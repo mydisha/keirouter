@@ -80,6 +80,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
@@ -168,5 +170,6 @@ jobs:
       - name: Commit updated formula
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
+          branch: main
           commit_message: "chore: update Homebrew formula for ${{ github.ref_name }}"
           file_pattern: Formula/keirouter.rb
