@@ -4,7 +4,7 @@ import {
   Sparkles, Zap, MessageSquare, Layers, Route, Wifi, Monitor, Database, Clock,
   ArrowUpCircle, CheckCircle2, ExternalLink,
   Gauge, Eye, EyeOff, KeyRound, Download, Upload, ShieldCheck, Info,
-  Palette, Shield,
+  Palette, Shield, Cpu,
 } from "lucide-react";
 import { api, type EndpointSettings, type BrandingSettings } from "../lib/api";
 import { ChangelogMarkdown } from "../components/ChangelogMarkdown";
@@ -167,13 +167,66 @@ function SavingTab({
     <div className="space-y-4">
       <Card>
         <SectionHeader
+          title="Headroom context compression"
+          description="Compresses conversation context through an optional Headroom proxy. Start the proxy separately with `make headroom` or Docker, then enable it here. Disables RTK when enabled."
+          icon={Cpu}
+        />
+        <div className="flex items-center justify-between border-t border-[var(--border)] px-6 py-4">
+          <span className="text-sm font-medium">Enable Headroom compression</span>
+          <Toggle checked={local.headroom_enabled} onChange={(v) => update({ headroom_enabled: v, ...(v ? { rtk_enabled: false } : {}) })} />
+        </div>
+        {local.headroom_enabled && (
+          <>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] px-6 py-4">
+              <div>
+                <p className="text-sm font-medium">Proxy URL</p>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">Use http://127.0.0.1:8787 for local dev, or http://headroom:8787 for a Docker sidecar.</p>
+              </div>
+              <Input
+                type="text"
+                value={local.headroom_base_url || "http://127.0.0.1:8787"}
+                onChange={(e) => update({ headroom_base_url: e.target.value })}
+                className="w-64 font-mono text-sm"
+                placeholder="http://127.0.0.1:8787"
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] px-6 py-4">
+              <div>
+                <p className="text-sm font-medium">Token budget</p>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">Target token count after compression</p>
+              </div>
+              <Input
+                type="number"
+                min={1000}
+                max={2000000}
+                value={local.headroom_token_budget || 100000}
+                onChange={(e) => update({ headroom_token_budget: parseInt(e.target.value) || 100000 })}
+                className="w-28 text-center"
+              />
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] px-6 py-4">
+              <div>
+                <p className="text-sm font-medium">Output shaper</p>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">Headroom also steers output verbosity (replaces Caveman/Terse)</p>
+              </div>
+              <Toggle
+                checked={local.headroom_output_shaper}
+                onChange={(v) => update({ headroom_output_shaper: v, ...(v ? { caveman_enabled: false, terse_enabled: false } : {}) })}
+              />
+            </div>
+          </>
+        )}
+      </Card>
+
+      <Card>
+        <SectionHeader
           title="RTK input compression"
           description="Compresses bulky tool outputs (diffs, greps, listings, build logs) before they reach the model. Saves input tokens. Safe by design — never corrupts content."
           icon={Zap}
         />
         <div className="flex items-center justify-between border-t border-[var(--border)] px-6 py-4">
           <span className="text-sm font-medium">Enable RTK token saver</span>
-          <Toggle checked={local.rtk_enabled} onChange={(v) => update({ rtk_enabled: v })} />
+          <Toggle checked={local.rtk_enabled} onChange={(v) => update({ rtk_enabled: v, ...(v ? { headroom_enabled: false } : {}) })} />
         </div>
         {local.rtk_enabled && (
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] px-6 py-4">

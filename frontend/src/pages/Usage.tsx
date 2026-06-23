@@ -435,7 +435,7 @@ function ActivityChart({ series }: { series: SeriesPoint[] }) {
 
 function RecentRow({ row }: { row: RecentActivity }) {
   const success = row.latency_ms > 0;
-  const hasSavings = (row.slim_bytes_saved ?? 0) > 0 || row.caveman_active || row.terse_active;
+  const hasSavings = (row.slim_bytes_saved ?? 0) > 0 || row.caveman_active || row.terse_active || row.headroom_active;
   return (
     <tr className="transition-colors hover:bg-[var(--bg-subtle)] group">
       <td className="w-6 px-3 py-2.5">
@@ -463,6 +463,11 @@ function RecentRow({ row }: { row: RecentActivity }) {
                 {row.caveman_active && (
                   <span className="text-[9px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-widest" title="Caveman compression">
                     [CVMN]
+                  </span>
+                )}
+                {row.headroom_active && (
+                  <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest" title={`Headroom saved ${fmtNum(row.headroom_tokens_saved ?? 0)} tokens`}>
+                    [HDRM]
                   </span>
                 )}
                 {row.terse_active && (

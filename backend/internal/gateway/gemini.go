@@ -88,6 +88,7 @@ func (s *Server) handleGeminiGenerate(w http.ResponseWriter, r *http.Request) {
 		Targets:  resolved.Targets,
 		PlanOpts: s.endpointPlanOptions(r.Context(), resolved.PlanOpts, resolved.Targets, affinityKey),
 		Slimmer:  s.slimmerConfig(),
+		Headroom: s.headroomConfig(),
 		Terse:    s.terseConfig(),
 		Caveman:  s.cavemanConfig(),
 	}

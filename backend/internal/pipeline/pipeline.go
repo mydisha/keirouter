@@ -25,6 +25,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/core"
 	"github.com/mydisha/keirouter/backend/internal/dispatch"
 	"github.com/mydisha/keirouter/backend/internal/guardrails"
+	"github.com/mydisha/keirouter/backend/internal/headroom"
 	"github.com/mydisha/keirouter/backend/internal/limits"
 	"github.com/mydisha/keirouter/backend/internal/meter"
 	"github.com/mydisha/keirouter/backend/internal/normalizer"
@@ -51,6 +52,7 @@ type Pipeline struct {
 	meter      *meter.Meter
 	budget     *budget.Engine
 	slimmer    *slimmer.Engine
+	headroom   *headroom.Client
 	metrics    *observ.Metrics
 	cache      *cache.Cache
 	embedder   cache.Embedder
@@ -69,6 +71,7 @@ type Deps struct {
 	Meter      *meter.Meter
 	Budget     *budget.Engine
 	Slimmer    *slimmer.Engine
+	Headroom   *headroom.Client
 	Metrics    *observ.Metrics
 	Cache      *cache.Cache
 	Embedder   cache.Embedder
@@ -97,6 +100,7 @@ func New(d Deps) *Pipeline {
 		meter:      d.Meter,
 		budget:     d.Budget,
 		slimmer:    d.Slimmer,
+		headroom:   d.Headroom,
 		metrics:    d.Metrics,
 		cache:      d.Cache,
 		embedder:   d.Embedder,
@@ -143,6 +147,7 @@ type Options struct {
 	// compresses bulky tool outputs on the input side; Terse and Caveman inject
 	// system-prompt directives that reduce output tokens.
 	Slimmer slimmer.Config
+	Headroom headroom.Config
 	Terse   terse.Config
 	Caveman caveman.Config
 	// Limits carries already-resolved per-key rate limits. Zero values mean unlimited.
@@ -158,6 +163,7 @@ type Result struct {
 	CostMicros int64
 	Latency    time.Duration
 	SlimStats  *slimmer.Stats
+	HeadroomStats *headroom.Stats
 	CacheHit   bool
 }
 
@@ -215,11 +221,14 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 		p.metrics.RecordCache(false)
 	}
 
-	slimStats := p.applyTokenSaving(req, opts)
+	slimStats, headStats := p.applyTokenSaving(ctx, req, opts)
 	if slimStats != nil {
 		p.log.Debug("slimmer stats", "saved", slimStats.Saved(), "hits", len(slimStats.Hits))
 	}
-	save := buildSaveState(slimStats, opts)
+	if headStats != nil {
+		p.log.Debug("headroom stats", "saved_tokens", headStats.TokensSaved, "transforms", strings.Join(headStats.Transforms, ","))
+	}
+	save := buildSaveState(slimStats, headStats, opts)
 
 	required := capability.Required(req)
 	attempts, err := p.planWithCooldownRetry(ctx, req.Metadata.TenantID, opts.Targets, required, opts.PlanOpts)
@@ -298,6 +307,7 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 			CostMicros: cost,
 			Latency:    latency,
 			SlimStats:  slimStats,
+			HeadroomStats: headStats,
 		}, nil
 	}
 
@@ -365,8 +375,8 @@ func (p *Pipeline) Stream(ctx context.Context, req *core.ChatRequest, opts Optio
 		return nil, &core.ProviderError{Kind: core.ErrPolicyBlocked, Message: gres.Reason}
 	}
 
-	slimStats := p.applyTokenSaving(req, opts)
-	save := buildSaveState(slimStats, opts)
+	slimStats, headStats := p.applyTokenSaving(ctx, req, opts)
+	save := buildSaveState(slimStats, headStats, opts)
 
 	required := capability.Required(req)
 	scope := budget.Scope{TenantID: req.Metadata.TenantID, ProjectID: req.Metadata.ProjectID, APIKeyID: req.Metadata.APIKeyID}
@@ -894,28 +904,40 @@ func (p *Pipeline) planWithCooldownRetry(ctx context.Context, tenantID string, t
 // (terse, caveman) token-saving transforms in place. Terse and caveman both
 // inject system-prompt directives; if both are enabled, terse runs first and
 // caveman appends after, but in practice only one output-saver is used.
-func (p *Pipeline) applyTokenSaving(req *core.ChatRequest, opts Options) *slimmer.Stats {
+func (p *Pipeline) applyTokenSaving(ctx context.Context, req *core.ChatRequest, opts Options) (*slimmer.Stats, *headroom.Stats) {
 	// Normalize tool call IDs and fix missing tool results before any
 	// downstream processing. This ensures Anthropic-compatible IDs and
 	// complete tool_use/tool_result pairs.
 	normalizer.Apply(req)
 
 	var stats *slimmer.Stats
-	if p.slimmer != nil && opts.Slimmer.Enabled {
+	var hstats *headroom.Stats
+	if p.headroom != nil && opts.Headroom.Enabled {
+		var err error
+		hstats, err = p.headroom.Compress(ctx, req, opts.Headroom)
+		if err != nil {
+			p.log.Warn("headroom compression failed; continuing uncompressed", "err", err)
+		} else if hstats != nil {
+			p.log.Debug("headroom compressed request", "saved_tokens", hstats.TokensSaved, "transforms", strings.Join(hstats.Transforms, ","))
+		}
+	} else if p.slimmer != nil && opts.Slimmer.Enabled {
 		stats = p.slimmer.Compress(req, opts.Slimmer)
 		if stats != nil {
 			p.log.Debug("slimmer compressed request", "saved_bytes", stats.Saved(), "hits", len(stats.Hits))
 		}
 	}
-	terse.Apply(req, opts.Terse)
-	caveman.Apply(req, opts.Caveman)
-	return stats
+	if !opts.Headroom.OutputShaper {
+		terse.Apply(req, opts.Terse)
+		caveman.Apply(req, opts.Caveman)
+	}
+	return stats, hstats
 }
 
 // saveState captures which token-saving features were active and their results
 // for a single request, so the meter can persist them.
 type saveState struct {
 	slimSnap *meter.SlimSnapshot
+	headroom *meter.HeadroomSnapshot
 	caveman  bool
 	terse    bool
 }
@@ -940,10 +962,20 @@ func splitRuleNames(s string) []string {
 
 // buildSaveState converts pipeline-level token-saving results into a snapshot
 // suitable for the meter. Returns nil when no features were active.
-func buildSaveState(stats *slimmer.Stats, opts Options) *saveState {
+func buildSaveState(stats *slimmer.Stats, hstats *headroom.Stats, opts Options) *saveState {
 	save := &saveState{
-		caveman: opts.Caveman.Enabled,
-		terse:   opts.Terse.Enabled,
+		caveman: opts.Caveman.Enabled && !opts.Headroom.OutputShaper,
+		terse:   opts.Terse.Enabled && !opts.Headroom.OutputShaper,
+	}
+	if hstats != nil {
+		save.headroom = &meter.HeadroomSnapshot{
+			TokensBefore:     hstats.TokensBefore,
+			TokensAfter:      hstats.TokensAfter,
+			TokensSaved:      hstats.TokensSaved,
+			CompressionRatio: hstats.CompressionRatio,
+			Transforms:       strings.Join(hstats.Transforms, ","),
+			CCRHashes:        strings.Join(hstats.CCRHashes, ","),
+		}
 	}
 	if stats != nil && stats.Saved() > 0 {
 		// Build comma-separated rule names from hits.
@@ -964,7 +996,7 @@ func buildSaveState(stats *slimmer.Stats, opts Options) *saveState {
 			Rules:       ruleNames,
 		}
 	}
-	if save.slimSnap == nil && !save.caveman && !save.terse {
+	if save.slimSnap == nil && save.headroom == nil && !save.caveman && !save.terse {
 		return nil
 	}
 	return save
@@ -997,6 +1029,7 @@ func (p *Pipeline) recordWithTTFT(ctx context.Context, meta core.RequestMetadata
 	}
 	if save != nil {
 		ev.SlimStats = save.slimSnap
+		ev.HeadroomStats = save.headroom
 		ev.CavemanActive = save.caveman
 		ev.TerseActive = save.terse
 	}
@@ -1020,6 +1053,14 @@ func (p *Pipeline) recordWithTTFT(ctx context.Context, meta core.RequestMetadata
 			if save.slimSnap != nil {
 				for _, rule := range splitRuleNames(save.slimSnap.Rules) {
 					p.metrics.RecordSlimSavings(rule, save.slimSnap.BytesSaved)
+				}
+			}
+			if save.headroom != nil {
+				for _, transform := range splitRuleNames(save.headroom.Transforms) {
+					p.metrics.RecordHeadroomSavings(transform, save.headroom.TokensSaved)
+				}
+				if save.headroom.Transforms == "" {
+					p.metrics.RecordHeadroomSavings("unknown", save.headroom.TokensSaved)
 				}
 			}
 			if save.caveman {

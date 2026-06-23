@@ -111,6 +111,7 @@ type Event struct {
 
 	// Token-saving analytics.
 	SlimStats     *SlimSnapshot // nil when RTK did not fire
+	HeadroomStats *HeadroomSnapshot // nil when Headroom did not fire
 	CavemanActive bool          // caveman output compression was active
 	TerseActive   bool          // terse output compression was active
 }
@@ -120,6 +121,16 @@ type SlimSnapshot struct {
 	BytesSaved  int
 	TokensSaved int
 	Rules       string // comma-separated rule names that fired
+}
+
+// HeadroomSnapshot captures Headroom's exact per-request compression result.
+type HeadroomSnapshot struct {
+	TokensBefore     int
+	TokensAfter      int
+	TokensSaved      int
+	CompressionRatio float64
+	Transforms       string // comma-separated transform names
+	CCRHashes        string // comma-separated CCR hashes
 }
 
 // resolvePrice looks up the price for a provider/model pair. It tries
@@ -198,6 +209,15 @@ func (m *Meter) Record(ctx context.Context, ev Event) (int64, error) {
 		rec.SlimBytesSaved = ev.SlimStats.BytesSaved
 		rec.SlimTokensSaved = ev.SlimStats.TokensSaved
 		rec.SlimRules = ev.SlimStats.Rules
+	}
+	if ev.HeadroomStats != nil {
+		rec.HeadroomActive = true
+		rec.HeadroomTokensBefore = ev.HeadroomStats.TokensBefore
+		rec.HeadroomTokensAfter = ev.HeadroomStats.TokensAfter
+		rec.HeadroomTokensSaved = ev.HeadroomStats.TokensSaved
+		rec.HeadroomCompressionRatio = ev.HeadroomStats.CompressionRatio
+		rec.HeadroomTransforms = ev.HeadroomStats.Transforms
+		rec.HeadroomCCRHashes = ev.HeadroomStats.CCRHashes
 	}
 	if err := m.recordUsage(ctx, rec); err != nil {
 		return cost, err

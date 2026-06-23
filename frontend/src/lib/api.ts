@@ -41,6 +41,12 @@ export interface BrandingSettings {
 export interface EndpointSettings {
   rtk_enabled: boolean;
   rtk_filter_level: string;
+  headroom_enabled: boolean;
+  headroom_base_url: string;
+  headroom_api_key?: string;
+  headroom_timeout_ms: number;
+  headroom_token_budget: number;
+  headroom_output_shaper: boolean;
   caveman_enabled: boolean;
   caveman_level: string;
   terse_enabled: boolean;
@@ -256,6 +262,9 @@ export interface RecentActivity {
   slim_bytes_saved?: number;
   slim_tokens_saved?: number;
   slim_rules?: string;
+  headroom_active?: boolean;
+  headroom_tokens_saved?: number;
+  headroom_transforms?: string;
   caveman_active?: boolean;
   terse_active?: boolean;
 }
@@ -277,14 +286,23 @@ export interface ClientSaving {
   terse_requests: number;
 }
 
+export interface HeadroomTransformSaving {
+  transform: string;
+  count: number;
+  tokens_saved: number;
+}
+
 export interface TokenSavings {
   slim_bytes_saved: number;
   slim_tokens_saved: number;
+  headroom_requests: number;
+  headroom_tokens_saved: number;
   caveman_requests: number;
   terse_requests: number;
   usd_saved?: number;
   usd_saved_estimate?: boolean;
   rules: RuleSaving[];
+  headroom_transforms?: HeadroomTransformSaving[];
   by_client?: ClientSaving[];
 }
 

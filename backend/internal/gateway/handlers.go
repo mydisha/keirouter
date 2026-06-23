@@ -230,6 +230,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 		Targets:  resolved.Targets,
 		PlanOpts: s.endpointPlanOptions(r.Context(), resolved.PlanOpts, resolved.Targets, affinityKey),
 		Slimmer:  s.slimmerConfig(),
+		Headroom: s.headroomConfig(),
 		Terse:    s.terseConfig(),
 		Caveman:  s.cavemanConfig(),
 		Limits:   effectiveLimits,

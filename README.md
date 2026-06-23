@@ -139,6 +139,44 @@ KeiRouter isn't just for chat! It supports everything:
 - **Web Search & Fetching** (`/v1/search`, `/v1/web/fetch`)
 - **Embeddings** (`/v1/embeddings`)
 
+## 🧠 Optional Headroom context compression
+
+Headroom is an optional context-compression proxy. KeiRouter can call its `/v1/compress` endpoint before provider routing, then keep the normal fallback, metering, and dashboard analytics flow. It is disabled by default, and `make dev` / `make setup` do not require it.
+
+Start Headroom separately when you want to use it:
+
+```bash
+make headroom
+```
+
+Or run the proxy with Docker:
+
+```bash
+docker run --rm --name keirouter-headroom \
+  -p 127.0.0.1:8787:8787 \
+  ghcr.io/chopratejas/headroom:latest
+```
+
+Then open **Dashboard → Settings → Token Saving → Headroom context compression** and enable it. The default local URL is:
+
+```text
+http://127.0.0.1:8787
+```
+
+For Docker Compose deployments, KeiRouter can use a sidecar URL such as:
+
+```text
+http://headroom:8787
+```
+
+You can also opt in to starting Headroom together with local dev servers:
+
+```bash
+KEIROUTER_HEADROOM_AUTO=1 make dev
+```
+
+If Headroom is disabled, unavailable, or returns an error, KeiRouter continues with the original request without context compression.
+
 ## 🔑 Connect via OAuth (No API Keys needed!)
 Tired of copying API keys? You can connect providers like Claude, GitHub Copilot, Gemini CLI, and more directly from the Connections page using OAuth. Just click, sign in, and KeiRouter handles securely refreshing your tokens in the background!
 

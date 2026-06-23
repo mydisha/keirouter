@@ -140,19 +140,23 @@ install_deps() {
 start_dev() {
   cd "$REPO_DIR"
 
+  local hr_port="${HEADROOM_PORT:-8787}"
   echo ""
   printf "${BOLD}  ┌───────────────────────────────────────────────┐${RESET}\n"
-  printf "${BOLD}  │${RESET}  ${GREEN}Everything ready! Starting KeiRouter…${RESET}         ${BOLD}│${RESET}\n"
+  printf "${BOLD}  │${RESET}  ${GREEN}Everything ready! Starting KeiRouter...${RESET}         ${BOLD}│${RESET}\n"
   printf "${BOLD}  │${RESET}                                               ${BOLD}│${RESET}\n"
-  printf "${BOLD}  │${RESET}  ${BLUE}Backend${RESET}    → http://localhost:20180           ${BOLD}│${RESET}\n"
-  printf "${BOLD}  │${RESET}  ${BLUE}Dashboard${RESET}  → http://localhost:5180            ${BOLD}│${RESET}\n"
-  printf "${BOLD}  │${RESET}  ${BLUE}Password${RESET}   → keirouter (change on first use) ${BOLD}│${RESET}\n"
+  printf "${BOLD}  │${RESET}  ${BLUE}Backend${RESET}    -> http://localhost:20180           ${BOLD}│${RESET}\n"
+  printf "${BOLD}  │${RESET}  ${BLUE}Dashboard${RESET}  -> http://localhost:5180            ${BOLD}│${RESET}\n"
+  printf "${BOLD}  │${RESET}  ${BLUE}Headroom${RESET}   -> optional: make headroom (:${hr_port})     ${BOLD}│${RESET}\n"
+  printf "${BOLD}  │${RESET}  ${BLUE}Password${RESET}   -> keirouter (change on first use) ${BOLD}│${RESET}\n"
   printf "${BOLD}  │${RESET}                                               ${BOLD}│${RESET}\n"
-  printf "${BOLD}  │${RESET}  ${YELLOW}Press Ctrl+C to stop both servers.${RESET}            ${BOLD}│${RESET}\n"
+  printf "${BOLD}  │${RESET}  ${YELLOW}Press Ctrl+C to stop all servers.${RESET}             ${BOLD}│${RESET}\n"
   printf "${BOLD}  └───────────────────────────────────────────────┘${RESET}\n"
   echo ""
 
-  # Run make dev — which starts backend + waits for healthz + starts frontend
+  # Run make dev — starts backend + waits for healthz + starts frontend.
+  # Headroom is optional; run `make headroom` separately or
+  # `KEIROUTER_HEADROOM_AUTO=1 make dev` from the repo root.
   make dev
 }
 

@@ -46,13 +46,15 @@ function prettyClient(id: string): string {
 
 export function TokenSavingsBreakdown({ savings, totalRequests, insights, period }: { savings: TokenSavings; totalRequests: number; insights: UsageInsights; period: string }) {
   const rules = savings.rules || [];
+  const headroomTransforms = savings.headroom_transforms || [];
   const maxBytes = Math.max(...rules.map((r) => r.bytes_saved), 1);
   const totalCavemanPct = totalRequests > 0 ? ((savings.caveman_requests / totalRequests) * 100).toFixed(1) : "0";
   const totalTersePct = totalRequests > 0 ? ((savings.terse_requests / totalRequests) * 100).toFixed(0) : "0";
-  const hasSavings = savings.slim_bytes_saved > 0 || savings.caveman_requests > 0 || savings.terse_requests > 0 || rules.length > 0;
+  const totalHeadroomPct = totalRequests > 0 ? ((savings.headroom_requests / totalRequests) * 100).toFixed(1) : "0";
+  const hasSavings = savings.slim_bytes_saved > 0 || (savings.headroom_tokens_saved ?? 0) > 0 || savings.caveman_requests > 0 || savings.terse_requests > 0 || rules.length > 0 || headroomTransforms.length > 0;
   // Prefer the backend's blended USD estimate; fall back to a rough $3/M rate
   // for older payloads that predate the usd_saved field.
-  const usdSaved = savings.usd_saved ?? (savings.slim_tokens_saved / 1_000_000) * 3;
+  const usdSaved = savings.usd_saved ?? ((savings.slim_tokens_saved + (savings.headroom_tokens_saved ?? 0)) / 1_000_000) * 3;
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] shadow-sm overflow-hidden">
@@ -63,6 +65,12 @@ export function TokenSavingsBreakdown({ savings, totalRequests, insights, period
         </div>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+          {savings.headroom_requests > 0 && (
+            <span className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+              HDRM {totalHeadroomPct}%
+            </span>
+          )}
           {savings.caveman_requests > 0 && (
             <span className="flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-purple-500" />

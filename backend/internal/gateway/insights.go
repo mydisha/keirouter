@@ -68,8 +68,9 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 		breakdown     []store.ProviderUsage
 		recent        []store.RecentRecord
 		timeline      []store.TimeBucket
-		ruleSavings   []store.RuleSavings
-		clientSavings []store.ClientSavings
+		ruleSavings     []store.RuleSavings
+		clientSavings   []store.ClientSavings
+		headroomSavings []store.HeadroomTransformSavings
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -94,6 +95,10 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 	})
 	g.Go(func() error {
 		clientSavings, _ = s.usage.SavingsByClient(gctx, adminTenant, since)
+		return nil
+	})
+	g.Go(func() error {
+		headroomSavings, _ = s.usage.SavingsByHeadroomTransform(gctx, adminTenant, since)
 		return nil
 	})
 	if err := g.Wait(); err != nil {
@@ -153,6 +158,13 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 		}
 		if rec.SlimRules != "" {
 			entry["slim_rules"] = rec.SlimRules
+		}
+		if rec.HeadroomActive {
+			entry["headroom_active"] = true
+			entry["headroom_tokens_saved"] = rec.HeadroomTokensSaved
+		}
+		if rec.HeadroomTransforms != "" {
+			entry["headroom_transforms"] = rec.HeadroomTransforms
 		}
 		if rec.CavemanActive {
 			entry["caveman_active"] = true
@@ -236,6 +248,16 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Headroom savings by transform.
+	headroomTransforms := make([]map[string]any, 0, len(headroomSavings))
+	for _, hs := range headroomSavings {
+		headroomTransforms = append(headroomTransforms, map[string]any{
+			"transform":    hs.Transform,
+			"count":        hs.Count,
+			"tokens_saved": hs.TokensSaved,
+		})
+	}
+
 	writeJSONCached(w, s.insightsCache, cacheKey, map[string]any{
 		"summary": map[string]any{
 			"total_requests":     sum.TotalRequests,
@@ -251,14 +273,17 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 			"since":              since,
 		},
 		"savings": map[string]any{
-			"slim_bytes_saved":   sum.SlimBytesSaved,
-			"slim_tokens_saved":  sum.SlimTokensSaved,
-			"caveman_requests":   sum.CavemanRequests,
-			"terse_requests":     sum.TerseRequests,
-			"usd_saved":          usdPerToken(sum.SlimTokensSaved),
-			"usd_saved_estimate": true,
-			"rules":              rules,
-			"by_client":          byClient,
+			"slim_bytes_saved":      sum.SlimBytesSaved,
+			"slim_tokens_saved":     sum.SlimTokensSaved,
+			"headroom_requests":     sum.HeadroomRequests,
+			"headroom_tokens_saved": sum.HeadroomTokensSaved,
+			"caveman_requests":      sum.CavemanRequests,
+			"terse_requests":        sum.TerseRequests,
+			"usd_saved":             usdPerToken(sum.SlimTokensSaved + sum.HeadroomTokensSaved),
+			"usd_saved_estimate":    true,
+			"rules":                 rules,
+			"headroom_transforms":   headroomTransforms,
+			"by_client":             byClient,
 		},
 		"providers": providers,
 		"recent":    recentRows,

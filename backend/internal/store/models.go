@@ -141,6 +141,13 @@ type UsageRecord struct {
 	SlimBytesSaved   int    // bytes removed by RTK slimmer (input-side compression)
 	SlimTokensSaved  int    // estimated tokens saved by RTK (bytes/4)
 	SlimRules        string // comma-separated rule names that fired (e.g. "git-diff,grep")
+	HeadroomActive   bool   // Headroom compression was active
+	HeadroomTokensBefore int // exact input tokens before Headroom compression
+	HeadroomTokensAfter  int // exact input tokens after Headroom compression
+	HeadroomTokensSaved  int // exact tokens saved by Headroom
+	HeadroomCompressionRatio float64 // Headroom tokens_after/tokens_before
+	HeadroomTransforms string // comma-separated Headroom transforms
+	HeadroomCCRHashes  string // comma-separated CCR hashes
 	CavemanActive    bool   // caveman output compression was active
 	TerseActive      bool   // terse output compression was active
 	CreatedAt        time.Time

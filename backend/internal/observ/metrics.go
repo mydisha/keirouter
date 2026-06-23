@@ -29,6 +29,8 @@ type Metrics struct {
 
 	// Token-saving analytics.
 	SlimBytesSaved  *prometheus.CounterVec // by rule
+	HeadroomTokensSaved *prometheus.CounterVec // by transform
+	HeadroomRequests prometheus.Counter
 	CavemanRequests prometheus.Counter     // requests with caveman active
 	TerseRequests   prometheus.Counter     // requests with terse active
 
@@ -97,6 +99,14 @@ func New() *Metrics {
 			Name: "keirouter_slim_bytes_saved_total",
 			Help: "Total bytes saved by RTK slimmer, labeled by rule.",
 		}, []string{"rule"}),
+		HeadroomTokensSaved: factory.NewCounterVec(prometheus.CounterOpts{
+			Name: "keirouter_headroom_tokens_saved_total",
+			Help: "Total exact input tokens saved by Headroom, labeled by transform.",
+		}, []string{"transform"}),
+		HeadroomRequests: factory.NewCounter(prometheus.CounterOpts{
+			Name: "keirouter_headroom_requests_total",
+			Help: "Total requests where Headroom compression was active.",
+		}),
 		CavemanRequests: factory.NewCounter(prometheus.CounterOpts{
 			Name: "keirouter_caveman_requests_total",
 			Help: "Total requests with caveman output compression active.",
@@ -178,6 +188,14 @@ func (m *Metrics) SetCacheSize(n int) {
 func (m *Metrics) RecordSlimSavings(rule string, bytesSaved int) {
 	if bytesSaved > 0 {
 		m.SlimBytesSaved.WithLabelValues(rule).Add(float64(bytesSaved))
+	}
+}
+
+// RecordHeadroomSavings records exact tokens saved by Headroom.
+func (m *Metrics) RecordHeadroomSavings(transform string, tokensSaved int) {
+	if tokensSaved > 0 {
+		m.HeadroomTokensSaved.WithLabelValues(transform).Add(float64(tokensSaved))
+		m.HeadroomRequests.Inc()
 	}
 }
 

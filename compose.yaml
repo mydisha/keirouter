@@ -1,6 +1,24 @@
 name: keirouter
 
 services:
+  headroom:
+    image: ghcr.io/chopratejas/headroom:code-nonroot
+    restart: unless-stopped
+    environment:
+      HEADROOM_HOST: "0.0.0.0"
+      HEADROOM_PORT: "8787"
+      HEADROOM_MODE: "optimize"
+      HEADROOM_TELEMETRY: "off"
+      HEADROOM_SAVINGS_PATH: /data/proxy_savings.json
+    volumes:
+      - headroom-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8787/stats"]
+      interval: 30s
+      timeout: 5s
+      start-period: 15s
+      retries: 3
+
   keirouter:
     build:
       context: .
@@ -15,6 +33,9 @@ services:
         SOURCE_COMMIT: ${SOURCE_COMMIT:-}
     image: ${KEIROUTER_IMAGE:-ghcr.io/mydisha/keirouter:latest}
     restart: unless-stopped
+    depends_on:
+      headroom:
+        condition: service_healthy
     ports:
       - "${KEIROUTER_PORT:-20180}:20180"
     volumes:
@@ -27,6 +48,8 @@ services:
       KEIROUTER_SECURITY__ALLOW_PRIVATE_BASE_URL: ${KEIROUTER_SECURITY__ALLOW_PRIVATE_BASE_URL:-false}
       KEIROUTER_SECURITY__MASTER_KEY: ${KEIROUTER_MASTER_KEY:-}
       KEIROUTER_LOG__FORMAT: ${KEIROUTER_LOG_FORMAT:-json}
+      KEIROUTER_HEADROOM__BASE_URL: "http://headroom:8787"
 
 volumes:
   keirouter-data:
+  headroom-data:

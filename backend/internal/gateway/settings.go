@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/caveman"
 	"github.com/mydisha/keirouter/backend/internal/connectors"
 	"github.com/mydisha/keirouter/backend/internal/dispatch"
+	"github.com/mydisha/keirouter/backend/internal/headroom"
 	"github.com/mydisha/keirouter/backend/internal/slimmer"
 	"github.com/mydisha/keirouter/backend/internal/terse"
 )
@@ -25,6 +27,15 @@ type EndpointSettings struct {
 	// RTKEnabled toggles input-side tool-output compression (the slimmer).
 	RTKEnabled     bool   `json:"rtk_enabled"`
 	RTKFilterLevel string `json:"rtk_filter_level"` // "none", "minimal", "aggressive"
+
+	// HeadroomEnabled toggles Headroom input-side context compression through a
+	// local/sidecar Headroom proxy. It is mutually exclusive with RTK.
+	HeadroomEnabled      bool   `json:"headroom_enabled"`
+	HeadroomBaseURL      string `json:"headroom_base_url"`
+	HeadroomAPIKey       string `json:"headroom_api_key,omitempty"`
+	HeadroomTimeoutMs    int    `json:"headroom_timeout_ms"`
+	HeadroomTokenBudget  int    `json:"headroom_token_budget"`
+	HeadroomOutputShaper bool   `json:"headroom_output_shaper"`
 
 	// CavemanEnabled toggles output-side caveman compression; CavemanLevel is
 	// one of "lite", "full", "ultra".
@@ -69,6 +80,11 @@ func defaultEndpointSettings() EndpointSettings {
 	return EndpointSettings{
 		RTKEnabled:     true,
 		RTKFilterLevel: "none",
+		HeadroomEnabled:      false,
+		HeadroomBaseURL:      defaultHeadroomBaseURL(),
+		HeadroomTimeoutMs:    15000,
+		HeadroomTokenBudget:  100000,
+		HeadroomOutputShaper: false,
 		CavemanEnabled:       false,
 		CavemanLevel:         string(caveman.LevelFull),
 		TerseEnabled:         false,
@@ -119,6 +135,15 @@ func (s *Server) loadEndpointSettings(ctx context.Context) EndpointSettings {
 	if es.RTKFilterLevel == "" {
 		es.RTKFilterLevel = def.RTKFilterLevel
 	}
+	if es.HeadroomBaseURL == "" {
+		es.HeadroomBaseURL = def.HeadroomBaseURL
+	}
+	if es.HeadroomTimeoutMs == 0 {
+		es.HeadroomTimeoutMs = def.HeadroomTimeoutMs
+	}
+	if es.HeadroomTokenBudget == 0 {
+		es.HeadroomTokenBudget = def.HeadroomTokenBudget
+	}
 	if es.TerseLevel == "" {
 		es.TerseLevel = def.TerseLevel
 	}
@@ -155,12 +180,36 @@ func (s *Server) loadEndpointSettings(ctx context.Context) EndpointSettings {
 	return es
 }
 
+func defaultHeadroomBaseURL() string {
+	if v := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(os.Getenv("KEIROUTER_HEADROOM__BASE_URL")), "/")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(os.Getenv("HEADROOM_BASE_URL")), "/")); v != "" {
+		return v
+	}
+	return "http://127.0.0.1:8787"
+}
+
 // slimmerConfig resolves the slimmer (RTK) settings from endpoint settings.
 func (s *Server) slimmerConfig() slimmer.Config {
 	es := s.loadEndpointSettings(context.Background())
 	return slimmer.Config{
 		Enabled:     es.RTKEnabled,
 		FilterLevel: slimmer.ParseFilterLevel(es.RTKFilterLevel),
+	}
+}
+
+// headroomConfig resolves Headroom settings from endpoint settings.
+func (s *Server) headroomConfig() headroom.Config {
+	es := s.loadEndpointSettings(context.Background())
+	return headroom.Config{
+		Enabled:      es.HeadroomEnabled,
+		BaseURL:      es.HeadroomBaseURL,
+		APIKey:       es.HeadroomAPIKey,
+		Timeout:      time.Duration(es.HeadroomTimeoutMs) * time.Millisecond,
+		TokenBudget:  es.HeadroomTokenBudget,
+		OutputShaper: es.HeadroomOutputShaper,
+		Fallback:     true,
 	}
 }
 
@@ -195,6 +244,12 @@ func (s *Server) adminUpdateEndpointSettings(w http.ResponseWriter, r *http.Requ
 	var patch struct {
 		RTKEnabled              *bool   `json:"rtk_enabled"`
 		RTKFilterLevel          *string `json:"rtk_filter_level"`
+		HeadroomEnabled         *bool   `json:"headroom_enabled"`
+		HeadroomBaseURL         *string `json:"headroom_base_url"`
+		HeadroomAPIKey          *string `json:"headroom_api_key"`
+		HeadroomTimeoutMs       *int    `json:"headroom_timeout_ms"`
+		HeadroomTokenBudget     *int    `json:"headroom_token_budget"`
+		HeadroomOutputShaper    *bool   `json:"headroom_output_shaper"`
 		CavemanEnabled          *bool   `json:"caveman_enabled"`
 		CavemanLevel            *string `json:"caveman_level"`
 		TerseEnabled            *bool   `json:"terse_enabled"`
@@ -227,6 +282,36 @@ func (s *Server) adminUpdateEndpointSettings(w http.ResponseWriter, r *http.Requ
 			writeError(w, http.StatusBadRequest, "rtk_filter_level must be none, minimal, or aggressive")
 			return
 		}
+	}
+	if patch.HeadroomEnabled != nil {
+		current.HeadroomEnabled = *patch.HeadroomEnabled
+	}
+	if patch.HeadroomBaseURL != nil {
+		current.HeadroomBaseURL = strings.TrimRight(strings.TrimSpace(*patch.HeadroomBaseURL), "/")
+		if current.HeadroomBaseURL == "" {
+			writeError(w, http.StatusBadRequest, "headroom_base_url must not be empty")
+			return
+		}
+	}
+	if patch.HeadroomAPIKey != nil {
+		current.HeadroomAPIKey = strings.TrimSpace(*patch.HeadroomAPIKey)
+	}
+	if patch.HeadroomTimeoutMs != nil {
+		if *patch.HeadroomTimeoutMs < 1000 || *patch.HeadroomTimeoutMs > 120000 {
+			writeError(w, http.StatusBadRequest, "headroom_timeout_ms must be between 1000 and 120000")
+			return
+		}
+		current.HeadroomTimeoutMs = *patch.HeadroomTimeoutMs
+	}
+	if patch.HeadroomTokenBudget != nil {
+		if *patch.HeadroomTokenBudget < 1000 || *patch.HeadroomTokenBudget > 2000000 {
+			writeError(w, http.StatusBadRequest, "headroom_token_budget must be between 1000 and 2000000")
+			return
+		}
+		current.HeadroomTokenBudget = *patch.HeadroomTokenBudget
+	}
+	if patch.HeadroomOutputShaper != nil {
+		current.HeadroomOutputShaper = *patch.HeadroomOutputShaper
 	}
 	if patch.CavemanEnabled != nil {
 		current.CavemanEnabled = *patch.CavemanEnabled
@@ -326,6 +411,19 @@ func (s *Server) adminUpdateEndpointSettings(w http.ResponseWriter, r *http.Requ
 		} else {
 			current.TerseEnabled = false
 		}
+	}
+	if current.HeadroomEnabled && current.RTKEnabled {
+		if patch.HeadroomEnabled != nil && *patch.HeadroomEnabled {
+			current.RTKEnabled = false
+		} else if patch.RTKEnabled != nil && *patch.RTKEnabled {
+			current.HeadroomEnabled = false
+		} else {
+			current.RTKEnabled = false
+		}
+	}
+	if current.HeadroomOutputShaper {
+		current.CavemanEnabled = false
+		current.TerseEnabled = false
 	}
 
 	raw, err := json.Marshal(current)

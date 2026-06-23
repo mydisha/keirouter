@@ -29,6 +29,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/guardrails/pii"
 	"github.com/mydisha/keirouter/backend/internal/guardrails/topics"
 	"github.com/mydisha/keirouter/backend/internal/guardrails/toxicity"
+	"github.com/mydisha/keirouter/backend/internal/headroom"
 	"github.com/mydisha/keirouter/backend/internal/healthcheck"
 	"github.com/mydisha/keirouter/backend/internal/httputil"
 	"github.com/mydisha/keirouter/backend/internal/identity"
@@ -292,6 +293,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		Meter:              mtr,
 		Budget:             bud,
 		Slimmer:            slim,
+		Headroom:           headroom.New(),
 		Metrics:            metrics,
 		Cache:              semanticCache,
 		Embedder:           embedder,
