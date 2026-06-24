@@ -24,6 +24,7 @@ export interface Provider {
   pinned: boolean;
   notice: string;
   drivable: boolean;
+  supports_model_fetch: boolean;
   input_per_m: number;
   output_per_m: number;
   regions?: RegionOption[];
@@ -856,6 +857,24 @@ export const api = {
       "GET",
       `/providers/${id}/models${kind ? `?kind=${encodeURIComponent(kind)}` : ""}`,
     ),
+  fetchProviderModels: (id: string) =>
+    request<{ models: { id: string; name: string; kind: string }[]; source: string }>(
+      "POST",
+      `/providers/${id}/fetch-models`,
+    ),
+  listCustomModels: (id: string) =>
+    request<{ models: { id: string; name: string }[] }>(
+      "GET",
+      `/providers/${id}/custom-models`,
+    ),
+  addCustomModel: (id: string, modelId: string, name?: string) =>
+    request<{ id: string; name: string }>(
+      "POST",
+      `/providers/${id}/custom-models`,
+      { id: modelId, name: name || modelId },
+    ),
+  removeCustomModel: (id: string, modelId: string) =>
+    request<void>("DELETE", `/providers/${id}/custom-models?id=${encodeURIComponent(modelId)}`),
   providerRouting: (id: string) =>
     request<ProviderRoutingSettings>("GET", `/providers/${id}/routing`),
   updateProviderRouting: (id: string, patch: Partial<ProviderRoutingSettings>) =>

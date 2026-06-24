@@ -419,7 +419,7 @@ func apiKeyProviders() []ProviderSpec {
 			Color: "#EC4899", Website: "https://glhf.chat", Hidden: true},
 		{ID: "sumopod", DisplayName: "SumoPod", Alias: "sumopod", Dialect: core.DialectOpenAI,
 			BaseURL: "https://ai.sumopod.com/v1", AuthKind: "api_key", ServiceKinds: llm(),
-			Color: "#3B82F6", Website: "https://sumopod.com", APIKeyURL: "https://sumopod.com", Hidden: true},
+			Color: "#3B82F6", Website: "https://sumopod.com", APIKeyURL: "https://sumopod.com"},
 		// Generic compatible endpoints are now in pinnedProviders().
 	}
 }

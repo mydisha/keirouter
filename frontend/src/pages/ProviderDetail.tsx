@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Plus, Trash2, Plug, X, Zap, ArrowUp, ArrowDown, CheckCircle, ToggleLeft, ToggleRight, Search, Route, AlertCircle, AlertTriangle, RefreshCw } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Plug, X, Zap, ArrowUp, ArrowDown, CheckCircle, ToggleLeft, ToggleRight, Search, Route, AlertCircle, AlertTriangle, RefreshCw, DownloadCloud, Sparkles } from "lucide-react";
 import { api, type DeviceCode, type OAuthProvider, type Provider, type Account, type ProxyPool, type UpstreamQuota, type ProviderRoutingSettings } from "../lib/api";
 import { KiroConnectModal } from "../components/KiroConnectModal";
 import { QoderConnectModal } from "../components/QoderConnectModal";
@@ -9,6 +9,7 @@ import { KilocodeConnectModal } from "../components/KilocodeConnectModal";
 import { CodebuddyConnectModal } from "../components/CodebuddyConnectModal";
 import { CursorConnectModal } from "../components/CursorConnectModal";
 import { CommandCodeConnectModal } from "../components/CommandCodeConnectModal";
+import { SearchableSelect, type SearchableSelectOption } from "../components/SearchableSelect";
 import { useToast } from "../components/Toast";
 import {
   Card,
@@ -91,6 +92,8 @@ export function ProviderDetailPage() {
   const [cursorOpen, setCursorOpen] = useState(false);
   const [commandcodeOpen, setCommandcodeOpen] = useState(false);
   const [addKeyOpen, setAddKeyOpen] = useState(false);
+  const [addModelOpen, setAddModelOpen] = useState(false);
+  const [fetchingModels, setFetchingModels] = useState(false);
 
   // Model search and pagination
   const [modelSearchQuery, setModelSearchQuery] = useState("");
@@ -482,12 +485,54 @@ export function ProviderDetailPage() {
         </Card>
 
         {/* Available Models */}
-        {models.data?.models && models.data.models.length > 0 && (
-          <Card>
-            <CardHeader
-              title="Available Models"
-              description={`${models.data.models.length} model${models.data.models.length === 1 ? "" : "s"} configured for this provider.`}
-            />
+        <Card>
+          <CardHeader
+            title="Available Models"
+            description={models.data?.models?.length
+              ? `${models.data.models.length} model${models.data.models.length === 1 ? "" : "s"} available for this provider.`
+              : "No predefined models — add a custom model or fetch from upstream."}
+            action={
+              <div className="flex items-center gap-2">
+                {provider.supports_model_fetch && (
+                  <Button
+                    variant="ghost"
+                    className="h-8 px-3 text-xs"
+                    onClick={async () => {
+                      setFetchingModels(true);
+                      try {
+                        await api.fetchProviderModels(id!);
+                        qc.invalidateQueries({ queryKey: ["provider-models", id] });
+                        toast.success("Models fetched", "Upstream model list refreshed.");
+                      } catch (e) {
+                        toast.error("Fetch failed", (e as Error).message);
+                      } finally {
+                        setFetchingModels(false);
+                      }
+                    }}
+                    disabled={fetchingModels || myAccounts.length === 0}
+                    title={myAccounts.length === 0 ? "Connect an account first" : "Fetch models from upstream"}
+                  >
+                    <DownloadCloud className={`h-3.5 w-3.5 ${fetchingModels ? "animate-pulse" : ""}`} />
+                    {fetchingModels ? "Fetching…" : "Fetch Models"}
+                  </Button>
+                )}
+                <Button
+                  variant="ghost"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => setAddModelOpen(true)}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add Model
+                </Button>
+              </div>
+            }
+          />
+          {models.isLoading ? (
+            <div className="border-t border-[var(--border)] px-6 py-12 text-center">
+              <Spinner />
+            </div>
+          ) : models.data?.models && models.data.models.length > 0 ? (
+            <>
             <div className="flex flex-col gap-3 border-t border-[var(--border)] bg-[var(--bg-subtle)] px-6 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="relative w-full max-w-sm">
                 <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
@@ -607,8 +652,14 @@ export function ProviderDetailPage() {
                 </div>
               </div>
             )}
-          </Card>
-        )}
+            </>
+          ) : (
+            <div className="border-t border-[var(--border)] px-6 py-12 text-center text-sm text-[var(--text-muted)]">
+              No models yet. Use &ldquo;Add Model&rdquo; to define a custom model
+              {provider.supports_model_fetch ? " or &ldquo;Fetch Models&rdquo; to fetch from upstream." : "."}
+            </div>
+          )}
+        </Card>
       </div>
 
       {oauthOpen && oauthProvider && (
@@ -648,7 +699,150 @@ export function ProviderDetailPage() {
           onClose={() => { setAddKeyOpen(false); setError(""); }}
         />
       )}
+      {addModelOpen && (
+        <AddModelModal
+          provider={provider}
+          existingModels={models.data?.models ?? []}
+          onClose={() => setAddModelOpen(false)}
+          onAdded={() => {
+            qc.invalidateQueries({ queryKey: ["provider-models", id] });
+            setAddModelOpen(false);
+          }}
+        />
+      )}
     </>
+  );
+}
+
+// AddModelModal lets the user add a custom model to a provider. It shows a
+// searchable selectbox with existing models + fetched upstream models, and
+// supports free-text entry for model IDs not in the list.
+function AddModelModal({
+  provider,
+  existingModels,
+  onClose,
+  onAdded,
+}: {
+  provider: Provider;
+  existingModels: { id: string; name: string; kind: string }[];
+  onClose: () => void;
+  onAdded: () => void;
+}) {
+  const toast = useToast();
+  const [modelId, setModelId] = useState("");
+  const [fetching, setFetching] = useState(false);
+  const [fetchedModels, setFetchedModels] = useState<{ id: string; name: string; kind: string }[]>([]);
+
+  // Build options from existing + fetched models, deduplicated.
+  const options: SearchableSelectOption[] = useMemo(() => {
+    const seen = new Set<string>();
+    const out: SearchableSelectOption[] = [];
+    for (const m of [...existingModels, ...fetchedModels]) {
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      out.push({ value: m.id, label: m.name || m.id, sublabel: m.id });
+    }
+    return out;
+  }, [existingModels, fetchedModels]);
+
+  const handleFetch = async () => {
+    setFetching(true);
+    try {
+      const res = await api.fetchProviderModels(provider.id);
+      setFetchedModels(res.models);
+      toast.success("Models fetched", `${res.models.length} models found upstream.`);
+    } catch (e) {
+      toast.error("Fetch failed", (e as Error).message);
+    } finally {
+      setFetching(false);
+    }
+  };
+
+  const handleAdd = async () => {
+    const trimmed = modelId.trim();
+    if (!trimmed) return;
+    if (trimmed.includes("/")) {
+      toast.error("Invalid model ID", "Model ID must not contain '/' — use the provider-local name only.");
+      return;
+    }
+    try {
+      await api.addCustomModel(provider.id, trimmed);
+      toast.success("Model added", `${provider.alias || provider.id}/${trimmed} is now available for routing.`);
+      onAdded();
+    } catch (e) {
+      toast.error("Add failed", (e as Error).message);
+    }
+  };
+
+  const canAdd = modelId.trim() !== "" && !modelId.includes("/");
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-float)] overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-6 py-4">
+          <h2 className="text-sm font-semibold">Add Model — {provider.display_name}</h2>
+          <button
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-ink-100 hover:text-[var(--text)] dark:hover:bg-ink-800"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="space-y-4 px-6 py-5">
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-[var(--text-muted)]">
+              Model ID
+            </label>
+            <SearchableSelect
+              options={options}
+              value={modelId}
+              onChange={setModelId}
+              placeholder="Search existing or type a custom model ID…"
+              allowFreeText
+              loading={fetching}
+            />
+          </div>
+
+          {modelId.trim() && (
+            <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] px-3 py-2">
+              <Sparkles className="h-3.5 w-3.5 text-accent-500" />
+              <span className="text-xs text-[var(--text-muted)]">Full path:</span>
+              <code className="font-mono text-xs text-accent-600">
+                {provider.alias || provider.id}/{modelId.trim()}
+              </code>
+            </div>
+          )}
+
+          {provider.supports_model_fetch && fetchedModels.length === 0 && (
+            <Button
+              variant="ghost"
+              onClick={handleFetch}
+              disabled={fetching}
+              className="w-full"
+            >
+              <DownloadCloud className={`h-4 w-4 ${fetching ? "animate-pulse" : ""}`} />
+              {fetching ? "Fetching upstream models…" : "Fetch models from upstream"}
+            </Button>
+          )}
+
+          <div className="flex gap-3">
+            <Button type="button" variant="ghost" onClick={onClose} className="flex-1">
+              Cancel
+            </Button>
+            <Button onClick={handleAdd} disabled={!canAdd} className="flex-1">
+              <Plus className="h-4 w-4" />
+              Add Model
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -275,11 +275,18 @@ function ProviderCard({ provider: p, accountCount }: { provider: Provider; accou
         <p className="mt-0.5 truncate font-mono text-xs text-[var(--text-muted)]">{p.id}</p>
       </div>
 
-      <p className="mt-auto text-xs text-[var(--text-muted)]">
-        {connected
-          ? `${accountCount} ${accountCount === 1 ? "account" : "accounts"}`
-          : "Connect"}
-      </p>
+      <div className="mt-auto flex w-full items-center justify-between">
+        <p className="text-xs text-[var(--text-muted)]">
+          {connected
+            ? `${accountCount} ${accountCount === 1 ? "account" : "accounts"}`
+            : "Connect"}
+        </p>
+        {p.supports_model_fetch && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-[var(--bg-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-muted)]" title="Supports upstream model fetching">
+            fetch
+          </span>
+        )}
+      </div>
     </button>
   );
 }

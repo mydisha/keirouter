@@ -28,6 +28,10 @@ import (
 func (s *Server) mountAdmin(r chi.Router) {
 	r.Get("/providers", s.adminListProviders)
 	r.Get("/providers/{id}/models", s.adminProviderModels)
+	r.Post("/providers/{id}/fetch-models", s.adminFetchProviderModels)
+	r.Get("/providers/{id}/custom-models", s.adminListCustomModels)
+	r.Post("/providers/{id}/custom-models", s.adminAddCustomModel)
+	r.Delete("/providers/{id}/custom-models", s.adminRemoveCustomModel)
 	r.Get("/providers/{id}/routing", s.adminGetProviderRouting)
 	r.Post("/providers/{id}/routing", s.adminUpdateProviderRouting)
 	r.Patch("/providers/{id}/routing", s.adminUpdateProviderRouting)
@@ -153,24 +157,25 @@ func (s *Server) adminListProviders(w http.ResponseWriter, r *http.Request) {
 			kinds = []core.ServiceKind{core.ServiceLLM}
 		}
 		entry := map[string]any{
-			"id":            p.ID,
-			"display_name":  p.DisplayName,
-			"alias":         p.Alias,
-			"dialect":       p.Dialect,
-			"auth_kind":     p.AuthKind,
-			"auth_modes":    p.AuthModesOf(),
-			"service_kinds": kinds,
-			"color":         p.Color,
-			"website":       p.Website,
-			"api_key_url":   p.APIKeyURL,
-			"icon":          "/providers/" + p.ID + ".png",
-			"deprecated":    p.Deprecated,
-			"hidden":        p.Hidden,
-			"pinned":        p.Pinned,
-			"notice":        p.Notice,
-			"drivable":      connectors.DrivableDialect(p.Dialect) || webProvider(p.ID),
-			"input_per_m":   p.InputPerM,
-			"output_per_m":  p.OutputPerM,
+			"id":                  p.ID,
+			"display_name":        p.DisplayName,
+			"alias":               p.Alias,
+			"dialect":             p.Dialect,
+			"auth_kind":           p.AuthKind,
+			"auth_modes":          p.AuthModesOf(),
+			"service_kinds":       kinds,
+			"color":               p.Color,
+			"website":             p.Website,
+			"api_key_url":         p.APIKeyURL,
+			"icon":                "/providers/" + p.ID + ".png",
+			"deprecated":          p.Deprecated,
+			"hidden":              p.Hidden,
+			"pinned":              p.Pinned,
+			"notice":              p.Notice,
+			"drivable":            connectors.DrivableDialect(p.Dialect) || webProvider(p.ID),
+			"supports_model_fetch": connectors.GetLiveModelSource(p.ID) != nil,
+			"input_per_m":         p.InputPerM,
+			"output_per_m":        p.OutputPerM,
 		}
 		if len(p.Regions) > 0 {
 			regions := make([]map[string]string, 0, len(p.Regions))
@@ -274,7 +279,197 @@ func (s *Server) adminProviderModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// User-added custom models (persisted in settings).
+	for _, cm := range s.loadCustomModels(r.Context(), providerID) {
+		if seen[cm.ID] {
+			continue
+		}
+		if kindFilter != "" && kindFilter != core.ServiceLLM {
+			continue
+		}
+		out = append(out, modelInfo{ID: cm.ID, Name: cm.Name, Kind: string(core.ServiceLLM)})
+		seen[cm.ID] = true
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"models": out})
+}
+
+// ---- custom models & upstream fetch -----------------------------------------
+
+const customModelsPrefix = "custom_models_" // + provider id
+
+// customModelEntry is one user-added model stored in settings.
+type customModelEntry struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func (s *Server) loadCustomModels(ctx context.Context, provider string) []customModelEntry {
+	if s.settings == nil {
+		return nil
+	}
+	raw, err := s.settings.Get(ctx, customModelsPrefix+provider)
+	if err != nil || raw == "" {
+		return nil
+	}
+	var entries []customModelEntry
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		return nil
+	}
+	return entries
+}
+
+func (s *Server) saveCustomModels(ctx context.Context, provider string, entries []customModelEntry) error {
+	if s.settings == nil {
+		return nil
+	}
+	raw, err := json.Marshal(entries)
+	if err != nil {
+		return err
+	}
+	return s.settings.Set(ctx, customModelsPrefix+provider, string(raw))
+}
+
+// adminFetchProviderModels explicitly fetches the upstream model list using a
+// connected account's credentials. This powers the "Fetch Models" button on the
+// provider detail page.
+func (s *Server) adminFetchProviderModels(w http.ResponseWriter, r *http.Request) {
+	providerID := chi.URLParam(r, "id")
+	if _, ok := connectors.SpecByID(providerID); !ok {
+		writeError(w, http.StatusNotFound, "unknown provider: "+providerID)
+		return
+	}
+	src := connectors.GetLiveModelSource(providerID)
+	if src == nil {
+		writeError(w, http.StatusBadRequest, "provider does not support model fetching")
+		return
+	}
+	if s.accounts == nil || s.vault == nil {
+		writeError(w, http.StatusInternalServerError, "accounts or vault not configured")
+		return
+	}
+
+	accs, err := s.accounts.ListByProvider(r.Context(), adminTenant, providerID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+
+	type modelInfo struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+		Kind string `json:"kind"`
+	}
+
+	for _, acc := range accs {
+		if acc.Disabled {
+			continue
+		}
+		creds, err := s.vault.Open(acc)
+		if err != nil {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		models, merr := src.ListModels(ctx, creds)
+		cancel()
+		if merr != nil {
+			writeError(w, http.StatusBadGateway, "upstream model fetch failed: "+merr.Error())
+			return
+		}
+		if len(models) == 0 {
+			writeJSON(w, http.StatusOK, map[string]any{"models": []modelInfo{}, "source": "upstream"})
+			return
+		}
+
+		out := make([]modelInfo, 0, len(models))
+		for _, m := range models {
+			kind := m.Kind
+			if kind == "" {
+				kind = core.ServiceLLM
+			}
+			out = append(out, modelInfo{ID: m.ID, Name: m.Name, Kind: string(kind)})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"models": out, "source": "upstream"})
+		return
+	}
+
+	// No connected account found.
+	writeError(w, http.StatusBadRequest, "no connected account available for this provider — connect an account first")
+}
+
+// adminListCustomModels returns user-added custom models for a provider.
+func (s *Server) adminListCustomModels(w http.ResponseWriter, r *http.Request) {
+	providerID := chi.URLParam(r, "id")
+	entries := s.loadCustomModels(r.Context(), providerID)
+	if entries == nil {
+		entries = []customModelEntry{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"models": entries})
+}
+
+// adminAddCustomModel adds a user-defined model to a provider's custom list.
+func (s *Server) adminAddCustomModel(w http.ResponseWriter, r *http.Request) {
+	providerID := chi.URLParam(r, "id")
+	if _, ok := connectors.SpecByID(providerID); !ok {
+		writeError(w, http.StatusNotFound, "unknown provider: "+providerID)
+		return
+	}
+	var body struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	body.ID = strings.TrimSpace(body.ID)
+	if body.ID == "" {
+		writeError(w, http.StatusBadRequest, "model id is required")
+		return
+	}
+	if strings.Contains(body.ID, "/") {
+		writeError(w, http.StatusBadRequest, "model id must not contain '/' — use the provider-local model name only")
+		return
+	}
+	if body.Name == "" {
+		body.Name = body.ID
+	}
+
+	entries := s.loadCustomModels(r.Context(), providerID)
+	for _, e := range entries {
+		if e.ID == body.ID {
+			writeError(w, http.StatusConflict, "custom model already exists: "+body.ID)
+			return
+		}
+	}
+	entries = append(entries, customModelEntry{ID: body.ID, Name: body.Name})
+	if err := s.saveCustomModels(r.Context(), providerID, entries); err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": body.ID, "name": body.Name})
+}
+
+// adminRemoveCustomModel removes a user-defined model from a provider's custom list.
+func (s *Server) adminRemoveCustomModel(w http.ResponseWriter, r *http.Request) {
+	providerID := chi.URLParam(r, "id")
+	modelID := r.URL.Query().Get("id")
+	if modelID == "" {
+		writeError(w, http.StatusBadRequest, "id query param is required")
+		return
+	}
+
+	entries := s.loadCustomModels(r.Context(), providerID)
+	var kept []customModelEntry
+	for _, e := range entries {
+		if e.ID != modelID {
+			kept = append(kept, e)
+		}
+	}
+	if err := s.saveCustomModels(r.Context(), providerID, kept); err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---- API keys ---------------------------------------------------------------
