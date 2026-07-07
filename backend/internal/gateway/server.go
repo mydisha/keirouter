@@ -338,6 +338,13 @@ func (s *Server) routes() chi.Router {
 	r.Get("/oauth/callback", s.oauthCallback)
 	r.Get("/auth/callback", s.oauthCallback)
 
+	// Kimchi browser-callback endpoint. Receives a redirect from
+	// app.kimchi.dev/cli-auth with the token on the query string.
+	// Must be outside session middleware (external browser redirect,
+	// no dashboard cookie). The path matches the callback URL built
+	// in oauth.KimchiStartAuth (callbackBase + "/api/kimchi/callback").
+	r.Get("/api/kimchi/callback", s.kimchiCallback)
+
 	// Serve frontend static files. The dashboard is a Vite SPA; unmatched
 	// paths fall through to index.html so client-side routing works.
 	if s.frontendDir != "" {

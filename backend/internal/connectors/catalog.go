@@ -202,6 +202,12 @@ func oauthProviders() []ProviderSpec {
 		{ID: "kimi-coding", DisplayName: "Kimi Coding", Alias: "kimi-coding", Dialect: core.DialectAnthropic,
 			BaseURL: "https://api.kimi.com/coding/v1", AuthKind: "oauth", AuthModes: []string{"oauth", "api_key"}, ServiceKinds: llm(),
 			Color: "#1E3A8A", Website: "https://kimi.moonshot.cn", Deprecated: true, Notice: risk},
+		{ID: "kimchi", DisplayName: "Kimchi", Alias: "kimchi", Dialect: core.DialectOpenAI,
+			BaseURL: "https://llm.kimchi.dev/openai/v1", AuthKind: "oauth", AuthModes: []string{"oauth"}, ServiceKinds: llm(),
+			Color: "#FF521D", Website: "https://kimchi.dev", Deprecated: true, Notice: risk},
+		{ID: "codebuddy", DisplayName: "CodeBuddy", Alias: "cb", Dialect: core.DialectOpenAI,
+			BaseURL: "https://copilot.tencent.com/v2/chat/completions", AuthKind: "oauth", AuthModes: []string{"oauth", "api_key"}, ServiceKinds: llm(),
+			Color: "#006EFF", Website: "https://copilot.tencent.com", Deprecated: true, Notice: risk},
 	}
 }
 
@@ -325,9 +331,6 @@ func apiKeyProviders() []ProviderSpec {
 		{ID: "gitlab", DisplayName: "GitLab Duo", Alias: "gitlab", Dialect: core.DialectOpenAI,
 			BaseURL: "https://gitlab.com/api/v4", AuthKind: "api_key", ServiceKinds: llm(),
 			Color: "#FC6D26", Website: "https://gitlab.com"},
-		{ID: "codebuddy", DisplayName: "CodeBuddy", Alias: "cb", Dialect: core.DialectOpenAI,
-			BaseURL: "https://copilot.tencent.com/v1", AuthKind: "oauth", AuthModes: []string{"oauth", "api_key"}, ServiceKinds: llm(),
-			Color: "#0052D9", Website: "https://copilot.tencent.com"},
 		// Browser-session cookie providers. Connected by pasting a session cookie
 		// from the provider's web app. The web_cookie dialect has no connector
 		// yet, so these are discovery/account-management only until one lands.

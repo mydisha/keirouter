@@ -23,6 +23,13 @@ func (s *Server) mountCustomFlows(r chi.Router) {
 	r.Post("/codebuddy/auth-start", s.codebuddyAuthStart)
 	r.Post("/codebuddy/auth-poll", s.codebuddyAuthPoll)
 
+	r.Post("/kimchi/auth-start", s.kimchiAuthStart)
+	r.Post("/kimchi/auth-poll", s.kimchiAuthPoll)
+	// NOTE: GET /kimchi/callback is mounted at root level (outside session
+	// middleware) because it receives an external browser redirect from
+	// Kimchi's auth page that carries no dashboard session cookie.
+	r.Post("/kimchi/callback-submit", s.kimchiCallbackSubmit)
+
 	r.Post("/cursor/import", s.cursorImport)
 
 	r.Post("/commandcode/import", s.commandcodeImport)
@@ -160,6 +167,97 @@ func (s *Server) codebuddyAuthPoll(w http.ResponseWriter, r *http.Request) {
 	result := oauth.CodebuddyPollToken(r.Context(), body.DeviceCode)
 	s.completeCustomPoll(w, r, "codebuddy", body.DeviceCode, body.Label, result)
 }
+
+// kimchiAuthStart generates a state token and returns the browser auth URL.
+func (s *Server) kimchiAuthStart(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		CallbackBase string `json:"callback_base"`
+	}
+	_ = decodeJSON(w, r, &body)
+	callbackBase := body.CallbackBase
+	if callbackBase == "" {
+		scheme := "http"
+		if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
+			scheme = "https"
+		}
+		callbackBase = scheme + "://" + r.Host
+	}
+	dc, err := oauth.KimchiStartAuth(callbackBase)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.oauthSessions.Put(dc.DeviceCode, &oauth.Session{
+		Provider:   "kimchi",
+		Flow:       oauth.FlowDeviceCode,
+		DeviceCode: dc.DeviceCode,
+		Interval:   dc.Interval,
+	})
+	writeJSON(w, http.StatusOK, deviceCodeResponse(dc))
+}
+
+// kimchiAuthPoll checks whether the browser callback has delivered a token.
+func (s *Server) kimchiAuthPoll(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		DeviceCode string `json:"device_code"`
+		Label      string `json:"label"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.DeviceCode == "" {
+		writeError(w, http.StatusBadRequest, "device_code is required")
+		return
+	}
+	sess, ok := s.oauthSessions.Get(body.DeviceCode)
+	if !ok || sess.Provider != "kimchi" {
+		writeError(w, http.StatusBadRequest, "session not found or expired; restart the flow")
+		return
+	}
+	result := oauth.KimchiPollToken(body.DeviceCode)
+	s.completeCustomPoll(w, r, "kimchi", body.DeviceCode, body.Label, result)
+}
+
+// kimchiCallback receives the browser token callback.
+func (s *Server) kimchiCallback(w http.ResponseWriter, r *http.Request) {
+	state := r.URL.Query().Get("state")
+	token := r.URL.Query().Get("token")
+	if state == "" {
+		writeError(w, http.StatusBadRequest, "state is required")
+		return
+	}
+	if err := oauth.KimchiCallback(r.Context(), state, token); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>Kimchi Connected</title></head><body><p style="font-family:sans-serif;text-align:center;margin-top:40vh">Kimchi connected. You can close this tab.</p><script>try{window.opener&&window.opener.postMessage({type:"kimchi-callback",status:"success",state:"` + state + `"},"*")}catch(e){}setTimeout(function(){window.close()},500)</script></body></html>`))
+}
+
+
+// kimchiCallbackSubmit processes a manually submitted callback URL.
+// Used when the browser redirect didn't reach the callback endpoint or
+// the popup didn't auto-close.
+func (s *Server) kimchiCallbackSubmit(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		State string `json:"state"`
+		Token string `json:"token"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.State == "" || body.Token == "" {
+		writeError(w, http.StatusBadRequest, "state and token are required")
+		return
+	}
+	if err := oauth.KimchiCallback(r.Context(), body.State, body.Token); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
 
 // cursorImport validates and stores a token pasted from the Cursor IDE.
 func (s *Server) cursorImport(w http.ResponseWriter, r *http.Request) {

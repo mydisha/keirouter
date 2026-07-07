@@ -17,7 +17,7 @@ func TestIsCustomProviderID(t *testing.T) {
 		{"custom-anthropic", true}, // built-in generic gateway
 		{"", false},
 		{"glm", false},
-		{"codebuddy-cn", false},
+		{"codebuddy", false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.id, func(t *testing.T) {

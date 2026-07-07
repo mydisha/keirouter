@@ -1295,6 +1295,14 @@ export const api = {
   codebuddyAuthPoll: (deviceCode: string, label?: string) =>
     request<OAuthPollResult>("POST", "/codebuddy/auth-poll", { device_code: deviceCode, label }),
 
+  // Kimchi connect flow (browser-callback auth). Mounted under /kimchi.
+  kimchiAuthStart: () =>
+    request<DeviceCode>("POST", "/kimchi/auth-start", {}),
+  kimchiAuthPoll: (deviceCode: string, label?: string) =>
+    request<OAuthPollResult>("POST", "/kimchi/auth-poll", { device_code: deviceCode, label }),
+  kimchiCallbackSubmit: (state: string, token: string) =>
+    request<{ status: string }>("POST", "/kimchi/callback-submit", { state, token }),
+
   // Cursor connect flow (import token from Cursor IDE). Mounted under /cursor.
   cursorImport: (token: string, label?: string) =>
     request<{ id: string; provider: string }>("POST", "/cursor/import", { token, label }),

@@ -1,10 +1,13 @@
 package oauth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -128,6 +131,8 @@ func (m *TokenManager) refreshAndPersist(ctx context.Context, acc store.Account)
 		// Kiro refreshes through AWS SSO OIDC (Builder ID / IDC, using the stored
 		// client credentials) or the Kiro desktop social auth service (imported).
 		tokens, err = refreshKiro(ctx, acc, refreshToken)
+	} else if acc.Provider == "codebuddy" {
+		tokens, err = refreshCodebuddy(ctx, refreshToken)
 	} else {
 		cfg, ok := ConfigFor(acc.Provider)
 		if !ok {
@@ -168,6 +173,58 @@ func (m *TokenManager) refreshAndPersist(ctx context.Context, acc store.Account)
 		return acc, fmt.Errorf("oauth: persist refreshed token: %w", err)
 	}
 	return acc, nil
+}
+
+// refreshCodebuddy renews a CodeBuddy account token via the Tencent plugin
+// auth refresh endpoint. The refresh token is carried in the X-Refresh-Token
+// header (not a form body), matching the official CodeBuddy CLI. The body is
+// an empty JSON object.
+func refreshCodebuddy(ctx context.Context, refreshToken string) (*Tokens, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://copilot.tencent.com/v2/plugin/auth/token/refresh", bytes.NewReader([]byte("{}")))
+	if err != nil {
+		return nil, fmt.Errorf("codebuddy: build refresh request: %w", err)
+	}
+	for k, v := range codebuddyStateHeaders() {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("X-Refresh-Token", refreshToken)
+	req.Header.Set("X-Auth-Refresh-Source", "plugin")
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("codebuddy: refresh request: %w", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("codebuddy: refresh failed (%d): %s", resp.StatusCode, truncate(raw, 300))
+	}
+	var parsed struct {
+		Code int    `json:"code"`
+		Msg  string `json:"msg"`
+		Data struct {
+			AccessToken  string `json:"accessToken"`
+			RefreshToken string `json:"refreshToken"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("codebuddy: parse refresh response: %w", err)
+	}
+	if parsed.Code != 0 || parsed.Data.AccessToken == "" {
+		msg := parsed.Msg
+		if msg == "" {
+			msg = "unknown error"
+		}
+		return nil, fmt.Errorf("codebuddy: refresh error: %s", msg)
+	}
+	newRefresh := parsed.Data.RefreshToken
+	if newRefresh == "" {
+		newRefresh = refreshToken
+	}
+	return &Tokens{
+		AccessToken:  parsed.Data.AccessToken,
+		RefreshToken: newRefresh,
+		ExpiresIn:    86400,
+	}, nil
 }
 
 // refreshKiro renews a Kiro account's token. Builder ID / IDC accounts carry the

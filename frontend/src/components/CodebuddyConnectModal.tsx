@@ -44,6 +44,8 @@ export function CodebuddyConnectModal({ onClose }: { onClose: () => void }) {
       setDc(res);
       setStatus("waiting");
       timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+      // Auto-open the auth URL in a new tab (mirrors Kimchi flow).
+      window.open(res.verification_uri_complete || res.verification_uri, "_blank");
       poll(res.device_code, res.interval);
     } catch (e) {
       setError((e as Error).message);

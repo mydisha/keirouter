@@ -431,6 +431,9 @@ func renderOAIRequestForProvider(req *core.ChatRequest, providerID string, scope
 	if isDeepSeekTarget(providerID, req.Model) {
 		applyDeepSeekRequestFixes(out, req, providerID)
 	}
+	if providerID == "codebuddy" {
+		applyCodebuddyRequestFixes(out, req)
+	}
 	return json.Marshal(out)
 }
 
@@ -496,6 +499,27 @@ func applyDeepSeekRequestFixes(out *oaiRequest, req *core.ChatRequest, providerI
 	applyDeepSeekThinking(out, req, providerID)
 	normalizeDeepSeekToolMessages(out.Messages)
 	out.Messages = fillMissingDeepSeekToolResponses(out.Messages)
+}
+
+// applyCodebuddyRequestFixes handles CodeBuddy-specific reasoning_effort
+// semantics. CodeBuddy only surfaces model reasoning when the request carries
+// OpenAI-style reasoning_effort + reasoning_summary:"auto". When reasoning is
+// "none"/"off" the fields are omitted entirely.
+func applyCodebuddyRequestFixes(out *oaiRequest, req *core.ChatRequest) {
+	if req.Reasoning == nil {
+		return
+	}
+	effort := strings.ToLower(req.Reasoning.Effort)
+	if effort == "none" || effort == "off" {
+		out.ReasoningEffort = ""
+		return
+	}
+	if out.ReasoningEffort != "" {
+		if out.ExtraBody == nil {
+			out.ExtraBody = map[string]any{}
+		}
+		out.ExtraBody["reasoning_summary"] = "auto"
+	}
 }
 
 func applyDeepSeekThinking(out *oaiRequest, req *core.ChatRequest, providerID string) {

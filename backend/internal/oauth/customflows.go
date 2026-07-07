@@ -343,17 +343,34 @@ const (
 	codebuddyUserAgent = "CLI/2.63.2 CodeBuddy/2.63.2"
 )
 
-// codebuddyHeaders are sent on every CodeBuddy auth request.
-func codebuddyHeaders() map[string]string {
+// codebuddyStateHeaders are sent on the state-initiation POST.
+func codebuddyStateHeaders() map[string]string {
 	return map[string]string{
-		"Content-Type":      "application/json",
-		"Accept":            "application/json",
-		"User-Agent":        codebuddyUserAgent,
-		"X-Requested-With":  "XMLHttpRequest",
-		"X-Domain":          "copilot.tencent.com",
+		"Content-Type":       "application/json",
+		"Accept":             "application/json",
+		"User-Agent":         codebuddyUserAgent,
+		"X-Requested-With":   "XMLHttpRequest",
+		"X-Domain":           "copilot.tencent.com",
 		"X-No-Authorization": "true",
-		"X-No-User-Id":      "true",
-		"X-Product":         "SaaS",
+		"X-No-User-Id":       "true",
+		"X-Product":          "SaaS",
+	}
+}
+
+// codebuddyPollHeaders are sent on the token-poll GET. The poll endpoint
+// expects no body and no Content-Type; it carries extra X-No-* headers the
+// state endpoint does not.
+func codebuddyPollHeaders() map[string]string {
+	return map[string]string{
+		"Accept":               "application/json",
+		"User-Agent":           codebuddyUserAgent,
+		"X-Requested-With":     "XMLHttpRequest",
+		"X-Domain":             "copilot.tencent.com",
+		"X-No-Authorization":   "true",
+		"X-No-User-Id":         "true",
+		"X-No-Enterprise-Id":   "true",
+		"X-No-Department-Info": "true",
+		"X-Product":            "SaaS",
 	}
 }
 
@@ -394,14 +411,26 @@ func CodebuddyStartAuth(ctx context.Context) (*DeviceCode, error) {
 	}, nil
 }
 
-// CodebuddyPollToken polls for the access token. Upstream code 11217 means the
-// user has not authorized yet; code 0 with a token means success.
+// CodebuddyPollToken polls for the access token via GET with the state as a
+// query param (not POST/body) — matches the official CLI's
+// /v2/plugin/auth/token?state=... Upstream code 11217 means the user has not
+// authorized yet; code 0 with a token means success.
 func CodebuddyPollToken(ctx context.Context, state string) PollResult {
-	body, _ := json.Marshal(map[string]string{"state": state})
-	raw, status, err := codebuddyHTTP(ctx, codebuddyTokenURL, body)
+	pollURL := codebuddyTokenURL + "?state=" + url.QueryEscape(state)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pollURL, nil)
 	if err != nil {
-		return PollResult{Err: err}
+		return PollResult{Err: fmt.Errorf("codebuddy: build poll request: %w", err)}
 	}
+	for k, v := range codebuddyPollHeaders() {
+		req.Header.Set(k, v)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return PollResult{Err: fmt.Errorf("codebuddy: poll request: %w", err)}
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	status := resp.StatusCode
 	if status >= 400 {
 		return PollResult{Err: fmt.Errorf("codebuddy: poll failed (%d)", status)}
 	}
@@ -439,7 +468,7 @@ func codebuddyHTTP(ctx context.Context, endpoint string, body []byte) ([]byte, i
 	if err != nil {
 		return nil, 0, fmt.Errorf("codebuddy: build request: %w", err)
 	}
-	for k, v := range codebuddyHeaders() {
+	for k, v := range codebuddyStateHeaders() {
 		req.Header.Set(k, v)
 	}
 	resp, err := httpClient.Do(req)

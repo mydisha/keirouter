@@ -131,13 +131,13 @@ func TestOfProviderOverride(t *testing.T) {
 		t.Fatalf("expected bare glm-5v-turbo to lack vision, got %v", bare)
 	}
 
-	// With the codebuddy-cn provider, the override grants vision.
-	scoped := OfProvider("codebuddy-cn", "glm-5v-turbo")
+	// With the codebuddy provider, the override grants vision.
+	scoped := OfProvider("codebuddy", "glm-5v-turbo")
 	if !scoped.Has(core.CapVision) {
-		t.Errorf("expected codebuddy-cn/glm-5v-turbo to have vision, got %v", scoped)
+		t.Errorf("expected codebuddy/glm-5v-turbo to have vision, got %v", scoped)
 	}
 	if !scoped.Has(core.CapReasoning) {
-		t.Errorf("expected codebuddy-cn/glm-5v-turbo to have reasoning, got %v", scoped)
+		t.Errorf("expected codebuddy/glm-5v-turbo to have reasoning, got %v", scoped)
 	}
 }
 
@@ -154,9 +154,9 @@ func TestResolveProfileChain(t *testing.T) {
 		t.Errorf("anthropic/claude-opus-4.6 thinking = %q, want claude-adaptive", p.ThinkingFormat)
 	}
 
-	// Provider override: locked thinking on a codebuddy-cn model.
-	if p := ResolveProfile("codebuddy-cn", "deepseek-v3-2-volc"); p.ThinkingCanDisable {
-		t.Errorf("codebuddy-cn/deepseek-v3-2-volc should not allow disabling thinking")
+	// Provider override: locked thinking on a codebuddy model.
+	if p := ResolveProfile("codebuddy", "deepseek-v3-2-volc"); p.ThinkingCanDisable {
+		t.Errorf("codebuddy/deepseek-v3-2-volc should not allow disabling thinking")
 	}
 
 	// Pattern fallback: a thinking-only model cannot disable thinking.

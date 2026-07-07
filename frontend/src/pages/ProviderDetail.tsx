@@ -7,6 +7,7 @@ import { KiroConnectModal } from "../components/KiroConnectModal";
 import { QoderConnectModal } from "../components/QoderConnectModal";
 import { KilocodeConnectModal } from "../components/KilocodeConnectModal";
 import { CodebuddyConnectModal } from "../components/CodebuddyConnectModal";
+import { KimchiConnectModal } from "../components/KimchiConnectModal";
 import { CursorConnectModal } from "../components/CursorConnectModal";
 import { CommandCodeConnectModal } from "../components/CommandCodeConnectModal";
 import { CustomModelsSection } from "../components/CustomModelsSection";
@@ -118,6 +119,7 @@ export function ProviderDetailPage() {
   const [qoderOpen, setQoderOpen] = useState(false);
   const [kilocodeOpen, setKilocodeOpen] = useState(false);
   const [codebuddyOpen, setCodebuddyOpen] = useState(false);
+  const [kimchiOpen, setKimchiOpen] = useState(false);
   const [cursorOpen, setCursorOpen] = useState(false);
   const [commandcodeOpen, setCommandcodeOpen] = useState(false);
   const [addKeyOpen, setAddKeyOpen] = useState(false);
@@ -431,9 +433,10 @@ export function ProviderDetailPage() {
   const isQoder = provider.id === "qoder";
   const isKilocode = provider.id === "kilocode";
   const isCodebuddy = provider.id === "codebuddy";
+  const isKimchi = provider.id === "kimchi";
   const isCursor = provider.id === "cursor";
   const isCommandCode = provider.id === "commandcode";
-  const hasCustomModal = isKiro || isQoder || isKilocode || isCodebuddy || isCursor || isCommandCode;
+  const hasCustomModal = isKiro || isQoder || isKilocode || isCodebuddy || isKimchi || isCursor || isCommandCode;
   const supportsManualConnect = !hasCustomModal && (
     provider.auth_modes.includes("api_key") ||
     provider.auth_modes.includes("none") ||
@@ -541,6 +544,12 @@ export function ProviderDetailPage() {
                   <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => setKilocodeOpen(true)}>
                     <Plug className="h-3.5 w-3.5" />
                     Connect Kilo Code
+                  </Button>
+                )}
+                {isKimchi && (
+                  <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => setKimchiOpen(true)}>
+                    <Plus className="h-3.5 w-3.5" />
+                    Connect Kimchi
                   </Button>
                 )}
                 {isCodebuddy && (
@@ -841,6 +850,7 @@ export function ProviderDetailPage() {
       {qoderOpen && <QoderConnectModal onClose={() => setQoderOpen(false)} />}
       {kilocodeOpen && <KilocodeConnectModal onClose={() => setKilocodeOpen(false)} />}
       {codebuddyOpen && <CodebuddyConnectModal onClose={() => setCodebuddyOpen(false)} />}
+      {kimchiOpen && <KimchiConnectModal onClose={() => setKimchiOpen(false)} />}
       {cursorOpen && <CursorConnectModal onClose={() => setCursorOpen(false)} />}
       {commandcodeOpen && <CommandCodeConnectModal onClose={() => setCommandcodeOpen(false)} />}
       {addKeyOpen && (

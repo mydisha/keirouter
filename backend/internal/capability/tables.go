@@ -63,10 +63,10 @@ var modelCapabilities = map[string]caps{
 // providerCapabilities holds provider-specific overrides keyed by provider
 // alias then full model id. These win over modelCapabilities and patterns.
 var providerCapabilities = map[string]map[string]caps{
-	// CodeBuddy.cn exposes authoritative per-model metadata via its gateway
+	// CodeBuddy exposes authoritative per-model metadata via its gateway
 	// config; every model reasons through OpenAI-style reasoning_effort.
 	// onlyReasoning models cannot disable thinking (clamped to minimal).
-	"codebuddy-cn": {
+	"codebuddy": {
 		"glm-5.2":            {Reasoning: true, ThinkingFormat: "openai", ThinkingLocked: true, ContextWindow: 1000000, MaxOutput: 48000},
 		"glm-5.1":            {Reasoning: true, ThinkingFormat: "openai", ThinkingLocked: true, ContextWindow: 200000, MaxOutput: 48000},
 		"glm-5.0":            {Reasoning: true, ThinkingFormat: "openai", ContextWindow: 200000, MaxOutput: 48000},
@@ -82,6 +82,17 @@ var providerCapabilities = map[string]map[string]caps{
 		"deepseek-v4-pro":    {Vision: true, Reasoning: true, ThinkingFormat: "openai", ThinkingLocked: true, ContextWindow: 1000000, MaxOutput: 50000},
 		"deepseek-v4-flash":  {Vision: true, Reasoning: true, ThinkingFormat: "openai", ThinkingLocked: true, ContextWindow: 1000000, MaxOutput: 50000},
 		"deepseek-v3-2-volc": {Reasoning: true, ThinkingFormat: "openai", ThinkingLocked: true, ContextWindow: 96000, MaxOutput: 32000},
+	},
+	// Kimchi is an OpenAI-compatible gateway that proxies multiple upstream
+	// providers. Reasoning effort is OpenAI-style. Claude models use their
+	// native thinking format (handled via pattern fallback).
+	"kimchi": {
+		"minimax-m3":           {Vision: true, Reasoning: true, ThinkingFormat: "openai", ContextWindow: 1048576, MaxOutput: 512000},
+		"minimax-m2.7":         {Reasoning: true, ThinkingFormat: "openai", ThinkingLocked: true, ContextWindow: 204800, MaxOutput: 131072},
+		"kimi-k2.7":            {Vision: true, Reasoning: true, ThinkingFormat: "kimi", ContextWindow: 262144, MaxOutput: 262144},
+		"kimi-k2.6":            {Vision: true, Reasoning: true, ThinkingFormat: "kimi", ContextWindow: 262144, MaxOutput: 262144},
+		"kimi-k2.5":            {Vision: true, Reasoning: true, ThinkingFormat: "kimi", ContextWindow: 164000, MaxOutput: 262144},
+		"nemotron-3-ultra-fp4": {Reasoning: true, ThinkingFormat: "openai", ContextWindow: 128000},
 	},
 }
 
