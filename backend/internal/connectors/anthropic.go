@@ -91,6 +91,13 @@ func (c *Anthropic) Validate(ctx context.Context, creds core.Credentials) error 
 	// Try GET /models first (cheap, no token cost).
 	modelsURL := base + "/models"
 	_, err := doJSONMethod(ctx, http.MethodGet, c.id, "validate", modelsURL, nil, c.headers(creds))
+	// An HTML response means the base URL points at a web frontend, not the API
+	// (e.g. a custom base URL missing the "/v1" path). Fail hard rather than
+	// falling through to the messages probe, which is skipped for custom
+	// providers and would otherwise report a false-positive success.
+	if isNonJSONResponseError(err) {
+		return fmt.Errorf("validation failed for %s: %w", c.id, err)
+	}
 	if err == nil {
 		// The official Anthropic API auth-protects GET /models, so a 200 proves
 		// the key. Anthropic-compatible third-party gateways may list models
@@ -140,7 +147,7 @@ func (c *Anthropic) messagesAuthProbe(ctx context.Context, creds core.Credential
 	if err == nil {
 		return nil
 	}
-	if validationAuthError(err) || !validationReachedUpstream(err) {
+	if isNonJSONResponseError(err) || validationAuthError(err) || !validationReachedUpstream(err) {
 		return err
 	}
 	return nil

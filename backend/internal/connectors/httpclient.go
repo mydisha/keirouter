@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -25,6 +26,13 @@ import (
 
 	"github.com/mydisha/keirouter/backend/internal/core"
 )
+
+// errNonJSONResponse marks a successful HTTP response whose body was not JSON
+// (typically an HTML page from a provider's web frontend). It is set as the
+// Cause on the ProviderError returned by checkNonJSONResponse so validation can
+// distinguish it from an ordinary non-auth upstream response and fail rather
+// than false-positively accepting the credential. Test with isNonJSONResponseError.
+var errNonJSONResponse = errors.New("upstream returned a non-JSON (HTML) response")
 
 // maxResponseBodyBytes caps the size of upstream response bodies read into
 // memory. This prevents a single large response from causing an OOM spike.
@@ -156,6 +164,9 @@ func doJSON(ctx context.Context, provider, model, url string, body []byte, heade
 	if resp.StatusCode >= 400 {
 		return nil, httpStatusError(provider, model, resp, respBody)
 	}
+	if perr := checkNonJSONResponse(provider, model, resp, respBody); perr != nil {
+		return nil, perr
+	}
 	return respBody, nil
 }
 
@@ -185,6 +196,13 @@ func doJSONDecode(ctx context.Context, provider, model, url string, body []byte,
 		defer resp.Body.Close()
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		return nil, nil, httpStatusError(provider, model, resp, errBody)
+	}
+	// Guard against an HTML page (web frontend) served with HTTP 200 before
+	// handing the body to the streaming JSON decoder. Body is not buffered here,
+	// so detect by content-type only.
+	if perr := checkNonJSONResponse(provider, model, resp, nil); perr != nil {
+		resp.Body.Close()
+		return nil, nil, perr
 	}
 	dec := json.NewDecoder(resp.Body)
 	return dec, resp.Body, nil
@@ -247,6 +265,9 @@ func doJSONMethod(ctx context.Context, method, provider, model, url string, body
 	}
 	if resp.StatusCode >= 400 {
 		return nil, httpStatusError(provider, model, resp, respBody)
+	}
+	if perr := checkNonJSONResponse(provider, model, resp, respBody); perr != nil {
+		return nil, perr
 	}
 	return respBody, nil
 }
@@ -394,6 +415,13 @@ func openStream(ctx context.Context, provider, model, url string, body []byte, h
 		defer resp.Body.Close()
 		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 		return nil, httpStatusError(provider, model, resp, errBody)
+	}
+	// An HTML page served with HTTP 200 on the stream endpoint means the base URL
+	// points at a web frontend, not the SSE API. Detect by content-type before
+	// the caller starts scanning for "data:" events (which would never arrive).
+	if perr := checkNonJSONResponse(provider, model, resp, nil); perr != nil {
+		resp.Body.Close()
+		return nil, perr
 	}
 	return resp, nil
 }
@@ -573,6 +601,51 @@ func httpStatusError(provider, model string, resp *http.Response, body []byte) e
 		}
 	}
 	return pe
+}
+
+// checkNonJSONResponse detects a successful (non-error) HTTP response whose
+// body is not JSON — almost always an HTML page served when the configured base
+// URL points at a provider's web frontend instead of its API (for example a
+// custom base URL missing the "/v1" path segment, so POST {base}/messages hits
+// the SPA and returns "<!doctype html>..." with HTTP 200). Without this guard
+// the HTML body is handed to the JSON parser, producing a confusing
+// "parse response: Syntax error at index 0" and, during validation, a false
+// positive because any non-auth HTTP response is otherwise treated as proof the
+// credential works.
+//
+// It returns a ProviderError (nil when the body looks like JSON). StatusCode is
+// deliberately left 0: no valid API response was received, so credential
+// validation must treat this as "did not reach the API" rather than a
+// key-accepted signal. Pass a nil body to check by content-type only (used on
+// paths that stream the body instead of buffering it).
+func checkNonJSONResponse(provider, model string, resp *http.Response, body []byte) *core.ProviderError {
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	isHTML := strings.Contains(ct, "text/html")
+	if !isHTML {
+		trimmed := bytes.TrimSpace(body)
+		// Empty/unknown bodies (e.g. header-only checks) and JSON bodies (which
+		// start with '{', '[', '"', a digit, or t/f/n) are accepted. Only an
+		// HTML document, which starts with '<', is rejected here.
+		if len(trimmed) == 0 || trimmed[0] != '<' {
+			return nil
+		}
+	}
+	return &core.ProviderError{
+		Kind:     core.ErrUpstream,
+		Provider: provider,
+		Model:    model,
+		Message: fmt.Sprintf("upstream returned a non-JSON response (HTTP %d, content-type %q); "+
+			"the base URL likely points at a web page rather than the API endpoint — "+
+			"check that it includes the API path segment (e.g. ends with /v1)",
+			resp.StatusCode, resp.Header.Get("Content-Type")),
+		Cause: errNonJSONResponse,
+	}
+}
+
+// isNonJSONResponseError reports whether err originates from a non-JSON (HTML)
+// upstream response detected by checkNonJSONResponse.
+func isNonJSONResponseError(err error) bool {
+	return errors.Is(err, errNonJSONResponse)
 }
 
 func truncateError(body []byte) string {

@@ -230,6 +230,47 @@ func TestAnthropic_Chat(t *testing.T) {
 	require.Equal(t, 7, resp.Usage.TotalTokens)
 }
 
+// TestAnthropic_Chat_HTMLResponse covers a custom anthropic-compatible base URL
+// that points at the provider's web frontend (e.g. missing the "/v1" path
+// segment). The frontend answers POST /messages with HTTP 200 and an HTML body;
+// the connector must surface an actionable error instead of a raw JSON
+// "Syntax error at index 0".
+func TestAnthropic_Chat_HTMLResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "<!doctype html>\n<html lang=\"zh-CN\"><head><title>Gateway</title></head></html>")
+	}))
+	defer srv.Close()
+
+	c := NewAnthropic("custom-anthropic-test", srv.URL)
+	_, err := c.Chat(context.Background(), textReq("claude-opus-4-8", false), core.Credentials{APIKey: "sk-x"})
+	require.Error(t, err)
+	pe := core.AsProviderError(err)
+	require.Equal(t, core.ErrUpstream, pe.Kind)
+	require.Equal(t, 0, pe.StatusCode)
+	require.Contains(t, err.Error(), "non-JSON response")
+	require.Contains(t, err.Error(), "/v1")
+	// The raw HTML must not leak into the JSON parser path.
+	require.NotContains(t, err.Error(), "Syntax error")
+}
+
+// TestAnthropic_Validate_HTMLResponse ensures validation of a custom provider
+// pointed at a web frontend fails rather than false-positively passing (the
+// frontend returns HTTP 200 HTML for both GET /models and POST /messages).
+func TestAnthropic_Validate_HTMLResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "<!doctype html><html><body>frontend</body></html>")
+	}))
+	defer srv.Close()
+
+	c := NewAnthropic("custom-anthropic-test", srv.URL)
+	err := c.Validate(context.Background(), core.Credentials{APIKey: "sk-x", BaseURL: srv.URL})
+	require.Error(t, err)
+}
+
 func TestOllama_ValidateProbesTags(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/tags", r.URL.Path)

@@ -334,6 +334,13 @@ func (c *OpenAICompatible) Validate(ctx context.Context, creds core.Credentials)
 
 	url := joinURL(c.baseURL(creds), "models")
 	_, err := doJSONMethod(ctx, http.MethodGet, c.id, "validate", url, nil, c.headers(creds))
+	// An HTML response means the base URL points at a web frontend, not the API
+	// (e.g. a custom base URL missing the "/v1" path). Fail hard rather than
+	// falling through to the chat probe, which is skipped for custom providers
+	// and would otherwise report a false-positive success.
+	if isNonJSONResponseError(err) {
+		return fmt.Errorf("validation failed for %s: %w", c.id, err)
+	}
 	if err == nil {
 		// GET /models reached the upstream. For no-auth accounts (e.g. a local
 		// gateway) reachability is all we can verify. For strict providers the
@@ -409,7 +416,7 @@ func validateProbe(ctx context.Context, provider, endpoint string, body []byte, 
 	if err == nil {
 		return nil
 	}
-	if validationAuthError(err) || !validationReachedUpstream(err) {
+	if isNonJSONResponseError(err) || validationAuthError(err) || !validationReachedUpstream(err) {
 		return err
 	}
 	return nil
