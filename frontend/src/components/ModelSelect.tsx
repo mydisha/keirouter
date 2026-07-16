@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueries } from "@tanstack/react-query";
-import { X, Search, ChevronDown, Check } from "lucide-react";
+import { X, Search, ChevronDown, Check, Cpu } from "lucide-react";
 import { api } from "../lib/api";
 
 // ── Token Formatting ─────────────────────────────────────────────────
@@ -46,12 +46,100 @@ export function FormattedTokenInput({
 
 // ── Model Multi-Select ───────────────────────────────────────────────
 
-interface ModelOption {
+export interface ModelCatalogOption {
   id: string;
   name: string;
   providerId: string;
   providerName: string;
   icon: string;
+}
+
+export function useModelCatalog() {
+  const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.providers(), staleTime: 300_000 });
+  const visibleProviders = useMemo(
+    () => (providers.data?.providers ?? []).filter((provider) => !provider.hidden),
+    [providers.data],
+  );
+  const modelQueries = useQueries({
+    queries: visibleProviders.map((provider) => ({
+      queryKey: ["providerModels", provider.id],
+      queryFn: () => api.providerModels(provider.id),
+      staleTime: 300_000,
+    })),
+  });
+  const models = useMemo<ModelCatalogOption[]>(() => {
+    const result: ModelCatalogOption[] = [];
+    visibleProviders.forEach((provider, index) => {
+      for (const model of modelQueries[index]?.data?.models ?? []) {
+        result.push({
+          id: model.id,
+          name: model.name || model.id,
+          providerId: provider.id,
+          providerName: provider.display_name,
+          icon: provider.icon || `/providers/${provider.id}.png`,
+        });
+      }
+    });
+    return result;
+  }, [visibleProviders, modelQueries]);
+
+  return {
+    models,
+    loading: providers.isLoading || modelQueries.some((query) => query.isLoading),
+    error: providers.isError || modelQueries.some((query) => query.isError),
+  };
+}
+
+function ProviderIcon({ option, className = "h-7 w-7" }: { option?: ModelCatalogOption; className?: string }) {
+  return (
+    <span className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--bg-subtle)] text-[var(--text-muted)] outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10 ${className}`}>
+      <Cpu className="h-3.5 w-3.5" aria-hidden="true" />
+      {option?.icon && (
+        <img
+          src={option.icon}
+          alt=""
+          className="absolute inset-0 h-full w-full object-contain p-1"
+          onError={(event) => { (event.currentTarget as HTMLImageElement).style.display = "none"; }}
+        />
+      )}
+    </span>
+  );
+}
+
+export function ModelAccessList({ value, limit = 12 }: { value: string[]; limit?: number }) {
+  const catalog = useModelCatalog();
+  const lookup = useMemo(() => {
+    const result = new Map<string, ModelCatalogOption>();
+    for (const model of catalog.models) {
+      if (!result.has(model.id)) result.set(model.id, model);
+    }
+    return result;
+  }, [catalog.models]);
+
+  return (
+    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+      {value.slice(0, limit).map((id) => {
+        const option = lookup.get(id);
+        return (
+          <div key={id} className="flex min-w-0 items-center gap-3 rounded-xl bg-[var(--bg-elevated)] px-3 py-2.5 shadow-[var(--shadow-card)]">
+            <ProviderIcon option={option} className="h-8 w-8" />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-[var(--text)]" title={id}>{option?.name || id}</p>
+              <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">
+                {catalog.loading ? "Resolving provider…" : catalog.error ? "Provider unavailable" : option?.providerName || "Custom model pattern"}
+                {option && option.name !== id ? <span className="font-mono"> · {id}</span> : null}
+              </p>
+            </div>
+          </div>
+        );
+      })}
+      {value.length > limit && (
+        <div className="flex min-h-12 items-center justify-center rounded-xl bg-[var(--bg-elevated)] px-3 text-sm font-semibold tabular-nums text-[var(--text-muted)] shadow-[var(--shadow-card)]">
+          +{value.length - limit} more
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** Autocomplete multi-select for models, grouped by provider with logos. */
@@ -64,71 +152,55 @@ export function ModelMultiSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [providerFilter, setProviderFilter] = useState("all");
   const [customText, setCustomText] = useState("");
   const triggerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [rect, setRect] = useState<DOMRect | null>(null);
 
-  const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.providers() });
-  const visibleProviders = useMemo(
-    () => (providers.data?.providers ?? []).filter((p) => !p.hidden),
-    [providers.data],
-  );
-
-  const modelQueries = useQueries({
-    queries: visibleProviders.map((p) => ({
-      queryKey: ["providerModels", p.id],
-      queryFn: () => api.providerModels(p.id),
-      staleTime: 300_000,
-    })),
-  });
-
-  const allModels = useMemo<ModelOption[]>(() => {
-    const result: ModelOption[] = [];
-    visibleProviders.forEach((p, i) => {
-      const models = modelQueries[i]?.data?.models ?? [];
-      models.forEach((m) => {
-        result.push({
-          id: m.id,
-          name: m.name || m.id,
-          providerId: p.id,
-          providerName: p.display_name,
-          icon: `/providers/${p.id}.png`,
-        });
-      });
-    });
-    return result;
-  }, [visibleProviders, modelQueries]);
+  const catalog = useModelCatalog();
+  const allModels = catalog.models;
 
   const modelLookup = useMemo(() => {
-    const map = new Map<string, ModelOption>();
-    allModels.forEach((m) => map.set(m.id, m));
+    const map = new Map<string, ModelCatalogOption>();
+    allModels.forEach((model) => {
+      if (!map.has(model.id)) map.set(model.id, model);
+    });
     return map;
   }, [allModels]);
 
   const filtered = useMemo(() => {
-    if (!query.trim()) return allModels;
+    const providerModels = providerFilter === "all"
+      ? allModels
+      : allModels.filter((model) => model.providerId === providerFilter);
+    if (!query.trim()) return providerModels;
     const q = query.toLowerCase();
-    return allModels.filter(
+    return providerModels.filter(
       (m) =>
         m.id.toLowerCase().includes(q) ||
         m.name.toLowerCase().includes(q) ||
         m.providerId.toLowerCase().includes(q) ||
         m.providerName.toLowerCase().includes(q),
     );
-  }, [allModels, query]);
+  }, [allModels, providerFilter, query]);
 
   const grouped = useMemo(() => {
-    const map = new Map<string, { provider: string; providerName: string; icon: string; models: ModelOption[] }>();
+    const map = new Map<string, { provider: string; providerName: string; models: ModelCatalogOption[] }>();
     filtered.forEach((m) => {
       if (!map.has(m.providerId)) {
-        map.set(m.providerId, { provider: m.providerId, providerName: m.providerName, icon: m.icon, models: [] });
+        map.set(m.providerId, { provider: m.providerId, providerName: m.providerName, models: [] });
       }
       map.get(m.providerId)!.models.push(m);
     });
     return Array.from(map.values());
   }, [filtered]);
+
+  const providerOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    allModels.forEach((model) => map.set(model.providerId, model.providerName));
+    return Array.from(map, ([id, name]) => ({ id, name }));
+  }, [allModels]);
 
   const updateRect = useCallback(() => {
     if (triggerRef.current) setRect(triggerRef.current.getBoundingClientRect());
@@ -190,32 +262,61 @@ export function ModelMultiSelect({
     }
   };
 
-  const anyLoading = modelQueries.some((q) => q.isLoading);
+  const anyLoading = catalog.loading;
+  const dropdownWidth = rect ? Math.min(Math.max(rect.width, 420), window.innerWidth - 16, 760) : 420;
+  const dropdownLeft = rect ? Math.max(8, Math.min(rect.left, window.innerWidth - dropdownWidth - 8)) : 8;
+  const spaceBelow = rect ? window.innerHeight - rect.bottom - 8 : 0;
+  const spaceAbove = rect ? rect.top - 8 : 0;
+  const opensAbove = spaceBelow < 320 && spaceAbove > spaceBelow;
+  const availableHeight = opensAbove ? spaceAbove : spaceBelow;
+  const dropdownHeight = Math.max(180, Math.min(420, availableHeight - 6));
+  const dropdownTop = rect
+    ? opensAbove
+      ? Math.max(8, rect.top - dropdownHeight - 6)
+      : rect.bottom + 6
+    : 8;
+  const dropdownChromeHeight = window.innerWidth < 640 ? 178 : 138;
+  const listHeight = Math.max(100, dropdownHeight - dropdownChromeHeight);
 
   const dropdown = open && rect
     ? createPortal(
         <div
           ref={dropdownRef}
           onMouseDown={(e) => e.stopPropagation()}
-          className="fixed z-[100] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-float)]"
-          style={{ top: rect.bottom + 4, left: rect.left, width: Math.max(rect.width, 360), maxHeight: 420 }}
+          className="fixed z-[100] overflow-hidden rounded-2xl bg-[var(--bg-elevated)] shadow-[var(--shadow-float)] outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
+          style={{ top: dropdownTop, left: dropdownLeft, width: dropdownWidth, maxHeight: dropdownHeight }}
         >
           {/* Search */}
-          <div className="border-b border-[var(--border)] p-2">
-            <div className="flex items-center gap-2 rounded-lg bg-[var(--bg-subtle)] px-2.5 py-1.5">
-              <Search className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search models…"
-                className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--text-muted)]"
-              />
+          <div className="space-y-2 border-b border-[var(--border)] p-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="flex min-h-10 flex-1 items-center gap-2 rounded-lg bg-[var(--bg-subtle)] px-3">
+                <Search className="h-4 w-4 shrink-0 text-[var(--text-muted)]" />
+                <input
+                  ref={inputRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search name or model ID…"
+                  className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--text-muted)]"
+                />
+              </div>
+              <select
+                value={providerFilter}
+                onChange={(event) => setProviderFilter(event.target.value)}
+                aria-label="Filter models by provider"
+                className="min-h-10 rounded-lg bg-[var(--bg-subtle)] px-3 text-sm font-medium text-[var(--text)] outline-none focus-visible:ring-2 focus-visible:ring-accent-400/40 sm:w-48"
+              >
+                <option value="all">All providers</option>
+                {providerOptions.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
+              </select>
+            </div>
+            <div className="flex items-center justify-between px-1 text-[11px] text-[var(--text-muted)]">
+              <span>{filtered.length} model{filtered.length === 1 ? "" : "s"}</span>
+              <span className="tabular-nums">{value.length} selected</span>
             </div>
           </div>
 
           {/* Model list grouped by provider */}
-          <div className="max-h-60 overflow-y-auto p-1">
+          <div role="listbox" aria-multiselectable="true" className="overflow-y-auto overscroll-contain p-1" style={{ maxHeight: listHeight }}>
             {anyLoading ? (
               <div className="flex items-center justify-center py-6">
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-ink-300 border-t-accent-500" />
@@ -225,23 +326,20 @@ export function ModelMultiSelect({
             ) : (
               grouped.map((g) => (
                 <div key={g.provider}>
-                  <div className="flex items-center gap-2 px-3 pt-2 pb-1">
-                    <img
-                      src={g.icon}
-                      alt=""
-                      className="h-4 w-4 shrink-0 rounded-sm object-contain"
-                      onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                    />
+                  <div className="sticky top-0 z-10 flex items-center gap-2 bg-[var(--bg-elevated)] px-3 pb-1.5 pt-2.5">
+                    <ProviderIcon option={g.models[0]} className="h-5 w-5 rounded-md" />
                     <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
                       {g.providerName}
                     </span>
                   </div>
                   {g.models.map((m) => (
                     <button
-                      key={m.id}
+                      key={`${m.providerId}:${m.id}`}
                       type="button"
+                      role="option"
+                      aria-selected={value.includes(m.id)}
                       onClick={() => toggle(m.id)}
-                      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-1.5 text-left text-sm transition-colors hover:bg-[var(--bg-subtle)] ${
+                      className={`flex min-h-10 w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-[var(--bg-subtle)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50 ${
                         value.includes(m.id) ? "bg-accent-500/10" : ""
                       }`}
                     >
@@ -254,10 +352,10 @@ export function ModelMultiSelect({
                       >
                         {value.includes(m.id) && <Check className="h-3 w-3 text-white" />}
                       </div>
-                      <span className="flex-1 truncate">{m.name}</span>
-                      {m.id !== m.name && (
-                        <span className="truncate text-[11px] text-[var(--text-muted)]">{m.id}</span>
-                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{m.name}</span>
+                        {m.id !== m.name && <span className="block truncate font-mono text-[11px] text-[var(--text-muted)]">{m.id}</span>}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -278,13 +376,13 @@ export function ModelMultiSelect({
                   }
                 }}
                 placeholder="Add custom pattern (e.g. claude-*)"
-                className="flex-1 rounded-lg bg-[var(--bg-subtle)] px-2.5 py-1.5 text-sm outline-none placeholder:text-[var(--text-muted)]"
+                className="min-h-10 flex-1 rounded-lg bg-[var(--bg-subtle)] px-2.5 py-2 text-sm outline-none placeholder:text-[var(--text-muted)] focus-visible:ring-2 focus-visible:ring-accent-400/40"
               />
               <button
                 type="button"
                 onClick={addCustom}
                 disabled={!customText.trim()}
-                className="rounded-lg bg-accent-600 px-2.5 py-1.5 text-xs font-medium text-white transition-colors hover:bg-accent-700 disabled:opacity-40"
+                className="min-h-10 rounded-lg bg-accent-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-accent-700 disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
               >
                 Add
               </button>
@@ -305,21 +403,15 @@ export function ModelMultiSelect({
             return (
               <span
                 key={id}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-accent-500/10 px-2 py-1 text-xs font-medium text-accent-700 dark:text-accent-300"
+                className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-accent-500/10 pl-2 text-xs font-medium text-accent-700 dark:text-accent-300"
               >
-                {m && (
-                  <img
-                    src={m.icon}
-                    alt=""
-                    className="h-3.5 w-3.5 shrink-0 rounded-sm object-contain"
-                    onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
-                  />
-                )}
-                <span className="max-w-[180px] truncate">{id}</span>
+                <ProviderIcon option={m} className="h-6 w-6" />
+                <span className="max-w-[240px] truncate"><span className="text-[var(--text-muted)]">{m?.providerName || "Custom"}</span> · {id}</span>
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); removeChip(id); }}
-                  className="ml-0.5 rounded p-0.5 transition-colors hover:bg-accent-500/20"
+                  aria-label={`Remove ${id}`}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl transition-colors hover:bg-accent-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
                 >
                   <X className="h-3 w-3" />
                 </button>
@@ -338,7 +430,9 @@ export function ModelMultiSelect({
             setOpen(!open);
             setQuery("");
           }}
-          className="flex w-full items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-left text-sm transition-colors focus:border-accent-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/40"
+          aria-expanded={open}
+          aria-haspopup="listbox"
+          className="flex min-h-10 w-full items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-left text-sm transition-colors hover:border-[var(--border-strong)] focus:border-accent-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/40"
         >
           <Search className="h-4 w-4 shrink-0 text-[var(--text-muted)]" />
           <span className={`flex-1 ${value.length > 0 ? "" : "text-[var(--text-muted)]"}`}>

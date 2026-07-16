@@ -1,7 +1,7 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, Copy, Check, ToggleLeft, ToggleRight, ArrowLeft, ArrowRight, Trash2, Wallet, Wrench, DollarSign, Gauge, Link2, Activity, Ban, ListFilter, Search, X, ArrowUpDown } from "lucide-react";
+import { KeyRound, Plus, Copy, Check, ToggleLeft, ToggleRight, ArrowLeft, ArrowRight, Trash2, Wallet, Wrench, DollarSign, Gauge, Link2, Activity, Ban, ListFilter, Search, X } from "lucide-react";
 import { api, type APIKey, type CreatedKey, type Plan } from "../lib/api";
 import { microsToUSD, formatTokens } from "../lib/format";
 import { PageHeader } from "../components/Layout";
@@ -18,7 +18,8 @@ import {
   Spinner,
   Toggle,
   Modal,
-  StatCard,
+  TablePagination,
+  useClientPagination,
 } from "../components/ui";
 
 const budgetPeriods = [
@@ -62,16 +63,39 @@ function StatusPill({ disabled }: { disabled: boolean }) {
 
   return (
     <span className="inline-flex items-center gap-1.5 px-1 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-      <span className="relative flex h-1.5 w-1.5">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" style={{ animationDuration: '3s' }}></span>
-        <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-      </span>
+      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
       Active
     </span>
   );
 }
 
-
+function SummaryItem({
+  icon: Icon,
+  label,
+  value,
+  tone = "default",
+}: {
+  icon: typeof KeyRound;
+  label: string;
+  value: number;
+  tone?: "default" | "danger" | "warning";
+}) {
+  const iconTone =
+    tone === "danger"
+      ? "text-red-600 dark:text-red-400"
+      : tone === "warning"
+        ? "text-amber-600 dark:text-amber-400"
+        : "text-secondary-600 dark:text-secondary-300";
+  return (
+    <div className="flex min-w-0 items-center gap-3 px-4 py-3 sm:px-5">
+      <Icon className={`h-4 w-4 shrink-0 ${iconTone}`} strokeWidth={2} />
+      <div className="min-w-0">
+        <p className="truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</p>
+        <p className="mt-0.5 text-lg font-semibold leading-none tabular-nums text-[var(--text)]">{value}</p>
+      </div>
+    </div>
+  );
+}
 
 function KeyCopyButton({
   icon,
@@ -92,16 +116,18 @@ function KeyCopyButton({
     <button
       type="button"
       onClick={() => {
-        navigator.clipboard.writeText(value);
-        toast.success(label, copiedMessage);
+        navigator.clipboard.writeText(value).then(
+          () => toast.success(label, copiedMessage),
+          () => toast.error("Copy failed", "Your browser blocked clipboard access."),
+        );
       }}
-      className={`group inline-flex min-w-0 items-center gap-1.5 text-left transition-colors text-[var(--text-muted)] hover:text-[var(--text)] ${className}`}
+      className={`group inline-flex min-h-10 min-w-0 items-center gap-2 rounded-lg px-2 text-left text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50 ${className}`}
     >
       <span className="shrink-0">{icon}</span>
       <span className="min-w-0 truncate font-mono text-[11px] font-medium">
         {value}
       </span>
-      <Copy className="h-3 w-3 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
+      <Copy className="h-3.5 w-3.5 shrink-0 opacity-60 transition-opacity group-hover:opacity-100" />
     </button>
   );
 }
@@ -150,12 +176,12 @@ function KeyRow({
 
   return (
     <article
-      className={`grid gap-3 px-5 py-3.5 transition-colors sm:grid-cols-[minmax(0,1fr)_minmax(200px,0.75fr)_auto] sm:items-center sm:px-6 ${
+      className={`grid gap-2 px-4 py-3 transition-colors md:grid-cols-[minmax(190px,1.2fr)_minmax(160px,0.9fr)_minmax(120px,0.7fr)_auto] md:items-center md:px-5 ${
         selected ? "bg-secondary-50/50 dark:bg-secondary-950/20" : "hover:bg-[var(--bg-subtle)]/70"
       }`}
     >
-      <div className="flex min-w-0 items-center gap-4">
-        <label className="flex shrink-0 cursor-pointer">
+      <div className="flex min-w-0 items-center gap-2">
+        <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg hover:bg-[var(--bg-subtle)]">
           <input
             type="checkbox"
             checked={selected}
@@ -164,48 +190,58 @@ function KeyRow({
             aria-label={`Select ${apiKey.name}`}
           />
         </label>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2.5">
-            <h3 className="truncate text-sm font-semibold tracking-tight text-[var(--text)]">{apiKey.name}</h3>
+        <button type="button" onClick={onConfigure} className="group min-w-0 flex-1 rounded-lg py-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50">
+          <div className="flex items-center gap-2">
+            <h3 className="truncate text-sm font-semibold tracking-tight text-[var(--text)] group-hover:text-secondary-700 dark:group-hover:text-secondary-300">{apiKey.name}</h3>
             <StatusPill disabled={apiKey.disabled} />
-            <span className="shrink-0 text-[11px] font-medium text-[var(--text-muted)]">{apiKey.plan_name || "Custom plan"}</span>
-            {modelCount > 0 && (
-              <span className="shrink-0 text-[11px] font-medium text-amber-600 dark:text-amber-400">
-                {modelCount} model{modelCount > 1 ? "s" : ""}
-              </span>
-            )}
           </div>
-        </div>
-      </div>
-
-      <div className="grid min-w-0 gap-1.5 pl-8 sm:pl-0">
-        <KeyCopyButton icon={<KeyRound className="h-3 w-3" />} label="Key copied" value={apiKey.display} copiedMessage="Masked key identifier copied." />
-        <KeyCopyButton icon={<Link2 className="h-3 w-3" />} label="Portal link copied" value={portalUrl} copiedMessage="Owner usage portal link copied." />
-      </div>
-
-      <div className="flex items-center gap-1 sm:justify-end pl-8 sm:pl-0">
-        <button
-          onClick={onConfigure}
-          className="p-1.5 rounded hover:bg-ink-200 dark:hover:bg-ink-800 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors"
-          title="Configure key"
-        >
-          <Wrench className="h-4 w-4" />
+          <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">Created {new Date(apiKey.created_at).toLocaleDateString()}</p>
         </button>
+      </div>
+
+      <div className="min-w-0 pl-12 md:pl-0">
+        <KeyCopyButton icon={<KeyRound className="h-3 w-3" />} label="Key copied" value={apiKey.display} copiedMessage="Masked key identifier copied." />
+      </div>
+
+      <div className="flex min-w-0 items-center gap-2 pl-12 text-xs md:pl-0">
+        <span className="truncate font-medium text-[var(--text)]">{apiKey.plan_name || "Custom plan"}</span>
+        <span className="text-[var(--text-muted)]">·</span>
+        <span className={modelCount > 0 ? "truncate text-amber-600 dark:text-amber-400" : "truncate text-[var(--text-muted)]"}>
+          {modelCount > 0 ? `${modelCount} model${modelCount > 1 ? "s" : ""}` : "Plan defaults"}
+        </span>
+      </div>
+
+      <div className="flex items-center gap-1 pl-11 md:justify-end md:pl-0">
+        <KeyCopyButton
+          icon={<Link2 className="h-4 w-4" />}
+          label="Portal link copied"
+          value={portalUrl}
+          copiedMessage="Owner usage portal link copied."
+          className="w-10 justify-center px-0 [&_span:nth-child(2)]:hidden [&_svg:last-child]:hidden"
+        />
         <button
+          type="button"
           onClick={onToggle}
           disabled={togglePending}
-          className="p-1.5 rounded hover:bg-ink-200 dark:hover:bg-ink-800 text-[var(--text-muted)] hover:text-[var(--text)] transition-colors disabled:opacity-50"
+          aria-label={apiKey.disabled ? "Enable key" : "Disable key"}
+          className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
           title={apiKey.disabled ? "Enable key" : "Disable key"}
         >
           {apiKey.disabled ? <ToggleLeft className="h-4 w-4" /> : <ToggleRight className="h-4 w-4" />}
         </button>
         <button
+          type="button"
           onClick={onRevoke}
-          className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 text-[var(--text-muted)] hover:text-red-600 transition-colors"
+          aria-label={`Revoke ${apiKey.name}`}
+          className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50"
           title="Revoke key"
         >
           <Trash2 className="h-4 w-4" />
         </button>
+        <Button variant="ghost" onClick={onConfigure} className="ml-1">
+          Details
+          <ArrowRight className="h-4 w-4" />
+        </Button>
       </div>
     </article>
   );
@@ -256,6 +292,11 @@ export function KeysPage() {
         }
       });
   }, [keys.data, statusFilter, searchQuery, sortKey]);
+  const pagination = useClientPagination(visibleKeys, 10);
+
+  useEffect(() => {
+    pagination.setPage(1);
+  }, [statusFilter, searchQuery, sortKey]);
 
   // Step 1 — name
   const [name, setName] = useState("");
@@ -356,8 +397,13 @@ export function KeysPage() {
   const toggleSelectAll = useCallback(() => {
     if (!visibleKeys.length) return;
     setSelectedIds((prev) => {
-      if (prev.size === visibleKeys.length && visibleKeys.every((k) => prev.has(k.id))) return new Set();
-      return new Set(visibleKeys.map((k) => k.id));
+      const next = new Set(prev);
+      if (visibleKeys.every((key) => next.has(key.id))) {
+        visibleKeys.forEach((key) => next.delete(key.id));
+      } else {
+        visibleKeys.forEach((key) => next.add(key.id));
+      }
+      return next;
     });
   }, [visibleKeys]);
 
@@ -486,12 +532,14 @@ export function KeysPage() {
       {(() => {
         const summary = getKeySummary(keys.data?.keys ?? []);
         return (
-          <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <StatCard label="Total keys" value={String(summary.total)} icon={KeyRound} />
-            <StatCard label="Active" value={String(summary.active)} icon={Activity} />
-            <StatCard label="Disabled" value={String(summary.disabled)} icon={Ban} iconTone="danger" />
-            <StatCard label="Restricted" value={String(summary.restricted)} icon={ListFilter} iconTone="warning" />
-          </div>
+          <Card className="mb-4 shadow-none">
+            <div className="grid grid-cols-2 divide-x divide-y divide-[var(--border)] sm:grid-cols-4 sm:divide-y-0">
+              <SummaryItem label="Total keys" value={summary.total} icon={KeyRound} />
+              <SummaryItem label="Active" value={summary.active} icon={Activity} />
+              <SummaryItem label="Disabled" value={summary.disabled} icon={Ban} tone="danger" />
+              <SummaryItem label="Restricted" value={summary.restricted} icon={ListFilter} tone="warning" />
+            </div>
+          </Card>
         );
       })()}
 
@@ -522,63 +570,53 @@ export function KeysPage() {
           <KeyEmptyState onCreate={openModal} />
         ) : (
           <div>
-            <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--bg-subtle)] px-5 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-              <label className="flex cursor-pointer items-center gap-3">
+            <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-5">
+              <label className="flex min-h-10 cursor-pointer items-center gap-3 rounded-lg pr-3">
                 <input
                   type="checkbox"
                   checked={visibleKeys.length >0 && visibleKeys.every((k) => selectedIds.has(k.id))}
                   onChange={toggleSelectAll}
                   className="h-4 w-4 rounded border-[var(--border)] accent-[var(--color-accent)]"
+                  aria-label="Select all visible API keys"
                 />
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                  Select all
+                <span className="text-xs font-semibold text-[var(--text-muted)]">
+                  Select all <span className="tabular-nums">({visibleKeys.length})</span>
                 </span>
               </label>
-              <div className="flex flex-wrap items-center gap-3">
-                <div className="relative max-w-xs flex-1">
+              <div className="flex flex-1 flex-col gap-2 sm:flex-row lg:max-w-3xl lg:justify-end">
+                <div className="relative min-w-0 flex-1 lg:max-w-sm">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search keys…"
-                    className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] py-1.5 pl-9 pr-9 text-sm placeholder:text-[var(--text-muted)] focus:border-accent-400 focus:outline-none focus:ring-2 focus:ring-accent-400/40"
+                    className="min-h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] py-2 pl-9 pr-10 text-sm transition-[border-color,box-shadow] placeholder:text-[var(--text-muted)] hover:border-[var(--border-strong)] focus:border-accent-400 focus:outline-none focus:ring-2 focus:ring-accent-400/30"
                   />
                   {searchQuery && (
                     <button
+                      type="button"
                       onClick={() => setSearchQuery("")}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-0.5 text-[var(--text-muted)] hover:text-[var(--text)]"
+                      className="absolute right-0 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
                       aria-label="Clear search"
                     >
                       <X className="h-4 w-4" />
                     </button>
                   )}
                 </div>
-                <div className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-muted)]">
-                  <ArrowUpDown className="h-3.5 w-3.5" />
-                  <select
-                    className="bg-transparent font-semibold text-[var(--text)] outline-none cursor-pointer"
-                    value={sortKey}
-                    onChange={(e) => setSortKey(e.target.value as any)}
-                  >
-                    <option value="created_desc">Newest first</option>
-                    <option value="created_asc">Oldest first</option>
-                    <option value="name_asc">Name A–Z</option>
-                    <option value="name_desc">Name Z–A</option>
-                  </select>
-                </div>
-                <div className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--text-muted)]">
-                  <span>Filter:</span>
-                  <select
-                    className="bg-transparent font-semibold text-[var(--text)] outline-none cursor-pointer"
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value as any)}
-                  >
-                    <option value="all">All</option>
-                    <option value="active">Active</option>
-                    <option value="inactive">Inactive</option>
-                  </select>
-                </div>
+                <label className="sr-only" htmlFor="key-sort">Sort keys</label>
+                <Select id="key-sort" className="w-full sm:w-40" value={sortKey} onChange={(e) => setSortKey(e.target.value as typeof sortKey)}>
+                  <option value="created_desc">Newest first</option>
+                  <option value="created_asc">Oldest first</option>
+                  <option value="name_asc">Name A–Z</option>
+                  <option value="name_desc">Name Z–A</option>
+                </Select>
+                <label className="sr-only" htmlFor="key-status">Filter by status</label>
+                <Select id="key-status" className="w-full sm:w-32" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
+                  <option value="all">All status</option>
+                  <option value="active">Active</option>
+                  <option value="inactive">Inactive</option>
+                </Select>
               </div>
             </div>
             {visibleKeys.length ===0 ? (
@@ -587,7 +625,7 @@ export function KeysPage() {
               </div>
             ) : (
               <div className="divide-y divide-[var(--border)]">
-                {visibleKeys.map((k) => (
+                {pagination.paged.map((k) => (
                   <KeyRow
                     key={k.id}
                     apiKey={k}
@@ -595,12 +633,21 @@ export function KeysPage() {
                     onSelect={() => toggleSelect(k.id)}
                     onToggle={() => toggleDisabled.mutate({ id: k.id, disabled: !k.disabled })}
                     onConfigure={() => navigate(`/keys/${k.id}`)}
-                    onRevoke={() => remove.mutate(k.id)}
+                    onRevoke={() => {
+                      if (!confirm(`Revoke ${k.name}? This cannot be undone.`)) return;
+                      remove.mutate(k.id);
+                    }}
                     togglePending={toggleDisabled.isPending}
                   />
                 ))}
               </div>
             )}
+            <TablePagination
+              page={pagination.page}
+              pages={pagination.pages}
+              total={pagination.total}
+              onPage={pagination.setPage}
+            />
           </div>
         )}
       </Card>

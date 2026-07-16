@@ -135,7 +135,7 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 
 export function Button({ variant = "primary", className = "", ...props }: ButtonProps) {
   const base =
-    "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-150 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] [&_svg]:shrink-0";
+    "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-150 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] [&_svg]:shrink-0";
   const variants = {
     primary: "border border-secondary-600 bg-secondary-600 text-white shadow-sm hover:border-secondary-700 hover:bg-secondary-700 hover:shadow-[var(--shadow-card)] dark:border-secondary-500 dark:bg-secondary-500 dark:hover:border-secondary-400 dark:hover:bg-secondary-400",
     secondary: "border border-accent-600 bg-accent-600 text-white shadow-sm hover:border-accent-700 hover:bg-accent-700 hover:shadow-[var(--shadow-card)] dark:border-accent-500 dark:bg-accent-500 dark:hover:border-accent-400 dark:hover:bg-accent-400",

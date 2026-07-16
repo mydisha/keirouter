@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useMemo } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Plus, Trash2, Plug, X, Zap, ArrowUp, ArrowDown, CheckCircle, ToggleLeft, ToggleRight, Search, Route, AlertCircle, AlertTriangle, RefreshCw, Globe, Copy, Check, Upload, Loader2, XCircle, Layers, FileText, Download, ChevronDown } from "lucide-react";
-import { api, type DeviceCode, type OAuthProvider, type Provider, type Account, type ProxyPool, type UpstreamQuota, type ProviderRoutingSettings, type BulkAccountResult, type QuotaAccount, type CodexUsageDetails } from "../lib/api";
+import { ArrowLeft, Plus, Trash2, Plug, X, Zap, ArrowUp, ArrowDown, CheckCircle, ToggleLeft, ToggleRight, Search, Route, AlertCircle, AlertTriangle, RefreshCw, Globe, Copy, Check, Upload, Loader2, XCircle, Layers, FileText, Download, ChevronDown, Clock3, Package } from "lucide-react";
+import { api, type DeviceCode, type OAuthProvider, type Provider, type Account, type ProxyPool, type UpstreamQuota, type ProviderRoutingSettings, type BulkAccountResult } from "../lib/api";
 import { KiroConnectModal } from "../components/KiroConnectModal";
 import { QoderConnectModal } from "../components/QoderConnectModal";
 import { KilocodeConnectModal } from "../components/KilocodeConnectModal";
@@ -58,15 +58,6 @@ export function ProviderDetailPage() {
 
   const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.providers() });
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api.listAccounts() });
-  const bulkQuota = useQuery({
-    queryKey: ["quota", "today", id],
-    queryFn: () => api.quotaByProvider(id!),
-    enabled: !!id,
-    staleTime: 60_000,
-  });
-  const quotaMap: Record<string, QuotaAccount> = Object.fromEntries(
-    (bulkQuota.data?.accounts ?? []).map((a) => [a.id, a]),
-  );
   const oauthProviders = useQuery({ queryKey: ["oauth-providers"], queryFn: () => api.oauthProviders() });
   const pools = useQuery({ queryKey: ["proxy-pools"], queryFn: () => api.listProxyPools() });
   const routing = useQuery({
@@ -706,7 +697,6 @@ export function ProviderDetailPage() {
                     onUpdateProxy={(patch) => updateAccount.mutate({ id: account.id, patch })}
                     testResult={testResults[account.id]}
                     disabledByBatch={testingAll}
-                    quotaData={quotaMap[account.id]}
                   />
                 ))}
               </div>
@@ -1165,7 +1155,6 @@ function AccountRow({
   onUpdateProxy,
   testResult,
   disabledByBatch,
-  quotaData,
 }: {
   account: Account;
   index: number;
@@ -1180,7 +1169,6 @@ function AccountRow({
   onUpdateProxy: (patch: { priority?: number; proxy_pool_id?: string; disabled?: boolean }) => void;
   testResult?: { status: "testing" | "ok" | "error"; message?: string };
   disabledByBatch?: boolean;
-  quotaData?: QuotaAccount;
 }) {
   const testing = testResult?.status === "testing";
   const [localPriority, setLocalPriority] = useState(a.priority);
@@ -1199,10 +1187,18 @@ function AccountRow({
     }
   };
 
-  const hasQuota = !!quotaData?.upstream_quotas && quotaData.upstream_quotas.length > 0;
   const boundPool = pools.find((p) => p.id === a.proxy_pool_id);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const hasExpandableDetails = hasQuota || a.provider === "codex";
+  const supportsKiroQuota = a.provider === "kiro";
+  const hasExpandableDetails = supportsKiroQuota || a.provider === "codex";
+  const accountQuota = useQuery({
+    queryKey: ["account-quota", a.id],
+    queryFn: () => api.accountQuota(a.id),
+    enabled: supportsKiroQuota && detailsOpen && !a.disabled,
+    staleTime: 60_000,
+    retry: 1,
+  });
+  const quotaRows = accountQuota.data?.quotas ?? [];
 
   return (
     <div className={`px-3 py-2.5 transition-colors sm:px-4 ${a.disabled ? "bg-[var(--bg-subtle)]/50" : ""} ${selected ? "bg-accent-50/70 dark:bg-accent-900/15" : "hover:bg-[var(--bg-subtle)]/50"}`}>
@@ -1240,7 +1236,7 @@ function AccountRow({
               type="button"
               onClick={onMoveUp}
               disabled={index === 0}
-              className="flex h-9 w-8 items-center justify-center text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] disabled:cursor-not-allowed disabled:opacity-25"
+              className="flex h-10 w-9 items-center justify-center text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] disabled:cursor-not-allowed disabled:opacity-25"
               aria-label="Move account up"
             >
               <ArrowUp className="h-3.5 w-3.5" />
@@ -1255,7 +1251,7 @@ function AccountRow({
               onBlur={commitPriority}
               onKeyDown={(event) => event.key === "Enter" && (event.target as HTMLInputElement).blur()}
               aria-label={`Priority for ${a.label || a.provider}`}
-              className="h-9 w-10 border-x border-[var(--border)] bg-transparent text-center text-xs font-semibold text-[var(--text)] focus:bg-[var(--bg)] focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              className="h-10 w-10 border-x border-[var(--border)] bg-transparent text-center text-xs font-semibold text-[var(--text)] focus:bg-[var(--bg)] focus:outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
               min={0}
               max={999}
             />
@@ -1263,7 +1259,7 @@ function AccountRow({
               type="button"
               onClick={onMoveDown}
               disabled={index === total - 1}
-              className="flex h-9 w-8 items-center justify-center text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] disabled:cursor-not-allowed disabled:opacity-25"
+              className="flex h-10 w-9 items-center justify-center text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] disabled:cursor-not-allowed disabled:opacity-25"
               aria-label="Move account down"
             >
               <ArrowDown className="h-3.5 w-3.5" />
@@ -1274,7 +1270,7 @@ function AccountRow({
             value={a.proxy_pool_id || ""}
             onChange={(event) => onUpdateProxy({ proxy_pool_id: event.target.value || "" })}
             aria-label={`Proxy for ${a.label || a.provider}`}
-            className="h-9 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 text-xs focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/40 lg:w-40 lg:flex-none"
+            className="h-10 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 text-xs focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/40 lg:w-40 lg:flex-none"
           >
             <option value="">Direct connection</option>
             {pools.map((pool) => (
@@ -1297,7 +1293,7 @@ function AccountRow({
             type="button"
             onClick={onTest}
             disabled={testing || disabledByBatch}
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--text-muted)] transition-[transform,background-color,color] duration-150 hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] active:scale-[0.96] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50 disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
             title="Test account connection"
             aria-label={`Test ${a.label || a.provider}`}
           >
@@ -1306,7 +1302,7 @@ function AccountRow({
           <button
             type="button"
             onClick={() => onUpdateProxy({ disabled: !a.disabled })}
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--text-muted)] transition-[transform,background-color,color] duration-150 hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] active:scale-[0.96] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
             title={a.disabled ? "Enable account" : "Disable account"}
             aria-label={a.disabled ? `Enable ${a.label || a.provider}` : `Disable ${a.label || a.provider}`}
           >
@@ -1315,7 +1311,7 @@ function AccountRow({
           <button
             type="button"
             onClick={onDelete}
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-danger)]/40"
+            className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--text-muted)] transition-[transform,background-color,color] duration-150 hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)] active:scale-[0.96] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-danger)]/40"
             title="Delete account"
             aria-label={`Delete ${a.label || a.provider}`}
           >
@@ -1336,30 +1332,103 @@ function AccountRow({
           type="button"
           onClick={() => setDetailsOpen((open) => !open)}
           aria-expanded={detailsOpen}
-          className="ml-6 mt-1 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-xs font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
+          className="ml-6 mt-1 inline-flex h-10 items-center gap-1.5 rounded-lg px-2 text-xs font-medium text-[var(--text-muted)] transition-[transform,background-color,color] duration-150 hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] active:scale-[0.96] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
         >
           <Zap className="h-3.5 w-3.5" />
-          {quotaData?.plan_name || "Usage and quota"}
+          {a.provider === "codex"
+            ? "Usage & reset limits"
+            : accountQuota.data?.plan_name || "Package & usage"}
           <ChevronDown className={`h-3.5 w-3.5 transition-transform ${detailsOpen ? "rotate-180" : ""}`} />
         </button>
       )}
 
       {detailsOpen && (
-        <div className="ml-6 mt-2 space-y-2">
-          {hasQuota && quotaData && (
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] px-3 py-2.5">
-              {quotaData.upstream_quotas && (
-                <div className="space-y-2">
-                  {quotaData.upstream_quotas.map((quota) => (
-                    <QuotaBarInline key={quota.resource_type} quota={quota} />
-                  ))}
-                </div>
-              )}
-            </div>
+        <div className="ml-6 mt-2">
+          {supportsKiroQuota && (
+            <KiroQuotaPanel
+              loading={accountQuota.isLoading || accountQuota.isFetching}
+              error={accountQuota.error instanceof Error ? accountQuota.error.message : ""}
+              planName={accountQuota.data?.plan_name}
+              message={accountQuota.data?.message}
+              quotas={quotaRows}
+              disabled={a.disabled}
+              onRefresh={() => accountQuota.refetch()}
+            />
           )}
           {a.provider === "codex" && <CodexResetCreditsSection accountId={a.id} />}
         </div>
       )}
+    </div>
+  );
+}
+
+function KiroQuotaPanel({
+  loading,
+  error,
+  planName,
+  message,
+  quotas,
+  disabled,
+  onRefresh,
+}: {
+  loading: boolean;
+  error: string;
+  planName?: string;
+  message?: string;
+  quotas: UpstreamQuota[];
+  disabled: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="rounded-xl bg-[var(--bg-subtle)] p-3 shadow-[inset_0_0_0_1px_var(--border)] sm:p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-elevated)] text-accent-700 shadow-sm dark:text-accent-300">
+            <Package className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="truncate text-sm font-semibold text-[var(--text)]">{planName || "Kiro package"}</p>
+            <p className="mt-0.5 text-xs text-[var(--text-muted)]">Live allowance from this account</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading || disabled}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] transition-[transform,background-color,color] duration-150 hover:bg-[var(--bg-elevated)] hover:text-[var(--text)] active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
+          aria-label="Refresh Kiro usage"
+          title="Refresh usage"
+        >
+          <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {disabled ? (
+        <p className="mt-3 text-xs text-[var(--text-muted)]">Enable this account to refresh its package usage.</p>
+      ) : loading && quotas.length === 0 ? (
+        <div className="mt-4 space-y-3" aria-label="Loading Kiro usage">
+          {[0, 1].map((item) => (
+            <div key={item} className="space-y-2">
+              <div className="skeleton h-3 w-2/5 rounded" />
+              <div className="skeleton h-1.5 w-full rounded-full" />
+            </div>
+          ))}
+        </div>
+      ) : error ? (
+        <div className="mt-3 flex items-start gap-2 rounded-lg bg-[color:var(--color-danger)]/8 px-3 py-2 text-xs text-[color:var(--color-danger)] shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--color-danger)_20%,transparent)]">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      ) : quotas.length > 0 ? (
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          {quotas.map((quota) => (
+            <QuotaBarInline key={quota.resource_type} quota={quota} />
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-xs text-[var(--text-muted)]">{message || "Kiro did not report a usage allowance for this account."}</p>
+      )}
+      {message && quotas.length > 0 && <p className="mt-3 text-xs text-[var(--text-muted)]">{message}</p>}
     </div>
   );
 }
@@ -1378,27 +1447,27 @@ function QuotaBarInline({ quota: q }: { quota: UpstreamQuota }) {
     .replace(/_/g, " ")
     .replace(/\b\w/g, (c) => c.toUpperCase());
 
-  const resetDate = q.reset_at ? new Date(q.reset_at) : null;
+  const resetDate = q.reset_at
+    ? /^\d+$/.test(q.reset_at)
+      ? new Date(Number(q.reset_at) * (Number(q.reset_at) > 10_000_000_000 ? 1 : 1000))
+      : new Date(q.reset_at)
+    : null;
   const resetLabel = resetDate && !isNaN(resetDate.getTime())
     ? resetDate.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
     : null;
 
   return (
-    <div>
-      <div className="mb-1 flex items-center justify-between text-[11px]">
+    <div className="rounded-lg bg-[var(--bg-elevated)] p-3 shadow-sm">
+      <div className="mb-2 flex items-center justify-between gap-3 text-[11px]">
         <span className="font-medium text-[var(--text)]">{label}</span>
-        <div className="flex items-center gap-2">
-          {resetLabel && (
-            <span className="text-[10px] text-[var(--text-muted)]">resets {resetLabel}</span>
-          )}
-          <span className="tabular-nums">
-            {q.used.toLocaleString()} / {q.limit.toLocaleString()}
-            <span className="ml-1 text-[var(--text-muted)]">({q.remaining.toLocaleString()} left)</span>
-          </span>
-        </div>
+        <span className="shrink-0 font-semibold tabular-nums text-[var(--text)]">{q.remaining.toLocaleString()} left</span>
       </div>
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-        <div className={`h-full rounded-full ${tone}`} style={{ width: `${Math.max(2, pct)}%` }} />
+        <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-1 text-[10px] text-[var(--text-muted)]">
+        <span className="tabular-nums">{q.used.toLocaleString()} of {q.limit.toLocaleString()} used</span>
+        {resetLabel && <span className="inline-flex items-center gap-1"><Clock3 className="h-3 w-3" />Resets {resetLabel}</span>}
       </div>
     </div>
   );
@@ -2309,201 +2378,172 @@ function DeviceFlow({ provider, onClose }: { provider: OAuthProvider; onClose: (
 // ---- Codex reset credits section --------------------------------------------
 
 function CodexResetCreditsSection({ accountId }: { accountId: string }) {
-  const [expanded, setExpanded] = useState(false);
-  const [details, setDetails] = useState<CodexUsageDetails | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [consuming, setConsuming] = useState(false);
+  const qc = useQueryClient();
   const toast = useToast();
-
-  const fetchDetails = async () => {
-    setLoading(true);
-    setError("");
-    try {
-      const data = await api.codexUsageDetails(accountId);
-      setDetails(data);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const consumeCredit = async (redeemRequestId: string) => {
-    if (!redeemRequestId) {
-      toast.error("Cannot consume credit", "Missing redeem request ID");
-      return;
-    }
-    setConsuming(true);
-    try {
-      const result = await api.codexConsumeCredit(accountId, redeemRequestId);
+  const [confirmingReset, setConfirmingReset] = useState(false);
+  const details = useQuery({
+    queryKey: ["codex-usage-details", accountId],
+    queryFn: () => api.codexUsageDetails(accountId),
+    staleTime: 30_000,
+    retry: 1,
+  });
+  const consumeCredit = useMutation({
+    mutationFn: (creditId?: string) => api.codexConsumeCredit(accountId, creditId),
+    onSuccess: async (result) => {
       if (result.ok) {
-        toast.success("Reset credit consumed", "Rate limit has been reset");
-        // Refresh the details
-        await fetchDetails();
+        toast.success("Usage limits reset", "A reset credit was used successfully.");
+        setConfirmingReset(false);
+        await details.refetch();
+        qc.invalidateQueries({ queryKey: ["quota"] });
       } else if (result.no_credit) {
         toast.error("No credits available", result.message || "No reset credits remaining");
       } else {
-        toast.error("Failed to consume credit", result.message || "Unknown error");
+        toast.error("Usage limits were not reset", result.message || "The reset request was not accepted.");
       }
-    } catch (e) {
-      toast.error("Failed to consume credit", (e as Error).message);
-    } finally {
-      setConsuming(false);
-    }
-  };
+    },
+    onError: (error: Error) => toast.error("Usage limits were not reset", error.message),
+  });
 
-  if (!expanded) {
-    return (
-      <button
-        onClick={() => { setExpanded(true); fetchDetails(); }}
-        className="mt-2 text-xs text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300"
-      >
-        View usage & reset credits →
-      </button>
-    );
-  }
+  const data = details.data;
+  const availableCount = data?.reset_credits?.available_count ?? data?.usage_data?.reset_credits_available ?? 0;
+  const availableCredits = data?.reset_credits?.credits.filter((credit) => credit.status === "available") ?? [];
+  const firstAvailableCredit = availableCredits[0];
+  const soonestExpiry = availableCredits
+    .map((credit) => credit.expires_at)
+    .filter((value): value is string => !!value)
+    .sort((left, right) => new Date(left).getTime() - new Date(right).getTime())[0];
 
   return (
-    <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs font-medium text-[var(--text)]">Usage & Reset Credits</span>
+    <div className="rounded-xl bg-[var(--bg-subtle)] p-3 shadow-[inset_0_0_0_1px_var(--border)] sm:p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold text-[var(--text)]">Usage limits</h3>
+            {data?.usage_data?.plan_type && (
+              <Badge tone={data.usage_data.limit_reached ? "danger" : "accent"}>{data.usage_data.plan_type}</Badge>
+            )}
+          </div>
+          <p className="mt-0.5 text-xs text-[var(--text-muted)]">Codex allowance and earned resets for this account</p>
+        </div>
         <button
-          onClick={() => setExpanded(false)}
-          className="text-xs text-[var(--text-muted)] hover:text-[var(--text)]"
+          type="button"
+          onClick={() => details.refetch()}
+          disabled={details.isFetching}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] transition-[transform,background-color,color] duration-150 hover:bg-[var(--bg-elevated)] hover:text-[var(--text)] active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100"
+          aria-label="Refresh Codex usage"
+          title="Refresh usage"
         >
-          ✕
+          <RefreshCw className={`h-4 w-4 ${details.isFetching ? "animate-spin" : ""}`} />
         </button>
       </div>
 
-      {loading && <div className="text-xs text-[var(--text-muted)]">Loading...</div>}
-      {error && <div className="text-xs text-red-600 dark:text-red-400">{error}</div>}
-
-      {details && (
-        <div className="space-y-3">
-          {details.error && (
-            <div className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-300">
-              {details.error}
-            </div>
-          )}
-          {/* Usage Data */}
-          {details.usage_data && (
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="text-xs font-medium text-[var(--text)]">Rate Limit</div>
-                <Badge tone={details.usage_data.limit_reached ? "danger" : details.usage_data.allowed ? "success" : "neutral"}>
-                  {details.usage_data.plan_type}
-                </Badge>
-              </div>
-
-              {/* Primary window (5h rolling) */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-[var(--text-muted)]">Primary (5h window)</span>
-                  <span className="font-medium text-[var(--text)]">{details.usage_data.primary_used_percent}%</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-                  <div
-                    className={`h-full rounded-full ${details.usage_data.primary_used_percent > 80 ? "bg-red-500" : details.usage_data.primary_used_percent > 50 ? "bg-amber-500" : "bg-accent-500"}`}
-                    style={{ width: `${Math.max(2, details.usage_data.primary_used_percent)}%` }}
-                  />
-                </div>
-                {details.usage_data.primary_reset_at > 0 && (
-                  <div className="text-[10px] text-[var(--text-muted)]">
-                    Resets {new Date(details.usage_data.primary_reset_at * 1000).toLocaleString()}
-                  </div>
-                )}
-              </div>
-
-              {/* Secondary window (weekly) */}
-              <div className="space-y-1.5">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-[var(--text-muted)]">Secondary (weekly)</span>
-                  <span className="font-medium text-[var(--text)]">{details.usage_data.secondary_used_percent}%</span>
-                </div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-                  <div
-                    className={`h-full rounded-full ${details.usage_data.secondary_used_percent > 80 ? "bg-red-500" : details.usage_data.secondary_used_percent > 50 ? "bg-amber-500" : "bg-accent-500"}`}
-                    style={{ width: `${Math.max(2, details.usage_data.secondary_used_percent)}%` }}
-                  />
-                </div>
-                {details.usage_data.secondary_reset_at > 0 && (
-                  <div className="text-[10px] text-[var(--text-muted)]">
-                    Resets {new Date(details.usage_data.secondary_reset_at * 1000).toLocaleString()}
-                  </div>
-                )}
-              </div>
-
-              {/* Credits */}
-              <div className="flex items-center justify-between border-t border-[var(--border)] pt-1.5 text-[11px]">
-                <span className="text-[var(--text-muted)]">Credits</span>
-                <span className="font-medium text-[var(--text)]">
-                  {details.usage_data.unlimited ? "Unlimited" : details.usage_data.credits_balance || "0"}
-                </span>
-              </div>
-
-              {/* Reset credits from usage endpoint */}
-              {details.usage_data.reset_credits_available > 0 && !details.reset_credits && (
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-[var(--text-muted)]">Reset credits available</span>
-                  <span className="font-medium text-[var(--text)]">{details.usage_data.reset_credits_available}</span>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Reset Credits */}
-          {details.reset_credits && (
-            <div className="space-y-2">
-              <div className="text-xs font-medium text-[var(--text)]">Reset Credits</div>
-              <div className="text-xs text-[var(--text-muted)]">
-                Available: <span className="font-medium text-[var(--text)]">{details.reset_credits.available_count}</span>
-              </div>
-
-              {details.reset_credits.credits.length === 0 ? (
-                <div className="text-xs text-[var(--text-muted)]">No reset credits available</div>
-              ) : (
-                <div className="space-y-1.5">
-                  {details.reset_credits.credits.map((credit, idx) => (
-                    <div
-                      key={idx}
-                      className="flex items-center justify-between rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5"
-                    >
-                      <div className="flex-1 text-[11px]">
-                        <div className="flex items-center gap-2">
-                          <Badge tone={credit.status === "available" ? "success" : "neutral"}>{credit.status}</Badge>
-                          {credit.expires_at && (
-                            <span className="text-[var(--text-muted)]">
-                              expires {new Date(credit.expires_at).toLocaleDateString()}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {credit.status === "available" && (
-                        <button
-                          onClick={() => consumeCredit(credit.redeem_request_id || "")}
-                          disabled={consuming || !credit.redeem_request_id}
-                          className="ml-2 rounded-md border border-[var(--border)] px-2 py-0.5 text-[11px] font-medium text-accent-600 hover:bg-accent-50 disabled:opacity-40 dark:text-accent-400 dark:hover:bg-accent-900/20"
-                        >
-                          {consuming ? "..." : "Use"}
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          <button
-            onClick={fetchDetails}
-            disabled={loading}
-            className="text-xs text-accent-600 hover:text-accent-700 dark:text-accent-400 dark:hover:text-accent-300"
-          >
-            {loading ? "Refreshing..." : "Refresh"}
-          </button>
+      {details.isLoading ? (
+        <div className="mt-4 grid gap-3 sm:grid-cols-2" aria-label="Loading Codex usage">
+          {[0, 1].map((item) => <div key={item} className="skeleton h-28 rounded-lg" />)}
         </div>
-      )}
+      ) : details.error ? (
+        <div className="mt-3 flex items-start gap-2 rounded-lg bg-[color:var(--color-danger)]/8 px-3 py-2 text-xs text-[color:var(--color-danger)]">
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{details.error instanceof Error ? details.error.message : "Could not load Codex usage."}</span>
+        </div>
+      ) : data ? (
+        <div className="mt-4 space-y-3">
+          {data.error && (
+            <div className="flex items-start gap-2 rounded-lg bg-[color:var(--color-warning)]/10 px-3 py-2 text-xs text-[color:var(--color-warning)]">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span>{data.error}</span>
+            </div>
+          )}
+
+          {data.usage_data && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <CodexLimitWindow
+                label="5-hour limit"
+                usedPercent={data.usage_data.primary_used_percent}
+                resetAt={data.usage_data.primary_reset_at}
+              />
+              <CodexLimitWindow
+                label="Weekly limit"
+                usedPercent={data.usage_data.secondary_used_percent}
+                resetAt={data.usage_data.secondary_reset_at}
+              />
+            </div>
+          )}
+
+          <div className="flex flex-col gap-3 rounded-lg bg-[var(--bg-elevated)] p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-5">
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">Credits</p>
+                <p className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--text)]">
+                  {data.usage_data?.unlimited ? "Unlimited" : data.usage_data?.credits_balance || "0"}
+                </p>
+              </div>
+              <div className="h-8 w-px bg-[var(--border)]" />
+              <div>
+                <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">Earned resets</p>
+                <p className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--text)]">{availableCount} available</p>
+              </div>
+              {soonestExpiry && (
+                <p className="hidden text-xs text-[var(--text-muted)] lg:block">Next expiry {new Date(soonestExpiry).toLocaleDateString()}</p>
+              )}
+            </div>
+
+            {availableCount > 0 && (
+              confirmingReset ? (
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-xs font-medium text-[var(--text-muted)]">Use 1 credit?</span>
+                  <Button
+                    variant="secondary"
+                    className="min-h-10 px-3 py-1.5 text-xs"
+                    disabled={consumeCredit.isPending}
+                    onClick={() => consumeCredit.mutate(firstAvailableCredit?.id)}
+                  >
+                    {consumeCredit.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Confirm reset"}
+                  </Button>
+                  <Button variant="ghost" className="min-h-10 px-3 py-1.5 text-xs" disabled={consumeCredit.isPending} onClick={() => setConfirmingReset(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="ghost" className="min-h-10 shrink-0 px-3 py-1.5 text-xs" onClick={() => setConfirmingReset(true)}>
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Reset limits
+                </Button>
+              )
+            )}
+          </div>
+          {soonestExpiry && <p className="text-[10px] text-[var(--text-muted)] lg:hidden">Next reset credit expires {new Date(soonestExpiry).toLocaleDateString()}.</p>}
+          {availableCount === 0 && <p className="text-[10px] text-[var(--text-muted)]">No earned reset credits are currently available.</p>}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CodexLimitWindow({ label, usedPercent, resetAt }: { label: string; usedPercent: number; resetAt: number }) {
+  const used = Math.min(100, Math.max(0, usedPercent));
+  const remaining = Math.max(0, 100 - used);
+  const tone = used >= 80
+    ? "bg-[color:var(--color-danger)]"
+    : used >= 50
+      ? "bg-[color:var(--color-warning)]"
+      : "bg-accent-500";
+
+  return (
+    <div className="rounded-lg bg-[var(--bg-elevated)] p-3 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-medium text-[var(--text)]">{label}</p>
+          <p className="mt-1 text-[10px] text-[var(--text-muted)]">{resetAt > 0 ? `Resets ${new Date(resetAt * 1000).toLocaleString()}` : "Reset time unavailable"}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-sm font-semibold tabular-nums text-[var(--text)]">{remaining}% left</p>
+          <p className="text-[10px] tabular-nums text-[var(--text-muted)]">{used}% used</p>
+        </div>
+      </div>
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--bg-subtle)]" aria-label={`${label}: ${used}% used`}>
+        <div className={`h-full rounded-full ${tone}`} style={{ width: `${used}%` }} />
+      </div>
     </div>
   );
 }
@@ -2535,7 +2575,7 @@ function ModelCell({
 
   return (
     <article
-      className={`group relative flex min-h-44 flex-col rounded-xl border bg-[var(--bg-elevated)] p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-[var(--shadow-card)] ${
+      className={`group relative flex min-h-44 flex-col rounded-xl border bg-[var(--bg-elevated)] p-4 shadow-sm transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-[var(--shadow-card)] ${
         disabled ? "border-[var(--border)] opacity-70" : "border-[var(--border)]"
       } ${selected ? "border-accent-400 ring-2 ring-accent-400/20" : ""}`}
     >

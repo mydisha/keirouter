@@ -585,10 +585,13 @@ export interface UpstreamQuota {
 }
 
 export interface CodexCreditInfo {
+  id?: string;
   redeem_request_id?: string;
   status: string;
   granted_at?: string;
   expires_at?: string;
+  title?: string;
+  description?: string;
 }
 
 export interface CodexResetCredits {
@@ -601,6 +604,7 @@ export interface CodexConsumeResult {
   no_credit: boolean;
   status: number;
   code?: string;
+  outcome?: string;
   windows_reset?: number;
   message?: string;
 }
@@ -1289,8 +1293,8 @@ export const api = {
     ),
   codexResetCredits: (id: string) =>
     request<CodexResetCredits>("GET", `/accounts/${id}/codex-reset-credits`),
-  codexConsumeCredit: (id: string, redeemRequestId: string) =>
-    request<CodexConsumeResult>("POST", `/accounts/${id}/codex-consume-credit`, { redeem_request_id: redeemRequestId }),
+  codexConsumeCredit: (id: string, creditId?: string) =>
+    request<CodexConsumeResult>("POST", `/accounts/${id}/codex-consume-credit`, creditId ? { credit_id: creditId } : {}),
   codexUsageDetails: (id: string) =>
     request<CodexUsageDetails>("GET", `/accounts/${id}/codex-usage-details`),
 

@@ -7,6 +7,7 @@ import {
   Loader2,
   ArrowUpRight,
   KeyRound,
+  Server,
 } from "lucide-react";
 import {
   api,
@@ -59,11 +60,10 @@ export function EndpointsPage() {
     <>
       <PageHeader
         title="Endpoints"
-        description="How your applications connect to KeiRouter."
+        description="Connect an application with one base URL and an API key."
       />
       <div className="space-y-5 sm:space-y-6">
-        <PrimaryEndpoint />
-        <CredentialNotice />
+        <ConnectionCard />
         <TunnelSection />
       </div>
     </>
@@ -82,7 +82,7 @@ function withApiPath(base: string): string {
   return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`;
 }
 
-function PrimaryEndpoint() {
+function ConnectionCard() {
   const access = useQuery({ queryKey: ["access-settings"], queryFn: () => api.accessSettings() });
   const status = useQuery({
     queryKey: ["tunnel-status"],
@@ -99,6 +99,10 @@ function PrimaryEndpoint() {
 
   return (
     <Card>
+      <CardHeader
+        title="Connect an application"
+        description="Copy an endpoint, then authenticate requests with a key from KeiRouter."
+      />
       <div className="divide-y divide-[var(--border)]">
         <EndpointRow
           label="Primary endpoint"
@@ -114,6 +118,24 @@ function PrimaryEndpoint() {
             hint="Publicly reachable URL from your Cloudflare tunnel. Use it to reach KeiRouter from anywhere."
           />
         )}
+      </div>
+      <div className="flex flex-col gap-3 border-t border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-elevated)] text-secondary-700 shadow-sm dark:text-secondary-300">
+            <KeyRound className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-[var(--text)]">Add an API key</p>
+            <p className="text-xs text-pretty text-[var(--text-muted)]">Create or copy a key to authenticate your application.</p>
+          </div>
+        </div>
+        <Link
+          to="/keys"
+          className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-secondary-600 pl-3.5 pr-3 py-2 text-sm font-semibold text-white shadow-sm transition-[transform,background-color,box-shadow] duration-150 hover:bg-secondary-700 hover:shadow-[var(--shadow-card)] active:scale-[0.96] focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary-400/60 dark:bg-secondary-500 dark:hover:bg-secondary-400"
+        >
+          Manage keys
+          <ArrowUpRight className="h-4 w-4" />
+        </Link>
       </div>
     </Card>
   );
@@ -150,78 +172,35 @@ function EndpointRow({
   };
 
   return (
-    <div className="px-4 py-4 sm:px-6 sm:py-5">
-      <div className="flex items-center gap-2">
+    <div className="px-4 py-4 sm:px-6">
+      <div className="flex items-center gap-2.5">
         {icon ?? (
-          <span className="relative flex h-2 w-2">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" style={{ animationDuration: "2s" }} />
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
-          </span>
+          <Server className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
         )}
-        <p className="text-[11px] font-medium uppercase tracking-wider text-[var(--text-muted)]">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
           {label}
         </p>
       </div>
-      {/* Mobile: stack vertically. Desktop: side-by-side. */}
-      <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-stretch">
-        <div className="flex min-w-0 flex-1 items-center rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2.5 sm:px-4 sm:py-3">
-          <span className="truncate font-mono text-[13px] text-[var(--text)]">
+      <div className="mt-2.5 flex min-w-0 items-center rounded-xl bg-[var(--bg)] p-1 shadow-[inset_0_0_0_1px_var(--border)]">
+          <span className="min-w-0 flex-1 truncate px-2.5 font-mono text-[13px] text-[var(--text)] sm:px-3">
             {url || loadingText || ""}
           </span>
-        </div>
         <button
           onClick={copy}
           disabled={!url}
-          className="flex shrink-0 items-center justify-center gap-2 rounded-xl bg-secondary-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-secondary-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-secondary-500 dark:hover:bg-secondary-400 sm:py-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary-400/60"
+          className="flex h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[var(--bg-elevated)] pl-3 pr-2.5 text-xs font-semibold text-[var(--text)] shadow-sm transition-[transform,background-color,color,box-shadow] duration-150 hover:bg-[var(--bg-subtle)] hover:shadow-[var(--shadow-card)] active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60"
         >
-          {copied ? (
-            <>
-              <Check className="h-4 w-4" />
-              <span>Copied</span>
-            </>
-          ) : (
-            <>
-              <Copy className="h-4 w-4" />
-              <span>Copy</span>
-            </>
-          )}
+          <span className="relative h-4 w-4" aria-hidden="true">
+            <Check className={`absolute inset-0 h-4 w-4 transition-[opacity,filter,scale] duration-300 [transition-timing-function:cubic-bezier(0.2,0,0,1)] ${copied ? "scale-100 opacity-100 blur-0" : "scale-[0.25] opacity-0 blur-[4px]"}`} />
+            <Copy className={`absolute inset-0 h-4 w-4 transition-[opacity,filter,scale] duration-300 [transition-timing-function:cubic-bezier(0.2,0,0,1)] ${copied ? "scale-[0.25] opacity-0 blur-[4px]" : "scale-100 opacity-100 blur-0"}`} />
+          </span>
+          <span>{copied ? "Copied" : "Copy"}</span>
         </button>
       </div>
-      <p className="mt-2.5 text-xs text-[var(--text-muted)] sm:mt-3">
+      <p className="mt-2 text-xs text-pretty text-[var(--text-muted)]">
         {hint}
       </p>
     </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Credential notice — keep key management centralized
-// ---------------------------------------------------------------------------
-
-function CredentialNotice() {
-  return (
-    <Card className="overflow-hidden">
-      <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-5">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary-100 text-secondary-700 dark:bg-secondary-900/40 dark:text-secondary-200">
-            <KeyRound className="h-5 w-5" />
-          </div>
-          <div>
-            <h2 className="text-sm font-semibold tracking-tight text-[var(--text)]">Credentials live in API Keys</h2>
-            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-[var(--text-muted)]">
-              Use this page for connection URLs and tunnels. Create, revoke, copy owner portals, and set model limits from the API Keys page.
-            </p>
-          </div>
-        </div>
-        <Link
-          to="/keys"
-          className="inline-flex items-center justify-center gap-1.5 self-start rounded-xl bg-secondary-600 px-3.5 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-secondary-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary-400/60 dark:bg-secondary-500 dark:hover:bg-secondary-400 sm:self-center"
-        >
-          Manage keys
-          <ArrowUpRight className="h-4 w-4" />
-        </Link>
-      </div>
-    </Card>
   );
 }
 
@@ -234,7 +213,7 @@ function TunnelSection() {
     <Card>
       <CardHeader
         title="Tunnels"
-        description="Expose KeiRouter to external networks"
+        description="Optional network access for apps outside this machine."
       />
       <div className="divide-y divide-[var(--border)] border-t border-[var(--border)]">
         <CloudflareTunnel />
@@ -253,17 +232,7 @@ function TunnelSection() {
           onDisable={() => {}}
           enablePending={false}
           disablePending={false}
-        >
-          <div className="flex items-center gap-2 rounded-lg border border-amber-300/40 bg-amber-500/5 px-3 py-2 dark:border-amber-500/20 dark:bg-amber-500/10">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
-            </span>
-            <p className="text-xs font-medium text-amber-700 dark:text-amber-400">
-              Under development — this feature is being built and will be available soon.
-            </p>
-          </div>
-        </TunnelRow>
+        />
       </div>
     </Card>
   );
@@ -685,7 +654,7 @@ function TunnelRow({
             </Button>
           ) : (
             <Button onClick={onEnable} disabled={actionsDisabled || loading || enablePending} className={actionsDisabled ? "opacity-50 cursor-not-allowed" : ""}>
-              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Enable"}
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : actionsDisabled ? "Coming soon" : "Enable"}
             </Button>
           )}
         </div>
