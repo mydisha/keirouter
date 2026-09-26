@@ -386,3 +386,129 @@ select:disabled,
     padding-bottom: 1.25rem;
   }
 }
+
+/* ── Public landing ─────────────────────────────────────────────────
+   Self-hosted DM Sans (variable, weights 100–1000) and the cream / forest
+   palette from design.md §2. Scoped under `.landing-root` with a
+   `[data-theme="dark"]` variant so it never collides with the dashboard's
+   `.dark` theme. See docs/superpowers/specs/2026-09-26-public-landing-page-design.md. */
+@font-face {
+  font-family: "DM Sans";
+  font-style: normal;
+  src: url("/assets/fonts/dm-sans-latin-variable.woff2") format("woff2");
+  font-weight: 100 1000;
+  font-display: swap;
+}
+
+.landing-root {
+  font-family: "DM Sans", system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+
+  --bg: #f5f5ee;
+  --paper: #fffef9;
+  --soft: #edf1e7;
+  --ink: #29392d;
+  --muted: #606d60;
+  --line: #dce2d4;
+  --green: #315e43;
+  --accent-bg: #e3ecd9;
+  --on-accent: #fff;
+  --tag-bg: #e3ecd9;
+  --tag-ink: #315e43;
+  --nav-surface: #fffef9;
+  --terminal: #17201a;
+  --terminal-bar: #253229;
+  --terminal-ink: #e8efde;
+  --terminal-muted: #b9c8b5;
+  --gold: #edd386;
+  --silver: #dce3df;
+  --bronze: #e6b797;
+}
+
+.landing-root[data-theme="dark"] {
+  background: var(--bg);
+  color: var(--ink);
+
+  --bg: #0e1511;
+  --paper: #17221b;
+  --paper-2: #1d2b21;
+  --soft: #213026;
+  --ink: #e9f0e3;
+  --muted: #9db0a0;
+  --line: #2c3d30;
+  --line-strong: #3a4f3d;
+  --green: #a8cf94;
+  --accent-bg: #26402d;
+  --on-accent: #142619;
+  --nav-surface: #1b281f;
+  --terminal: #111a14;
+  --gold: #c9a96a;
+  --silver: #9fb3ad;
+  --bronze: #c08b62;
+}
+
+/* Rank medals (design.md §7.3) — three distinct silhouettes, colours per rank. */
+.landing-root .rank-crown .crown-face {
+  fill: #edd386;
+  stroke: #886728;
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+}
+.landing-root .rank-crown .crown-depth {
+  fill: #ad813c;
+  stroke: #886728;
+  stroke-width: 0.5;
+}
+.landing-root .rank-crown .crown-base {
+  fill: none;
+  stroke: #886728;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.landing-root .rank-crown[data-rank="2"] .crown-face {
+  fill: #dce3df;
+  stroke: #63766e;
+}
+.landing-root .rank-crown[data-rank="2"] .crown-depth {
+  fill: #8da497;
+}
+.landing-root .rank-crown[data-rank="3"] .crown-face {
+  fill: #e6b797;
+  stroke: #926746;
+}
+.landing-root .rank-crown[data-rank="3"] .crown-depth {
+  fill: #b4825b;
+}
+
+/* Dark: the crown picks up the forest-theme metals (--gold/--silver/--bronze). */
+.landing-root[data-theme="dark"] .rank-crown[data-rank="1"] .crown-face {
+  fill: var(--gold);
+}
+.landing-root[data-theme="dark"] .rank-crown[data-rank="1"] .crown-depth {
+  fill: var(--gold);
+  opacity: 0.55;
+}
+.landing-root[data-theme="dark"] .rank-crown[data-rank="1"] .crown-base {
+  stroke: var(--gold);
+}
+.landing-root[data-theme="dark"] .rank-crown[data-rank="2"] .crown-face {
+  fill: var(--silver);
+}
+.landing-root[data-theme="dark"] .rank-crown[data-rank="2"] .crown-depth {
+  fill: var(--silver);
+  opacity: 0.55;
+}
+.landing-root[data-theme="dark"] .rank-crown[data-rank="2"] .crown-base {
+  stroke: var(--silver);
+}
+.landing-root[data-theme="dark"] .rank-crown[data-rank="3"] .crown-face {
+  fill: var(--bronze);
+}
+.landing-root[data-theme="dark"] .rank-crown[data-rank="3"] .crown-depth {
+  fill: var(--bronze);
+  opacity: 0.55;
+}
+.landing-root[data-theme="dark"] .rank-crown[data-rank="3"] .crown-base {
+  stroke: var(--bronze);
+}
