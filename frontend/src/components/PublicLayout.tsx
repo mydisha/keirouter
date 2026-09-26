@@ -9,12 +9,18 @@ import { AnnouncementDialog } from "./AnnouncementDialog";
 
 type Theme = "light" | "dark";
 
+// Real, existing destination: the project repository README (same URL the
+// desktop tray opens and the README badges reference). There is no in-app
+// docs route and no terms-of-service page in this repo, so the dead `/docs`
+// and `/tos` links are not pointed at invented routes.
+const DOCS_URL = "https://github.com/mydisha/keirouter#readme";
+
 const TABS = [
   { id: "overview", label: "Monitor", href: "#overview", d: "M3 12h4l3-8 4 16 3-8h4" },
   { id: "models", label: "Model", href: "#models", d: "M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7" },
   { id: "purchase", label: "Beli", href: "#purchase", d: "M3 7V5h16v3M3 8h18v12H3V8Zm18 4h-6v4h6" },
   { id: "balance", label: "Saldo", href: "#balance", d: "M14 10a6 6 0 1 1-2-4M13 11l9-9m-4 4 3 3m-6 0 3 3" },
-  { id: "docs", label: "Docs", href: "/docs", d: "M3 4h7l2 2 2-2h7v16h-7l-2 1-2-1H3V4Zm9 2v15" },
+  { id: "docs", label: "Docs", href: DOCS_URL, d: "M3 4h7l2 2 2-2h7v16h-7l-2 1-2-1H3V4Zm9 2v15" },
 ] as const;
 
 const BELL_D = "M6 17h12l-1.5-3V9a4.5 4.5 0 0 0-9 0v5L6 17Zm4 3h4";
@@ -114,11 +120,14 @@ function TabLink({
   stacked?: boolean;
 }) {
   const isActive = active === tab.id;
+  const external = tab.href.startsWith("http");
   return (
     <a
       href={tab.href}
       role="tab"
       aria-selected={isActive}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noopener noreferrer" : undefined}
       onClick={() => onSelect(tab.id)}
       className={`flex items-center justify-center gap-2 rounded-xl no-underline transition-colors ${
         stacked ? "flex-col gap-1 px-1 py-1.5 text-[10px]" : "px-3 py-2 text-[13px]"
@@ -183,11 +192,13 @@ export function PublicLayout({ children }: { children: ReactNode }) {
           </div>
           <p>Developed by 0xverssace</p>
           <div className="flex items-center gap-4">
-            <a href="/docs" className="text-[var(--green)] hover:underline">
+            <a
+              href={DOCS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[var(--green)] hover:underline"
+            >
               Dokumentasi API
-            </a>
-            <a href="/tos" className="text-[var(--green)] hover:underline">
-              Syarat Layanan
             </a>
           </div>
         </div>

@@ -4,7 +4,7 @@ import { AuthGate } from "./components/AuthGate";
 import { Layout } from "./components/Layout";
 import { AdminBrandingProvider, PortalBrandingProvider } from "./contexts/BrandingContext";
 import { routeLoaders } from "./routePreload";
-import { DASHBOARD_PREFIX } from "./lib/dashboardRoutes";
+import { DASHBOARD_PREFIX, dashboard } from "./lib/dashboardRoutes";
 
 // Routes are code-split; loaders live in routePreload so navigation can warm
 // chunks before click without pulling page modules into the shell bundle.
@@ -88,6 +88,9 @@ export function App() {
                 <Route path="system" element={<SystemPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>
+              {/* Unknown dashboard sub-paths must not render the bare Layout
+                  shell; send them back to the dashboard root. */}
+              <Route path="*" element={<Navigate to={dashboard("/")} replace />} />
             </Routes>
             </AdminBrandingProvider>
           </AuthGate>
