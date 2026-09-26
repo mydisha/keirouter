@@ -3,6 +3,8 @@ package gateway
 import (
 	"net/http"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/connectors"
 	"github.com/mydisha/keirouter/backend/internal/core"
@@ -94,6 +96,63 @@ func (s *Server) publicModels(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSONCached(w, s.insightsCache, "public-models", map[string]any{"models": out})
+}
+
+// publicPerformance serves GET /v1/public/performance?model=<id>. The only input
+// is a model id matched against the last-24h aggregate set; unknown values are
+// rejected before any lookup, so the parameter cannot address other objects.
+func (s *Server) publicPerformance(w http.ResponseWriter, r *http.Request) {
+	model := strings.TrimSpace(r.URL.Query().Get("model"))
+	if model == "" {
+		writeError(w, http.StatusBadRequest, "unknown model")
+		return
+	}
+	ctx := r.Context()
+	since, to := sinceForPeriod("24h", ""), time.Now().UTC()
+	models, err := s.usage.ByModelAccurate(ctx, adminTenant, since)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "usage unavailable")
+		return
+	}
+	var found *store.AccurateModelUsage
+	for i := range models {
+		if models[i].Model == model {
+			found = &models[i]
+			break
+		}
+	}
+	if found == nil {
+		writeError(w, http.StatusBadRequest, "unknown model")
+		return
+	}
+	buckets, err := s.usage.TimelineAccurate(ctx, adminTenant, since, to, 24)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "usage unavailable")
+		return
+	}
+	// AccurateTimeBucket carries a 0-based bucket index, not a timestamp. Fill
+	// every slot so the client always gets a full 24-bar series; the client
+	// labels the bars locally.
+	series := make([]map[string]any, 24)
+	for i := range series {
+		series[i] = map[string]any{"bucket": i, "requests": int64(0), "tokens": int64(0)}
+	}
+	for _, b := range buckets {
+		if b.Bucket >= 0 && b.Bucket < len(series) {
+			series[b.Bucket] = map[string]any{
+				"bucket":   b.Bucket,
+				"requests": b.Requests,
+				"tokens":   b.PromptTokens + b.CompletionTokens,
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"model":          model,
+		"avg_latency_ms": found.AvgLatencyMS,
+		"avg_ttft_ms":    found.AvgTTFTMS,
+		"success_rate":   ratio(found.SuccessCount, found.TotalRequests),
+		"series":         series,
+	})
 }
 
 // topModelsByRequests maps aggregate model rows to the public leaderboard shape

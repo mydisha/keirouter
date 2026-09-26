@@ -318,6 +318,7 @@ func (s *Server) routes() chi.Router {
 		r.Use(s.publicRateLimiter)
 		r.Get("/v1/public/overview", s.publicOverview)
 		r.Get("/v1/public/models", s.publicModels)
+		r.Get("/v1/public/performance", s.publicPerformance)
 	})
 
 	// Dashboard auth endpoints (login/logout/status) are loopback-guarded but

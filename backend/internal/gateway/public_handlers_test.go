@@ -98,6 +98,67 @@ func TestPublicModelsHidesProviderSecrets(t *testing.T) {
 	}
 }
 
+func TestPublicPerformanceRejectsUnknownModel(t *testing.T) {
+	gw := newPublicTestGateway(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/performance?model=../../etc/passwd", nil)
+	gw.Handler().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "unknown model")
+}
+
+func TestPublicPerformanceRejectsEmptyModel(t *testing.T) {
+	gw := newPublicTestGateway(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/performance", nil)
+	gw.Handler().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "unknown model")
+}
+
+// TestPublicPerformanceReturnsKnownModel seeds usage for a catalog model and
+// asserts the per-model scalars plus a 24-entry hourly series, and that the
+// serialized body leaks no provider/caller secrets.
+func TestPublicPerformanceReturnsKnownModel(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	records := []store.UsageRecord{
+		{ID: "q1", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, EndToEndLatencyMS: 1000, TTFTMS: 200, CreatedAt: now},
+		{ID: "q2", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, EndToEndLatencyMS: 2000, TTFTMS: 400, CreatedAt: now},
+		{ID: "q3", TenantID: store.DefaultTenantID, APIKeyID: "key-b", Provider: "openai", Model: "gpt-4o", Status: "error", PromptTokens: 50, CompletionTokens: 0, EndToEndLatencyMS: 3000, TTFTMS: 600, CreatedAt: now},
+	}
+	require.NoError(t, db.Usage().RecordBatch(ctx, records))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/performance?model=gpt-4o", nil)
+	gw.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var payload struct {
+		Model        string  `json:"model"`
+		AvgLatencyMS int64   `json:"avg_latency_ms"`
+		AvgTTFTMS    int64   `json:"avg_ttft_ms"`
+		SuccessRate  float64 `json:"success_rate"`
+		Series       []struct {
+			Bucket   int   `json:"bucket"`
+			Requests int64 `json:"requests"`
+			Tokens   int64 `json:"tokens"`
+		} `json:"series"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Equal(t, "gpt-4o", payload.Model)
+	require.Equal(t, int64(2000), payload.AvgLatencyMS)
+	require.Equal(t, int64(400), payload.AvgTTFTMS)
+	require.InDelta(t, 2.0/3.0, payload.SuccessRate, 1e-9)
+	require.Len(t, payload.Series, 24)
+
+	body := rec.Body.String()
+	for _, secret := range []string{"api_key", "base_url", "request_id", "key_id", "key_name", "account_id", "pricing_key", "error_kind"} {
+		require.NotContains(t, body, secret)
+	}
+}
+
 func newPublicTestGateway(t *testing.T) *Server {
 	t.Helper()
 	_, gw := newPublicTestGatewayWithDB(t)
