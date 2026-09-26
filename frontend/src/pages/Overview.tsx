@@ -32,6 +32,7 @@ import {
   type UsageInsights,
   type UsageTerminalStatus,
 } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { microsToUSD } from "../lib/format";
 import { PageHeader } from "../components/Layout";
 import {
@@ -139,7 +140,7 @@ function BudgetNotice({
         </p>
       </div>
       <Link
-        to="/plans"
+              to={dashboard("/plans")}
         className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-[var(--text)] hover:text-accent-600"
       >
         Manage plans <ArrowUpRight className="h-3.5 w-3.5" />
@@ -511,7 +512,7 @@ function RecentActivityTable({ recent, providers }: { recent: RecentActivity[]; 
             <p className="mt-1 text-xs text-[var(--text-muted)]">Terminal request outcomes from the selected period.</p>
           </div>
         </div>
-        <Link to="/usage" className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text)]">
+        <Link to={dashboard("/usage")} className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text)]">
           Full accounting <ArrowUpRight className="h-3.5 w-3.5" />
         </Link>
       </div>

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
 import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, Check, Clock3, DollarSign, GripVertical, Layers, Loader2, Plus, Repeat2, Shield, X, Zap } from "lucide-react";
 import { api, type Chain } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
 import { Badge, Button, Card, ErrorCard, Field, Input, Modal, Spinner } from "../components/ui";
@@ -69,7 +70,7 @@ export function ChainEditorPage() {
       queryClient.invalidateQueries({ queryKey: ["health-chains"] });
       toast.success(isEdit ? "Chain updated" : "Chain created", `chain:${name.trim()} is ready to use.`);
       setDirty(false);
-      navigate("/chains");
+      navigate(dashboard("/chains"));
     },
     onError: (saveError: Error) => { setError(saveError.message); toast.error(isEdit ? "Save failed" : "Creation failed", saveError.message); },
   });
@@ -77,7 +78,7 @@ export function ChainEditorPage() {
   const updateStep = (stepID: string, next: Pick<DraftChainStep, "provider" | "model">) => { setSteps((current) => current.map((step) => step.id === stepID ? { ...step, ...next } : step)); setDirty(true); };
   const moveStep = (index: number, direction: -1 | 1) => { setSteps((current) => { const target = index + direction; if (target < 0 || target >= current.length) return current; const next = [...current]; [next[index], next[target]] = [next[target], next[index]]; return next; }); setDirty(true); };
   const removeStep = (stepID: string) => { setSteps((current) => current.length === 1 ? current : current.filter((step) => step.id !== stepID)); setDirty(true); };
-  const exit = () => { if (dirty) setConfirmExit(true); else navigate("/chains"); };
+  const exit = () => { if (dirty) setConfirmExit(true); else navigate(dashboard("/chains")); };
 
   if (chainsQuery.isLoading || (isEdit && !hydrated)) return <Spinner />;
   if (chainsQuery.isError) return <ErrorCard message="Could not load this chain. Please return to Chains and try again." />;
@@ -95,6 +96,6 @@ export function ChainEditorPage() {
       </div>
       <aside className="xl:sticky xl:top-5"><Card className="p-5"><p className="text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Route summary</p><div className="mt-3"><p className="truncate font-mono text-base font-semibold">chain:{name || "your-chain"}</p><p className="mt-1 text-sm text-[var(--text-muted)]">{strategyLabel(strategy)} · {completeSteps.length} configured model{completeSteps.length === 1 ? "" : "s"}</p></div><div className="my-5 border-t border-[var(--border)]" /><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--text-muted)]">Effective route</p><ChainRoutePreview chain={routeChain} providers={providersQuery.data?.providers ?? []} /><div className="mt-5 rounded-lg bg-[var(--bg-subtle)] px-3 py-2.5 text-xs leading-5 text-[var(--text-muted)]">{strategyDescription(strategy)}</div>{validationMessage && <p className="mt-4 flex gap-2 text-xs leading-5 text-[color:var(--color-warning)]"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{validationMessage}</p>}</Card></aside>
     </div>
-    <Modal open={confirmExit} onClose={() => setConfirmExit(false)} title="Discard unsaved changes" subtitle="Your route edits have not been saved."><div className="flex justify-end gap-2 px-6 py-4"><Button variant="ghost" onClick={() => setConfirmExit(false)}>Keep editing</Button><Button variant="danger" onClick={() => navigate("/chains")}>Discard changes</Button></div></Modal>
+    <Modal open={confirmExit} onClose={() => setConfirmExit(false)} title="Discard unsaved changes" subtitle="Your route edits have not been saved."><div className="flex justify-end gap-2 px-6 py-4"><Button variant="ghost" onClick={() => setConfirmExit(false)}>Keep editing</Button><Button variant="danger" onClick={() => navigate(dashboard("/chains"))}>Discard changes</Button></div></Modal>
   </>;
 }

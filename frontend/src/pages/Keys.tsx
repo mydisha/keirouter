@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus, Copy, Check, ToggleLeft, ToggleRight, ArrowLeft, ArrowRight, Trash2, Wallet, Wrench, DollarSign, Gauge, Link2, Activity, Ban, ListFilter, Search, X } from "lucide-react";
 import { api, type APIKey, type CreatedKey, type Plan } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { microsToUSD, formatTokens } from "../lib/format";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
@@ -632,7 +633,7 @@ export function KeysPage() {
                     selected={selectedIds.has(k.id)}
                     onSelect={() => toggleSelect(k.id)}
                     onToggle={() => toggleDisabled.mutate({ id: k.id, disabled: !k.disabled })}
-                    onConfigure={() => navigate(`/keys/${k.id}`)}
+                    onConfigure={() => navigate(dashboard(`/keys/${k.id}`))}
                     onRevoke={() => {
                       if (!confirm(`Revoke ${k.name}? This cannot be undone.`)) return;
                       remove.mutate(k.id);

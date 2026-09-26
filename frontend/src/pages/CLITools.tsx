@@ -5,6 +5,7 @@ import {
   TerminalSquare, ChevronRight, CheckCircle2, XCircle, CircleDot,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { brandColor } from "../lib/brand-colors";
 import { PageHeader } from "../components/Layout";
 import { Card } from "../components/ui";
@@ -54,7 +55,7 @@ export function CLIToolsPage() {
           {(tools.data?.tools ?? []).map((t) => (
             <button
               key={t.id}
-              onClick={() => navigate(`/cli-tools/${t.id}`)}
+              onClick={() => navigate(dashboard(`/cli-tools/${t.id}`))}
               className="group flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-5 py-4 text-left transition-colors hover:border-accent-500/40 hover:shadow-[var(--shadow-pop)]"
             >
               {/* Icon */}

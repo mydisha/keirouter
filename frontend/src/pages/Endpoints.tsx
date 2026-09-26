@@ -13,6 +13,7 @@ import {
   api,
   type TailscaleEnableResult,
 } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { PageHeader } from "../components/Layout";
 import {
   Card,
@@ -130,7 +131,7 @@ function ConnectionCard() {
           </div>
         </div>
         <Link
-          to="/keys"
+          to={dashboard("/keys")}
           className="inline-flex min-h-10 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-secondary-600 pl-3.5 pr-3 py-2 text-sm font-semibold text-white shadow-sm transition-[transform,background-color,box-shadow] duration-150 hover:bg-secondary-700 hover:shadow-[var(--shadow-card)] active:scale-[0.96] focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary-400/60 dark:bg-secondary-500 dark:hover:bg-secondary-400"
         >
           Manage keys

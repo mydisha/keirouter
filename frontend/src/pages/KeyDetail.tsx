@@ -20,6 +20,7 @@ import {
   type GuardrailPolicyConfig,
   type Plan,
 } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { useToast } from "../components/Toast";
 import { GuardrailEditor } from "../components/GuardrailEditor";
 import { ModelAccessList, ModelMultiSelect } from "../components/ModelSelect";
@@ -89,7 +90,7 @@ export function KeyDetailPage() {
       <Card>
         <EmptyState title="API key not found" hint="The key may have been revoked. Return to API Keys to choose another key." />
         <div className="flex justify-center pb-8">
-          <Button variant="ghost" onClick={() => navigate("/keys")}>Back to API keys</Button>
+          <Button variant="ghost" onClick={() => navigate(dashboard("/keys"))}>Back to API keys</Button>
         </div>
       </Card>
     );
@@ -110,7 +111,7 @@ export function KeyDetailPage() {
     <div className="space-y-4">
       <button
         type="button"
-        onClick={() => navigate("/keys")}
+            onClick={() => navigate(dashboard("/keys"))}
         className="inline-flex min-h-10 items-center gap-2 rounded-lg px-2 text-sm font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
       >
         <ArrowLeft className="h-4 w-4" />
