@@ -1,0 +1,67 @@
+name: keirouter-localhost
+
+# Bundled KeiRouter + Postgres, localhost-only.
+# - Tidak ada port yang terekspos ke LAN/internet.
+# - Postgres TANPA publish ports -> hanya bisa diakses via network internal `keirouter`.
+# - KeiRouter di-publish HANYA ke 127.0.0.1 -> tidak bind ke 0.0.0.0 di host.
+# Pakai: docker compose -f compose.localhost.yaml up -d --build
+
+services:
+  keirouter:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+      args:
+        VERSION: ${KEIROUTER_VERSION:-dev}
+        SOURCE_COMMIT: ${SOURCE_COMMIT:-}
+    image: ${KEIROUTER_IMAGE:-ghcr.io/mydisha/keirouter:latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      # Kunci 127.0.0.1: format "IP:host_port:container_port" agar Docker
+      # hanya listen di loopback host. Jangan ubah ke "20180:20180"
+      # (itu bind ke 0.0.0.0 = terekspos ke LAN).
+      - "127.0.0.1:${KEIROUTER_PORT:-20180}:20180"
+    volumes:
+      - keirouter-data:/data
+    environment:
+      KEIROUTER_DATA__DIR: /data
+      # Ini HOST di DALAM container, wajib tetap 0.0.0.0 agar port-forward
+      # dari host bisa masuk. Pembatasan loopback di host diatur oleh
+      # `ports: 127.0.0.1:...` di atas + BIND_LOOPBACK_ONLY di bawah.
+      KEIROUTER_SERVER__HOST: 0.0.0.0
+      KEIROUTER_SERVER__PORT: 20180
+      # WAJIB false di Docker: middleware ini cek RemoteAddr TCP yang dilihat
+      # server *di dalam* container — via port-publish Docker itu selalu IP
+      # gateway (172.x), tidak pernah 127.0.0.1, sehingga `true` memblokir
+      # SEMUA request dashboard/API dengan 403. Proteksi loopback sudah
+      # dipegang oleh `ports: 127.0.0.1:...` di atas (port tidak bind ke LAN).
+      KEIROUTER_SECURITY__BIND_LOOPBACK_ONLY: ${KEIROUTER_BIND_LOOPBACK_ONLY:-false}
+      KEIROUTER_SECURITY__ALLOW_PRIVATE_BASE_URL: ${KEIROUTER_SECURITY__ALLOW_PRIVATE_BASE_URL:-false}
+      KEIROUTER_SECURITY__TRUST_FORWARDED_HEADERS: ${KEIROUTER_TRUST_FORWARDED_HEADERS:-true}
+      KEIROUTER_SECURITY__MASTER_KEY: ${KEIROUTER_MASTER_KEY:-}
+      KEIROUTER_LOG__FORMAT: ${KEIROUTER_LOG_FORMAT:-json}
+      KEIROUTER_DATABASE__DRIVER: postgres
+      KEIROUTER_DATABASE__DSN: "postgres://keirouter:${POSTGRES_PASSWORD:-keirouter}@postgres:5432/keirouter?sslmode=disable"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    # SENGAJA tidak ada `ports:` -> tidak terekspos ke host/LAN sama sekali.
+    environment:
+      POSTGRES_USER: keirouter
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-keirouter}
+      POSTGRES_DB: keirouter
+    volumes:
+      - keirouter-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keirouter -d keirouter"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  keirouter-data:
+  keirouter-pg:
