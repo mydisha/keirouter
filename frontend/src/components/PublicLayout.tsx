@@ -38,10 +38,10 @@ function UiIcon({ d, size = 20 }: { d: string; size?: number }) {
   );
 }
 
-function BrandMark({ size = 38 }: { size?: number }) {
+function BrandMark({ className = "h-[31px] w-[31px] md:h-[38px] md:w-[38px]" }: { className?: string }) {
   return (
-    <span className="inline-flex shrink-0" style={{ width: size, height: size }} aria-hidden="true">
-      <svg viewBox="0 0 40 40" width={size} height={size}>
+    <span className={`inline-flex shrink-0 ${className}`} aria-hidden="true">
+      <svg viewBox="0 0 40 40" className="h-full w-full">
         <rect width="40" height="40" rx="11" fill="#252820" />
         <path
           fill="none"
