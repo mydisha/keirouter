@@ -3,14 +3,19 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/mydisha/keirouter/backend/internal/config"
+	"github.com/mydisha/keirouter/backend/internal/core"
+	"github.com/mydisha/keirouter/backend/internal/dispatch"
+	"github.com/mydisha/keirouter/backend/internal/pipeline"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
@@ -95,6 +100,10 @@ func TestPublicModelsHidesProviderSecrets(t *testing.T) {
 	body := rec.Body.String()
 	for _, secret := range []string{"api_key", "base_url", "request_id", "key_id", "key_name", "account_id", "pricing_key"} {
 		require.NotContains(t, body, secret)
+	}
+	// The seeded key identifiers must not appear under any key name.
+	for _, id := range []string{"key-a", "key-b", "key-c"} {
+		require.NotContains(t, body, id)
 	}
 }
 
@@ -181,6 +190,9 @@ func TestPublicPerformanceReturnsKnownModel(t *testing.T) {
 	for _, secret := range []string{"api_key", "base_url", "request_id", "key_id", "key_name", "account_id", "pricing_key", "error_kind"} {
 		require.NotContains(t, body, secret)
 	}
+	for _, id := range []string{"key-a", "key-b"} {
+		require.NotContains(t, body, id)
+	}
 }
 
 func TestPublicArchivedEmptyDBIsEmptyArrays(t *testing.T) {
@@ -240,6 +252,7 @@ func TestPublicArchivedPodiumAndHistory(t *testing.T) {
 	for _, secret := range []string{"api_key", "base_url", "request_id", "key_id", "key_name", "account_id", "pricing_key", "error_kind"} {
 		require.NotContains(t, body, secret)
 	}
+	require.NotContains(t, body, "key-a")
 }
 
 // TestPublicRecentHasNoIdentifiers seeds a record and asserts publicOverview's
@@ -280,6 +293,57 @@ func TestPublicRecentHasNoIdentifiers(t *testing.T) {
 	for _, secret := range []string{"api_key", "base_url", "request_id", "key_id", "key_name", "account_id", "pricing_key", "error_kind"} {
 		require.NotContains(t, body, secret)
 	}
+	// A leak under a different key name would still expose the raw identifier
+	// values, so assert the seeded id values themselves are absent.
+	require.NotContains(t, body, "req-secret-1")
+	require.NotContains(t, body, "key-secret")
+}
+
+// spyConnectorSource counts connector resolutions. dispatch.Dispatcher calls
+// ConnectorSource.Get for every target before checking whether any account
+// exists, so any handler that reaches the dispatcher (directly or through the
+// pipeline) bumps this counter regardless of seeded accounts.
+type spyConnectorSource struct{ gets int32 }
+
+func (s *spyConnectorSource) Get(string) (core.Connector, error) {
+	atomic.AddInt32(&s.gets, 1)
+	return nil, errors.New("spy: no connector")
+}
+
+// TestPublicNeverDispatches proves spec §6.4: no public handler reaches the
+// dispatcher. It injects a pipeline whose dispatcher is backed by a counting
+// connector source and hits all four /v1/public/* endpoints. If any handler
+// started a model/provider call, the dispatcher would resolve a connector and
+// the counter would be non-zero — so this test fails on that regression.
+func TestPublicNeverDispatches(t *testing.T) {
+	db, err := store.Open(context.Background(), config.DatabaseConfig{Driver: "sqlite", DSN: ":memory:"}, t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, db.Migrate(context.Background()))
+	require.NoError(t, db.Tenants().EnsureDefault(context.Background()))
+	t.Cleanup(func() { _ = db.Close() })
+
+	require.NoError(t, db.Usage().RecordBatch(context.Background(), []store.UsageRecord{
+		{ID: "d1", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 10, CompletionTokens: 5, CreatedAt: time.Now().UTC()},
+	}))
+
+	spy := &spyConnectorSource{}
+	disp := dispatch.New(spy, db.Accounts(), nil)
+	pipe := pipeline.New(pipeline.Deps{Dispatcher: disp})
+	gw := New(Deps{Config: config.Default(), DB: db, Usage: db.Usage(), Settings: db.Settings(), Pipeline: pipe})
+
+	for _, path := range []string{
+		"/v1/public/overview",
+		"/v1/public/models",
+		"/v1/public/performance?model=gpt-4o",
+		"/v1/public/archived",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		gw.Handler().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "%s: %s", path, rec.Body.String())
+	}
+
+	require.Zero(t, atomic.LoadInt32(&spy.gets), "public handlers must never dispatch a model/provider call")
 }
 
 // TestPublicRejectsNonGet locks the security contract from spec §6: the
