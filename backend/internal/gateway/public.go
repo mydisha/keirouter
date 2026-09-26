@@ -30,6 +30,21 @@ func (s *Server) publicOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	top := topModelsByRequests(models, 10)
+	recent, err := s.usage.PublicRecentRecords(ctx, adminTenant, since, 10)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "usage unavailable")
+		return
+	}
+	recentOut := make([]map[string]any, 0, len(recent))
+	for _, rec := range recent {
+		recentOut = append(recentOut, map[string]any{
+			"provider":   rec.Provider,
+			"model":      rec.Model,
+			"status":     rec.Status,
+			"latency_ms": rec.LatencyMS,
+			"ttft_ms":    rec.TTFTMS,
+		})
+	}
 	// ponytail: rps is derived from the 24h total (avg), not a true 10s window.
 	// Upgrade to a live counter if the landing needs a real instantaneous rate.
 	rps := float64(summary.TotalRequests) / (24 * 3600)
@@ -40,7 +55,36 @@ func (s *Server) publicOverview(w http.ResponseWriter, r *http.Request) {
 		"success_24h":    summary.SuccessCount,
 		"failed_24h":     summary.FailureCount,
 		"top_models":     top,
+		"recent":         recentOut,
 	})
+}
+
+// publicArchived serves GET /v1/public/archived: an all-time podium (top two
+// models by token) plus a compact per-model history. Aggregate only.
+func (s *Server) publicArchived(w http.ResponseWriter, r *http.Request) {
+	if s.cacheHit(w, "public-archived") {
+		return
+	}
+	models, err := s.usage.ByModelAccurate(r.Context(), adminTenant, time.Time{})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "usage unavailable")
+		return
+	}
+	sort.Slice(models, func(i, j int) bool {
+		return models[i].PromptTokens+models[i].CompletionTokens > models[j].PromptTokens+models[j].CompletionTokens
+	})
+	podium := make([]map[string]any, 0, 2)
+	for i, m := range models {
+		if i >= 2 {
+			break
+		}
+		podium = append(podium, map[string]any{"model": m.Model, "tokens": m.PromptTokens + m.CompletionTokens, "requests": m.TotalRequests})
+	}
+	history := make([]map[string]any, 0, len(models))
+	for _, m := range models {
+		history = append(history, map[string]any{"model": m.Model, "tokens": m.PromptTokens + m.CompletionTokens, "requests": m.TotalRequests, "status": "arsip"})
+	}
+	writeJSONCached(w, s.insightsCache, "public-archived", map[string]any{"podium": podium, "history": history})
 }
 
 // publicModels serves GET /v1/public/models: models actually used in the last

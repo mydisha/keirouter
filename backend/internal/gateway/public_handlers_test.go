@@ -22,7 +22,7 @@ func TestPublicOverviewEmptyDBIsZeroed(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.JSONEq(t, `{"total_requests":0,"total_tokens":0,"rps_10s":0,
-		"success_24h":0,"failed_24h":0,"top_models":[]}`, rec.Body.String())
+		"success_24h":0,"failed_24h":0,"top_models":[],"recent":[]}`, rec.Body.String())
 }
 
 func TestPublicModelsEmptyDBIsEmptyArray(t *testing.T) {
@@ -176,6 +176,105 @@ func TestPublicPerformanceReturnsKnownModel(t *testing.T) {
 	require.Equal(t, int64(240), byBucket[bucketA].tokens)
 	require.Equal(t, int64(1), byBucket[bucketB].requests)
 	require.Equal(t, int64(50), byBucket[bucketB].tokens)
+
+	body := rec.Body.String()
+	for _, secret := range []string{"api_key", "base_url", "request_id", "key_id", "key_name", "account_id", "pricing_key", "error_kind"} {
+		require.NotContains(t, body, secret)
+	}
+}
+
+func TestPublicArchivedEmptyDBIsEmptyArrays(t *testing.T) {
+	gw := newPublicTestGateway(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/archived", nil)
+	gw.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.JSONEq(t, `{"podium":[],"history":[]}`, rec.Body.String())
+}
+
+// TestPublicArchivedPodiumAndHistory seeds three models with descending token
+// totals and asserts the all-time podium (top two by tokens) plus a full
+// per-model history, and that the serialized body leaks no secrets.
+func TestPublicArchivedPodiumAndHistory(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	records := []store.UsageRecord{
+		{ID: "a1", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "big", Status: "success", PromptTokens: 900, CompletionTokens: 100, CreatedAt: now},
+		{ID: "a2", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "mid", Status: "success", PromptTokens: 400, CompletionTokens: 100, CreatedAt: now},
+		{ID: "a3", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "anthropic", Model: "small", Status: "success", PromptTokens: 50, CompletionTokens: 50, CreatedAt: now},
+	}
+	require.NoError(t, db.Usage().RecordBatch(ctx, records))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/archived", nil)
+	gw.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	type item struct {
+		Model    string `json:"model"`
+		Tokens   int64  `json:"tokens"`
+		Requests int64  `json:"requests"`
+		Status   string `json:"status"`
+	}
+	var payload struct {
+		Podium  []item `json:"podium"`
+		History []item `json:"history"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Podium, 2)
+	require.Equal(t, "big", payload.Podium[0].Model)
+	require.Equal(t, int64(1000), payload.Podium[0].Tokens)
+	require.Equal(t, int64(1), payload.Podium[0].Requests)
+	require.Equal(t, "mid", payload.Podium[1].Model)
+
+	require.Len(t, payload.History, 3)
+	for _, h := range payload.History {
+		require.Equal(t, "arsip", h.Status)
+	}
+	require.Equal(t, "big", payload.History[0].Model)
+	require.Equal(t, "small", payload.History[2].Model)
+
+	body := rec.Body.String()
+	for _, secret := range []string{"api_key", "base_url", "request_id", "key_id", "key_name", "account_id", "pricing_key", "error_kind"} {
+		require.NotContains(t, body, secret)
+	}
+}
+
+// TestPublicRecentHasNoIdentifiers seeds a record and asserts publicOverview's
+// recent array carries the redacted fields only — provider/model/status and
+// latencies, never request_id or any key/account identifier.
+func TestPublicRecentHasNoIdentifiers(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	records := []store.UsageRecord{
+		{ID: "r1", RequestID: "req-secret-1", TenantID: store.DefaultTenantID, APIKeyID: "key-secret", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, LatencyMS: 1234, TTFTMS: 210, CreatedAt: now},
+	}
+	require.NoError(t, db.Usage().RecordBatch(ctx, records))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/overview", nil)
+	gw.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var payload struct {
+		Recent []struct {
+			Provider  string `json:"provider"`
+			Model     string `json:"model"`
+			Status    string `json:"status"`
+			LatencyMS int    `json:"latency_ms"`
+			TTFTMS    int    `json:"ttft_ms"`
+		} `json:"recent"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Recent, 1)
+	require.Equal(t, "openai", payload.Recent[0].Provider)
+	require.Equal(t, "gpt-4o", payload.Recent[0].Model)
+	require.Equal(t, "success", payload.Recent[0].Status)
+	require.Equal(t, 1234, payload.Recent[0].LatencyMS)
+	require.Equal(t, 210, payload.Recent[0].TTFTMS)
 
 	body := rec.Body.String()
 	for _, secret := range []string{"api_key", "base_url", "request_id", "key_id", "key_name", "account_id", "pricing_key", "error_kind"} {

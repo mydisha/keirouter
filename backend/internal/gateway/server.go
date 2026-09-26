@@ -319,6 +319,7 @@ func (s *Server) routes() chi.Router {
 		r.Get("/v1/public/overview", s.publicOverview)
 		r.Get("/v1/public/models", s.publicModels)
 		r.Get("/v1/public/performance", s.publicPerformance)
+		r.Get("/v1/public/archived", s.publicArchived)
 	})
 
 	// Dashboard auth endpoints (login/logout/status) are loopback-guarded but
