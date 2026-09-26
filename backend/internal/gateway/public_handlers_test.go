@@ -282,6 +282,47 @@ func TestPublicRecentHasNoIdentifiers(t *testing.T) {
 	}
 }
 
+// TestPublicRejectsNonGet locks the security contract from spec §6: the
+// public API is read-only. A POST to a GET-only route must not dispatch; chi
+// answers 405 (or 404), never a handler run.
+func TestPublicRejectsNonGet(t *testing.T) {
+	gw := newPublicTestGateway(t)
+	for _, path := range []string{
+		"/v1/public/overview",
+		"/v1/public/models",
+		"/v1/public/performance",
+		"/v1/public/archived",
+	} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		gw.Handler().ServeHTTP(rec, req)
+		require.Contains(t, []int{http.StatusMethodNotAllowed, http.StatusNotFound}, rec.Code, path)
+	}
+}
+
+// TestPublicRateLimitReturns429 locks the per-IP budget: requests within budget
+// are served (200), and once the budget is spent the limiter short-circuits
+// with 429. Looping to 100 makes the test independent of the exact budget.
+func TestPublicRateLimitReturns429(t *testing.T) {
+	gw := newPublicTestGateway(t)
+	first, last := 0, 0
+	for i := 0; i < 100; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/v1/public/overview", nil)
+		gw.Handler().ServeHTTP(rec, req)
+		last = rec.Code
+		if i == 0 {
+			first = rec.Code
+		}
+		require.Contains(t, []int{http.StatusOK, http.StatusTooManyRequests}, rec.Code, "request %d", i)
+		if last == http.StatusTooManyRequests {
+			break
+		}
+	}
+	require.Equal(t, http.StatusOK, first, "first request within budget must be allowed")
+	require.Equal(t, http.StatusTooManyRequests, last, "must exceed the per-IP budget within 100 requests")
+}
+
 func newPublicTestGateway(t *testing.T) *Server {
 	t.Helper()
 	_, gw := newPublicTestGatewayWithDB(t)
