@@ -50,3 +50,21 @@ func TestByModelAccurateSeparatesLegacyAndMissingPricing(t *testing.T) {
 	require.Equal(t, int64(1), missing.MissingPricingRequests)
 	require.Equal(t, int64(0), missing.LegacyPricingRequests)
 }
+
+func TestDistinctKeysPerModelCounts(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	records := []UsageRecord{
+		{ID: "k1", TenantID: DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", CreatedAt: now},
+		{ID: "k2", TenantID: DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", CreatedAt: now},
+		{ID: "k3", TenantID: DefaultTenantID, APIKeyID: "key-b", Provider: "openai", Model: "gpt-4o", Status: "success", CreatedAt: now},
+		{ID: "k4", TenantID: DefaultTenantID, APIKeyID: "key-c", Provider: "anthropic", Model: "claude", Status: "success", CreatedAt: now},
+	}
+	require.NoError(t, db.Usage().RecordBatch(ctx, records))
+
+	counts, err := db.Usage().DistinctKeysPerModel(ctx, DefaultTenantID, now.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, 2, counts["openai\x00gpt-4o"])
+	require.Equal(t, 1, counts["anthropic\x00claude"])
+}

@@ -20,7 +20,30 @@ func TestPublicOverviewEmptyDBIsZeroed(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.JSONEq(t, `{"total_requests":0,"total_tokens":0,"rps_10s":0,
-		"success_24h":0,"failed_24h":0,"top_models":[]}`, normalizePublic(rec.Body.String()))
+		"success_24h":0,"failed_24h":0,"top_models":[]}`, rec.Body.String())
+}
+
+func TestPublicModelsEmptyDBIsEmptyArray(t *testing.T) {
+	gw := newPublicTestGateway(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/models", nil)
+	gw.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.JSONEq(t, `{"models":[]}`, rec.Body.String())
+}
+
+func TestPublicModelsHidesProviderSecrets(t *testing.T) {
+	gw := newPublicTestGateway(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/models", nil)
+	gw.Handler().ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	body := rec.Body.String()
+	for _, secret := range []string{"api_key", "base_url", "request_id", "key_id", "key_name", "account_id", "pricing_key"} {
+		require.NotContains(t, body, secret)
+	}
 }
 
 func newPublicTestGateway(t *testing.T) *Server {
@@ -32,7 +55,3 @@ func newPublicTestGateway(t *testing.T) *Server {
 	t.Cleanup(func() { _ = db.Close() })
 	return New(Deps{Config: config.Default(), DB: db, Usage: db.Usage(), Settings: db.Settings()})
 }
-
-// normalizePublic collapses the asserted subset so extra safe fields don't
-// break equality while still failing on any secret key.
-func normalizePublic(body string) string { return body }
