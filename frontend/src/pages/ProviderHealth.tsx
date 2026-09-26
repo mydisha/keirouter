@@ -12,6 +12,7 @@ import {
   type HealthChainRow,
   type HealthProbeRow,
 } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { PageHeader } from "../components/Layout";
 import {
   Badge,
@@ -658,7 +659,7 @@ function ChartCard({ title, children }: { title: string; children: ReactNode }) 
 
 function BackLink() {
   return (
-    <a href="/provider-health" className="inline-flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
+    <a href={dashboard("/provider-health")} className="inline-flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
       <ArrowLeft className="h-4 w-4" /> Back
     </a>
   );

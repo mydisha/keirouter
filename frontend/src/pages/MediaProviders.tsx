@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useParams, useNavigate } from "react-router-dom";
 import { Image, AudioLines, Mic, Search, Globe, Boxes, ArrowRight } from "lucide-react";
 import { api, type Provider } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { PageHeader } from "../components/Layout";
 import { Card, CardHeader, Badge, Spinner, EmptyState } from "../components/ui";
 
@@ -35,7 +36,7 @@ export function MediaProvidersPage() {
   const activeFilter = urlKind || filter;
   const setActiveFilter = (k: string) => {
     setFilter(k);
-    navigate(`/media/${k}`, { replace: true });
+      navigate(dashboard(`/media/${k}`), { replace: true });
   };
 
   const list = useMemo(() => {
@@ -104,7 +105,7 @@ function MediaRow({ provider: p, kind }: { provider: Provider; kind: string }) {
 
   return (
     <button
-      onClick={() => navigate(`/media/${kind}/${p.id}`)}
+              onClick={() => navigate(dashboard(`/media/${kind}/${p.id}`))}
       className="flex items-start gap-3 bg-[var(--bg-elevated)] px-5 py-4 text-left transition-colors hover:bg-ink-50 dark:hover:bg-ink-800/40"
     >
       <ProviderIcon provider={p} />

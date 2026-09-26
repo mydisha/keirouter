@@ -14,6 +14,7 @@ import { CommandCodeConnectModal } from "../components/CommandCodeConnectModal";
 import { CustomModelsSection } from "../components/CustomModelsSection";
 import { useToast } from "../components/Toast";
 import { parseKeys } from "../lib/bulk";
+import { dashboard } from "../lib/dashboardRoutes";
 
 import {
   Card,
@@ -332,7 +333,7 @@ export function ProviderDetailPage() {
         ? `${provider?.display_name} has been removed. ${data.accounts_disabled} bound account(s) disabled.`
         : `${provider?.display_name} has been removed.`;
       toast.success("Provider deleted", detail);
-      navigate("/providers");
+      navigate(dashboard("/providers"));
     },
     onError: (e: Error) => toast.error("Failed to delete provider", e.message),
   });
@@ -435,7 +436,7 @@ export function ProviderDetailPage() {
     return (
       <Card className="px-6 py-12 text-center">
         <p className="text-sm text-[var(--text-muted)]">Provider not found.</p>
-        <Link to="/providers" className="mt-3 inline-block text-sm font-medium text-accent-600">
+        <Link to={dashboard("/providers")} className="mt-3 inline-block text-sm font-medium text-accent-600">
           Back to Providers
         </Link>
       </Card>
@@ -490,7 +491,7 @@ export function ProviderDetailPage() {
     <>
       <nav aria-label="Breadcrumb" className="mb-4 flex items-center gap-2 text-sm text-[var(--text-muted)]">
         <Link
-          to="/providers"
+          to={dashboard("/providers")}
           className="inline-flex min-h-9 items-center gap-2 rounded-lg px-1 font-medium transition-colors hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
         >
           <ArrowLeft className="h-4 w-4" />

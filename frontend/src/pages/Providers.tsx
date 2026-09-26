@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Boxes, Search, X, AlertTriangle, Plus, MessageSquare, Database, ImageIcon, Mic, Volume2, Globe, Link2 } from "lucide-react";
 import { api, type Provider, type Account } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { PageHeader } from "../components/Layout";
 import { Card, CardHeader, Badge, Spinner, EmptyState, StatusDot, Button, Modal, Field, Input, Select, ErrorBanner } from "../components/ui";
 import { useToast } from "../components/Toast";
@@ -298,7 +299,7 @@ function CreateCustomProviderModal({ open, onClose }: { open: boolean; onClose: 
       toast.success("Custom provider created", "Add an account and models to start routing.");
       reset();
       onClose();
-      navigate(`/providers/${p.id}`);
+      navigate(dashboard(`/providers/${p.id}`));
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -385,7 +386,7 @@ function ProviderCard({ provider: p, accountCount }: { provider: Provider; accou
   return (
     <button
       type="button"
-      onClick={() => navigate(`/providers/${p.id}`)}
+                onClick={() => navigate(dashboard(`/providers/${p.id}`))}
       aria-label={`Open ${p.display_name}`}
       className="group relative flex h-full w-full flex-col items-start gap-3 rounded-none bg-[var(--bg-elevated)] p-5 text-left transition-colors hover:bg-ink-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-400/60 dark:hover:bg-ink-800/40"
     >

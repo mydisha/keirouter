@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Sparkles, X, ExternalLink, ArrowUpCircle, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { ChangelogMarkdown } from "./ChangelogMarkdown";
 
 // useUpdateInfo is a shared hook so the TopBar badge and the Settings page
@@ -100,7 +101,7 @@ export function UpdateNotification() {
 
           <div className="flex shrink-0 items-center justify-between gap-2 border-t border-[var(--border)] bg-[var(--bg-elevated)]/90 px-4 py-3">
             <Link
-              to="/settings#system"
+              to={dashboard("/settings#system")}
               onClick={() => setOpen(false)}
               className="flex items-center gap-1.5 rounded-lg bg-accent-50 px-3 py-1.5 text-xs font-semibold text-accent-700 transition-colors hover:bg-accent-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 dark:bg-accent-900/30 dark:text-accent-300 dark:hover:bg-accent-900/50"
             >

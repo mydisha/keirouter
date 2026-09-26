@@ -313,6 +313,15 @@ func (s *Server) routes() chi.Router {
 	r.Get("/v1/portal/keys/{id}/usage", s.handlePortalKeyUsage)
 	r.Get("/v1/portal/branding", s.portalBranding)
 
+	// Public landing API: read-only aggregates, no auth, per-IP limited.
+	r.Group(func(r chi.Router) {
+		r.Use(s.publicRateLimiter)
+		r.Get("/v1/public/overview", s.publicOverview)
+		r.Get("/v1/public/models", s.publicModels)
+		r.Get("/v1/public/performance", s.publicPerformance)
+		r.Get("/v1/public/archived", s.publicArchived)
+	})
+
 	// Dashboard auth endpoints (login/logout/status) are loopback-guarded but
 	// do not require a session — they are how a session is obtained.
 	// Login has rate limiting to prevent brute force attacks.

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import {
   Search,
   LayoutGrid,
@@ -215,7 +216,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const go = useCallback(
     (path: string, id?: string) => {
       if (id) rememberRecent(id);
-      navigate(path);
+      navigate(dashboard(path));
       onClose();
     },
     [navigate, onClose, rememberRecent],

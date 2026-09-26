@@ -32,6 +32,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { CommandPalette } from "./CommandPalette";
 import { UpdateNotification } from "./UpdateNotification";
 import { preloadRoute, type RoutePreloadKey } from "../routePreload";
+import { dashboard, DASHBOARD_PREFIX } from "../lib/dashboardRoutes";
 
 interface NavItem {
   to: string;
@@ -124,10 +125,13 @@ const TITLE_BY_PREFIX: [string, string][] = [
 ];
 
 function titleForPath(pathname: string): string {
-  const exact = TITLE_BY_PATH[pathname];
+  const path = pathname.startsWith(DASHBOARD_PREFIX)
+    ? pathname.slice(DASHBOARD_PREFIX.length) || "/"
+    : pathname;
+  const exact = TITLE_BY_PATH[path];
   if (exact) return exact;
   for (const [prefix, label] of TITLE_BY_PREFIX) {
-    if (pathname.startsWith(prefix)) return label;
+    if (path.startsWith(prefix)) return label;
   }
   return "";
 }
@@ -287,7 +291,7 @@ function SidebarContent({ onNavigate }: { onNavigate: () => void }) {
               {group.items.map((item) => (
                 <li key={item.to}>
                   <NavLink
-                    to={item.to}
+                    to={dashboard(item.to)}
                     end={item.end}
                     onMouseEnter={() => item.preload && preloadRoute(item.preload)}
                     onFocus={() => item.preload && preloadRoute(item.preload)}

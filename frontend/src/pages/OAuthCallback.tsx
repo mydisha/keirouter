@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { CheckCircle, XCircle } from "lucide-react";
+import { dashboard } from "../lib/dashboardRoutes";
 
 /**
  * OAuthCallback is the landing page after a provider redirects back to the
@@ -58,11 +59,11 @@ export function OAuthCallbackPage() {
           window.close();
         } catch {
           // close blocked — fall back to navigating in place
-          navigate(provider ? `/providers/${provider}` : "/providers", { replace: true });
+          navigate(provider ? dashboard(`/providers/${provider}`) : dashboard("/providers"), { replace: true });
         }
         return;
       }
-      navigate(provider ? `/providers/${provider}` : "/providers", { replace: true });
+      navigate(provider ? dashboard(`/providers/${provider}`) : dashboard("/providers"), { replace: true });
     }, 1200);
 
     return () => clearTimeout(t);

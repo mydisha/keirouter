@@ -44,6 +44,7 @@ import {
   type UsageSource,
   type UsageTerminalStatus,
 } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { PageHeader } from "../components/Layout";
 import {
   Badge,
@@ -582,7 +583,7 @@ function ProviderHealthOverview({
 					: "Current rolling attempt telemetry."}
           </p>
         </div>
-        <Link to="/provider-health" className="text-xs font-semibold text-accent-600 hover:text-accent-700 dark:text-accent-300">
+        <Link to={dashboard("/provider-health")} className="text-xs font-semibold text-accent-600 hover:text-accent-700 dark:text-accent-300">
           Open full health dashboard →
         </Link>
       </div>

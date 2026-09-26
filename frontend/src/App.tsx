@@ -1,9 +1,10 @@
 import { lazy, Suspense } from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import { AuthGate } from "./components/AuthGate";
 import { Layout } from "./components/Layout";
 import { AdminBrandingProvider, PortalBrandingProvider } from "./contexts/BrandingContext";
 import { routeLoaders } from "./routePreload";
+import { DASHBOARD_PREFIX, dashboard } from "./lib/dashboardRoutes";
 
 // Routes are code-split; loaders live in routePreload so navigation can warm
 // chunks before click without pulling page modules into the shell bundle.
@@ -31,6 +32,7 @@ const KeyPortalPage = lazy(routeLoaders["/portal"]);
 const KeyDetailPage = lazy(routeLoaders["/key-detail"]);
 const GuardrailsPage = lazy(routeLoaders["/guardrails"]);
 const ProviderHealthPage = lazy(routeLoaders["/provider-health"]);
+const PublicLanding = lazy(() => import("./pages/PublicLanding"));
 
 function PageFallback() {
   return (
@@ -44,12 +46,15 @@ export function App() {
   return (
     <Suspense fallback={<PageFallback />}>
       <Routes>
+        {/* Public landing — no auth. */}
+        <Route path="/" element={<PublicLanding />} />
         <Route path="portal" element={
           <PortalBrandingProvider>
             <KeyPortalPage />
           </PortalBrandingProvider>
         } />
-        <Route path="*" element={
+        {/* Authenticated dashboard, scoped under DASHBOARD_PREFIX. */}
+        <Route path={`${DASHBOARD_PREFIX}/*`} element={
           <AuthGate>
             <AdminBrandingProvider>
             <Routes>
@@ -83,10 +88,15 @@ export function App() {
                 <Route path="system" element={<SystemPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>
+              {/* Unknown dashboard sub-paths must not render the bare Layout
+                  shell; send them back to the dashboard root. */}
+              <Route path="*" element={<Navigate to={dashboard("/")} replace />} />
             </Routes>
             </AdminBrandingProvider>
           </AuthGate>
         } />
+        {/* Redirect any unmatched path (e.g. bare legacy dashboard paths) home. */}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Suspense>
   );

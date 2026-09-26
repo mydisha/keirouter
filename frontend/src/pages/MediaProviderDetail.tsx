@@ -7,6 +7,7 @@ import {
   ToggleLeft, ToggleRight, Loader2,
 } from "lucide-react";
 import { api, type Provider, type Account } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { useToast } from "../components/Toast";
 import {
   Card, SectionHeader, CardHeader, Button, Input, Field,
@@ -140,7 +141,7 @@ export function MediaProviderDetailPage() {
   if (!provider) {
     return (
       <div className="space-y-4">
-        <Link to={`/media/${kind}`} className="flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
+        <Link to={dashboard(`/media/${kind}`)} className="flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
           <ArrowLeft className="h-4 w-4" /> Back to {meta.label}
         </Link>
         <EmptyState title="Provider not found" />
@@ -154,7 +155,7 @@ export function MediaProviderDetailPage() {
       <div className="space-y-4">
         <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
           <Link
-            to={`/media/${kind}`}
+            to={dashboard(`/media/${kind}`)}
             className="inline-flex min-h-9 items-center gap-2 rounded-lg px-1 font-medium transition-colors hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
           >
             <ArrowLeft className="h-4 w-4" />

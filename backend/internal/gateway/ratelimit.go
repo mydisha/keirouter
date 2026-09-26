@@ -121,6 +121,20 @@ func (s *Server) apiKeyRateLimiter(next http.Handler) http.Handler {
 	})
 }
 
+// publicRateLimiter is a global per-IP budget for the unauthenticated public
+// landing API. Generous enough for a page load (several sections), tight enough
+// that the endpoint cannot be used as a free aggregate-scraping oracle.
+func (s *Server) publicRateLimiter(next http.Handler) http.Handler {
+	limiter := newIPLimiter(60, time.Minute)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow(extractIP(r)) {
+			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // concurrencyLimiter caps the number of in-flight API requests to protect
 // the gateway from resource exhaustion under high concurrency. Each request
 // holds argon2 goroutines, SQLite connection time, upstream HTTP connections,

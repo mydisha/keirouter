@@ -7,6 +7,7 @@ import {
   ChevronDown, ChevronUp, TerminalSquare, KeyRound, Globe, Cpu,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { dashboard } from "../lib/dashboardRoutes";
 import { brandColor } from "../lib/brand-colors";
 import { useToast } from "../components/Toast";
 import {
@@ -91,7 +92,7 @@ export function CLIToolDetailPage() {
   if (!tool) {
     return (
       <div className="space-y-4">
-        <Link to="/cli-tools" className="flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
+        <Link to={dashboard("/cli-tools")} className="flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
           <ArrowLeft className="h-4 w-4" /> Back to CLI Tools
         </Link>
         <EmptyState title="Tool not found" />
@@ -107,7 +108,7 @@ export function CLIToolDetailPage() {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <Link to="/cli-tools" className="mb-3 flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
+        <Link to={dashboard("/cli-tools")} className="mb-3 flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
           <ArrowLeft className="h-4 w-4" /> Back to CLI Tools
         </Link>
         <div className="flex items-center gap-3">

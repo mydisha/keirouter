@@ -204,3 +204,27 @@ func (r *UsageRepo) ByModelAccurate(ctx context.Context, tenantID string, since 
 	}
 	return out, rows.Err()
 }
+
+// DistinctKeysPerModel counts distinct API keys per provider/model since the
+// given time. Returns counts only — never key identities — so it is safe for the
+// public landing API.
+func (r *UsageRepo) DistinctKeysPerModel(ctx context.Context, tenantID string, since time.Time) (map[string]int, error) {
+	q := r.db.rebind(`SELECT provider, model, COUNT(DISTINCT api_key_id)
+		FROM usage_records WHERE tenant_id=? AND created_at>=?
+		GROUP BY provider, model`)
+	rows, err := r.db.sql.QueryContext(ctx, q, tenantID, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("store: distinct keys per model: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]int)
+	for rows.Next() {
+		var provider, model string
+		var n int
+		if err := rows.Scan(&provider, &model, &n); err != nil {
+			return nil, err
+		}
+		out[provider+"\x00"+model] = n
+	}
+	return out, rows.Err()
+}
