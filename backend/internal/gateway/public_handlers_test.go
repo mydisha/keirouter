@@ -117,16 +117,28 @@ func TestPublicPerformanceRejectsEmptyModel(t *testing.T) {
 }
 
 // TestPublicPerformanceReturnsKnownModel seeds usage for a catalog model and
-// asserts the per-model scalars plus a 24-entry hourly series, and that the
+// asserts the per-model scalars plus a 24-entry hourly series whose content is
+// correct (requests/tokens land in the expected bucket), and that the
 // serialized body leaks no provider/caller secrets.
 func TestPublicPerformanceReturnsKnownModel(t *testing.T) {
 	db, gw := newPublicTestGatewayWithDB(t)
 	ctx := context.Background()
+	// The handler buckets with slotSecs = int(span.Seconds())/24 over the last
+	// 24h. Seed at bucket midpoints so the expected index is stable across the
+	// few ms between here and the request.
 	now := time.Now().UTC()
+	slotSecs := int64((24 * time.Hour).Seconds()) / 24 // 3600
+	since := now.Add(-24 * time.Hour)
+	bucketOf := func(t time.Time) int { return int(t.Sub(since).Seconds()) / int(slotSecs) }
+	seedA := now.Add(-2*time.Hour - 30*time.Minute) // midpoint of bucket 21
+	seedB := now.Add(-5*time.Hour - 30*time.Minute) // midpoint of bucket 18
+	bucketA, bucketB := bucketOf(seedA), bucketOf(seedB)
+	require.NotEqual(t, bucketA, bucketB)
+
 	records := []store.UsageRecord{
-		{ID: "q1", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, EndToEndLatencyMS: 1000, TTFTMS: 200, CreatedAt: now},
-		{ID: "q2", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, EndToEndLatencyMS: 2000, TTFTMS: 400, CreatedAt: now},
-		{ID: "q3", TenantID: store.DefaultTenantID, APIKeyID: "key-b", Provider: "openai", Model: "gpt-4o", Status: "error", PromptTokens: 50, CompletionTokens: 0, EndToEndLatencyMS: 3000, TTFTMS: 600, CreatedAt: now},
+		{ID: "q1", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, EndToEndLatencyMS: 1000, TTFTMS: 200, CreatedAt: seedA},
+		{ID: "q2", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, EndToEndLatencyMS: 2000, TTFTMS: 400, CreatedAt: seedA},
+		{ID: "q3", TenantID: store.DefaultTenantID, APIKeyID: "key-b", Provider: "openai", Model: "gpt-4o", Status: "error", PromptTokens: 50, CompletionTokens: 0, EndToEndLatencyMS: 3000, TTFTMS: 600, CreatedAt: seedB},
 	}
 	require.NoError(t, db.Usage().RecordBatch(ctx, records))
 
@@ -152,6 +164,18 @@ func TestPublicPerformanceReturnsKnownModel(t *testing.T) {
 	require.Equal(t, int64(400), payload.AvgTTFTMS)
 	require.InDelta(t, 2.0/3.0, payload.SuccessRate, 1e-9)
 	require.Len(t, payload.Series, 24)
+
+	// The series must reflect the seeded records in their expected buckets:
+	// seedA (2 records) -> 2 requests, 240 tokens; seedB (1 record) -> 1
+	// request, 50 tokens. A dropped/zeroed/mis-bucketed series fails here.
+	byBucket := make(map[int]struct{ requests, tokens int64 })
+	for _, b := range payload.Series {
+		byBucket[b.Bucket] = struct{ requests, tokens int64 }{b.Requests, b.Tokens}
+	}
+	require.Equal(t, int64(2), byBucket[bucketA].requests)
+	require.Equal(t, int64(240), byBucket[bucketA].tokens)
+	require.Equal(t, int64(1), byBucket[bucketB].requests)
+	require.Equal(t, int64(50), byBucket[bucketB].tokens)
 
 	body := rec.Body.String()
 	for _, secret := range []string{"api_key", "base_url", "request_id", "key_id", "key_name", "account_id", "pricing_key", "error_kind"} {
