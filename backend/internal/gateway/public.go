@@ -60,16 +60,21 @@ func (s *Server) publicModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "usage unavailable")
 		return
 	}
-	byModel := make(map[string]store.AccurateModelUsage, len(usage))
-	for _, m := range usage {
-		byModel[m.Provider+"\x00"+m.Model] = m
+	sort.Slice(usage, func(i, j int) bool { return usage[i].TotalRequests > usage[j].TotalRequests })
+
+	specs := make(map[string]connectors.ProviderModel)
+	for _, pm := range connectors.ModelsByKind(core.ServiceLLM) {
+		specs[pm.Provider+"\x00"+pm.Model.ID] = pm
 	}
 
 	out := make([]map[string]any, 0, len(usage))
-	for _, pm := range connectors.ModelsByKind(core.ServiceLLM) {
-		key := pm.Provider + "\x00" + pm.Model.ID
-		m, ok := byModel[key]
-		if !ok || m.TotalRequests == 0 {
+	for _, m := range usage {
+		if m.TotalRequests == 0 {
+			continue
+		}
+		key := m.Provider + "\x00" + m.Model
+		pm, ok := specs[key]
+		if !ok {
 			continue
 		}
 		caps, _ := capabilityPayload(pm.Provider, pm.Model.ID, core.ServiceLLM)
@@ -88,10 +93,6 @@ func (s *Server) publicModels(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 	}
-	sort.Slice(out, func(i, j int) bool {
-		return out[i]["usage_24h"].(map[string]any)["requests"].(int64) >
-			out[j]["usage_24h"].(map[string]any)["requests"].(int64)
-	})
 	writeJSONCached(w, s.insightsCache, "public-models", map[string]any{"models": out})
 }
 
