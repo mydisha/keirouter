@@ -52,4 +52,4 @@ export const makeDraftStep = (step?: { provider: string; model: string }): Draft
 export const toDraftSteps = (chain?: Chain) =>
   chain?.steps.map((step) => makeDraftStep(step)) ?? [makeDraftStep()];
 
-export const isValidChainName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(name);
+export const isValidChainName = (name: string) => /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name);

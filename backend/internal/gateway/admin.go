@@ -3290,9 +3290,11 @@ func defaultBool(v, def bool) bool {
 }
 
 // validateChainName rejects combo names that would conflict with routing resolution.
-// Names must be alphanumeric with hyphens/underscores only, no slashes, colons,
-// or leading/trailing whitespace. This prevents ambiguity with "provider/model"
-// and "chain:name" formats in resolveTargets.
+// Names must be alphanumeric with hyphens/underscores/dots, no slashes or colons,
+// and no leading/trailing whitespace. This prevents ambiguity with "provider/model"
+// and "chain:name" formats in resolveTargets. Dots are allowed because model ids
+// commonly contain version dots (e.g. deepseek-v4.1-flash) and resolveTargets
+// only splits on "/" and ":".
 func validateChainName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -3307,18 +3309,18 @@ func validateChainName(name string) error {
 	if strings.HasPrefix(name, "chain:") {
 		return fmt.Errorf("combo name cannot start with 'chain:' prefix")
 	}
-	// Must match ^[a-zA-Z0-9][a-zA-Z0-9_-]*$
+	// Must match ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$
 	for i, c := range name {
 		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' {
 			continue
 		}
-		if c == '-' || c == '_' {
+		if c == '-' || c == '_' || c == '.' {
 			if i == 0 {
 				return fmt.Errorf("combo name must start with a letter or digit")
 			}
 			continue
 		}
-		return fmt.Errorf("combo name can only contain letters, digits, hyphens, and underscores")
+		return fmt.Errorf("combo name can only contain letters, digits, hyphens, underscores, and dots")
 	}
 	return nil
 }
