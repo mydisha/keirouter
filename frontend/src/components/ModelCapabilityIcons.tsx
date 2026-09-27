@@ -39,21 +39,28 @@ export function ModelCapabilityIcons({
   capabilities,
   size = 15,
   className = "",
+  bare = false,
 }: {
   capabilities?: CapabilityFlags;
   size?: number;
   className?: string;
+  // bare drops the coloured chip background, leaving the stroke icon only.
+  bare?: boolean;
 }) {
   if (!capabilities?.vision && !capabilities?.reasoning && !capabilities?.tools) return null;
   return (
-    <span className={`inline-flex shrink-0 items-center gap-1.5 ${className}`} role="group" aria-label="Model capabilities">
+    <span className={`inline-flex shrink-0 items-center ${bare ? "gap-2.5" : "gap-1.5"} ${className}`} role="group" aria-label="Model capabilities">
       {(["reasoning", "vision", "tools"] as const).map((key) =>
         capabilities[key] ? (
           <span
             key={key}
             title={ICONS[key].title}
             aria-label={ICONS[key].title}
-            className={`inline-flex h-6 w-6 items-center justify-center rounded-md ${STYLES[key]}`}
+            className={
+              bare
+                ? "inline-flex items-center justify-center text-[var(--muted)]"
+                : `inline-flex h-6 w-6 items-center justify-center rounded-md ${STYLES[key]}`
+            }
           >
             <svg
               viewBox="0 0 24 24"

@@ -1,69 +1,96 @@
-// Public landing page — default-exported page, served at `/` by Task 9.
+// Public landing page — served at `/` by the router.
 //
-// Reads the four read-only public endpoints via TanStack Query. Every section
+// Reads the two read-only public endpoints via TanStack Query. Every section
 // degrades to a zeroed/empty state when a query is loading, errored, or returns
-// nothing: no error cards, no blank screen. `fetchPublicPerformance` rejects on
-// non-ok responses, which is caught by the query and rendered as an empty series.
+// nothing: no error cards, no blank screen.
 //
 // Styling is scoped through `.landing-root` tokens only; this module never
 // imports lib/api.ts or the dashboard Layout.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  fetchPublicOverview,
-  fetchPublicModels,
-  fetchPublicPerformance,
-  fetchPublicArchived,
-} from "../lib/publicApi";
-import type { PublicModel, PublicPerformance } from "../lib/publicApi";
+import { Activity, Boxes, Coins, Cpu } from "lucide-react";
+import { fetchPublicOverview, fetchPublicModels } from "../lib/publicApi";
+import type { PublicModel } from "../lib/publicApi";
 import { PublicLayout } from "../components/PublicLayout";
-import { ModelGlyph } from "../components/ModelGlyph";
-import { RankCrown } from "../components/RankCrown";
 import { ModelCapabilityIcons } from "../components/ModelCapabilityIcons";
 
-const fmtInt = new Intl.NumberFormat("id-ID");
-const fmtCompact = new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 });
-const fmt2 = new Intl.NumberFormat("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Family logo detection for models whose provider has no brand PNG of its own
+// (e.g. relay/custom providers). Each family slug maps to an existing PNG in
+// frontend/public/providers/. No new dependency.
+const FAMILY_RULES: [RegExp, string][] = [
+  [/claude/, "anthropic"],
+  [/gpt|dall-e|whisper|text-embedding|(^|[^a-z])o[134](-|$)/, "openai"],
+  [/gemini|gemma|palm|learnlm/, "gemini"],
+  [/deepseek/, "deepseek"],
+  [/kimi|moonshot/, "kimi"],
+  [/qwen/, "qwen"],
+  [/minimax/, "minimax"],
+  [/glm/, "glm"],
+  [/grok/, "xai"],
+  [/mistral|codestral|pixtral|mixtral/, "mistral"],
+  [/nemotron/, "nvidia"],
+  [/sonar/, "perplexity"],
+  [/qoder/, "qoder"],
+  [/mimo/, "xiaomi-mimo"],
+  [/command-[ra]/, "cohere"],
+];
 
-const fmtCount = (n: number) => (n > 0 ? fmtInt.format(n) : "0");
-const fmtShort = (n: number) => (n > 0 ? fmtCompact.format(n) : "0");
-const fmtRate = (n: number) => `$${n.toLocaleString("id-ID", { maximumFractionDigits: 6 })}`;
-const fmtPct = (r: number) => `${(r * 100).toFixed(1)}%`;
+const familySlug = (modelId: string): string | null => {
+  const m = modelId.toLowerCase();
+  for (const [re, slug] of FAMILY_RULES) if (re.test(m)) return slug;
+  return null;
+};
 
-const WA_URL = "https://wa.me/84826240052";
-
-function Panel({
-  id,
-  eyebrow,
-  title,
-  children,
-  className = "",
-}: {
-  id?: string;
-  eyebrow?: string;
-  title?: string;
-  children: ReactNode;
-  className?: string;
-}) {
+// Tries the provider's own brand PNG first, then the detected model family.
+// Falls back to a generic icon so a missing logo never leaves an empty box.
+function ProviderLogo({ providerId, modelId }: { providerId: string; modelId: string }) {
+  const candidates = useMemo(() => {
+    const list = [`/providers/${providerId}.png`];
+    const family = familySlug(modelId);
+    if (family && family !== providerId) list.push(`/providers/${family}.png`);
+    return list;
+  }, [providerId, modelId]);
+  const [idx, setIdx] = useState(0);
   return (
-    <section id={id} className={`scroll-mt-28 rounded-[22px] border border-[var(--line)] bg-[var(--paper)] p-5 sm:p-6 ${className}`}>
-      {eyebrow && <p className="text-[11px] uppercase tracking-[0.7px] text-[var(--muted)]">{eyebrow}</p>}
-      {title && <h2 className="mt-1 text-[22px] font-[650] tracking-[-0.5px] text-[var(--ink)]">{title}</h2>}
-      {children}
-    </section>
+    <span className="flex h-9 w-9 shrink-0 items-center justify-center text-[var(--green)]">
+      {idx < candidates.length ? (
+        <img
+          src={candidates[idx]}
+          alt=""
+          className="h-full w-full object-contain"
+          loading="lazy"
+          onError={() => setIdx((i) => i + 1)}
+        />
+      ) : (
+        <Cpu className="h-6 w-6" aria-hidden="true" />
+      )}
+    </span>
   );
 }
 
+const fmtInt = new Intl.NumberFormat("id-ID");
+const fmtCompact = new Intl.NumberFormat("id-ID", { notation: "compact", maximumFractionDigits: 1 });
+const fmtRate = (n: number) => `$${n.toLocaleString("id-ID", { maximumFractionDigits: 6 })}`;
+
+const fmtCount = (n: number) => (n > 0 ? fmtInt.format(n) : "0");
+const fmtShort = (n: number) => (n > 0 ? fmtCompact.format(n) : "0");
+
+const WA_URL = "https://wa.me/84826240052";
+
+const MODEL_PAGE = 24;
+
 function Metric({
+  icon,
   label,
   value,
   sub,
   hero = false,
 }: {
+  icon: React.ReactNode;
   label: string;
   value: string;
-  sub?: ReactNode;
+  sub?: React.ReactNode;
   hero?: boolean;
 }) {
   return (
@@ -71,9 +98,14 @@ function Metric({
       className="rounded-2xl border border-[var(--line)] p-5"
       style={hero ? { background: "linear-gradient(110deg, var(--soft), var(--paper))" } : undefined}
     >
-      <p className="text-[11px] uppercase tracking-[0.7px] text-[var(--muted)]">{label}</p>
+      <div className="flex items-center gap-2 text-[var(--muted)]">
+        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--soft)] text-[var(--green)]" aria-hidden="true">
+          {icon}
+        </span>
+        <span className="text-[11px] uppercase tracking-[0.7px]">{label}</span>
+      </div>
       <p
-        className="mt-2 font-[650] tabular-nums text-[var(--ink)]"
+        className="mt-3 font-[650] tabular-nums text-[var(--ink)]"
         style={{ fontSize: "clamp(23px,2.5vw,38px)", lineHeight: 1.1 }}
       >
         {value}
@@ -83,73 +115,36 @@ function Metric({
   );
 }
 
-/* 24 hourly bars, computed from the performance series. Zero bars render at 0px
-   so an empty/errored series is a flat row rather than a broken chart. */
-function HourlyBars({ series }: { series: PublicPerformance["series"] }) {
-  const max = series.reduce((m, p) => Math.max(m, p.requests), 0);
+function ModelCard({ model }: { model: PublicModel }) {
   return (
-    <div className="flex h-[80px] items-end gap-[3px]">
-      {series.map((p) => (
-        <div
-          key={p.bucket}
-          title={`Jam ${p.bucket} · ${fmtCount(p.requests)} request`}
-          className="flex-1 rounded-t-[2px] bg-[var(--green)] opacity-70"
-          style={{ height: max > 0 ? `${Math.max(2, (p.requests / max) * 100)}%` : "0px" }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function ModelsTable({ models }: { models: PublicModel[] }) {
-  const sorted = [...models].sort((a, b) => b.usage_24h.requests - a.usage_24h.requests);
-  return (
-    <div className="mt-4 overflow-x-auto">
-      <table className="w-full border-collapse text-sm">
-        <thead>
-          <tr className="bg-[var(--soft)] text-left text-[11px] text-[var(--muted)]">
-            <th className="px-4 py-3 font-normal">Model</th>
-            <th className="px-4 py-3 text-right font-normal">Input / 1M</th>
-            <th className="px-4 py-3 text-right font-normal">Output / 1M</th>
-            <th className="px-4 py-3 text-right font-normal">Pemakaian / 24 jam</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.length === 0 ? (
-            <tr className="border-t border-[var(--line)]">
-              <td colSpan={4} className="px-4 py-8 text-center text-sm text-[var(--muted)]">
-                Belum ada model aktif dalam 24 jam terakhir.
-              </td>
-            </tr>
-          ) : (
-            sorted.map((m) => (
-              <tr key={m.model_id} className="border-t border-[var(--line)] align-middle">
-                <td className="px-4 py-[18px]">
-                  <div className="flex items-start gap-2">
-                    <ModelGlyph modelId={m.model_id} size={34} />
-                    <div className="min-w-0">
-                      <p className="text-[15px] font-[650] text-[var(--ink)]">{m.name}</p>
-                      <ModelCapabilityIcons capabilities={m.capabilities} className="my-1" />
-                      <code className="block break-all text-[11px] text-[var(--muted)]">{m.model_id}</code>
-                    </div>
-                  </div>
-                </td>
-                <td className="px-4 py-[18px] text-right tabular-nums text-[18px] font-[650] text-[var(--ink)]">
-                  {fmtRate(m.input_per_m)}
-                </td>
-                <td className="px-4 py-[18px] text-right tabular-nums text-[18px] font-[650] text-[var(--ink)]">
-                  {fmtRate(m.output_per_m)}
-                </td>
-                <td className="px-4 py-[18px] text-right text-xs text-[var(--muted)]">
-                  <span className="text-[var(--ink)]">{fmtCount(m.usage_24h.users)} pengguna</span>
-                  <br />
-                  {fmtCount(m.usage_24h.requests)} request · {fmtShort(m.usage_24h.tokens)} token
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
+    <div className="flex flex-col rounded-2xl border border-[var(--line)] bg-[var(--paper)] p-4">
+      <div className="flex items-start gap-3">
+        <ProviderLogo providerId={model.provider_id} modelId={model.model_id} />
+        <div className="min-w-0">
+          <p className="truncate text-[15px] font-[650] text-[var(--ink)]">{model.name}</p>
+          <p className="text-[11px] text-[var(--muted)]">{model.provider}</p>
+        </div>
+      </div>
+      <ModelCapabilityIcons capabilities={model.capabilities} className="my-2" bare />
+      <p className="break-all font-mono text-[10px] text-[var(--muted)]">{model.model_id}</p>
+      <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[var(--line)] pt-3 text-xs">
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.5px] text-[var(--muted)]">Input / 1M</p>
+          <p className="tabular-nums font-[650] text-[var(--ink)]">{fmtRate(model.input_per_m)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.5px] text-[var(--muted)]">Output / 1M</p>
+          <p className="tabular-nums font-[650] text-[var(--ink)]">{fmtRate(model.output_per_m)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.5px] text-[var(--muted)]">Cache Read / 1M</p>
+          <p className="tabular-nums font-[650] text-[var(--ink)]">{fmtRate(model.cached_per_m)}</p>
+        </div>
+        <div>
+          <p className="text-[10px] uppercase tracking-[0.5px] text-[var(--muted)]">Cache Write / 1M</p>
+          <p className="tabular-nums font-[650] text-[var(--ink)]">{fmtRate(model.cache_write_per_m)}</p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -167,249 +162,91 @@ export default function PublicLanding() {
     staleTime: 60_000,
     retry: false,
   });
-  const archived = useQuery({
-    queryKey: ["public-archived"],
-    queryFn: fetchPublicArchived,
-    staleTime: 60_000,
-    retry: false,
-  });
 
   const modelList = models.data ?? [];
-  const [selectedModel, setSelectedModel] = useState<string | null>(null);
-  const activeModel = selectedModel ?? modelList[0]?.model_id ?? "";
-
-  const performance = useQuery({
-    queryKey: ["public-performance", activeModel],
-    queryFn: () => fetchPublicPerformance(activeModel),
-    enabled: activeModel.length > 0,
-    staleTime: 30_000,
-    retry: false,
-  });
-
   const overviewData = overview.data;
-  const requestTotal = overviewData?.total_requests ?? 0;
-  const tokenTotal = overviewData?.total_tokens ?? 0;
-  const success24 = overviewData?.success_24h ?? 0;
-  const failed24 = overviewData?.failed_24h ?? 0;
-  const rps = overviewData?.rps_10s ?? 0;
-  const tokens24 = modelList.reduce((s, m) => s + m.usage_24h.tokens, 0);
-  const recent = overviewData?.recent ?? [];
+  const [modelVisible, setModelVisible] = useState(MODEL_PAGE);
 
-  // A query that errored or has no data yet renders the same zeroed shape; only
-  // show the "Terhubung" pill when overview actually succeeded.
-  const connected = overview.isSuccess;
-  const perfSeries: PublicPerformance["series"] = performance.data?.series ?? [];
-
-  const podium = (archived.data?.podium ?? []).slice(0, 2);
-  const history = archived.data?.history ?? [];
+  // The portal branding provider rewrites document.title when /portal mounts;
+  // re-assert the landing title on mount so it survives that navigation.
+  useEffect(() => {
+    document.title = "Tokenizer";
+  }, []);
 
   return (
     <PublicLayout>
       <div id="overview" className="scroll-mt-28">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.7px] text-[var(--muted)]">
-              Monitor / aktivitas layanan
-            </p>
-            <h1 className="mt-1 text-[30px] font-semibold tracking-[-1.1px] text-[var(--ink)]">
-              Aktivitas gateway
-            </h1>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] px-3 py-2 text-xs text-[var(--muted)]">
-              <span
-                className={`h-2 w-2 rounded-full ${connected ? "bg-[var(--green)]" : "bg-[var(--muted)]"}`}
-                aria-hidden="true"
-              />
-              {connected ? "Terhubung" : "Menunggu data"}
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                void overview.refetch();
-                void models.refetch();
-                void archived.refetch();
-                void performance.refetch();
-              }}
-              className="rounded-full border border-[var(--line)] px-3 py-2 text-xs text-[var(--muted)] transition-colors hover:bg-[var(--soft)]"
-            >
-              Perbarui
-            </button>
-          </div>
+        <div className="text-center">
+          <h1
+            className="font-[750] tracking-[-1.5px] text-[var(--ink)]"
+            style={{ fontSize: "clamp(38px,7vw,76px)", lineHeight: 1.02 }}
+          >
+            TOKENIZER
+          </h1>
+          <p className="mt-3 text-base text-[var(--muted)] sm:text-lg">Layanan PAYG AI Frontier</p>
         </div>
 
-        <div className="mt-5 grid gap-4 md:grid-cols-[1fr_2fr_0.8fr]">
+        <div className="mt-8 grid gap-4 md:grid-cols-3">
           <Metric
-            label="Request"
-            value={fmtShort(requestTotal)}
-            sub={
-              <>
-                24 jam: {fmtCount(success24)} berhasil · {fmtCount(failed24)} gagal
-              </>
-            }
+            icon={<Activity className="h-5 w-5" />}
+            label="Total Request"
+            value={fmtShort(overviewData?.total_requests ?? 0)}
+            sub={<>Total request sepanjang waktu</>}
           />
           <Metric
+            icon={<Coins className="h-5 w-5" />}
             label="Token"
-            value={fmtCount(tokenTotal)}
+            value={fmtCount(overviewData?.total_tokens ?? 0)}
             hero
-            sub={<>24 jam: {fmtShort(tokens24)} token</>}
+            sub={<>total sepanjang waktu</>}
           />
-          <Metric label="Request / detik" value={fmt2.format(rps)} sub={<>rata-rata 24 jam</>} />
+          <Metric
+            icon={<Boxes className="h-5 w-5" />}
+            label="Model List"
+            value={fmtCount(overviewData?.model_count ?? 0)}
+            sub={<>model tersedia</>}
+          />
         </div>
-
-        <Panel eyebrow="Monitor / live" title="Request terbaru" className="mt-4">
-          {recent.length === 0 ? (
-            <p className="mt-4 text-sm text-[var(--muted)]">Belum ada request terbaru.</p>
-          ) : (
-            <ul className="mt-4 divide-y divide-[var(--line)]">
-              {recent.map((r, i) => (
-                <li key={i} className="flex items-center justify-between gap-3 py-2 text-sm">
-                  <span className="min-w-0 truncate text-[var(--ink)]">
-                    <span className="text-[var(--muted)]">{r.provider}</span> · {r.model}
-                  </span>
-                  <span className="flex shrink-0 items-center gap-3 tabular-nums text-xs text-[var(--muted)]">
-                    <span className={r.status === "success" ? "text-[var(--green)]" : ""}>{r.status}</span>
-                    <span>{fmtCount(r.latency_ms)} ms</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
       </div>
 
-      <Panel
-        id="models"
-        eyebrow="Katalog / pilihan model"
-        title="Model & harga"
-        className="mt-10"
-      >
+      <section id="models" className="mt-14 scroll-mt-28">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Cpu className="h-5 w-5 text-[var(--green)]" />
+            <h2 className="text-[22px] font-[650] tracking-[-0.5px] text-[var(--ink)]">
+              Model &amp; harga
+            </h2>
+          </div>
+          <p className="text-xs text-[var(--muted)]">{fmtCount(modelList.length)} model tersedia</p>
+        </div>
         <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
-          Model yang aktif dalam 24 jam terakhir, diurutkan berdasarkan popularitas. Harga ditampilkan per
-          1 juta token.
+          Model yang tersedia di gateway, diurutkan berdasarkan popularitas. Harga per 1 juta token.
         </p>
-        <ModelsTable models={modelList} />
-      </Panel>
-
-      <Panel eyebrow="Model / inspector" title="Performa model" className="mt-4">
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <select
-            value={activeModel}
-            onChange={(e) => setSelectedModel(e.target.value)}
-            disabled={modelList.length === 0}
-            className="min-h-12 rounded-[10px] border border-[var(--line)] bg-[var(--paper)] px-3 text-sm text-[var(--ink)] disabled:opacity-60"
-            aria-label="Pilih model"
-          >
-            {modelList.length === 0 ? (
-              <option value="">Tidak ada model</option>
-            ) : (
-              modelList.map((m) => (
-                <option key={m.model_id} value={m.model_id}>
-                  {m.name}
-                </option>
-              ))
-            )}
-          </select>
-          {activeModel && <ModelGlyph modelId={activeModel} size={34} />}
-        </div>
-
-        <div className="mt-4 grid gap-4 sm:grid-cols-3">
-          <div className="rounded-2xl border border-[var(--line)] bg-[var(--soft)] p-4">
-            <p className="text-[11px] uppercase tracking-[0.7px] text-[var(--muted)]">Latensi rata-rata</p>
-            <p className="mt-1 text-lg font-[650] tabular-nums text-[var(--ink)]">
-              {performance.data ? `${fmtCount(performance.data.avg_latency_ms)} ms` : "—"}
-            </p>
-          </div>
-          <div className="rounded-2xl border border-[var(--line)] bg-[var(--soft)] p-4">
-            <p className="text-[11px] uppercase tracking-[0.7px] text-[var(--muted)]">TTFT rata-rata</p>
-            <p className="mt-1 text-lg font-[650] tabular-nums text-[var(--ink)]">
-              {performance.data ? `${fmtCount(performance.data.avg_ttft_ms)} ms` : "—"}
-            </p>
-          </div>
-          <div className="rounded-2xl border border-[var(--line)] bg-[var(--soft)] p-4">
-            <p className="text-[11px] uppercase tracking-[0.7px] text-[var(--muted)]">Tingkat keberhasilan</p>
-            <p className="mt-1 text-lg font-[650] tabular-nums text-[var(--ink)]">
-              {performance.data ? fmtPct(performance.data.success_rate) : "—"}
-            </p>
-          </div>
-        </div>
-
-        <p className="mt-5 text-[11px] uppercase tracking-[0.7px] text-[var(--muted)]">
-          Request per jam · 24 jam terakhir
-        </p>
-        <div className="mt-2">
-          <HourlyBars series={perfSeries} />
-        </div>
-        {!performance.data && (
-          <p className="mt-2 text-xs text-[var(--muted)]">Belum ada data performa untuk model ini.</p>
-        )}
-      </Panel>
-
-      <Panel eyebrow="Arsip / puncak" title="Podium model arsip" className="mt-10">
-        {podium.length === 0 ? (
-          <p className="mt-4 text-sm text-[var(--muted)]">Belum ada model arsip.</p>
+        {modelList.length === 0 ? (
+          <p className="mt-6 text-sm text-[var(--muted)]">Belum ada model tersedia.</p>
         ) : (
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            {podium.map((p, i) => (
-              <div
-                key={p.model}
-                className="flex items-center gap-4 rounded-2xl border border-[var(--line)] p-4"
-                style={{
-                  background:
-                    i === 0
-                      ? "linear-gradient(110deg, var(--soft), var(--paper))"
-                      : "linear-gradient(110deg, var(--paper), var(--paper))",
-                }}
-              >
-                <RankCrown rank={i === 0 ? 1 : 2} size={32} />
-                <div className="min-w-0">
-                  <p className="truncate text-[15px] font-[650] text-[var(--ink)]">{p.model}</p>
-                  <p className="text-xs tabular-nums text-[var(--muted)]">
-                    {fmtShort(p.tokens)} token · {fmtCount(p.requests)} request
-                  </p>
-                </div>
+          <>
+            <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {modelList.slice(0, modelVisible).map((m) => (
+                <ModelCard key={m.model_id} model={m} />
+              ))}
+            </div>
+            {modelVisible < modelList.length && (
+              <div className="mt-6 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setModelVisible((n) => n + MODEL_PAGE)}
+                  className="rounded-xl border border-[var(--line)] px-5 py-3 text-sm font-[650] text-[var(--green)] transition-colors hover:bg-[var(--soft)]"
+                >
+                  Tampilkan lebih banyak ({fmtCount(modelList.length - modelVisible)} lagi)
+                </button>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
+      </section>
 
-        <div className="mt-6 overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="bg-[var(--soft)] text-left text-[11px] text-[var(--muted)]">
-                <th className="px-4 py-3 font-normal">Model</th>
-                <th className="px-4 py-3 text-right font-normal">Token</th>
-                <th className="px-4 py-3 text-right font-normal">Request</th>
-                <th className="px-4 py-3 text-right font-normal">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {history.length === 0 ? (
-                <tr className="border-t border-[var(--line)]">
-                  <td colSpan={4} className="px-4 py-8 text-center text-sm text-[var(--muted)]">
-                    Belum ada riwayat arsip.
-                  </td>
-                </tr>
-              ) : (
-                history.map((h) => (
-                  <tr key={h.model} className="border-t border-[var(--line)]">
-                    <td className="px-4 py-3 text-[var(--ink)]">{h.model}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-[var(--ink)]">{fmtShort(h.tokens)}</td>
-                    <td className="px-4 py-3 text-right tabular-nums text-[var(--ink)]">{fmtCount(h.requests)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <span className="rounded-full bg-[var(--soft)] px-2.5 py-1 text-[10px] uppercase tracking-[0.7px] text-[var(--muted)]">
-                        {h.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </Panel>
-
-      <div className="mt-10 grid gap-4 md:grid-cols-2">
+      <div className="mt-14 grid gap-4 md:grid-cols-2">
         <section id="purchase" className="scroll-mt-28 rounded-[22px] border border-[var(--line)] bg-[var(--paper)] p-5 sm:p-6">
           <p className="text-[11px] uppercase tracking-[0.7px] text-[var(--muted)]">Beli / top up</p>
           <h2 className="mt-1 text-[22px] font-[650] tracking-[-0.5px] text-[var(--ink)]">Tambah saldo</h2>
