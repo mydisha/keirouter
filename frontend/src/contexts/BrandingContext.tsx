@@ -10,6 +10,7 @@ const DEFAULT_BRANDING: BrandingSettings = {
   favicon_url: "",
   tagline: "",
   color_palette: "sage-terra",
+  api_key_prefix: "kr_",
 };
 
 interface BrandingContextValue {

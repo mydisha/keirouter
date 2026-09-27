@@ -9,6 +9,8 @@ package identity
 import (
 	"context"
 	"errors"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,9 +23,29 @@ import (
 // ErrUnauthorized is returned when a presented key is invalid or disabled.
 var ErrUnauthorized = errors.New("identity: unauthorized")
 
+// prefixTokenRe matches an allowed prefix token: 1-16 lowercase letters or digits.
+var prefixTokenRe = regexp.MustCompile(`^[a-z0-9]{1,16}$`)
+
+// NormalizePrefix validates a user-supplied API key prefix and returns its
+// canonical "token_" form. An empty or underscore-only input resets to the
+// default. Invalid input returns ok=false and must be rejected by the caller.
+func NormalizePrefix(raw string) (string, bool) {
+	token := strings.Trim(strings.ToLower(strings.TrimSpace(raw)), "_")
+	if token == "" {
+		return crypto.DefaultKeyPrefix, true
+	}
+	if !prefixTokenRe.MatchString(token) {
+		return "", false
+	}
+	return token + "_", true
+}
+
 // Service manages API key lifecycle and authentication.
 type Service struct {
 	keys *store.APIKeyRepo
+
+	prefixMu sync.RWMutex
+	prefix   string
 
 	// authCache caches successful authentication results keyed by lookup hash.
 	// Under high concurrency, this avoids re-running argon2id verification
@@ -50,8 +72,31 @@ const authCacheMaxEntries = 256
 func New(keys *store.APIKeyRepo) *Service {
 	return &Service{
 		keys:      keys,
+		prefix:    crypto.DefaultKeyPrefix,
 		authCache: make(map[string]authCacheEntry),
 	}
+}
+
+// keyPrefix returns the active issued-key prefix, defaulting when unset.
+func (s *Service) keyPrefix() string {
+	s.prefixMu.RLock()
+	defer s.prefixMu.RUnlock()
+	if s.prefix == "" {
+		return crypto.DefaultKeyPrefix
+	}
+	return s.prefix
+}
+
+// SetKeyPrefix sets the prefix used for newly issued keys. It is safe for
+// concurrent use and takes effect without restart. An empty value resets the
+// default.
+func (s *Service) SetKeyPrefix(prefix string) {
+	if prefix == "" {
+		prefix = crypto.DefaultKeyPrefix
+	}
+	s.prefixMu.Lock()
+	s.prefix = prefix
+	s.prefixMu.Unlock()
 }
 
 // Issued is the result of creating a key. Plaintext is shown exactly once.
@@ -76,7 +121,7 @@ func (s *Service) Create(ctx context.Context, tenantID, projectID, name string) 
 // The caller is responsible for inserting Issued.Record into the store,
 // typically inside a transaction when co-creating related resources.
 func (s *Service) Generate(tenantID, projectID, name string) (Issued, error) {
-	gen, err := crypto.GenerateAPIKey()
+	gen, err := crypto.GenerateAPIKey(s.keyPrefix())
 	if err != nil {
 		return Issued{}, err
 	}

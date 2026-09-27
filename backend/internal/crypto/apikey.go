@@ -14,9 +14,8 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// KeyPrefix is the human-visible prefix on every issued API key. It lets users
-// and secret scanners recognize a KeiRouter key at a glance.
-const KeyPrefix = "kr_"
+// DefaultKeyPrefix is the human-visible prefix used when none is configured.
+const DefaultKeyPrefix = "kr_"
 
 // secretBytes is the entropy of the random portion of an API key.
 const secretBytes = 24
@@ -50,13 +49,16 @@ type GeneratedKey struct {
 
 // GenerateAPIKey mints a new API key, returning the plaintext plus its stored
 // verifier. The plaintext is unrecoverable afterward.
-func GenerateAPIKey() (GeneratedKey, error) {
+func GenerateAPIKey(prefix string) (GeneratedKey, error) {
+	if prefix == "" {
+		prefix = DefaultKeyPrefix
+	}
 	raw := make([]byte, secretBytes)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
 		return GeneratedKey{}, fmt.Errorf("generate key entropy: %w", err)
 	}
 	secret := base64.RawURLEncoding.EncodeToString(raw)
-	plaintext := KeyPrefix + secret
+	plaintext := prefix + secret
 
 	hash, err := HashAPIKey(plaintext)
 	if err != nil {
@@ -67,7 +69,7 @@ func GenerateAPIKey() (GeneratedKey, error) {
 		Plaintext: plaintext,
 		Hash:      hash,
 		Lookup:    LookupHash(plaintext),
-		Display:   maskKey(plaintext),
+		Display:   maskKey(plaintext, prefix),
 	}, nil
 }
 
@@ -106,12 +108,12 @@ func LookupHash(plaintext string) string {
 }
 
 // maskKey renders a key for display, revealing only a short head and tail.
-func maskKey(plaintext string) string {
-	body := strings.TrimPrefix(plaintext, KeyPrefix)
+func maskKey(plaintext, prefix string) string {
+	body := strings.TrimPrefix(plaintext, prefix)
 	if len(body) <= 8 {
-		return KeyPrefix + "…"
+		return prefix + "…"
 	}
-	return fmt.Sprintf("%s%s…%s", KeyPrefix, body[:4], body[len(body)-4:])
+	return fmt.Sprintf("%s%s…%s", prefix, body[:4], body[len(body)-4:])
 }
 
 func parseArgon2Hash(encoded string) (mem, time uint32, threads uint8, salt, hash []byte, err error) {
