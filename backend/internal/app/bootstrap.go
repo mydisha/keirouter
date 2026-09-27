@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/mydisha/keirouter/backend/internal/config"
+	"github.com/mydisha/keirouter/backend/internal/gateway"
 	"github.com/mydisha/keirouter/backend/internal/identity"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
@@ -34,7 +35,9 @@ func Bootstrap(ctx context.Context, cfg config.Config, name string) (string, err
 	if name == "" {
 		name = "default"
 	}
-	issued, err := identity.New(db.APIKeys()).Create(ctx, store.DefaultTenantID, "", name)
+	idSvc := identity.New(db.APIKeys())
+	idSvc.SetKeyPrefix(gateway.LoadAPIKeyPrefix(ctx, db.Settings()))
+	issued, err := idSvc.Create(ctx, store.DefaultTenantID, "", name)
 	if err != nil {
 		return "", fmt.Errorf("bootstrap: create key: %w", err)
 	}

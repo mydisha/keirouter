@@ -119,6 +119,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	codecs := transform.DefaultRegistry()
 
 	idSvc := identity.New(db.APIKeys())
+	idSvc.SetKeyPrefix(gateway.LoadAPIKeyPrefix(ctx, db.Settings()))
 
 	authSvc := auth.New(db.Settings(), cfg.Security.JWTSecret, cfg.Security.SessionTTL)
 	seeded, err := authSvc.EnsureDefaults(ctx)
