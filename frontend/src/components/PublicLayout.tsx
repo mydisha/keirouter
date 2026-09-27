@@ -5,7 +5,7 @@
 // element only, so it never touches the dashboard's `.dark` class.
 
 import { useState, type ReactNode } from "react";
-import { AnnouncementDialog } from "./AnnouncementDialog";
+import { NotificationPopup } from "./NotificationPopup";
 
 type Theme = "light" | "dark";
 
@@ -16,7 +16,7 @@ type Theme = "light" | "dark";
 const DOCS_URL = "https://github.com/mydisha/keirouter#readme";
 
 const TABS = [
-  { id: "overview", label: "Monitor", href: "#overview", d: "M3 12h4l3-8 4 16 3-8h4" },
+  { id: "overview", label: "Home", href: "#overview", d: "M3 11l9-8 9 8M5 10v10h14V10" },
   { id: "models", label: "Model", href: "#models", d: "M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7" },
   { id: "purchase", label: "Beli", href: "#purchase", d: "M3 7V5h16v3M3 8h18v12H3V8Zm18 4h-6v4h6" },
   { id: "balance", label: "Saldo", href: "#balance", d: "M14 10a6 6 0 1 1-2-4M13 11l9-9m-4 4 3 3m-6 0 3 3" },
@@ -52,10 +52,10 @@ function BrandMark({ className = "h-[31px] w-[31px] md:h-[38px] md:w-[38px]" }: 
         <path
           fill="none"
           stroke="#dbe5cb"
-          strokeWidth="1.3"
+          strokeWidth="3.2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          d="M17.77 8.14L6.00 12.81M22.13 16.38L32.37 10.22M8.46 29.12L18.69 22.23M31.80 26.06L22.82 35.00M6.00 12.81L8.46 29.12M22.13 16.38L6.00 12.81M8.46 29.12L22.82 35.00M22.82 35.00L22.13 16.38M32.37 10.22L31.80 26.06M17.77 8.14L32.37 10.22M31.80 26.06L18.69 22.23M18.69 22.23L17.77 8.14"
+          d="M11 12.5H29M20 12.5V29.5"
         />
       </svg>
     </span>
@@ -67,9 +67,9 @@ function Brand() {
     <a href="#overview" className="flex items-center gap-2.5 no-underline">
       <BrandMark />
       <span className="leading-none">
-        <strong className="block text-[17px] font-[650] tracking-[-0.7px] text-[var(--ink)]">KeiRouter</strong>
+        <strong className="block text-[17px] font-[650] tracking-[-0.7px] text-[var(--ink)]">Tokenizer</strong>
         <small className="mt-0.5 hidden text-[10px] uppercase tracking-[1.5px] text-[var(--muted)] sm:block">
-          gateway
+          AI PAYG
         </small>
       </span>
     </a>
@@ -158,7 +158,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
             <TabLink key={tab.id} tab={tab} active={active} onSelect={setActive} />
           ))}
         </div>
-        <AnnouncementButton onClick={() => setAnnouncementOpen(true)} />
+        <AnnouncementButton onClick={() => setAnnouncementOpen((v) => !v)} />
         <ThemeButton theme={theme} onToggle={() => setTheme(theme === "dark" ? "light" : "dark")} />
       </nav>
 
@@ -166,7 +166,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
       <header className="fixed inset-x-3 top-[10px] z-30 flex items-center justify-between rounded-2xl border border-[var(--line)] bg-[var(--nav-surface)] px-3 py-2 shadow-[0_5px_22px_#1528180c] md:hidden">
         <Brand />
         <div className="flex items-center gap-2">
-          <AnnouncementButton onClick={() => setAnnouncementOpen(true)} />
+          <AnnouncementButton onClick={() => setAnnouncementOpen((v) => !v)} />
           <ThemeButton theme={theme} onToggle={() => setTheme(theme === "dark" ? "light" : "dark")} />
         </div>
       </header>
@@ -185,26 +185,13 @@ export function PublicLayout({ children }: { children: ReactNode }) {
       </main>
 
       <footer className="relative z-10 mx-auto w-full max-w-[1152px] border-t border-[var(--line)] px-4 pb-[calc(96px+env(safe-area-inset-bottom))] pt-8 text-xs text-[var(--muted)] sm:px-7 md:pb-12">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <strong className="text-[var(--ink)]">KeiRouter</strong>
-            <span className="uppercase tracking-[1.5px]">gateway</span>
-          </div>
-          <p>Developed by 0xverssace</p>
-          <div className="flex items-center gap-4">
-            <a
-              href={DOCS_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[var(--green)] hover:underline"
-            >
-              Dokumentasi API
-            </a>
-          </div>
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <strong className="text-[var(--ink)]">Tokenizer</strong>
+          <span className="uppercase tracking-[1.5px]">PAYG AI Frontier</span>
         </div>
       </footer>
 
-      <AnnouncementDialog open={announcementOpen} onClose={() => setAnnouncementOpen(false)} />
+      <NotificationPopup open={announcementOpen} onClose={() => setAnnouncementOpen(false)} />
     </div>
   );
 }

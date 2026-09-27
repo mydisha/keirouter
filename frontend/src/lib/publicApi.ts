@@ -18,37 +18,31 @@ export interface PublicCapabilities {
   max_output: number;
 }
 
+export interface PublicUsage {
+  users: number;
+  requests: number;
+  tokens: number;
+}
+
 export interface PublicModel {
   name: string;
   model_id: string;
   provider: string;
+  provider_id: string;
   input_per_m: number;
   output_per_m: number;
+  cached_per_m: number;
+  cache_write_per_m: number;
   capabilities: PublicCapabilities;
-  usage_24h: { users: number; requests: number; tokens: number };
+  usage: PublicUsage;
 }
 
 export interface PublicOverview {
   total_requests: number;
   total_tokens: number;
-  rps_10s: number;
-  success_24h: number;
-  failed_24h: number;
-  top_models: { name: string; requests: number; tokens: number }[];
-  recent: { provider: string; model: string; status: string; latency_ms: number; ttft_ms: number }[];
-}
-
-export interface PublicPerformance {
-  model: string;
-  avg_latency_ms: number;
-  avg_ttft_ms: number;
-  success_rate: number;
-  series: { bucket: number; requests: number; tokens: number }[];
-}
-
-export interface PublicArchived {
-  podium: { model: string; tokens: number; requests: number }[];
-  history: { model: string; tokens: number; requests: number; status: string }[];
+  success: number;
+  failed: number;
+  model_count: number;
 }
 
 async function getJSON<T>(path: string): Promise<T> {
@@ -61,8 +55,3 @@ export const fetchPublicOverview = () => getJSON<PublicOverview>("/v1/public/ove
 
 export const fetchPublicModels = () =>
   getJSON<{ models: PublicModel[] }>("/v1/public/models").then((d) => d.models);
-
-export const fetchPublicPerformance = (model: string) =>
-  getJSON<PublicPerformance>(`/v1/public/performance?model=${encodeURIComponent(model)}`);
-
-export const fetchPublicArchived = () => getJSON<PublicArchived>("/v1/public/archived");

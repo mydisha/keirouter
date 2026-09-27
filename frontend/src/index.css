@@ -426,25 +426,30 @@ select:disabled,
   --bronze: #e6b797;
 }
 
+/* Dark palette mirrors the dashboard: deep warm charcoal neutrals with the
+   olive accent, instead of the earlier saturated green. Values are the
+   dashboard's `.dark` tokens (see :root / .dark above). */
 .landing-root[data-theme="dark"] {
   background: var(--bg);
   color: var(--ink);
 
-  --bg: #0e1511;
-  --paper: #17221b;
-  --paper-2: #1d2b21;
-  --soft: #213026;
-  --ink: #e9f0e3;
-  --muted: #9db0a0;
-  --line: #2c3d30;
-  --line-strong: #3a4f3d;
-  --green: #a8cf94;
-  --accent-bg: #26402d;
-  --on-accent: #142619;
-  --nav-surface: #1b281f;
-  --terminal: #111a14;
+  --bg: #161514;
+  --paper: #1e1d1b;
+  --paper-2: #252422;
+  --soft: #252422;
+  --ink: #e8e6e1;
+  --muted: #8a867e;
+  --line: #302e2b;
+  --line-strong: #3d3b37;
+  --green: #a3ab87;
+  --accent-bg: #2c3224;
+  --on-accent: #161514;
+  --tag-bg: #2c3224;
+  --tag-ink: #c5cab2;
+  --nav-surface: #1e1d1b;
+  --terminal: #111010;
   --gold: #c9a96a;
-  --silver: #9fb3ad;
+  --silver: #9a9791;
   --bronze: #c08b62;
 }
 

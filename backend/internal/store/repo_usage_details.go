@@ -89,40 +89,6 @@ func (r *UsageRepo) RecentAccurate(ctx context.Context, tenantID string, since t
 	return out, rows.Err()
 }
 
-// PublicRecent is the redacted recent-request projection for the landing page:
-// provider, model, status, and latency only. It deliberately excludes request
-// id, key identity, error detail, and pricing columns.
-type PublicRecent struct {
-	Provider, Model, Status        string
-	LatencyMS, TTFTMS              int
-	PromptTokens, CompletionTokens int
-}
-
-// PublicRecentRecords returns the most recent requests for a tenant, projected
-// to non-identifying columns. limit is clamped to [1,50] (default 10).
-func (r *UsageRepo) PublicRecentRecords(ctx context.Context, tenantID string, since time.Time, limit int) ([]PublicRecent, error) {
-	if limit <= 0 || limit > 50 {
-		limit = 10
-	}
-	q := r.db.rebind(`SELECT provider, model, status, latency_ms, ttft_ms, prompt_tokens, completion_tokens
-		FROM usage_records WHERE tenant_id=? AND created_at>=?
-		ORDER BY created_at DESC LIMIT ?`)
-	rows, err := r.db.sql.QueryContext(ctx, q, tenantID, formatTime(since), limit)
-	if err != nil {
-		return nil, fmt.Errorf("store: public recent: %w", err)
-	}
-	defer rows.Close()
-	var out []PublicRecent
-	for rows.Next() {
-		var p PublicRecent
-		if err := rows.Scan(&p.Provider, &p.Model, &p.Status, &p.LatencyMS, &p.TTFTMS, &p.PromptTokens, &p.CompletionTokens); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	return out, rows.Err()
-}
-
 // AccurateTimeBucket powers a multi-series request/token/cost trend chart.
 type AccurateTimeBucket struct {
 	Bucket                                           int
