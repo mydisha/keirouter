@@ -98,8 +98,8 @@ Design rules (binding):
   (≤10, display name + request/token counts).
 
 `GET /v1/public/models`
-- Only models with non-zero usage in the requested window (default 24h),
-  sorted by 24h popularity.
+- Catalog = operator-defined routing chains only; each entry is one chain
+  (provider `combo`).
 - Each: `name`, `model_id`, `provider` (display name), `input_per_m`,
   `output_per_m`, `discount_pct` (computed from list vs. effective rate when
   both known; omitted otherwise), `capabilities` (vision/reasoning/tools/…),
@@ -221,6 +221,6 @@ Known sites: `pages/Chains.tsx`, `pages/KeyDetail.tsx`,
 None. All product decisions resolved:
 
 - Root = landing; dashboard under `/ahoirilaila/*`.
-- Catalog = actively-used models only.
+- Catalog = operator-defined routing chains only; each entry is one chain (provider `combo`).
 - Leaderboard identity anonymized; aggregate displayed.
 - Graceful empty state instead of error.
