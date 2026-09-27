@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mydisha/keirouter/backend/internal/crypto"
 )
 
@@ -66,4 +68,67 @@ func TestGenerateUniqueKeys(t *testing.T) {
 		seen[issued.Plaintext] = true
 		seen[issued.Record.ID] = true
 	}
+}
+
+func TestNormalizePrefix(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+		ok   bool
+	}{
+		{"", crypto.DefaultKeyPrefix, true},
+		{"_", crypto.DefaultKeyPrefix, true},
+		{"tkr", "tkr_", true},
+		{"tkr_", "tkr_", true},
+		{"TKR_", "tkr_", true},
+		{"  tkr  ", "tkr_", true},
+		{"a", "a_", true},
+		{"abc123", "abc123_", true},
+		{"abcdefghijklmnop", "abcdefghijklmnop_", true}, // 16 chars: allowed
+		{"tkr!", "", false},
+		{"tk r", "", false},
+		{"abcdefghijklmnopq", "", false}, // 17 chars: rejected
+	}
+	for _, c := range cases {
+		got, ok := NormalizePrefix(c.in)
+		require.Equal(t, c.ok, ok, "input %q", c.in)
+		if c.ok {
+			require.Equal(t, c.want, got, "input %q", c.in)
+		}
+	}
+}
+
+func TestSetKeyPrefixAppliesToNewKeys(t *testing.T) {
+	s := New(nil)
+	p, ok := NormalizePrefix("tkr")
+	require.True(t, ok)
+	s.SetKeyPrefix(p)
+
+	issued, err := s.Generate("t", "p", "k")
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(issued.Plaintext, "tkr_"))
+	require.True(t, strings.HasPrefix(issued.Record.Display, "tkr_"))
+}
+
+func TestChangingPrefixKeepsOldKeysValid(t *testing.T) {
+	s := New(nil)
+
+	old, err := s.Generate("t", "p", "k")
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(old.Plaintext, crypto.DefaultKeyPrefix))
+
+	p, ok := NormalizePrefix("tkr")
+	require.True(t, ok)
+	s.SetKeyPrefix(p)
+
+	// Requirement: a key issued before the prefix change must still authenticate.
+	ok, err = crypto.VerifyAPIKey(old.Plaintext, old.Record.KeyHash)
+	require.NoError(t, err)
+	require.True(t, ok, "existing key must keep authenticating after prefix change")
+	require.Equal(t, crypto.LookupHash(old.Plaintext), old.Record.LookupHash)
+
+	// Newly issued keys use the new prefix.
+	fresh, err := s.Generate("t", "p", "k")
+	require.NoError(t, err)
+	require.True(t, strings.HasPrefix(fresh.Plaintext, "tkr_"))
 }
