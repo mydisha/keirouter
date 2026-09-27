@@ -1,0 +1,37 @@
+package meter
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/mydisha/keirouter/backend/internal/core"
+	"github.com/mydisha/keirouter/backend/internal/store"
+)
+
+// chainCaptureStore records the last UsageRecord the meter persisted.
+type chainCaptureStore struct{ last store.UsageRecord }
+
+func (c *chainCaptureStore) Record(_ context.Context, u store.UsageRecord) error {
+	c.last = u
+	return nil
+}
+func (c *chainCaptureStore) RecordBatch(_ context.Context, rs []store.UsageRecord) error {
+	if len(rs) > 0 {
+		c.last = rs[len(rs)-1]
+	}
+	return nil
+}
+
+func TestRecordPersistsChainID(t *testing.T) {
+	cap := &chainCaptureStore{}
+	m := New(cap, nil, nil)
+	_, err := m.Record(context.Background(), Event{
+		TenantID: store.DefaultTenantID, Provider: "openai", Model: "gpt-4o",
+		ChainID: "chain-9", Status: "success",
+		Usage: core.Usage{PromptTokens: 1, CompletionTokens: 1, Source: core.UsageSourceProvider},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "chain-9", cap.last.ChainID)
+}

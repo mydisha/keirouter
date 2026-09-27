@@ -228,3 +228,38 @@ func (r *UsageRepo) DistinctKeysPerModel(ctx context.Context, tenantID string, s
 	}
 	return out, rows.Err()
 }
+
+// AccurateChainUsage is per-chain aggregate usage. Only rows with a non-empty
+// chain_id are counted; direct provider/model requests are excluded.
+type AccurateChainUsage struct {
+	ChainID          string
+	TotalRequests    int64
+	PromptTokens     int64
+	CompletionTokens int64
+	DistinctKeys     int
+}
+
+// ChainUsageAccurate aggregates usage by routing chain since the given time.
+// Returns a map keyed by chain id. Public-safe: counts only, no identities.
+func (r *UsageRepo) ChainUsageAccurate(ctx context.Context, tenantID string, since time.Time) (map[string]AccurateChainUsage, error) {
+	q := r.db.rebind(`SELECT chain_id, COUNT(*),
+			COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0),
+			COUNT(DISTINCT api_key_id)
+		FROM usage_records
+		WHERE tenant_id=? AND created_at>=? AND chain_id<>''
+		GROUP BY chain_id`)
+	rows, err := r.db.sql.QueryContext(ctx, q, tenantID, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("store: chain usage: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]AccurateChainUsage{}
+	for rows.Next() {
+		var u AccurateChainUsage
+		if err := rows.Scan(&u.ChainID, &u.TotalRequests, &u.PromptTokens, &u.CompletionTokens, &u.DistinctKeys); err != nil {
+			return nil, err
+		}
+		out[u.ChainID] = u
+	}
+	return out, rows.Err()
+}

@@ -133,6 +133,7 @@ type UsageRecord struct {
 	TenantID  string
 	ProjectID string
 	APIKeyID  string
+	ChainID   string
 
 	Provider  string
 	Model     string

@@ -114,6 +114,7 @@ type Event struct {
 	TenantID  string
 	ProjectID string
 	APIKeyID  string
+	ChainID   string
 	Provider  string
 	Model     string
 	AccountID string
@@ -216,6 +217,7 @@ func (m *Meter) Record(ctx context.Context, ev Event) (int64, error) {
 	rec := store.UsageRecord{
 		ID: uuid.NewString(), RequestID: ev.RequestID,
 		TenantID: ev.TenantID, ProjectID: ev.ProjectID, APIKeyID: ev.APIKeyID,
+		ChainID:  ev.ChainID,
 		Provider: ev.Provider, Model: ev.Model, AccountID: ev.AccountID, Client: ev.Client,
 		Status: status, ErrorKind: ev.ErrorKind, UsageSource: usageSource,
 		PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens,

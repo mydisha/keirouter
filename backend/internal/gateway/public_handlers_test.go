@@ -38,13 +38,13 @@ func TestPublicOverviewEmptyDBIsZeroed(t *testing.T) {
 	require.Zero(t, overview.TotalTokens)
 	require.Zero(t, overview.Success)
 	require.Zero(t, overview.Failed)
-	// model_count reflects the catalogue, which is non-empty even with no usage.
-	require.Positive(t, overview.ModelCount)
+	// model_count reflects the number of routing chains, zero with none seeded.
+	require.Zero(t, overview.ModelCount)
 }
 
-// TestPublicModelsEmptyDBListsCatalogue proves the catalogue is catalog-driven,
-// not usage-driven: an idle gateway still advertises its priced models.
-func TestPublicModelsEmptyDBListsCatalogue(t *testing.T) {
+// TestPublicModelsEmptyDBListsNothing proves the public catalogue is
+// chain-driven: with no routing chains an idle gateway advertises nothing.
+func TestPublicModelsEmptyDBListsNothing(t *testing.T) {
 	gw := newPublicTestGateway(t)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/public/models", nil)
@@ -52,38 +52,31 @@ func TestPublicModelsEmptyDBListsCatalogue(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	var payload struct {
-		Models []struct {
-			ModelID    string  `json:"model_id"`
-			ProviderID string  `json:"provider_id"`
-			InputPerM  float64 `json:"input_per_m"`
-			OutputPerM float64 `json:"output_per_m"`
-			Usage      struct {
-				Requests int64 `json:"requests"`
-			} `json:"usage"`
-		} `json:"models"`
+		Models []json.RawMessage `json:"models"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
-	require.NotEmpty(t, payload.Models, "catalogue must be non-empty even with no usage")
-	for _, m := range payload.Models {
-		require.NotEmpty(t, m.ModelID)
-		require.NotEmpty(t, m.ProviderID)
-		require.Zero(t, m.Usage.Requests)
-	}
+	require.Empty(t, payload.Models, "no chains means no public models")
 }
 
-// TestPublicModelsHidesProviderSecrets seeds real catalog models with usage and
-// asserts the full item shape, all-time aggregation, request-descending order,
-// and that the serialized body contains no provider/caller secrets. Running it
-// on a populated DB (not an empty one) is what makes the NotContains checks bite.
+// TestPublicModelsHidesProviderSecrets seeds a routing chain with attributed
+// usage and asserts the full item shape, all-time aggregation,
+// request-descending order, and that the serialized body contains no
+// provider/caller secrets. Running it on a populated DB (not an empty one) is
+// what makes the NotContains checks bite.
 func TestPublicModelsHidesProviderSecrets(t *testing.T) {
 	db, gw := newPublicTestGatewayWithDB(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
+	require.NoError(t, db.Chains().Create(ctx, store.Chain{
+		ID: "gpt-4o", TenantID: store.DefaultTenantID, Name: "gpt-4o", Strategy: "priority",
+		Steps:     []store.ChainStep{{Provider: "openai", Model: "gpt-4o", Position: 0}},
+		CreatedAt: now, UpdatedAt: now,
+	}))
 	records := []store.UsageRecord{
 		// gpt-4o: 3 requests, 2 distinct keys, 300 prompt + 60 completion tokens.
-		{ID: "p1", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, InputRatePerM: 2.5, OutputRatePerM: 10, PricingStatus: "priced", PricingSource: "official", CreatedAt: now},
-		{ID: "p2", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, InputRatePerM: 2.5, OutputRatePerM: 10, PricingStatus: "priced", PricingSource: "official", CreatedAt: now},
-		{ID: "p3", TenantID: store.DefaultTenantID, APIKeyID: "key-b", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, InputRatePerM: 2.5, OutputRatePerM: 10, PricingStatus: "priced", PricingSource: "official", CreatedAt: now},
+		{ID: "p1", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", ChainID: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, InputRatePerM: 2.5, OutputRatePerM: 10, PricingStatus: "priced", PricingSource: "official", CreatedAt: now},
+		{ID: "p2", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", ChainID: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, InputRatePerM: 2.5, OutputRatePerM: 10, PricingStatus: "priced", PricingSource: "official", CreatedAt: now},
+		{ID: "p3", TenantID: store.DefaultTenantID, APIKeyID: "key-b", Provider: "openai", Model: "gpt-4o", ChainID: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, InputRatePerM: 2.5, OutputRatePerM: 10, PricingStatus: "priced", PricingSource: "official", CreatedAt: now},
 	}
 	require.NoError(t, db.Usage().RecordBatch(ctx, records))
 
@@ -131,11 +124,11 @@ func TestPublicModelsHidesProviderSecrets(t *testing.T) {
 		}
 	}
 	require.NotNil(t, gpt4o, "gpt-4o must be listed after being used")
-	require.Equal(t, "GPT-4o", gpt4o.Name)
-	require.Equal(t, "openai", gpt4o.ProviderID)
-	require.Equal(t, "OpenAI", gpt4o.Provider)
+	require.Equal(t, "gpt-4o", gpt4o.Name, "public name is the chain name")
+	require.Equal(t, "combo", gpt4o.ProviderID)
+	require.Equal(t, "combo", gpt4o.Provider)
 	require.NotEmpty(t, gpt4o.Capabilities)
-	require.Equal(t, 2.5, gpt4o.InputPerM)
+	require.Equal(t, 2.5, gpt4o.InputPerM, "price comes from the chain's first step")
 	require.Equal(t, 10.0, gpt4o.OutputPerM)
 	require.Equal(t, 2, gpt4o.Usage.Users)
 	require.Equal(t, int64(3), gpt4o.Usage.Requests)
@@ -152,15 +145,20 @@ func TestPublicModelsHidesProviderSecrets(t *testing.T) {
 }
 
 // TestPublicOverviewAllTimeAndModelCount proves the headline figures are
-// all-time (an old record is counted) and that model_count matches the
-// catalogue size returned by /v1/public/models.
+// all-time (an old record is counted) and that model_count matches the number
+// of routing chains returned by /v1/public/models.
 func TestPublicOverviewAllTimeAndModelCount(t *testing.T) {
 	db, gw := newPublicTestGatewayWithDB(t)
 	ctx := context.Background()
 	old := time.Now().UTC().Add(-400 * 24 * time.Hour)
+	require.NoError(t, db.Chains().Create(ctx, store.Chain{
+		ID: "chain-1", TenantID: store.DefaultTenantID, Name: "combo-a", Strategy: "priority",
+		Steps:     []store.ChainStep{{Provider: "openai", Model: "gpt-4o", Position: 0}},
+		CreatedAt: old, UpdatedAt: old,
+	}))
 	require.NoError(t, db.Usage().RecordBatch(ctx, []store.UsageRecord{
-		{ID: "o1", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "success", PromptTokens: 100, CompletionTokens: 20, CreatedAt: old},
-		{ID: "o2", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", Status: "error", PromptTokens: 0, CompletionTokens: 0, CreatedAt: old},
+		{ID: "o1", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", ChainID: "chain-1", Status: "success", PromptTokens: 100, CompletionTokens: 20, CreatedAt: old},
+		{ID: "o2", TenantID: store.DefaultTenantID, APIKeyID: "key-a", Provider: "openai", Model: "gpt-4o", ChainID: "chain-1", Status: "error", PromptTokens: 0, CompletionTokens: 0, CreatedAt: old},
 	}))
 
 	overviewRec := httptest.NewRecorder()
@@ -185,7 +183,116 @@ func TestPublicOverviewAllTimeAndModelCount(t *testing.T) {
 		Models []json.RawMessage `json:"models"`
 	}
 	require.NoError(t, json.Unmarshal(modelsRec.Body.Bytes(), &models))
-	require.Equal(t, len(models.Models), overview.ModelCount, "model_count must equal catalogue size")
+	require.Len(t, models.Models, 1, "one seeded chain is listed")
+	require.Equal(t, len(models.Models), overview.ModelCount, "model_count must equal chain count")
+}
+
+func TestPublicModelsListsChainsOnly(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	ctx := context.Background()
+	require.NoError(t, db.Chains().Create(ctx, store.Chain{
+		ID: "chain-1", TenantID: store.DefaultTenantID, Name: "deepseek-v4.1-flash",
+		Strategy:  "priority",
+		Steps:     []store.ChainStep{{Provider: "openai", Model: "gpt-4o", Position: 0}},
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	rec := httptest.NewRecorder()
+	gw.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/public/models", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var payload struct {
+		Models []struct {
+			Name       string `json:"name"`
+			ModelID    string `json:"model_id"`
+			ProviderID string `json:"provider_id"`
+		} `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Models, 1, "only chains are listed")
+	require.Equal(t, "deepseek-v4.1-flash", payload.Models[0].Name)
+	require.Equal(t, "combo", payload.Models[0].ProviderID)
+
+	// Catalog ids must not leak in.
+	require.NotContains(t, rec.Body.String(), "openai/gpt-4o")
+}
+
+// TestPublicModelsCapabilitiesFromFirstStep proves capabilities are derived
+// from the chain's first step, not the chain name. The chain is named
+// "my-fast-combo" (which resolves to no vision) while its first step is
+// openai/gpt-4o (vision=true), so a name-derived capability would report false.
+func TestPublicModelsCapabilitiesFromFirstStep(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	require.NoError(t, db.Chains().Create(context.Background(), store.Chain{
+		ID: "c-cap", TenantID: store.DefaultTenantID, Name: "my-fast-combo", Strategy: "priority",
+		Steps:     []store.ChainStep{{Provider: "openai", Model: "gpt-4o", Position: 0}},
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	rec := httptest.NewRecorder()
+	gw.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/public/models", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var payload struct {
+		Models []struct {
+			Name         string `json:"name"`
+			ProviderID   string `json:"provider_id"`
+			Capabilities struct {
+				Vision bool `json:"vision"`
+			} `json:"capabilities"`
+		} `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Models, 1)
+	require.Equal(t, "my-fast-combo", payload.Models[0].Name)
+	require.Equal(t, "combo", payload.Models[0].ProviderID, "provider_id stays combo for display")
+	require.True(t, payload.Models[0].Capabilities.Vision,
+		"capabilities must come from the first step (openai/gpt-4o has vision), not the chain name")
+}
+
+func TestPublicModelsSkipsEmptyStepChain(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	require.NoError(t, db.Chains().Create(context.Background(), store.Chain{
+		ID: "chain-empty", TenantID: store.DefaultTenantID, Name: "empty",
+		Strategy: "priority", CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+	rec := httptest.NewRecorder()
+	gw.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/public/models", nil))
+	var payload struct {
+		Models []json.RawMessage `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Empty(t, payload.Models)
+}
+
+func TestPublicModelsAttributesChainUsage(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	ctx := context.Background()
+	require.NoError(t, db.Chains().Create(ctx, store.Chain{
+		ID: "c1", TenantID: store.DefaultTenantID, Name: "combo-a", Strategy: "priority",
+		Steps:     []store.ChainStep{{Provider: "openai", Model: "gpt-4o", Position: 0}},
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+	require.NoError(t, db.Usage().RecordBatch(ctx, []store.UsageRecord{
+		{ID: "r1", TenantID: store.DefaultTenantID, APIKeyID: "k1", Provider: "openai", Model: "gpt-4o", ChainID: "c1", Status: "success", PromptTokens: 100, CompletionTokens: 20, CreatedAt: time.Now().UTC()},
+		{ID: "r2", TenantID: store.DefaultTenantID, APIKeyID: "k1", Provider: "openai", Model: "gpt-4o", ChainID: "", Status: "success", PromptTokens: 500, CompletionTokens: 500, CreatedAt: time.Now().UTC()},
+	}))
+
+	rec := httptest.NewRecorder()
+	gw.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/public/models", nil))
+	var payload struct {
+		Models []struct {
+			ModelID string `json:"model_id"`
+			Usage   struct {
+				Requests int64 `json:"requests"`
+				Tokens   int64 `json:"tokens"`
+			} `json:"usage"`
+		} `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Models, 1)
+	require.Equal(t, int64(1), payload.Models[0].Usage.Requests, "direct-target row must not count")
+	require.Equal(t, int64(120), payload.Models[0].Usage.Tokens)
 }
 
 // TestPublicRejectsUnknownRoutes locks the surface: the two removed endpoints no
@@ -229,7 +336,7 @@ func TestPublicNeverDispatches(t *testing.T) {
 	spy := &spyConnectorSource{}
 	disp := dispatch.New(spy, db.Accounts(), nil)
 	pipe := pipeline.New(pipeline.Deps{Dispatcher: disp})
-	gw := New(Deps{Config: config.Default(), DB: db, Usage: db.Usage(), Settings: db.Settings(), Pipeline: pipe})
+	gw := New(Deps{Config: config.Default(), DB: db, Usage: db.Usage(), Settings: db.Settings(), Chains: db.Chains(), Pipeline: pipe})
 
 	for _, path := range []string{
 		"/v1/public/overview",
@@ -298,5 +405,5 @@ func newPublicTestGatewayWithDB(t *testing.T) (*store.DB, *Server) {
 	require.NoError(t, db.Migrate(context.Background()))
 	require.NoError(t, db.Tenants().EnsureDefault(context.Background()))
 	t.Cleanup(func() { _ = db.Close() })
-	return db, New(Deps{Config: config.Default(), DB: db, Usage: db.Usage(), Settings: db.Settings()})
+	return db, New(Deps{Config: config.Default(), DB: db, Usage: db.Usage(), Settings: db.Settings(), Chains: db.Chains()})
 }
