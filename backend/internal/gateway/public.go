@@ -8,12 +8,11 @@ import (
 
 	"github.com/mydisha/keirouter/backend/internal/connectors"
 	"github.com/mydisha/keirouter/backend/internal/core"
-	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
 // publicOverview serves GET /v1/public/overview. Aggregate-only all-time totals
-// plus the size of the available model catalogue. No caller input, no
-// identifiers, no model dispatch.
+// plus the number of published routing chains. No caller input, no identifiers,
+// no model dispatch.
 func (s *Server) publicOverview(w http.ResponseWriter, r *http.Request) {
 	if s.cacheHit(w, "public-overview") {
 		return
@@ -39,7 +38,7 @@ func (s *Server) publicOverview(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// publicModelRow is one available catalogue model, joined with its all-time
+// publicModelRow is one published routing chain, joined with its all-time
 // aggregate usage. It carries no caller or account identifier.
 type publicModelRow struct {
 	Name       string
@@ -55,51 +54,39 @@ type publicModelRow struct {
 	Users      int
 }
 
-// publicModelRows lists every priced or used LLM in the catalogue, with all-time
-// usage merged in. Used models sort first by request volume, then the remaining
-// priced catalogue alphabetically. Purely aggregate; safe to publish.
+// publicModelRows lists one entry per routing chain, with all-time usage
+// attributed by chain_id. Chains without steps are skipped (nothing routable to
+// advertise). Rows sort by request volume, then name. Purely aggregate; safe to
+// publish.
 func (s *Server) publicModelRows(ctx context.Context) ([]publicModelRow, error) {
-	usage, err := s.usage.ByModelAccurate(ctx, adminTenant, time.Time{})
+	chains, err := s.chains.ListByTenant(ctx, adminTenant)
 	if err != nil {
 		return nil, err
 	}
-	users, err := s.usage.DistinctKeysPerModel(ctx, adminTenant, time.Time{})
+	usage, err := s.usage.ChainUsageAccurate(ctx, adminTenant, time.Time{})
 	if err != nil {
 		return nil, err
 	}
-	byKey := make(map[string]store.AccurateModelUsage, len(usage))
-	for _, m := range usage {
-		byKey[m.Provider+"\x00"+m.Model] = m
-	}
-
-	// One card per model id: the same model offered by several providers is a
-	// single catalogue entry. First provider in catalogue order wins.
-	seenModel := make(map[string]bool)
-	rows := make([]publicModelRow, 0, len(usage))
-	for _, pm := range connectors.ModelsByKind(core.ServiceLLM) {
-		if seenModel[pm.Model.ID] {
+	rows := make([]publicModelRow, 0, len(chains))
+	for _, c := range chains {
+		if len(c.Steps) == 0 {
 			continue
 		}
-		key := pm.Provider + "\x00" + pm.Model.ID
-		u := byKey[key]
-		price, priced := connectors.ModelPriceByProviderModel(pm.Provider, pm.Model.ID)
-		if u.TotalRequests == 0 && (!priced || (price.InputPerM <= 0 && price.OutputPerM <= 0)) {
-			continue
-		}
-		seenModel[pm.Model.ID] = true
-		display, _, _ := usageProviderMetadata(pm.Provider)
+		first := c.Steps[0]
+		price, _ := connectors.ModelPriceByProviderModel(first.Provider, first.Model)
+		u := usage[c.ID]
 		rows = append(rows, publicModelRow{
-			Name:       pm.Model.Name,
-			ModelID:    pm.Model.ID,
-			Provider:   display,
-			ProviderID: pm.Provider,
+			Name:       c.Name,
+			ModelID:    c.Name,
+			Provider:   "combo",
+			ProviderID: "combo",
 			InputPerM:  price.InputPerM,
 			OutputPerM: price.OutputPerM,
 			CachedPerM: price.CachedInputPerM,
 			CacheWrite: price.CacheWritePerM,
 			Requests:   u.TotalRequests,
 			Tokens:     u.PromptTokens + u.CompletionTokens,
-			Users:      users[key],
+			Users:      u.DistinctKeys,
 		})
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
@@ -111,9 +98,9 @@ func (s *Server) publicModelRows(ctx context.Context) ([]publicModelRow, error) 
 	return rows, nil
 }
 
-// publicModels serves GET /v1/public/models: the available LLM catalogue (every
-// priced model, plus any model with recorded usage) with per-1M list prices,
-// capabilities, and all-time aggregated usage. Aggregate only.
+// publicModels serves GET /v1/public/models: one entry per routing chain, with
+// per-1M list prices (from the chain's first step), capabilities, and all-time
+// usage aggregated by chain_id. Aggregate only.
 func (s *Server) publicModels(w http.ResponseWriter, r *http.Request) {
 	if s.cacheHit(w, "public-models") {
 		return
