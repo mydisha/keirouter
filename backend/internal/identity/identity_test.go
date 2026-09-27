@@ -19,8 +19,8 @@ func TestGenerateProducesVerifiableKey(t *testing.T) {
 	if issued.Plaintext == "" {
 		t.Fatal("Plaintext is empty")
 	}
-	if !strings.HasPrefix(issued.Plaintext, crypto.KeyPrefix) {
-		t.Fatalf("Plaintext %q missing prefix %q", issued.Plaintext, crypto.KeyPrefix)
+	if !strings.HasPrefix(issued.Plaintext, crypto.DefaultKeyPrefix) {
+		t.Fatalf("Plaintext %q missing prefix %q", issued.Plaintext, crypto.DefaultKeyPrefix)
 	}
 
 	rec := issued.Record

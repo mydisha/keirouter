@@ -76,7 +76,7 @@ func (s *Service) Create(ctx context.Context, tenantID, projectID, name string) 
 // The caller is responsible for inserting Issued.Record into the store,
 // typically inside a transaction when co-creating related resources.
 func (s *Service) Generate(tenantID, projectID, name string) (Issued, error) {
-	gen, err := crypto.GenerateAPIKey()
+	gen, err := crypto.GenerateAPIKey("")
 	if err != nil {
 		return Issued{}, err
 	}
