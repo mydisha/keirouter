@@ -106,6 +106,7 @@ export interface BrandingSettings {
   favicon_url: string;
   tagline: string;
   color_palette: string;
+  api_key_prefix: string;
 }
 
 export interface EndpointSettings {
@@ -1183,7 +1184,7 @@ export interface PortalRecentRequest {
 export async function fetchPortalBranding(): Promise<BrandingSettings> {
   const resp = await fetch("/v1/portal/branding");
   if (!resp.ok) {
-    return { name: "KeiRouter", logo_url: "", favicon_url: "", tagline: "", color_palette: "sage-terra" };
+    return { name: "KeiRouter", logo_url: "", favicon_url: "", tagline: "", color_palette: "sage-terra", api_key_prefix: "kr_" };
   }
   return resp.json();
 }

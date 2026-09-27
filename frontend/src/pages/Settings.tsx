@@ -1102,6 +1102,21 @@ function BrandingTab() {
           </div>
         </div>
 
+        {/* API key prefix */}
+        <div className="px-6 py-5">
+          <Field label="API Key Prefix">
+            <Input
+              value={local.api_key_prefix}
+              onChange={(e) => update({ api_key_prefix: e.target.value })}
+              placeholder="kr"
+            />
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              Used for newly created keys. Enter <code>tkr</code> or <code>tkr_</code> → new keys
+              look like <code>tkr_xxxx</code>. Existing keys are unaffected.
+            </p>
+          </Field>
+        </div>
+
         {/* Color palette */}
         <ColorPaletteField
           value={local.color_palette || "sage-terra"}
