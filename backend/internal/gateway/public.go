@@ -41,17 +41,19 @@ func (s *Server) publicOverview(w http.ResponseWriter, r *http.Request) {
 // publicModelRow is one published routing chain, joined with its all-time
 // aggregate usage. It carries no caller or account identifier.
 type publicModelRow struct {
-	Name       string
-	ModelID    string
-	Provider   string
-	ProviderID string
-	InputPerM  float64
-	OutputPerM float64
-	CachedPerM float64
-	CacheWrite float64
-	Requests   int64
-	Tokens     int64
-	Users      int
+	Name        string
+	ModelID     string
+	Provider    string
+	ProviderID  string
+	CapProvider string
+	CapModel    string
+	InputPerM   float64
+	OutputPerM  float64
+	CachedPerM  float64
+	CacheWrite  float64
+	Requests    int64
+	Tokens      int64
+	Users       int
 }
 
 // publicModelRows lists one entry per routing chain, with all-time usage
@@ -76,17 +78,19 @@ func (s *Server) publicModelRows(ctx context.Context) ([]publicModelRow, error) 
 		price, _ := connectors.ModelPriceByProviderModel(first.Provider, first.Model)
 		u := usage[c.ID]
 		rows = append(rows, publicModelRow{
-			Name:       c.Name,
-			ModelID:    c.Name,
-			Provider:   "combo",
-			ProviderID: "combo",
-			InputPerM:  price.InputPerM,
-			OutputPerM: price.OutputPerM,
-			CachedPerM: price.CachedInputPerM,
-			CacheWrite: price.CacheWritePerM,
-			Requests:   u.TotalRequests,
-			Tokens:     u.PromptTokens + u.CompletionTokens,
-			Users:      u.DistinctKeys,
+			Name:        c.Name,
+			ModelID:     c.Name,
+			Provider:    "combo",
+			ProviderID:  "combo",
+			CapProvider: first.Provider,
+			CapModel:    first.Model,
+			InputPerM:   price.InputPerM,
+			OutputPerM:  price.OutputPerM,
+			CachedPerM:  price.CachedInputPerM,
+			CacheWrite:  price.CacheWritePerM,
+			Requests:    u.TotalRequests,
+			Tokens:      u.PromptTokens + u.CompletionTokens,
+			Users:       u.DistinctKeys,
 		})
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
@@ -112,7 +116,7 @@ func (s *Server) publicModels(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, m := range rows {
-		caps, _ := capabilityPayload(m.ProviderID, m.ModelID, core.ServiceLLM)
+		caps, _ := capabilityPayload(m.CapProvider, m.CapModel, core.ServiceLLM)
 		out = append(out, map[string]any{
 			"name":              m.Name,
 			"model_id":          m.ModelID,

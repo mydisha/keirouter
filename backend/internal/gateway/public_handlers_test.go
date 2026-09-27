@@ -217,6 +217,39 @@ func TestPublicModelsListsChainsOnly(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "openai/gpt-4o")
 }
 
+// TestPublicModelsCapabilitiesFromFirstStep proves capabilities are derived
+// from the chain's first step, not the chain name. The chain is named
+// "my-fast-combo" (which resolves to no vision) while its first step is
+// openai/gpt-4o (vision=true), so a name-derived capability would report false.
+func TestPublicModelsCapabilitiesFromFirstStep(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	require.NoError(t, db.Chains().Create(context.Background(), store.Chain{
+		ID: "c-cap", TenantID: store.DefaultTenantID, Name: "my-fast-combo", Strategy: "priority",
+		Steps:     []store.ChainStep{{Provider: "openai", Model: "gpt-4o", Position: 0}},
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	rec := httptest.NewRecorder()
+	gw.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/public/models", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var payload struct {
+		Models []struct {
+			Name         string `json:"name"`
+			ProviderID   string `json:"provider_id"`
+			Capabilities struct {
+				Vision bool `json:"vision"`
+			} `json:"capabilities"`
+		} `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Models, 1)
+	require.Equal(t, "my-fast-combo", payload.Models[0].Name)
+	require.Equal(t, "combo", payload.Models[0].ProviderID, "provider_id stays combo for display")
+	require.True(t, payload.Models[0].Capabilities.Vision,
+		"capabilities must come from the first step (openai/gpt-4o has vision), not the chain name")
+}
+
 func TestPublicModelsSkipsEmptyStepChain(t *testing.T) {
 	db, gw := newPublicTestGatewayWithDB(t)
 	require.NoError(t, db.Chains().Create(context.Background(), store.Chain{
