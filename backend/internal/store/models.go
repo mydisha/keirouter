@@ -223,6 +223,22 @@ type Budget struct {
 	UpdatedAt   time.Time
 }
 
+// KeyTopup is one append-only budget top-up for an API key. Amount and limits
+// are integer micro-USD (1 USD = 1,000,000 micros).
+type KeyTopup struct {
+	ID                string
+	TenantID          string
+	KeyID             string
+	BudgetID          string
+	AmountMicros      int64
+	Reason            string
+	LimitBeforeMicros int64
+	LimitAfterMicros  int64
+	IdempotencyKey    string
+	Actor             string
+	CreatedAt         time.Time
+}
+
 // AuditEntry is one append-only audit record.
 type AuditEntry struct {
 	ID        string
