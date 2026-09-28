@@ -279,8 +279,11 @@ func chainPrice(ev Event) (Price, bool) {
 // keeps its provenance (key, match kind, estimated status) instead of both
 // paths drifting.
 func calculateCostFromPrice(match PricingMatch, uUsage core.Usage, cacheHit bool, savedInputTokens int) CostBreakdown {
-	u := clampUsage(uUsage)
 	out := CostBreakdown{Pricing: match}
+	if match.Status == "missing" || match.Status == "none" {
+		return out
+	}
+	u := clampUsage(uUsage)
 	p := effectivePrice(match.Price, u.PromptTokens)
 	out.InputRatePerM = p.InputPerM
 	out.CachedRatePerM = p.CachedInputPerM

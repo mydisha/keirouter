@@ -1589,8 +1589,10 @@ func providerErrorForAttempt(err error, attempt dispatch.Attempt) *core.Provider
 }
 
 func attemptForTargets(targets []dispatch.Target) dispatch.Attempt {
-	provider, model := firstTarget(targets)
-	return dispatch.Attempt{Target: dispatch.Target{Provider: provider, Model: model}}
+	if len(targets) == 0 {
+		return dispatch.Attempt{}
+	}
+	return dispatch.Attempt{Target: targets[0]}
 }
 
 // recordLocalTerminal records requests rejected before an upstream attempt

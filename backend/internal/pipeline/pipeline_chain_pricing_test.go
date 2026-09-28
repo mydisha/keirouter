@@ -13,6 +13,23 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
+// TestAttemptForTargetsKeepsChainRates proves the cache-hit/local-terminal path
+// builds the attempt by copying the source target wholesale, so the four chain
+// rates survive (previously only Provider/Model were copied, dropping them).
+func TestAttemptForTargetsKeepsChainRates(t *testing.T) {
+	targets := []dispatch.Target{{
+		Provider: "openai", Model: "gpt-4o",
+		InputPerM: 2.5, OutputPerM: 10, CacheWritePerM: 3.125, CacheReadPerM: 0.25,
+	}}
+	att := attemptForTargets(targets)
+	require.Equal(t, targets[0], att.Target)
+	require.Equal(t, float64(2.5), att.Target.InputPerM)
+	require.Equal(t, float64(10), att.Target.OutputPerM)
+	require.Equal(t, float64(3.125), att.Target.CacheWritePerM)
+	require.Equal(t, float64(0.25), att.Target.CacheReadPerM)
+	require.Equal(t, dispatch.Target{}, attemptForTargets(nil).Target)
+}
+
 // TestPipelineForwardsChainStepPrice proves that the winning attempt's chain
 // step rates are forwarded through recordOutcomeWithTTFT into the meter and
 // persisted as a chain-priced UsageRecord. The meter is built with no catalog

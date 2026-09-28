@@ -52,6 +52,30 @@ func TestRecordUsesChainStepPrice(t *testing.T) {
 	require.Equal(t, int64(7_500_000), cap.last.CostNanos)
 }
 
+func TestRecordChainPriceSplitsAllFourClasses(t *testing.T) {
+	cap := &chainCaptureStore{}
+	m := New(cap, nil, nil)
+	_, err := m.Record(context.Background(), Event{
+		TenantID: store.DefaultTenantID, Provider: "openai", Model: "gpt-4o", ChainID: "c1",
+		InputPerM: 2, OutputPerM: 10, CacheWritePerM: 2.5, CacheReadPerM: 0.2,
+		Status: "success",
+		Usage: core.Usage{
+			PromptTokens: 1000, CompletionTokens: 500,
+			CachedTokens: 200, CacheWriteTokens: 100, Source: core.UsageSourceProvider,
+		},
+	})
+	require.NoError(t, err)
+	// standardInput = 1000-200-100 = 700 → 700*2*1000 = 1,400,000
+	require.Equal(t, int64(1_400_000), cap.last.InputCostNanos)
+	// cached = 200*0.2*1000 = 40,000
+	require.Equal(t, int64(40_000), cap.last.CachedCostNanos)
+	// cache write = 100*2.5*1000 = 250,000
+	require.Equal(t, int64(250_000), cap.last.CacheWriteCostNanos)
+	// output = 500*10*1000 = 5,000,000
+	require.Equal(t, int64(5_000_000), cap.last.OutputCostNanos)
+	require.Equal(t, int64(6_690_000), cap.last.CostNanos)
+}
+
 func TestRecordFallsBackToCatalogWhenNoChainPrice(t *testing.T) {
 	cap := &chainCaptureStore{}
 	m := New(cap, nil, map[string]Price{"openai/gpt-4o": {InputPerM: 1, OutputPerM: 2, Source: "catalog"}})
