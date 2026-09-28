@@ -1197,6 +1197,13 @@ function NotificationTab() {
   const remove = (index: number) => persist(items.filter((_, i) => i !== index));
 
   if (list.isLoading) return <Spinner />;
+  if (list.isError) {
+    return (
+      <ErrorBanner
+        message={`Failed to load notifications: ${(list.error as Error)?.message ?? "unknown error"}`}
+      />
+    );
+  }
 
   return (
     <Card>
