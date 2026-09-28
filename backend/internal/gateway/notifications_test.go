@@ -2,6 +2,8 @@ package gateway
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -79,4 +81,42 @@ func TestNewNotificationIDUnique(t *testing.T) {
 		require.False(t, seen[id])
 		seen[id] = true
 	}
+}
+
+func TestAdminNotificationsRoundTrip(t *testing.T) {
+	s := newNotificationsGateway(t)
+
+	// GET returns defaults first.
+	rec := httptest.NewRecorder()
+	s.adminGetNotifications(rec, httptest.NewRequest(http.MethodGet, "/settings/notifications", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "DeepSeek V4.1 Flash")
+
+	// POST replaces.
+	body := `{"notifications":[{"id":"a1b2c3d4","title":"Halo","body":"<b>hi</b>","href":"https://x.dev"}]}`
+	rec = httptest.NewRecorder()
+	s.adminUpdateNotifications(rec, httptest.NewRequest(http.MethodPost, "/settings/notifications", strings.NewReader(body)))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	// GET reflects the replacement.
+	rec = httptest.NewRecorder()
+	s.adminGetNotifications(rec, httptest.NewRequest(http.MethodGet, "/settings/notifications", nil))
+	require.Contains(t, rec.Body.String(), "Halo")
+	require.NotContains(t, rec.Body.String(), "DeepSeek V4.1 Flash")
+}
+
+func TestAdminNotificationsRejectsInvalid(t *testing.T) {
+	s := newNotificationsGateway(t)
+	rec := httptest.NewRecorder()
+	s.adminUpdateNotifications(rec, httptest.NewRequest(http.MethodPost, "/settings/notifications",
+		strings.NewReader(`{"notifications":[{"title":""}]}`)))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+func TestPublicNotificationsNoAuth(t *testing.T) {
+	s := newNotificationsGateway(t)
+	rec := httptest.NewRecorder()
+	s.publicNotifications(rec, httptest.NewRequest(http.MethodGet, "/v1/public/notifications", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "notifications")
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -114,4 +115,48 @@ func validateLandingNotifications(items []LandingNotification) error {
 		}
 	}
 	return nil
+}
+
+// ---- admin endpoints --------------------------------------------------------
+
+func (s *Server) adminGetNotifications(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"notifications": s.loadLandingNotifications(r.Context())})
+}
+
+func (s *Server) adminUpdateNotifications(w http.ResponseWriter, r *http.Request) {
+	if s.settings == nil {
+		writeError(w, http.StatusInternalServerError, "settings store not configured")
+		return
+	}
+	var body struct {
+		Notifications []LandingNotification `json:"notifications"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	items := body.Notifications
+	if items == nil {
+		items = []LandingNotification{}
+	}
+	// Assign new ids to any item without one (create path).
+	for i := range items {
+		if strings.TrimSpace(items[i].ID) == "" {
+			items[i].ID = newNotificationID()
+		}
+	}
+	if err := validateLandingNotifications(items); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := s.saveLandingNotifications(r.Context(), items); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"notifications": items})
+}
+
+// ---- public endpoint --------------------------------------------------------
+
+func (s *Server) publicNotifications(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"notifications": s.loadLandingNotifications(r.Context())})
 }
