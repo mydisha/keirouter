@@ -13,6 +13,7 @@ import {
   Save,
   Settings as SettingsIcon,
   Shield,
+  Wallet,
 } from "lucide-react";
 import {
   api,
@@ -30,16 +31,20 @@ import {
   Card,
   CardHeader,
   EmptyState,
+  Field,
+  Input,
+  Modal,
   Spinner,
   TabBar,
   Toggle,
 } from "../components/ui";
 
-type Tab = "general" | "models" | "guardrails";
+type Tab = "general" | "models" | "budget" | "guardrails";
 
 const TABS = [
   { value: "general" as const, label: "General", icon: SettingsIcon },
   { value: "models" as const, label: "Models", icon: Cpu },
+  { value: "budget" as const, label: "Budget", icon: Wallet },
   { value: "guardrails" as const, label: "Guardrails", icon: Shield },
 ];
 
@@ -148,6 +153,7 @@ export function KeyDetailPage() {
 
       {tab === "general" && <GeneralTab apiKey={key} />}
       {tab === "models" && <ModelsTab apiKey={key} plan={plan} plansLoading={plans.isLoading} />}
+      {tab === "budget" && <BudgetTab apiKey={key} />}
       {tab === "guardrails" && <GuardrailsTab apiKey={key} />}
     </div>
   );
@@ -308,6 +314,129 @@ function enabledDetectors(config: GuardrailPolicyConfig | undefined) {
     ["Toxicity", config.toxicity?.enabled],
     ["Bias", config.bias?.enabled],
   ].filter((entry): entry is [string, true] => entry[1] === true).map(([name]) => name);
+}
+
+function BudgetTab({ apiKey }: { apiKey: APIKey }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const status = useQuery({ queryKey: ["budget-status"], queryFn: () => api.budgetStatus() });
+  const topups = useQuery({ queryKey: ["key-topups", apiKey.id], queryFn: () => api.listKeyTopups(apiKey.id) });
+
+  const budget = useMemo(
+    () => status.data?.budgets.find((b) => b.scope_kind === "api_key" && b.scope_id === apiKey.id),
+    [status.data, apiKey.id],
+  );
+
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const [idem, setIdem] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const openModal = () => {
+    setAmount("");
+    setReason("");
+    setError(null);
+    setIdem(crypto.randomUUID());
+    setOpen(true);
+  };
+
+  const parsed = Number(amount);
+  const valid = Number.isFinite(parsed) && parsed > 0 && Math.round(parsed * 1e6) === parsed * 1e6;
+
+  const submit = useMutation({
+    mutationFn: () => api.topupKey(apiKey.id, { amount_usd: parsed, reason: reason.trim() || undefined, idempotency_key: idem }),
+    onSuccess: async (data) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["budget-status"] }),
+        qc.invalidateQueries({ queryKey: ["key-topups", apiKey.id] }),
+      ]);
+      setOpen(false);
+      toast.success("Budget topped up", `New limit: $${data.topup.limit_after_usd.toFixed(2)}.`);
+    },
+    onError: (e) => { setError(e instanceof Error ? e.message : "Please try again."); },
+  });
+
+  const limit = budget ? budget.limit_micros / 1_000_000 : 0;
+  const spent = budget ? budget.spent_micros / 1_000_000 : 0;
+  const remaining = Math.max(limit - spent, 0);
+  const pct = limit > 0 ? Math.min((spent / limit) * 100, 100) : 0;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader
+          title="Budget"
+          description="Spend limit for this key. Top-ups increase the limit and are recorded below."
+          action={<Button onClick={openModal}><Wallet className="h-4 w-4" />Top up</Button>}
+        />
+        <div className="space-y-4 p-4 sm:p-5">
+          {status.isLoading ? (
+            <Spinner />
+          ) : !budget ? (
+            <p className="text-sm text-[var(--text-muted)]">This key has no budget yet. Top up to create one.</p>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                <Badge tone={pct >= (budget.alert_pct || 100) ? "danger" : "neutral"}>{budget.period} limit</Badge>
+                <span className="text-[var(--text-muted)]">Alert at {budget.alert_pct}%</span>
+              </div>
+              <div>
+                <div className="mb-1 flex items-baseline justify-between text-sm">
+                  <span className="font-medium text-[var(--text)]">${spent.toFixed(2)} spent</span>
+                  <span className="text-[var(--text-muted)]">of ${limit.toFixed(2)} · ${remaining.toFixed(2)} left</span>
+                </div>
+                <div className="h-2.5 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
+                  <div className={`h-full rounded-full ${pct >= 100 ? "bg-red-500" : pct >= (budget.alert_pct || 100) ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </Card>
+
+      <Card>
+        <CardHeader title="Top-up history" description="Every top-up is append-only and ordered newest first." />
+        <div className="p-4 sm:p-5">
+          {topups.isLoading ? <Spinner /> : !topups.data?.topups?.length ? (
+            <EmptyState title="No top-ups yet" hint="Top-ups for this key will appear here with their reason and before/after limit." />
+          ) : (
+            <div className="divide-y divide-[var(--border)]">
+              {topups.data.topups.map((t) => (
+                <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
+                  <div className="min-w-0">
+                    <p className="font-medium text-[var(--text)]">+${t.amount_usd.toFixed(2)}</p>
+                    <p className="truncate text-xs text-[var(--text-muted)]">{t.reason || "No reason provided"}</p>
+                  </div>
+                  <div className="text-right text-xs text-[var(--text-muted)]">
+                    <p className="tabular-nums">${t.limit_before_usd.toFixed(2)} → ${t.limit_after_usd.toFixed(2)}</p>
+                    <p>{new Date(t.created_at).toLocaleString()}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+
+      <Modal open={open} onClose={() => setOpen(false)} title={`Top up ${apiKey.name}`}>
+        <div className="space-y-4">
+          <Field label="Amount (USD)">
+            <Input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="25.00" autoFocus />
+          </Field>
+          <Field label="Reason (optional)">
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="manual invoice #123" maxLength={500} />
+          </Field>
+          {budget && valid && <p className="text-xs text-[var(--text-muted)]">New limit: ${(limit + parsed).toFixed(2)}</p>}
+          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={submit.isPending}>Cancel</Button>
+            <Button onClick={() => submit.mutate()} disabled={!valid || submit.isPending}>{submit.isPending ? "Topping up…" : "Top up"}</Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
+  );
 }
 
 function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
