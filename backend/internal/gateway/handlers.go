@@ -223,7 +223,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 	// Enforce per-key model access restrictions. Filter resolved targets to
 	// only include models the key is allowed to access.
 	if len(resolved.Targets) > 0 {
-		filtered, ferr := s.filterAllowedTargets(r.Context(), key.ID, resolved.Targets)
+		filtered, ferr := s.filterAllowedTargets(r.Context(), key.ID, req.Model, resolved.PlanOpts.ChainID != "", resolved.Targets)
 		if ferr != nil {
 			s.consoleLog.Log("ERROR", "Model access check failed", ferr.Error())
 			writeError(w, http.StatusInternalServerError, "model access check failed")
@@ -885,7 +885,11 @@ func isClientDisconnect(err error) bool {
 // filterAllowedTargets filters resolved routing targets to only include models
 // the given API key is allowed to access. Returns empty slice if no target
 // matches the key's model access policy.
-func (s *Server) filterAllowedTargets(ctx context.Context, keyID string, targets []dispatch.Target) ([]dispatch.Target, error) {
+//
+// isChain marks a request that resolved to a routing chain. A chain the key may
+// use by name (bare or "chain:") grants every step it resolves to, since the
+// key's grant is for the chain as a whole rather than its individual steps.
+func (s *Server) filterAllowedTargets(ctx context.Context, keyID, requestedModel string, isChain bool, targets []dispatch.Target) ([]dispatch.Target, error) {
 	keys := s.identity.Keys()
 	allowed, err := keys.GetAllowedModels(ctx, keyID)
 	if err != nil {
@@ -893,6 +897,13 @@ func (s *Server) filterAllowedTargets(ctx context.Context, keyID string, targets
 	}
 	if len(allowed) == 0 {
 		return targets, nil // no restriction
+	}
+
+	if isChain {
+		name, _ := strings.CutPrefix(requestedModel, "chain:")
+		if modelMatchesAny(requestedModel, allowed) || modelMatchesAny(name, allowed) {
+			return targets, nil
+		}
 	}
 
 	// Match all targets in-memory against the already-fetched allowed list.

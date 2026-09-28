@@ -28,7 +28,7 @@ func (s *Server) mediaOptions(r *http.Request, model string) (pipeline.MediaOpti
 		return pipeline.MediaOptions{}, err
 	}
 	if len(resolved.Targets) > 0 {
-		filtered, ferr := s.filterAllowedTargets(r.Context(), key.ID, resolved.Targets)
+		filtered, ferr := s.filterAllowedTargets(r.Context(), key.ID, model, resolved.PlanOpts.ChainID != "", resolved.Targets)
 		if ferr != nil {
 			return pipeline.MediaOptions{}, ferr
 		}

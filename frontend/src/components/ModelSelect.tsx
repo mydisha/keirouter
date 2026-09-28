@@ -58,6 +58,7 @@ export interface ModelCatalogOption {
 
 export function useModelCatalog() {
   const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.providers(), staleTime: 300_000 });
+  const chains = useQuery({ queryKey: ["chains"], queryFn: () => api.listChains(), staleTime: 300_000 });
   const visibleProviders = useMemo(
     () => (providers.data?.providers ?? []).filter((provider) => !provider.hidden),
     [providers.data],
@@ -71,6 +72,17 @@ export function useModelCatalog() {
   });
   const models = useMemo<ModelCatalogOption[]>(() => {
     const result: ModelCatalogOption[] = [];
+    // Chains are callable virtual models (bare name or "chain:" prefix), so they
+    // belong in the same allow/deny picker as provider models.
+    for (const chain of chains.data?.chains ?? []) {
+      result.push({
+        id: chain.name,
+        name: chain.name,
+        providerId: "chains",
+        providerName: "Chains",
+        icon: "",
+      });
+    }
     visibleProviders.forEach((provider, index) => {
       for (const model of modelQueries[index]?.data?.models ?? []) {
         result.push({
@@ -84,12 +96,12 @@ export function useModelCatalog() {
       }
     });
     return result;
-  }, [visibleProviders, modelQueries]);
+  }, [visibleProviders, modelQueries, chains.data]);
 
   return {
     models,
-    loading: providers.isLoading || modelQueries.some((query) => query.isLoading),
-    error: providers.isError || modelQueries.some((query) => query.isError),
+    loading: providers.isLoading || modelQueries.some((query) => query.isLoading) || chains.isLoading,
+    error: providers.isError || modelQueries.some((query) => query.isError) || chains.isError,
   };
 }
 
