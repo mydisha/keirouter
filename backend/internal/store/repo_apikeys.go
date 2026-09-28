@@ -12,6 +12,9 @@ import (
 // ErrNotFound is returned when a lookup matches no row.
 var ErrNotFound = errors.New("store: not found")
 
+// ErrLimitOverflow is returned when a limit increment would exceed int64.
+var ErrLimitOverflow = errors.New("store: limit overflow")
+
 // sqlExec abstracts *sql.DB and *sql.Tx so repository helpers can run on
 // either a direct connection or inside an open transaction.
 type sqlExec interface {

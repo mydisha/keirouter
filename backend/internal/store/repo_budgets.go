@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -71,6 +74,57 @@ func (r *BudgetRepo) Update(ctx context.Context, b Budget) error {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return ErrNotFound
+	}
+	return nil
+}
+
+// IncrementLimitOnTx atomically adds deltaMicros to a budget's spend limit
+// inside an existing transaction and returns the limit before and after.
+//
+// On Postgres the row is read with FOR UPDATE so concurrent top-ups serialize
+// and the returned "before" snapshot cannot go stale. On SQLite the write lock
+// already serializes the transaction. All arithmetic is int64 micro-USD.
+//
+// Overflow is checked against the value read under the lock and reported as
+// ErrLimitOverflow before any write, so a wrap can never be persisted.
+func (r *BudgetRepo) IncrementLimitOnTx(ctx context.Context, tx *sql.Tx, id string, deltaMicros int64) (int64, int64, error) {
+	sel := r.db.rebind(`SELECT limit_micros FROM budgets WHERE id = ?`)
+	if r.db.Dialect() == DialectPostgres {
+		sel += " FOR UPDATE"
+	}
+	var before int64
+	if err := tx.QueryRowContext(ctx, sel, id).Scan(&before); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, ErrNotFound
+		}
+		return 0, 0, fmt.Errorf("store: read budget limit: %w", err)
+	}
+	if deltaMicros > 0 && before > math.MaxInt64-deltaMicros {
+		return before, before, ErrLimitOverflow
+	}
+	if deltaMicros < 0 && before < math.MinInt64-deltaMicros {
+		return before, before, ErrLimitOverflow
+	}
+	after := before + deltaMicros
+	up := r.db.rebind(`UPDATE budgets SET limit_micros = ?, updated_at = ? WHERE id = ?`)
+	if _, err := tx.ExecContext(ctx, up, after, formatTime(time.Now()), id); err != nil {
+		return 0, 0, fmt.Errorf("store: increment budget limit: %w", err)
+	}
+	return before, after, nil
+}
+
+// LockKeyTopup serializes concurrent top-ups for one API key. On Postgres it
+// takes a transaction-scoped advisory lock keyed by the key id, so two requests
+// cannot both create the key's budget or lose an increment. On SQLite, whose
+// single writer already serializes transactions, it is a no-op.
+func (r *BudgetRepo) LockKeyTopup(ctx context.Context, tx *sql.Tx, keyID string) error {
+	if r.db.Dialect() != DialectPostgres {
+		return nil
+	}
+	sum := sha256.Sum256([]byte("key_topup:" + keyID))
+	lockID := int64(binary.BigEndian.Uint64(sum[:8]))
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", lockID); err != nil {
+		return fmt.Errorf("store: lock key topup: %w", err)
 	}
 	return nil
 }
