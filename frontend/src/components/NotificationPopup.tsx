@@ -1,41 +1,14 @@
 // Landing notification popup — a small card that drops below the navbar,
-// like a social feed's bell menu. Static content for now: the dashboard-side
-// editor is a later feature, so this is the presentation layer only. The list
-// is capped at MAX_NOTIFICATIONS.
+// like a social feed's bell menu. Content is fetched from the public
+// notifications API (configured in the dashboard); the list is capped at
+// MAX_NOTIFICATIONS.
 
 import { useEffect, useRef } from "react";
-
-export interface LandingNotification {
-  id: string;
-  title: string;
-  body: string;
-  tag?: string;
-  href?: string;
-}
+import { useQuery } from "@tanstack/react-query";
+import { fetchPublicNotifications, type LandingNotification } from "../lib/publicApi";
+import { sanitizeHtml } from "../lib/sanitizeHtml";
 
 export const MAX_NOTIFICATIONS = 5;
-
-// Default copy, carried over from the 26 Sep 2026 catalogue announcement.
-const DEFAULT_NOTIFICATIONS: LandingNotification[] = [
-  {
-    id: "deepseek-v4.1-flash",
-    tag: "BARU",
-    title: "DeepSeek V4.1 Flash",
-    body: "Model flash baru dengan konteks 1.000.000 token dan harga per-1M sangat rendah.",
-  },
-  {
-    id: "pixel-canary",
-    tag: "STEALTH",
-    title: "Pixel Canary",
-    body: "Akses sementara selama uji coba. Kuota terbatas dan dapat berubah tanpa pemberitahuan.",
-  },
-  {
-    id: "space-bunny-alpha",
-    tag: "STEALTH",
-    title: "Space Bunny Alpha",
-    body: "Masih tersedia untuk sementara. Harga tetap Rp 1 / 1M selama periode stealth.",
-  },
-];
 
 function NotificationItem({ item }: { item: LandingNotification }) {
   const inner = (
@@ -43,14 +16,20 @@ function NotificationItem({ item }: { item: LandingNotification }) {
       <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-[var(--green)]" aria-hidden="true" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <p className="truncate text-[13px] font-[650] text-[var(--ink)]">{item.title}</p>
+          <p
+            className="truncate text-[13px] font-[650] text-[var(--ink)] [&_a]:underline"
+            dangerouslySetInnerHTML={{ __html: sanitizeHtml(item.title) }}
+          />
           {item.tag && (
             <span className="shrink-0 rounded-full bg-[var(--accent-bg)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-[0.5px] text-[var(--green)]">
               {item.tag}
             </span>
           )}
         </div>
-        <p className="mt-0.5 text-xs leading-relaxed text-[var(--muted)]">{item.body}</p>
+        <p
+          className="mt-0.5 text-xs leading-relaxed text-[var(--muted)] [&_a]:underline"
+          dangerouslySetInnerHTML={{ __html: sanitizeHtml(item.body) }}
+        />
       </div>
     </div>
   );
@@ -66,15 +45,10 @@ function NotificationItem({ item }: { item: LandingNotification }) {
   );
 }
 
-export function NotificationPopup({
-  open,
-  onClose,
-  items = DEFAULT_NOTIFICATIONS,
-}: {
-  open: boolean;
-  onClose: () => void;
-  items?: LandingNotification[];
-}) {
+export function NotificationPopup({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { data } = useQuery({ queryKey: ["public-notifications"], queryFn: fetchPublicNotifications });
+  const items = data ?? [];
+
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
