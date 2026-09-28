@@ -37,6 +37,14 @@ export interface PublicModel {
   usage: PublicUsage;
 }
 
+export interface LandingNotification {
+  id: string;
+  tag?: string;
+  title: string;
+  body: string;
+  href?: string;
+}
+
 export interface PublicOverview {
   total_requests: number;
   total_tokens: number;
@@ -55,3 +63,6 @@ export const fetchPublicOverview = () => getJSON<PublicOverview>("/v1/public/ove
 
 export const fetchPublicModels = () =>
   getJSON<{ models: PublicModel[] }>("/v1/public/models").then((d) => d.models);
+
+export const fetchPublicNotifications = () =>
+  getJSON<{ notifications: LandingNotification[] }>("/v1/public/notifications").then((d) => d.notifications);

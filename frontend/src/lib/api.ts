@@ -109,6 +109,14 @@ export interface BrandingSettings {
   api_key_prefix: string;
 }
 
+export interface LandingNotification {
+  id: string;
+  tag?: string;
+  title: string;
+  body: string;
+  href?: string;
+}
+
 export interface EndpointSettings {
   rtk_enabled: boolean;
   rtk_filter_level: string;
@@ -1434,6 +1442,11 @@ export const api = {
   branding: () => request<BrandingSettings>("GET", "/settings/branding"),
   updateBranding: (patch: Partial<BrandingSettings>) =>
     request<BrandingSettings>("POST", "/settings/branding", patch),
+
+  // Landing page notifications.
+  notifications: () => request<{ notifications: LandingNotification[] }>("GET", "/settings/notifications"),
+  updateNotifications: (notifications: LandingNotification[]) =>
+    request<{ notifications: LandingNotification[] }>("POST", "/settings/notifications", { notifications }),
 
   // Tunnel management.
   tunnelStatus: () => request<TunnelCombinedStatus>("GET", "/tunnel/status"),
