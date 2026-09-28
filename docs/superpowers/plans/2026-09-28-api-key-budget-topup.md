@@ -382,6 +382,30 @@ Add `ErrLimitOverflow` next to `ErrNotFound` in `backend/internal/store/repo_api
 var ErrLimitOverflow = errors.New("store: limit overflow")
 ```
 
+Then add a per-key top-up serialization helper. Append to `backend/internal/store/repo_budgets.go` (same file, after `IncrementLimitOnTx`):
+
+```go
+// LockKeyTopup serializes concurrent top-ups for one API key. On Postgres it
+// takes a transaction-scoped advisory lock keyed by the key id, so two requests
+// cannot both create the key's budget or lose an increment. On SQLite, whose
+// single writer already serializes transactions, it is a no-op.
+func (r *BudgetRepo) LockKeyTopup(ctx context.Context, tx *sql.Tx, keyID string) error {
+	if r.db.Dialect() != DialectPostgres {
+		return nil
+	}
+	sum := sha256.Sum256([]byte("key_topup:" + keyID))
+	lockID := int64(binary.BigEndian.Uint64(sum[:8]))
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", lockID); err != nil {
+		return fmt.Errorf("store: lock key topup: %w", err)
+	}
+	return nil
+}
+```
+
+The advisory xact lock is released automatically when the transaction commits or rolls back, so no explicit unlock is needed. Add `crypto/sha256` and `encoding/binary` to the file's imports.
+
+Task 3 calls it as `s.budgets.LockKeyTopup(ctx, tx, key.ID)` (the handler already holds `s.budgets`).
+
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `go test ./internal/store/ -run TestBudgetRepo_IncrementLimitOnTx -v`
@@ -672,26 +696,37 @@ func (s *Server) adminTopupKey(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Resolve the key's api_key budget, creating a total-period one if absent.
-	budgets, err := s.budgets.ListByScope(ctx, store.ScopeAPIKey, key.ID)
-	if err != nil {
+	// Serialize all top-ups for this key so concurrent requests cannot race on
+	// budget creation or on the read-then-write limit snapshot. On Postgres
+	// this takes a transaction-scoped advisory lock; on SQLite the write lock
+	// already serializes.
+	if err := s.budgets.LockKeyTopup(ctx, tx, key.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
+
+	// Resolve the key's api_key budget, creating a total-period one if absent.
 	var budget store.Budget
-	if len(budgets) == 0 {
-		now := time.Now()
-		budget = store.Budget{
-			ID: uuid.NewString(), TenantID: adminTenant, ScopeKind: store.ScopeAPIKey,
-			ScopeID: key.ID, LimitMicros: 0, Period: "total", AlertPct: 80,
-			HardCutoff: true, CreatedAt: now, UpdatedAt: now,
-		}
-		if err := s.budgets.CreateOnTx(ctx, tx, budget); err != nil {
+	{
+		budgets, err := s.budgets.ListByScope(ctx, store.ScopeAPIKey, key.ID)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 			return
 		}
-	} else {
-		budget = budgets[0]
+		if len(budgets) == 0 {
+			now := time.Now()
+			budget = store.Budget{
+				ID: uuid.NewString(), TenantID: adminTenant, ScopeKind: store.ScopeAPIKey,
+				ScopeID: key.ID, LimitMicros: 0, Period: "total", AlertPct: 80,
+				HardCutoff: true, CreatedAt: now, UpdatedAt: now,
+			}
+			if err := s.budgets.CreateOnTx(ctx, tx, budget); err != nil {
+				writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+				return
+			}
+		} else {
+			budget = budgets[0]
+		}
 	}
 
 	// Atomic increment; overflow is detected under the row lock before writing.
@@ -1096,7 +1131,235 @@ git commit -m "feat(ui): show key budget spend bar in keys list"
 
 ---
 
-### Task 7: Postgres integration test, rebuild, and live verification
+### Task 7: Concurrency and race-condition verification
+
+Money must never be double-credited under concurrent access. SQLite serializes
+writers, so it cannot exercise the race — these tests run against **Postgres**
+(`KEIROUTER_TEST_POSTGRES_DSN`) with `-race` and multiple iterations.
+
+**Files:**
+- Create: `backend/internal/gateway/admin_topup_race_test.go`
+
+**Interfaces:**
+- Consumes: `newTopupTestServer` wiring shape (Task 3), `s.adminTopupKey`, `store.*`.
+- Produces: proof that (a) distinct top-ups all apply exactly once, (b) the same
+  idempotency key applies exactly once, (c) a budget-less key still ends with
+  exactly one budget row under concurrency.
+
+- [ ] **Step 1: Write the concurrent tests**
+
+Create `backend/internal/gateway/admin_topup_race_test.go`:
+
+```go
+package gateway
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/mydisha/keirouter/backend/internal/config"
+	"github.com/mydisha/keirouter/backend/internal/identity"
+	"github.com/mydisha/keirouter/backend/internal/store"
+	"github.com/stretchr/testify/require"
+)
+
+// newTopupPostgresServer builds a Server backed by the real Postgres test DSN.
+// SQLite cannot exercise concurrent writers, so the race tests require this.
+func newTopupPostgresServer(t *testing.T) *Server {
+	t.Helper()
+	dsn := os.Getenv("KEIROUTER_TEST_POSTGRES_DSN")
+	if dsn == "" {
+		t.Skip("KEIROUTER_TEST_POSTGRES_DSN not set; skipping concurrency test")
+	}
+	ctx := context.Background()
+	db, err := store.Open(ctx, config.DatabaseConfig{Driver: "postgres", DSN: dsn}, "")
+	require.NoError(t, err)
+	require.NoError(t, db.Migrate(ctx))
+	require.NoError(t, db.Tenants().EnsureDefault(ctx))
+	t.Cleanup(func() { _ = db.Close() })
+	return &Server{db: db, identity: identity.New(db.APIKeys()), budgets: db.Budgets(), usage: db.Usage(), log: slog.Default()}
+}
+
+// callTopup invokes the handler once in its own request context.
+func callTopup(s *Server, keyID, body string) int {
+	r := httptest.NewRequest(http.MethodPost, "/keys/"+keyID+"/topup", strings.NewReader(body))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", keyID)
+	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	s.adminTopupKey(w, r)
+	return w.Code
+}
+
+func TestTopupRace_DistinctKeysAllApplyExactlyOnce(t *testing.T) {
+	s := newTopupPostgresServer(t)
+	ctx := context.Background()
+	issued, err := s.identity.Create(ctx, store.DefaultTenantID, "", "race-distinct")
+	require.NoError(t, err)
+	keyID := issued.Record.ID
+	require.NoError(t, s.budgets.Create(ctx, store.Budget{
+		ID: "b-race-1", TenantID: adminTenant, ScopeKind: store.ScopeAPIKey, ScopeID: keyID,
+		LimitMicros: 0, Period: "total", AlertPct: 80, HardCutoff: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	const n = 25
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			code := callTopup(s, keyID, fmt.Sprintf(`{"amount_usd":1,"idempotency_key":"race-%d"}`, i))
+			require.Equal(t, http.StatusCreated, code)
+		}(i)
+	}
+	wg.Wait()
+
+	b, err := s.budgets.Get(ctx, "b-race-1")
+	require.NoError(t, err)
+	require.Equal(t, int64(n)*1_000_000, b.LimitMicros, "limit must equal n * amount")
+
+	topups, err := s.db.Topups().ListByKey(ctx, keyID)
+	require.NoError(t, err)
+	require.Len(t, topups, n)
+
+	// snapshots must form a gapless chain: sorted by before, each after == next before
+	byBefore := make(map[int64]int64, n)
+	for _, tp := range topups {
+		require.Equal(t, tp.LimitBeforeMicros+tp.AmountMicros, tp.LimitAfterMicros)
+		byBefore[tp.LimitBeforeMicros] = tp.LimitAfterMicros
+	}
+	prev := int64(0)
+	for i := 0; i < n; i++ {
+		next, ok := byBefore[prev]
+		require.True(t, ok, "missing snapshot starting at %d", prev)
+		prev = next
+	}
+	require.Equal(t, int64(n)*1_000_000, prev)
+}
+
+func TestTopupRace_SameIdempotencyKeyCreditsOnce(t *testing.T) {
+	s := newTopupPostgresServer(t)
+	ctx := context.Background()
+	issued, err := s.identity.Create(ctx, store.DefaultTenantID, "", "race-same-idem")
+	require.NoError(t, err)
+	keyID := issued.Record.ID
+	require.NoError(t, s.budgets.Create(ctx, store.Budget{
+		ID: "b-race-2", TenantID: adminTenant, ScopeKind: store.ScopeAPIKey, ScopeID: keyID,
+		LimitMicros: 0, Period: "total", AlertPct: 80, HardCutoff: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	const n = 25
+	var wg sync.WaitGroup
+	codes := make([]int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			codes[i] = callTopup(s, keyID, `{"amount_usd":3,"idempotency_key":"same-idem"}`)
+		}(i)
+	}
+	wg.Wait()
+
+	b, err := s.budgets.Get(ctx, "b-race-2")
+	require.NoError(t, err)
+	require.Equal(t, int64(3_000_000), b.LimitMicros, "limit must be credited exactly once")
+
+	topups, err := s.db.Topups().ListByKey(ctx, keyID)
+	require.NoError(t, err)
+	require.Len(t, topups, 1, "only one top-up row may exist")
+
+	// exactly one request creates (201); the rest are replays or conflict-free 200
+	created := 0
+	for _, c := range codes {
+		require.Contains(t, []int{http.StatusCreated, http.StatusOK}, c)
+		if c == http.StatusCreated {
+			created++
+		}
+	}
+	require.Equal(t, 1, created)
+}
+
+func TestTopupRace_NoBudgetCreatesExactlyOne(t *testing.T) {
+	s := newTopupPostgresServer(t)
+	ctx := context.Background()
+	issued, err := s.identity.Create(ctx, store.DefaultTenantID, "", "race-no-budget")
+	require.NoError(t, err)
+	keyID := issued.Record.ID
+
+	const n = 25
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			callTopup(s, keyID, fmt.Sprintf(`{"amount_usd":1,"idempotency_key":"nb-%d"}`, i))
+		}(i)
+	}
+	wg.Wait()
+
+	bs, err := s.budgets.ListByScope(ctx, store.ScopeAPIKey, keyID)
+	require.NoError(t, err)
+	require.Len(t, bs, 1, "concurrent top-ups must not create duplicate budgets")
+	require.Equal(t, int64(n)*1_000_000, bs[0].LimitMicros)
+
+	var count int
+	require.NoError(t, s.db.SQL().QueryRowContext(ctx, "SELECT COUNT(*) FROM key_topups WHERE key_id = $1", keyID).Scan(&count))
+	require.Equal(t, n, count)
+}
+```
+
+If the top-up handler returns 409 under contention instead of 200 for a lost
+increment, that is acceptable for distinct keys (retryable) but must never
+occur for the same idempotency key with a 5xx. Adjust assertions to match
+actual, non-5xx behavior and record the observed codes.
+
+- [ ] **Step 2: Run the race tests against Postgres with -race**
+
+```bash
+cd /home/emalution/keirouter/backend
+KEIROUTER_TEST_POSTGRES_DSN="postgres://keirouter:qB8FmFlOI0okQqQm7N09ScoLnV1qyJnJ@192.168.32.3:5432/keirouter?sslmode=disable" \
+  go test ./internal/gateway/ -run 'TestTopupRace' -race -count=5 -v
+```
+
+Expected: PASS on all 5 iterations with no data race reported.
+
+- [ ] **Step 3: Verify no double-credit in the database**
+
+```bash
+docker exec keirouter-localhost-postgres-1 psql -U keirouter -d keirouter \
+  -c "SELECT key_id, COUNT(*) AS rows, SUM(amount_micros) AS credited FROM key_topups GROUP BY key_id HAVING COUNT(*) > 1;"
+```
+
+Expected: every key that used a distinct idempotency key per top-up has the
+expected row count. The `same-idem` key must show exactly 1 row. Confirm no key
+has more top-up rows than requests issued.
+
+- [ ] **Step 4: Commit**
+
+```bash
+cd /home/emalution/keirouter
+git add backend/internal/gateway/admin_topup_race_test.go
+git commit -m "test(gateway): race-condition coverage for concurrent top-ups"
+```
+
+**If any race test fails:** do not weaken the assertion. Fix the root cause in
+the handler/repo (serialization lock, atomic increment, or idempotency
+handling) and re-run Step 2 until clean.
+
+---
+
+### Task 8: Postgres integration test, rebuild, and live verification
 
 **Files:**
 - Modify: `backend/internal/store/postgres_integration_test.go` (add a subtest) — only if a top-up-related SQL path is Postgres-sensitive; otherwise test Task 1/2 against Postgres via the existing harness.
@@ -1174,7 +1437,8 @@ git commit -m "test(store): cover key top-up on Postgres"
 
 ## Self-Review Notes
 
-- Spec coverage: table+repo (Task 1), atomic increment (Task 2), endpoints with idempotency/validation/overflow (Task 3), client (Task 4), Budget tab with history (Task 5), list progress bar (Task 6), Postgres + live verification (Task 7).
-- Money safety: integer-only conversion (`usdToMicros` via `big.Rat`), single transaction, `FOR UPDATE` snapshot, unique idempotency index, overflow guard under the lock (`ErrLimitOverflow`) — all present.
+- Spec coverage: table+repo (Task 1), atomic increment (Task 2), endpoints with idempotency/validation/overflow (Task 3), client (Task 4), Budget tab with history (Task 5), list progress bar (Task 6), concurrency/race verification (Task 7), Postgres + live verification (Task 8).
+- Money safety: integer-only conversion (`usdToMicros` via `big.Rat`), single transaction, per-key advisory serialization (`LockKeyTopup`) so budget creation cannot duplicate, `FOR UPDATE` snapshot, unique idempotency index, overflow guard under the lock (`ErrLimitOverflow`) — all present.
+- Race coverage (Task 7, Postgres + `-race`): N distinct top-ups apply exactly once with a gapless before/after chain; N requests sharing one idempotency key credit exactly once and create exactly one row; N concurrent top-ups on a budget-less key create exactly one budget row.
 - Wiring facts confirmed against the repo: `Server.db` (`server.go:49`), `store.DB.SQL()` (`store.go:175`), `identity.New(db.APIKeys())` (`identity.go:72`), `s.identity.Create(...) (Issued, error)` (`identity.go:109`), `Modal{open,onClose,title}` (`ui.tsx:350`), test wiring via `&Server{...}` (`admin_bulk_test.go:38`).
 - Type consistency: `KeyTopup` field names (`LimitBeforeMicros`/`LimitAfterMicros`) are used identically in Tasks 1 and 3; `IncrementLimitOnTx` returns `(before, after, err)` in Tasks 2 and 3.
