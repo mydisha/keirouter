@@ -122,6 +122,12 @@ type ChainStep struct {
 	Provider  string
 	Model     string
 	CreatedAt time.Time
+
+	// Per-step price override. All zero = fall back to catalog pricing.
+	InputPerM      float64
+	OutputPerM     float64
+	CacheWritePerM float64
+	CacheReadPerM  float64
 }
 
 // UsageRecord is the terminal accounting fact for one inbound request.

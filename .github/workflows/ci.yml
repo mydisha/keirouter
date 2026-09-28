@@ -67,7 +67,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -82,6 +82,10 @@ jobs:
       - name: Build
         working-directory: frontend
         run: npm run build
+
+      - name: Test
+        working-directory: frontend
+        run: npm test
 
   deploy:
     name: Deploy Artifacts

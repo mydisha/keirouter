@@ -83,6 +83,13 @@ const maxRecentFailureEntries = 4096
 type Target struct {
 	Provider string
 	Model    string
+
+	// Optional per-step price override carried from the source chain. All zero
+	// means the meter must resolve the catalog price instead.
+	InputPerM      float64
+	OutputPerM     float64
+	CacheWritePerM float64
+	CacheReadPerM  float64
 }
 
 // Attempt describes a single resolved try: the connector, credentials, and the
@@ -1021,7 +1028,11 @@ func advanceRotationState(length, lastIndex, hitCount, stickyLimit int) (cursor 
 func TargetsFromChain(chain store.Chain) []Target {
 	out := make([]Target, 0, len(chain.Steps))
 	for _, s := range chain.Steps {
-		out = append(out, Target{Provider: s.Provider, Model: s.Model})
+		out = append(out, Target{
+			Provider: s.Provider, Model: s.Model,
+			InputPerM: s.InputPerM, OutputPerM: s.OutputPerM,
+			CacheWritePerM: s.CacheWritePerM, CacheReadPerM: s.CacheReadPerM,
+		})
 	}
 	return out
 }

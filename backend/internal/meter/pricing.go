@@ -260,15 +260,30 @@ func clampUsage(u core.Usage) core.Usage {
 	return u
 }
 
-// CalculateCost prices one normalized usage snapshot. Reasoning is a subset of
-// completion, never an additional token class, which prevents double charging.
-func (m *Meter) CalculateCost(provider, model string, raw core.Usage, cacheHit bool, savedInputTokens int) CostBreakdown {
-	u := clampUsage(raw)
-	match := m.ResolvePrice(provider, model)
+// chainPrice returns the operator-configured step price when present. All-zero
+// rates mean "unset" and fall back to catalog resolution.
+func chainPrice(ev Event) (Price, bool) {
+	if ev.InputPerM <= 0 && ev.OutputPerM <= 0 && ev.CacheWritePerM <= 0 && ev.CacheReadPerM <= 0 {
+		return Price{}, false
+	}
+	return Price{
+		InputPerM: ev.InputPerM, OutputPerM: ev.OutputPerM,
+		CacheWritePerM: ev.CacheWritePerM, CachedInputPerM: ev.CacheReadPerM,
+		ReasoningPerM: ev.OutputPerM,
+		Source:        "chain",
+	}, true
+}
+
+// calculateCostFromPrice runs the same token math as CalculateCost but with an
+// already-resolved price match. It takes the full match so the catalog path
+// keeps its provenance (key, match kind, estimated status) instead of both
+// paths drifting.
+func calculateCostFromPrice(match PricingMatch, uUsage core.Usage, cacheHit bool, savedInputTokens int) CostBreakdown {
 	out := CostBreakdown{Pricing: match}
 	if match.Status == "missing" || match.Status == "none" {
 		return out
 	}
+	u := clampUsage(uUsage)
 	p := effectivePrice(match.Price, u.PromptTokens)
 	out.InputRatePerM = p.InputPerM
 	out.CachedRatePerM = p.CachedInputPerM
@@ -284,7 +299,6 @@ func (m *Meter) CalculateCost(provider, model string, raw core.Usage, cacheHit b
 	if out.ReasoningRatePerM == 0 {
 		out.ReasoningRatePerM = p.OutputPerM
 	}
-
 	standardInput := u.PromptTokens - u.CachedTokens - u.CacheWriteTokens
 	normalOutput := u.CompletionTokens - u.ReasoningTokens
 	out.InputCostNanos = tokenCostNanos(standardInput, out.InputRatePerM)
@@ -301,6 +315,17 @@ func (m *Meter) CalculateCost(provider, model string, raw core.Usage, cacheHit b
 		out.CostMicros = int64(math.Round(float64(retail) / 1000))
 	}
 	return out
+}
+
+// CalculateCost prices one normalized usage snapshot. Reasoning is a subset of
+// completion, never an additional token class, which prevents double charging.
+func (m *Meter) CalculateCost(provider, model string, raw core.Usage, cacheHit bool, savedInputTokens int) CostBreakdown {
+	match := m.ResolvePrice(provider, model)
+	out := CostBreakdown{Pricing: match}
+	if match.Status == "missing" || match.Status == "none" {
+		return out
+	}
+	return calculateCostFromPrice(match, raw, cacheHit, savedInputTokens)
 }
 
 // ReplacePrices atomically refreshes catalog/custom prices for subsequent
