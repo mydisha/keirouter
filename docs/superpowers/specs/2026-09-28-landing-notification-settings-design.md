@@ -95,19 +95,25 @@ not parsed on the backend. The backend does not add an HTML parser dependency
 it only performs the structural validation above. This is safe because the
 notification HTML is never rendered server-side.
 
-The single shared sanitizer `frontend/src/lib/sanitizeHtml.ts` (dependency-free,
-`DOMParser`-based) is applied both in the public popup and in the admin live
-preview, so there is one allowlist in one place:
+The single shared sanitizer `frontend/src/lib/sanitizeHtml.ts` is applied both
+in the public popup and in the admin live preview, so there is one allowlist in
+one place. It is **dependency-free and environment-independent**: a default-deny
+string tokenizer (no `DOMParser`; Node has no global `DOMParser`), so it runs
+identically in the browser and under `node --test`. Only allowlisted tags are
+emitted; all other markup is unwrapped (text kept), and text outside tags is
+HTML-escaped.
 
 - Allowed elements: `b, strong, i, em, u, a, br, span, code, small`.
 - All other elements are unwrapped (text content kept), except
   `script`/`style`/`iframe`/`object`/`embed`, whose contents are discarded
-  entirely; raw `<`/`>` text nodes are re-escaped.
-- Allowed attributes: only `href` on `a`, and only when the scheme is
-  `http`/`https`/`mailto` (relative/anchor hrefs are dropped to avoid open
-  redirects). All other attributes are stripped. `a` elements also receive
-  `rel="noopener noreferrer"` and `target="_blank"`.
-- Disallowed schemes (`javascript:`, `data:`, etc.) drop the `href`.
+  entirely; raw `<`/`>` in text are re-escaped.
+- Allowed attributes: none kept except `href` on `a`, and only when the URL is
+  absolute with scheme `http`/`https`/`mailto`. All other attributes are
+  stripped. `a` elements with a kept href also receive
+  `rel="noopener noreferrer"` and `target="_blank"`; `a` without a valid href is
+  emitted as a bare `<a>`.
+- Disallowed schemes (`javascript:`, `data:`, etc.) and relative/anchor hrefs
+  drop the `href`.
 
 ## Frontend
 
@@ -118,9 +124,9 @@ preview, so there is one allowlist in one place:
 
 ### `lib/sanitizeHtml.ts` (new, dependency-free)
 
-Allowlist sanitizer using `DOMParser`, mirroring the rules above. Applied in the
-public popup and the admin live preview before `dangerouslySetInnerHTML`.
-Unit-tested with `node --test`.
+Dependency-free, environment-independent tokenizer mirroring the rules above.
+Applied in the public popup and the admin live preview before
+`dangerouslySetInnerHTML`. Unit-tested with `node --test`.
 
 ### `components/NotificationPopup.tsx`
 
