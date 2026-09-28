@@ -109,9 +109,14 @@ type Chain struct {
 	Strategy         string
 	FallbackProvider string
 	FallbackModel    string
-	Steps            []ChainStep
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	// Operator price for the chain model. All zero = fall back to catalog.
+	InputPerM      float64
+	OutputPerM     float64
+	CacheWritePerM float64
+	CacheReadPerM  float64
+	Steps          []ChainStep
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 // ChainStep is one candidate target within a chain.
@@ -122,12 +127,6 @@ type ChainStep struct {
 	Provider  string
 	Model     string
 	CreatedAt time.Time
-
-	// Per-step price override. All zero = fall back to catalog pricing.
-	InputPerM      float64
-	OutputPerM     float64
-	CacheWritePerM float64
-	CacheReadPerM  float64
 }
 
 // UsageRecord is the terminal accounting fact for one inbound request.

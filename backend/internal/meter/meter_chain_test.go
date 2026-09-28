@@ -36,7 +36,7 @@ func TestRecordPersistsChainID(t *testing.T) {
 	require.Equal(t, "chain-9", cap.last.ChainID)
 }
 
-func TestRecordUsesChainStepPrice(t *testing.T) {
+func TestRecordUsesChainPrice(t *testing.T) {
 	cap := &chainCaptureStore{}
 	m := New(cap, nil, nil) // no catalog prices at all
 	_, err := m.Record(context.Background(), Event{

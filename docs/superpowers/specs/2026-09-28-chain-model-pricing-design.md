@@ -1,3 +1,5 @@
+> **Superseded by** `docs/superpowers/specs/2026-09-28-chain-level-pricing-design.md` (chain-level pricing). Per-step pricing described below was removed.
+
 # Chain model pricing (per-step price override) — Design
 
 Date: 2026-09-28

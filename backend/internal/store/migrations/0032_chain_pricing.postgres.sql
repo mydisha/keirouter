@@ -1,0 +1,8 @@
+ALTER TABLE chains ADD COLUMN input_per_m DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE chains ADD COLUMN output_per_m DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE chains ADD COLUMN cache_write_per_m DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE chains ADD COLUMN cache_read_per_m DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE chain_steps DROP COLUMN input_per_m;
+ALTER TABLE chain_steps DROP COLUMN output_per_m;
+ALTER TABLE chain_steps DROP COLUMN cache_write_per_m;
+ALTER TABLE chain_steps DROP COLUMN cache_read_per_m;

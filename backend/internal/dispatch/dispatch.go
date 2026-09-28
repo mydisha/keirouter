@@ -84,8 +84,8 @@ type Target struct {
 	Provider string
 	Model    string
 
-	// Optional per-step price override carried from the source chain. All zero
-	// means the meter must resolve the catalog price instead.
+	// Optional chain price carried from the source chain. All zero means the
+	// meter must resolve the catalog price instead.
 	InputPerM      float64
 	OutputPerM     float64
 	CacheWritePerM float64
@@ -1024,14 +1024,15 @@ func advanceRotationState(length, lastIndex, hitCount, stickyLimit int) (cursor 
 	return cursor, nextCursor, nextHitCount
 }
 
-// TargetsFromChain flattens a stored chain into ordered targets.
+// TargetsFromChain flattens a stored chain into ordered targets. The chain's
+// price applies to every candidate, so all emitted targets carry the same rates.
 func TargetsFromChain(chain store.Chain) []Target {
 	out := make([]Target, 0, len(chain.Steps))
 	for _, s := range chain.Steps {
 		out = append(out, Target{
 			Provider: s.Provider, Model: s.Model,
-			InputPerM: s.InputPerM, OutputPerM: s.OutputPerM,
-			CacheWritePerM: s.CacheWritePerM, CacheReadPerM: s.CacheReadPerM,
+			InputPerM: chain.InputPerM, OutputPerM: chain.OutputPerM,
+			CacheWritePerM: chain.CacheWritePerM, CacheReadPerM: chain.CacheReadPerM,
 		})
 	}
 	return out

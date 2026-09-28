@@ -316,10 +316,6 @@ export interface ChainStep {
   provider: string;
   model: string;
   position: number;
-  input_per_m: number;
-  output_per_m: number;
-  cache_write_per_m: number;
-  cache_read_per_m: number;
 }
 
 export interface Chain {
@@ -328,6 +324,10 @@ export interface Chain {
   strategy: string;
   fallback_provider?: string;
   fallback_model?: string;
+  input_per_m: number;
+  output_per_m: number;
+  cache_write_per_m: number;
+  cache_read_per_m: number;
   steps: ChainStep[];
 }
 
@@ -1343,9 +1343,9 @@ export const api = {
     request<CodexUsageDetails>("GET", `/accounts/${id}/codex-usage-details`),
 
   listChains: () => request<{ chains: Chain[] }>("GET", "/chains"),
-  createChain: (input: { name: string; strategy?: string; fallback_provider?: string; fallback_model?: string; steps: { provider: string; model: string; input_per_m: number; output_per_m: number; cache_write_per_m: number; cache_read_per_m: number }[] }) =>
+  createChain: (input: { name: string; strategy?: string; fallback_provider?: string; fallback_model?: string; input_per_m?: number; output_per_m?: number; cache_write_per_m?: number; cache_read_per_m?: number; steps: { provider: string; model: string }[] }) =>
     request<{ id: string }>("POST", "/chains", input),
-  updateChain: (id: string, patch: { name?: string; strategy?: string; fallback_provider?: string; fallback_model?: string; steps?: { provider: string; model: string; input_per_m: number; output_per_m: number; cache_write_per_m: number; cache_read_per_m: number }[] }) =>
+  updateChain: (id: string, patch: { name?: string; strategy?: string; fallback_provider?: string; fallback_model?: string; input_per_m?: number; output_per_m?: number; cache_write_per_m?: number; cache_read_per_m?: number; steps?: { provider: string; model: string }[] }) =>
     request<{ id: string }>("PATCH", `/chains/${id}`, patch),
   deleteChain: (id: string) => request<void>("DELETE", `/chains/${id}`),
 

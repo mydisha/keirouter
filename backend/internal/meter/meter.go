@@ -116,8 +116,8 @@ type Event struct {
 	APIKeyID  string
 	ChainID   string
 
-	// Optional per-step price override from the serving chain step. When any
-	// rate is > 0 the meter prices from these instead of the catalog.
+	// Optional chain-level price override. When any rate is > 0 the meter
+	// prices from these instead of the catalog.
 	InputPerM      float64
 	OutputPerM     float64
 	CacheWritePerM float64
