@@ -64,11 +64,15 @@ Non-goals:
    only recomputes an auto-derived field when it still equals the previous
    formula result; a manually edited value is preserved. No boolean flag column.
 
-5. **A step must supply all four rates to be saved.** Chain create/update
-   validates that every step supplies four finite, non-negative rates. This makes
-   "step carries a price" a guaranteed invariant for new writes. Legacy chains
-   (saved before this feature) keep catalog pricing until the operator re-saves
-   them; the editor surfaces this as "needs pricing".
+5. **A step must supply all four rates to be saved, and Input/Output must be
+   positive.** Chain create/update validates that every step supplies four
+   finite, non-negative rates, and additionally rejects any step whose
+   `input_per_m <= 0` or `output_per_m <= 0` (HTTP 400, "step input and output
+   price must be greater than 0"). Cache write/read may be `0`. This makes
+   "step carries a price" a guaranteed invariant for new writes, and prevents a
+   step from charging all completion tokens at $0. Legacy chains (saved before
+   this feature) keep catalog pricing until the operator re-saves them; the
+   editor surfaces this as "needs pricing".
 
    To keep the runtime override decision unambiguous without an extra flag
    column, the override applies when **at least one** of the four rates is `> 0`;
@@ -115,9 +119,10 @@ CachedInputPerM, ReasoningPerM=OutputPerM, Source:"chain"}` instead of
 ### API (admin)
 
 `adminCreateChain` / `adminUpdateChain` (`admin.go:1807`, `1878`) decode four
-rates per step, validate finite/non-negative, persist them. `adminListChains`
-(`admin.go:1783`) returns them on each step. Reject with 400 on missing/invalid
-step price.
+rates per step, validate finite/non-negative, and require Input and Output to be
+strictly greater than 0 (cache write/read may be 0), persist them.
+`adminListChains` (`admin.go:1783`) returns them on each step. Reject with 400 on
+missing/invalid step price.
 
 ### Frontend
 
@@ -141,7 +146,8 @@ client model "chain:name"
 ## Error handling
 
 - Invalid/negative/non-finite step price → HTTP 400, chain not saved.
-- Missing step price on create/update → HTTP 400 with a clear message.
+- Missing or non-positive Input/Output price on create/update → HTTP 400 with a
+  clear message ("step input and output price must be greater than 0").
 - Legacy chain with zero rates → routes normally, priced from catalog.
 - An all-zero step price is treated as "not set" and prices from catalog (see
   decision 5) — the override only engages when some rate is `> 0`.

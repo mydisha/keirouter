@@ -1869,6 +1869,10 @@ func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid step price: rates must be finite and non-negative")
 			return
 		}
+		if st.InputPerM <= 0 || st.OutputPerM <= 0 {
+			writeError(w, http.StatusBadRequest, "step input and output price must be greater than 0")
+			return
+		}
 		chain.Steps = append(chain.Steps, store.ChainStep{
 			ID: uuid.NewString(), ChainID: chain.ID, Position: i,
 			Provider: st.Provider, Model: st.Model, CreatedAt: now,
@@ -1940,6 +1944,10 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 			if !validRate(st.InputPerM) || !validRate(st.OutputPerM) ||
 				!validRate(st.CacheWritePerM) || !validRate(st.CacheReadPerM) {
 				writeError(w, http.StatusBadRequest, "invalid step price: rates must be finite and non-negative")
+				return
+			}
+			if st.InputPerM <= 0 || st.OutputPerM <= 0 {
+				writeError(w, http.StatusBadRequest, "step input and output price must be greater than 0")
 				return
 			}
 			existing.Steps[i] = store.ChainStep{
@@ -2789,6 +2797,8 @@ func (s *Server) adminExportDatabase(w http.ResponseWriter, r *http.Request) {
 		for _, st := range c.Steps {
 			steps = append(steps, map[string]any{
 				"provider": st.Provider, "model": st.Model, "position": st.Position,
+				"input_per_m": st.InputPerM, "output_per_m": st.OutputPerM,
+				"cache_write_per_m": st.CacheWritePerM, "cache_read_per_m": st.CacheReadPerM,
 			})
 		}
 		chainsOut = append(chainsOut, map[string]any{
@@ -2939,9 +2949,13 @@ func (s *Server) adminImportDatabase(w http.ResponseWriter, r *http.Request) {
 			Name     string `json:"name"`
 			Strategy string `json:"strategy"`
 			Steps    []struct {
-				Provider string `json:"provider"`
-				Model    string `json:"model"`
-				Position int    `json:"position"`
+				Provider       string  `json:"provider"`
+				Model          string  `json:"model"`
+				Position       int     `json:"position"`
+				InputPerM      float64 `json:"input_per_m"`
+				OutputPerM     float64 `json:"output_per_m"`
+				CacheWritePerM float64 `json:"cache_write_per_m"`
+				CacheReadPerM  float64 `json:"cache_read_per_m"`
 			} `json:"steps"`
 		}
 		if err := json.Unmarshal(raw, &chains); err == nil {
@@ -2959,6 +2973,8 @@ func (s *Server) adminImportDatabase(w http.ResponseWriter, r *http.Request) {
 					chain.Steps = append(chain.Steps, store.ChainStep{
 						ID: uuid.NewString(), ChainID: chain.ID, Position: st.Position,
 						Provider: st.Provider, Model: st.Model, CreatedAt: now,
+						InputPerM: st.InputPerM, OutputPerM: st.OutputPerM,
+						CacheWritePerM: st.CacheWritePerM, CacheReadPerM: st.CacheReadPerM,
 					})
 				}
 				if err := s.chains.Create(ctx, chain); err == nil {
@@ -3324,12 +3340,6 @@ func defaultBool(v, def bool) bool {
 // and "chain:name" formats in resolveTargets. Dots are allowed because model ids
 // commonly contain version dots (e.g. deepseek-v4.1-flash) and resolveTargets
 // only splits on "/" and ":".
-// validRate reports whether r is a finite, non-negative price. NaN and Inf are
-// rejected so a malformed rate can never poison cost math.
-func validRate(r float64) bool {
-	return r >= 0 && !math.IsNaN(r) && !math.IsInf(r, 0)
-}
-
 func validateChainName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -3358,4 +3368,10 @@ func validateChainName(name string) error {
 		return fmt.Errorf("combo name can only contain letters, digits, hyphens, underscores, and dots")
 	}
 	return nil
+}
+
+// validRate reports whether r is a finite, non-negative price. NaN and Inf are
+// rejected so a malformed rate can never poison cost math.
+func validRate(r float64) bool {
+	return r >= 0 && !math.IsNaN(r) && !math.IsInf(r, 0)
 }

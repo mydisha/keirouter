@@ -511,6 +511,9 @@ Create `backend/internal/gateway/admin_chain_pricing_test.go` using the E2E harn
 // 2. POST /admin/chains with input_per_m = -1 → 400.
 // 3. POST valid four rates → 201; GET /admin/chains returns them on the step.
 // 4. PATCH /admin/chains/{id} with a step missing output_per_m → 400.
+// 5. POST/PATCH with a step whose input_per_m or output_per_m is 0 → 400
+//    ("step input and output price must be greater than 0"). Cache write/read
+//    may be 0.
 ```
 
 (Use the admin auth path already exercised by `admin_custom_providers_test.go`; reuse its login helper rather than inventing a new one. If no shared helper exists, drive `POST /api/auth/login` with the default password as the other admin tests do.)
@@ -555,6 +558,10 @@ Inside the step loop (`:1853`), after the provider check, validate and persist:
 		if !validRate(st.InputPerM) || !validRate(st.OutputPerM) ||
 			!validRate(st.CacheWritePerM) || !validRate(st.CacheReadPerM) {
 			writeError(w, http.StatusBadRequest, "invalid step price: rates must be finite and non-negative")
+			return
+		}
+		if st.InputPerM <= 0 || st.OutputPerM <= 0 {
+			writeError(w, http.StatusBadRequest, "step input and output price must be greater than 0")
 			return
 		}
 		chain.Steps = append(chain.Steps, store.ChainStep{
@@ -738,7 +745,7 @@ const updateStep = (stepID: string, next: Partial<DraftChainStep>) => {
 
 ```ts
 const needsPricing = completeSteps.some((step) =>
-  step.inputPerM <= 0 && step.outputPerM <= 0 && step.cacheWritePerM <= 0 && step.cacheReadPerM <= 0);
+  step.inputPerM <= 0 || step.outputPerM <= 0);
 const validationMessage =
   ... existing checks ...
   : needsPricing ? "Set input and output price for every route step."
