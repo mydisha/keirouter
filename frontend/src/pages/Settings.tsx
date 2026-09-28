@@ -1194,7 +1194,10 @@ function NotificationTab() {
     setEditing(null);
   };
 
-  const remove = (index: number) => persist(items.filter((_, i) => i !== index));
+  const remove = (index: number) => {
+    if (!confirm("Delete this notification?")) return;
+    persist(items.filter((_, i) => i !== index));
+  };
 
   if (list.isLoading) return <Spinner />;
   if (list.isError) {

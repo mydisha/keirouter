@@ -138,11 +138,10 @@ func (s *Server) adminUpdateNotifications(w http.ResponseWriter, r *http.Request
 	if items == nil {
 		items = []LandingNotification{}
 	}
-	// Assign new ids to any item without one (create path).
+	// The id is server-generated and never accepted from the client. The write
+	// is a full replace keyed by position, so regenerating every id is safe.
 	for i := range items {
-		if strings.TrimSpace(items[i].ID) == "" {
-			items[i].ID = newNotificationID()
-		}
+		items[i].ID = newNotificationID()
 	}
 	if err := validateLandingNotifications(items); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())

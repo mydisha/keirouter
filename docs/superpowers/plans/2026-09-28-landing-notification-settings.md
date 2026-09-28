@@ -957,6 +957,6 @@ Report results. Then follow `superpowers:finishing-a-development-branch` to merg
 ## Self-Review Notes
 
 - Spec coverage: storage model (Task 1), admin+public endpoints (Task 2), sanitizer (Task 3), clients (Task 4), popup render (Task 5), Settings tab (Task 6), verification (Task 7). Default seeding and explicit-empty distinction covered in Task 1 tests.
-- No new dependencies: sanitizer is frontend DOMParser-based; backend adds none.
+- No new dependencies: sanitizer is a frontend dependency-free tokenizer; backend adds none.
 - Type consistency: `LandingNotification` fields `id/tag/title/body/href` identical across Go, api.ts, publicApi.ts, and the tab.
 - Known simplification: the admin POST replaces the whole list rather than per-item CRUD — appropriate at the 5-item cap.

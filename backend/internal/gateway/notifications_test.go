@@ -92,17 +92,21 @@ func TestAdminNotificationsRoundTrip(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "DeepSeek V4.1 Flash")
 
-	// POST replaces.
-	body := `{"notifications":[{"id":"a1b2c3d4","title":"Halo","body":"<b>hi</b>","href":"https://x.dev"}]}`
+	// POST replaces. A client-supplied id must be ignored: the server always
+	// regenerates ids, so "deadbeef" must never appear in the stored result.
+	body := `{"notifications":[{"id":"deadbeef","title":"Halo","body":"<b>hi</b>","href":"https://x.dev"}]}`
 	rec = httptest.NewRecorder()
 	s.adminUpdateNotifications(rec, httptest.NewRequest(http.MethodPost, "/settings/notifications", strings.NewReader(body)))
 	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), "deadbeef")
+	require.Regexp(t, `"id":"[0-9a-f]{8}"`, rec.Body.String())
 
 	// GET reflects the replacement.
 	rec = httptest.NewRecorder()
 	s.adminGetNotifications(rec, httptest.NewRequest(http.MethodGet, "/settings/notifications", nil))
 	require.Contains(t, rec.Body.String(), "Halo")
 	require.NotContains(t, rec.Body.String(), "DeepSeek V4.1 Flash")
+	require.NotContains(t, rec.Body.String(), "deadbeef")
 }
 
 func TestAdminNotificationsRejectsInvalid(t *testing.T) {

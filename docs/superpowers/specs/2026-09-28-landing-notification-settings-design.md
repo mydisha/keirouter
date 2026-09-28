@@ -42,7 +42,8 @@ Shape:
 ```
 
 - `id`: server-generated short random hex (8 chars). Stable React key; never
-  user-supplied. Regenerated only on create.
+  user-supplied. The backend regenerates ids on every write (the write is a
+  full replace keyed by position).
 - `tag`: optional short uppercase badge (empty allowed).
 - `title`: required, non-empty.
 - `body`: HTML-allowed string.
