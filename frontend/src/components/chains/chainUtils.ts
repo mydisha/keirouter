@@ -70,18 +70,14 @@ export const providerIcon = (provider?: Provider, providerID?: string) =>
 export const makeDraftStep = (step?: {
   provider: string;
   model: string;
-  input_per_m?: number;
-  output_per_m?: number;
-  cache_write_per_m?: number;
-  cache_read_per_m?: number;
 }): DraftChainStep => ({
   id: crypto.randomUUID(),
   provider: step?.provider ?? "",
   model: step?.model ?? "",
-  inputPerM: step?.input_per_m ?? 0,
-  outputPerM: step?.output_per_m ?? 0,
-  cacheWritePerM: step?.cache_write_per_m ?? 0,
-  cacheReadPerM: step?.cache_read_per_m ?? 0,
+  inputPerM: 0,
+  outputPerM: 0,
+  cacheWritePerM: 0,
+  cacheReadPerM: 0,
 });
 
 export const toDraftSteps = (chain?: Chain) =>
