@@ -359,6 +359,15 @@ export interface BudgetStatus {
   period_start: string;
 }
 
+export interface KeyTopup {
+  id: string;
+  amount_usd: number;
+  reason: string;
+  limit_before_usd: number;
+  limit_after_usd: number;
+  created_at: string;
+}
+
 export interface UsageSummary {
   total_requests: number;
   prompt_tokens: number;
@@ -1356,6 +1365,11 @@ export const api = {
   updateBudget: (id: string, patch: { limit_usd?: number; limit_tokens?: number; period?: string; alert_pct?: number; hard_cutoff?: boolean }) =>
     request<void>("PATCH", `/budgets/${id}`, patch),
   deleteBudget: (id: string) => request<void>("DELETE", `/budgets/${id}`),
+
+  listKeyTopups: (keyId: string) =>
+    request<{ topups: KeyTopup[] }>("GET", `/keys/${keyId}/topups`),
+  topupKey: (keyId: string, input: { amount_usd: number; reason?: string; idempotency_key: string }) =>
+    request<{ topup: KeyTopup }>("POST", `/keys/${keyId}/topup`, input),
 
   usage: (period: string) => request<UsageSummary>("GET", `/usage?period=${period}&tz=${browserTZ()}`),
   usageInsights: (period: string) =>
