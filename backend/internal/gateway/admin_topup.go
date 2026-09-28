@@ -161,8 +161,9 @@ func (s *Server) adminTopupKey(w http.ResponseWriter, r *http.Request) {
 		// this idempotency key. Return the winner instead of double-crediting.
 		if idem != "" {
 			if existing, gerr := s.db.Topups().GetByIdempotencyKey(ctx, key.ID, idem); gerr == nil {
-				// After LockKeyTopup the in-tx resolved budget reflects the
-				// winner's committed state, so reuse it rather than re-reading.
+				// Report the winner's committed limit, not our pre-increment
+				// snapshot: the returned row carries the value it persisted.
+				budget.LimitMicros = existing.LimitAfterMicros
 				s.writeTopupResponse(w, http.StatusOK, existing, budget)
 				return
 			}

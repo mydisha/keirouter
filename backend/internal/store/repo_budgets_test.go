@@ -48,6 +48,33 @@ func TestBudgetRepo_IncrementLimitOnTx(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
+func TestBudgetRepo_ListByScope_NewestFirst(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	// Two budgets for one scope is possible (no unique constraint); the first
+	// row returned must be the newest so the top-up handler credits the same
+	// row the UI displays.
+	older := Budget{
+		ID: "older", TenantID: DefaultTenantID, ScopeKind: ScopeAPIKey, ScopeID: "dup-key",
+		LimitMicros: 1_000_000, Period: "total", AlertPct: 80, HardCutoff: true,
+		CreatedAt: time.Now().Add(-time.Hour), UpdatedAt: time.Now().Add(-time.Hour),
+	}
+	newer := Budget{
+		ID: "newer", TenantID: DefaultTenantID, ScopeKind: ScopeAPIKey, ScopeID: "dup-key",
+		LimitMicros: 2_000_000, Period: "total", AlertPct: 80, HardCutoff: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}
+	require.NoError(t, db.Budgets().Create(ctx, older))
+	require.NoError(t, db.Budgets().Create(ctx, newer))
+
+	got, err := db.Budgets().ListByScope(ctx, ScopeAPIKey, "dup-key")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, "newer", got[0].ID)
+	require.Equal(t, "older", got[1].ID)
+}
+
 func TestBudgetRepo_IncrementLimitOnTx_Overflow(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

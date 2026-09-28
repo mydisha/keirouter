@@ -42,9 +42,12 @@ func (r *BudgetRepo) insert(ctx context.Context, ex sqlExec, b Budget) error {
 
 const budgetSelectCols = `id, tenant_id, scope_kind, scope_id, limit_micros, limit_tokens, period, alert_pct, hard_cutoff, created_at, updated_at`
 
-// ListByScope returns budgets attached to a specific scope (kind + id).
+// ListByScope returns budgets attached to a specific scope (kind + id),
+// newest first. The ordering matches ListByTenant so callers that take the
+// first row (e.g. the key top-up handler) agree with what the UI displays
+// when a scope accidentally has more than one budget.
 func (r *BudgetRepo) ListByScope(ctx context.Context, kind BudgetScope, scopeID string) ([]Budget, error) {
-	q := r.db.rebind(`SELECT ` + budgetSelectCols + ` FROM budgets WHERE scope_kind = ? AND scope_id = ?`)
+	q := r.db.rebind(`SELECT ` + budgetSelectCols + ` FROM budgets WHERE scope_kind = ? AND scope_id = ? ORDER BY created_at DESC, id DESC`)
 	return r.queryList(ctx, q, string(kind), scopeID)
 }
 
@@ -83,7 +86,10 @@ func (r *BudgetRepo) Update(ctx context.Context, b Budget) error {
 //
 // On Postgres the row is read with FOR UPDATE so concurrent top-ups serialize
 // and the returned "before" snapshot cannot go stale. On SQLite the write lock
-// already serializes the transaction. All arithmetic is int64 micro-USD.
+// already serializes the transaction. The persisted value is computed by the
+// database (`limit_micros + ?`), never by a Go read-modify-write, so a stale
+// snapshot can never clobber a concurrent increment. All arithmetic is int64
+// micro-USD.
 //
 // Overflow is checked against the value read under the lock and reported as
 // ErrLimitOverflow before any write, so a wrap can never be persisted.
@@ -106,9 +112,13 @@ func (r *BudgetRepo) IncrementLimitOnTx(ctx context.Context, tx *sql.Tx, id stri
 		return before, before, ErrLimitOverflow
 	}
 	after := before + deltaMicros
-	up := r.db.rebind(`UPDATE budgets SET limit_micros = ?, updated_at = ? WHERE id = ?`)
-	if _, err := tx.ExecContext(ctx, up, after, formatTime(time.Now()), id); err != nil {
+	up := r.db.rebind(`UPDATE budgets SET limit_micros = limit_micros + ?, updated_at = ? WHERE id = ?`)
+	res, err := tx.ExecContext(ctx, up, deltaMicros, formatTime(time.Now()), id)
+	if err != nil {
 		return 0, 0, fmt.Errorf("store: increment budget limit: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return 0, 0, ErrNotFound
 	}
 	return before, after, nil
 }

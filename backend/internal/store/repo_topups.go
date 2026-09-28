@@ -41,8 +41,14 @@ func (r *KeyTopupRepo) insert(ctx context.Context, ex sqlExec, t KeyTopup) error
 }
 
 // ListByKey returns a key's top-ups, newest first.
+//
+// created_at is stored at second precision, so ties are broken by
+// limit_after_micros DESC rather than id: each top-up strictly increases the
+// limit (amounts are positive), making that column a deterministic insertion
+// order within the same second. Ordering by the random UUID id would render
+// rapid top-ups out of order.
 func (r *KeyTopupRepo) ListByKey(ctx context.Context, keyID string) ([]KeyTopup, error) {
-	q := r.db.rebind(`SELECT ` + keyTopupSelectCols + ` FROM key_topups WHERE key_id = ? ORDER BY created_at DESC, id DESC`)
+	q := r.db.rebind(`SELECT ` + keyTopupSelectCols + ` FROM key_topups WHERE key_id = ? ORDER BY created_at DESC, limit_after_micros DESC`)
 	rows, err := r.db.sql.QueryContext(ctx, q, keyID)
 	if err != nil {
 		return nil, fmt.Errorf("store: list key topups: %w", err)

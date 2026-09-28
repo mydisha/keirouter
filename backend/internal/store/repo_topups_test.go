@@ -53,3 +53,31 @@ func TestKeyTopupRepo_CreateListIdempotency(t *testing.T) {
 	rec3.IdempotencyKey = ""
 	require.NoError(t, db.Topups().Create(ctx, rec3))
 }
+
+func TestKeyTopupRepo_ListByKey_SameSecondOrder(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	// created_at is second-precision, so two top-ups can share a timestamp.
+	// Ordering must fall back to the monotonic limit_after_micros, not the
+	// random UUID id, so the newest (higher limit) comes first.
+	sameSecond := time.Now()
+	first := KeyTopup{
+		ID: "order-a", TenantID: DefaultTenantID, KeyID: "key-order", BudgetID: "b1",
+		AmountMicros: 1_000_000, LimitBeforeMicros: 0, LimitAfterMicros: 1_000_000,
+		Actor: "dashboard", CreatedAt: sameSecond,
+	}
+	second := KeyTopup{
+		ID: "order-b", TenantID: DefaultTenantID, KeyID: "key-order", BudgetID: "b1",
+		AmountMicros: 2_000_000, LimitBeforeMicros: 1_000_000, LimitAfterMicros: 3_000_000,
+		Actor: "dashboard", CreatedAt: sameSecond,
+	}
+	require.NoError(t, db.Topups().Create(ctx, first))
+	require.NoError(t, db.Topups().Create(ctx, second))
+
+	got, err := db.Topups().ListByKey(ctx, "key-order")
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, int64(3_000_000), got[0].LimitAfterMicros)
+	require.Equal(t, int64(1_000_000), got[1].LimitAfterMicros)
+}

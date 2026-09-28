@@ -59,6 +59,12 @@ jobs:
           KEIROUTER_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/keirouter_test?sslmode=disable
         run: go test ./internal/store -run TestPostgresCompatibility -count=1 -v
 
+      - name: Test top-up concurrency (race)
+        working-directory: backend
+        env:
+          KEIROUTER_TEST_POSTGRES_DSN: postgres://postgres:postgres@localhost:5432/keirouter_test?sslmode=disable
+        run: go test ./internal/gateway -run TestTopupRace -race -count=5 -v
+
   frontend:
     name: Frontend
     runs-on: ubuntu-latest
