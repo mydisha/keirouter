@@ -6,7 +6,7 @@
 import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { fetchPublicNotifications, type LandingNotification } from "../lib/publicApi";
-import { sanitizeHtml } from "../lib/sanitizeHtml";
+import { sanitizeHtml, safeHref } from "../lib/sanitizeHtml";
 
 export const MAX_NOTIFICATIONS = 5;
 
@@ -36,8 +36,9 @@ function NotificationItem({ item }: { item: LandingNotification }) {
 
   const className =
     "block rounded-xl px-3 py-2.5 text-left no-underline transition-colors hover:bg-[var(--soft)]";
-  return item.href ? (
-    <a href={item.href} target="_blank" rel="noopener noreferrer" className={className}>
+  const href = item.href ? safeHref(item.href) : null;
+  return href ? (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={className}>
       {inner}
     </a>
   ) : (

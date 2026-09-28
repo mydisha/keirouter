@@ -19,7 +19,7 @@ const escapeAttr = (s: string): string => s.replace(/&/g, "&amp;").replace(/"/g,
 
 // safeHref returns the href only when it is an absolute http/https/mailto URL.
 // Relative and anchor hrefs are dropped; so are javascript:/data:/etc.
-function safeHref(raw: string): string | null {
+export function safeHref(raw: string): string | null {
   const href = raw.trim();
   if (!href) return null;
   try {

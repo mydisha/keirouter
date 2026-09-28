@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { sanitizeHtml } from "./sanitizeHtml.ts";
+import { sanitizeHtml, safeHref } from "./sanitizeHtml.ts";
 
 test("keeps allowlisted tags", () => {
   assert.equal(sanitizeHtml("<b>hi</b> <em>there</em>"), "<b>hi</b> <em>there</em>");
@@ -46,4 +46,10 @@ test("keeps mailto href", () => {
     sanitizeHtml('<a href="mailto:x@y.dev">mail</a>'),
     '<a href="mailto:x@y.dev" rel="noopener noreferrer" target="_blank">mail</a>',
   );
+});
+
+test("safeHref fails closed on unsafe and relative URLs", () => {
+  assert.equal(safeHref("javascript:alert(1)"), null);
+  assert.equal(safeHref("https://x.dev"), "https://x.dev");
+  assert.equal(safeHref("/relative"), null);
 });
