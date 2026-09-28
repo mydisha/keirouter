@@ -118,6 +118,31 @@ func TestPostgresCompatibility(t *testing.T) {
 		require.Equal(t, 0.5, again.CacheReadPerM)
 	})
 
+	t.Run("cost aggregates scan into int64", func(t *testing.T) {
+		now := time.Now().UTC()
+		prefix := fmt.Sprintf("pg-cost-%d", now.UnixNano())
+		require.NoError(t, db.Usage().RecordBatch(ctx, []UsageRecord{
+			{ID: prefix, TenantID: DefaultTenantID, APIKeyID: prefix, Provider: "openai",
+				Model: "gpt-4o", Status: "success", PromptTokens: 10, CompletionTokens: 5,
+				CostNanos: 1500, PricingStatus: "priced", CreatedAt: now},
+		}))
+
+		// 1500 nanos + 500 rounds to 2 micros; Postgres returns the SUM(...)/1000
+		// division as numeric, which must be cast back to BIGINT before scanning.
+		micros, tokens, err := db.Usage().SpendAndTokens(ctx, ScopeAPIKey, prefix, time.Time{})
+		require.NoError(t, err)
+		require.Equal(t, int64(2), micros)
+		require.Equal(t, int64(15), tokens)
+
+		sum, err := db.Usage().SummarizeByKey(ctx, prefix, time.Time{})
+		require.NoError(t, err)
+		require.Equal(t, int64(2), sum.CostMicros)
+
+		acc, err := db.Usage().SummarizeAccurate(ctx, DefaultTenantID, time.Time{})
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, acc.CostNanos, int64(1500))
+	})
+
 	t.Run("calendar grouping is UTC", func(t *testing.T) {
 		_, err := db.sql.ExecContext(ctx, "SET TIME ZONE 'America/Los_Angeles'")
 		require.NoError(t, err)

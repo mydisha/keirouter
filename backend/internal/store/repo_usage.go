@@ -140,7 +140,7 @@ func (r *UsageRepo) SpendSince(ctx context.Context, scope BudgetScope, scopeID s
 	}
 
 	q := r.db.rebind(fmt.Sprintf(
-		`SELECT (COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) + 500) / 1000 FROM usage_records WHERE %s = ? AND created_at >= ?`,
+		`SELECT (CAST(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) AS BIGINT) + 500) / 1000 FROM usage_records WHERE %s = ? AND created_at >= ?`,
 		column))
 	var total int64
 	if err := r.db.sql.QueryRowContext(ctx, q, scopeID, formatTime(since)).Scan(&total); err != nil {
@@ -159,7 +159,7 @@ func (r *UsageRepo) SpendAndTokens(ctx context.Context, scope BudgetScope, scope
 	}
 
 	q := r.db.rebind(fmt.Sprintf(
-		`SELECT (COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) + 500) / 1000, COALESCE(SUM(prompt_tokens + completion_tokens), 0)
+		`SELECT (CAST(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) AS BIGINT) + 500) / 1000, COALESCE(SUM(prompt_tokens + completion_tokens), 0)
 		 FROM usage_records WHERE %s = ? AND created_at >= ?`,
 		column))
 	if err := r.db.sql.QueryRowContext(ctx, q, scopeID, formatTime(since)).Scan(&costMicros, &tokens); err != nil {
@@ -202,7 +202,7 @@ func (r *UsageRepo) SpendAndTokensBatch(ctx context.Context, scopes []SpendScope
 			query += " UNION ALL "
 		}
 		query += fmt.Sprintf(
-			"SELECT (COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) + 500) / 1000, COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM usage_records WHERE %s = ? AND created_at >= ?",
+			"SELECT (CAST(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) AS BIGINT) + 500) / 1000, COALESCE(SUM(prompt_tokens + completion_tokens), 0) FROM usage_records WHERE %s = ? AND created_at >= ?",
 			column)
 		args = append(args, s.ScopeID, formatTime(s.Since))
 	}
@@ -269,7 +269,7 @@ func (r *UsageRepo) Summarize(ctx context.Context, tenantID string, since time.T
 			COALESCE(SUM(completion_tokens), 0),
 			COALESCE(SUM(cached_tokens), 0),
 			COALESCE(SUM(cache_write_tokens), 0),
-			(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) + 500) / 1000,
+			(CAST(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) AS BIGINT) + 500) / 1000,
 			COALESCE(SUM(cache_hit), 0),
 			COALESCE(CAST(AVG(CASE WHEN ttft_ms > 0 THEN ttft_ms END) AS INTEGER), 0),
 			COALESCE(CAST(AVG(CASE WHEN latency_ms > 0 THEN latency_ms END) AS INTEGER), 0),
@@ -306,7 +306,7 @@ func (r *UsageRepo) SummarizeByKey(ctx context.Context, keyID string, since time
 			COALESCE(SUM(completion_tokens), 0),
 			COALESCE(SUM(cached_tokens), 0),
 			COALESCE(SUM(cache_write_tokens), 0),
-			(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) + 500) / 1000,
+			(CAST(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) AS BIGINT) + 500) / 1000,
 			COALESCE(SUM(cache_hit), 0),
 			COALESCE(CAST(AVG(CASE WHEN ttft_ms > 0 THEN ttft_ms END) AS INTEGER), 0),
 			COALESCE(CAST(AVG(CASE WHEN latency_ms > 0 THEN latency_ms END) AS INTEGER), 0),
@@ -352,7 +352,7 @@ func (r *UsageRepo) Breakdown(ctx context.Context, tenantID string, since time.T
 			COUNT(*),
 			COALESCE(SUM(prompt_tokens), 0),
 			COALESCE(SUM(completion_tokens), 0),
-			(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) + 500) / 1000
+			(CAST(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) AS BIGINT) + 500) / 1000
 		FROM usage_records
 		WHERE tenant_id = ? AND created_at >= ?
 		GROUP BY provider
@@ -475,7 +475,7 @@ func (r *UsageRepo) ByAccount(ctx context.Context, tenantID string, since time.T
 			COALESCE(SUM(completion_tokens), 0),
 			COALESCE(SUM(cached_tokens), 0),
 			COALESCE(SUM(cache_write_tokens), 0),
-			(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) + 500) / 1000
+			(CAST(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) AS BIGINT) + 500) / 1000
 		FROM usage_records
 		WHERE tenant_id = ? AND created_at >= ?
 		GROUP BY account_id`)
@@ -518,7 +518,7 @@ func (r *UsageRepo) ByModel(ctx context.Context, tenantID string, since time.Tim
 			COUNT(*),
 			COALESCE(SUM(prompt_tokens), 0),
 			COALESCE(SUM(completion_tokens), 0),
-			(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) + 500) / 1000
+			(CAST(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) AS BIGINT) + 500) / 1000
 		FROM usage_records
 		WHERE tenant_id = ? AND created_at >= ?
 		GROUP BY provider, model
@@ -551,7 +551,7 @@ func (r *UsageRepo) ByModelByKey(ctx context.Context, keyID string, since time.T
 			COUNT(*),
 			COALESCE(SUM(prompt_tokens), 0),
 			COALESCE(SUM(completion_tokens), 0),
-			(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) + 500) / 1000
+			(CAST(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) AS BIGINT) + 500) / 1000
 		FROM usage_records
 		WHERE api_key_id = ? AND created_at >= ?
 		GROUP BY provider, model
@@ -647,7 +647,7 @@ func (r *UsageRepo) DailyByKey(ctx context.Context, keyID string, since time.Tim
 			COUNT(*),
 			COALESCE(SUM(prompt_tokens), 0),
 			COALESCE(SUM(completion_tokens), 0),
-			(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) + 500) / 1000
+			(CAST(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) AS BIGINT) + 500) / 1000
 		FROM usage_records
 		WHERE api_key_id = ? AND created_at >= ?
 		GROUP BY day
