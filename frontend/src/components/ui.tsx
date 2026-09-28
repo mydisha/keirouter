@@ -410,6 +410,7 @@ export function Modal({
 			const first = elements[0];
 			const last = elements[elements.length - 1];
 			const active = document.activeElement;
+			if (isPortaled(active)) return;
 			if (event.shiftKey && (active === first || !dialog.contains(active))) {
 				event.preventDefault();
 				last.focus();
@@ -418,8 +419,10 @@ export function Modal({
 				first.focus();
 			}
 		};
+		const isPortaled = (node: Node | null) =>
+			node instanceof Element && !!node.closest("[data-modal-portal]");
 		const onFocusIn = (event: FocusEvent) => {
-			if (dialog && event.target instanceof Node && !dialog.contains(event.target)) {
+			if (dialog && event.target instanceof Node && !dialog.contains(event.target) && !isPortaled(event.target)) {
 				dialog.focus();
 			}
 		};

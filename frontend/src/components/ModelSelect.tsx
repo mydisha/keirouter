@@ -287,6 +287,7 @@ export function ModelMultiSelect({
     ? createPortal(
         <div
           ref={dropdownRef}
+          data-modal-portal
           onMouseDown={(e) => e.stopPropagation()}
           className="fixed z-[100] overflow-hidden rounded-2xl bg-[var(--bg-elevated)] shadow-[var(--shadow-float)] outline outline-1 -outline-offset-1 outline-black/10 dark:outline-white/10"
           style={{ top: dropdownTop, left: dropdownLeft, width: dropdownWidth, maxHeight: dropdownHeight }}
