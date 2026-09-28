@@ -67,6 +67,10 @@ func TestAdminTopupKey_RaisesLimitAndRecordsHistory(t *testing.T) {
 	require.Equal(t, 2.5, resp.Topup["amount_usd"])
 	require.Equal(t, 1.0, resp.Topup["limit_before_usd"])
 	require.Equal(t, 3.5, resp.Topup["limit_after_usd"])
+	require.Equal(t, "b1", resp.Budget["id"])
+	require.EqualValues(t, 3_500_000, resp.Budget["limit_micros"])
+	require.Equal(t, "total", resp.Budget["period"])
+	require.Equal(t, true, resp.Budget["hard_cutoff"])
 
 	b, err := s.budgets.Get(ctx, "b1")
 	require.NoError(t, err)
@@ -79,6 +83,11 @@ func TestAdminTopupKey_RaisesLimitAndRecordsHistory(t *testing.T) {
 	r2 = r2.WithContext(context.WithValue(r2.Context(), chi.RouteCtxKey, rctx))
 	s.adminTopupKey(w2, r2)
 	require.Equal(t, http.StatusOK, w2.Code, w2.Body.String())
+	var resp2 struct {
+		Budget map[string]any `json:"budget"`
+	}
+	require.NoError(t, json.Unmarshal(w2.Body.Bytes(), &resp2))
+	require.EqualValues(t, 3_500_000, resp2.Budget["limit_micros"])
 	b2, err := s.budgets.Get(ctx, "b1")
 	require.NoError(t, err)
 	require.Equal(t, int64(3_500_000), b2.LimitMicros)

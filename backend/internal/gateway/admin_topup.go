@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"math/big"
@@ -82,7 +83,12 @@ func (s *Server) adminTopupKey(w http.ResponseWriter, r *http.Request) {
 	// Fast replay path: if this idempotency key was already used, return it.
 	if idem != "" {
 		if existing, gerr := s.db.Topups().GetByIdempotencyKey(ctx, key.ID, idem); gerr == nil {
-			s.writeTopupResponse(w, http.StatusOK, existing)
+			budget, berr := s.resolveTopupBudget(ctx, key.ID)
+			if berr != nil {
+				writeError(w, http.StatusInternalServerError, sanitizeError(s.log, berr, "internal server error"))
+				return
+			}
+			s.writeTopupResponse(w, http.StatusOK, existing, budget)
 			return
 		} else if !errors.Is(gerr, store.ErrNotFound) {
 			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, gerr, "internal server error"))
@@ -155,7 +161,9 @@ func (s *Server) adminTopupKey(w http.ResponseWriter, r *http.Request) {
 		// this idempotency key. Return the winner instead of double-crediting.
 		if idem != "" {
 			if existing, gerr := s.db.Topups().GetByIdempotencyKey(ctx, key.ID, idem); gerr == nil {
-				s.writeTopupResponse(w, http.StatusOK, existing)
+				// After LockKeyTopup the in-tx resolved budget reflects the
+				// winner's committed state, so reuse it rather than re-reading.
+				s.writeTopupResponse(w, http.StatusOK, existing, budget)
 				return
 			}
 		}
@@ -170,10 +178,25 @@ func (s *Server) adminTopupKey(w http.ResponseWriter, r *http.Request) {
 	if s.budgetEngine != nil {
 		s.budgetEngine.InvalidateBudgetCacheForScope(store.ScopeAPIKey, key.ID)
 	}
-	s.writeTopupResponse(w, http.StatusCreated, rec)
+	// Report the post-increment limit for the create path.
+	budget.LimitMicros = after
+	s.writeTopupResponse(w, http.StatusCreated, rec, budget)
 }
 
-func (s *Server) writeTopupResponse(w http.ResponseWriter, status int, rec store.KeyTopup) {
+// resolveTopupBudget returns the key's current api_key budget. Callers use it
+// on replay paths where the budget was not resolved within an open transaction.
+func (s *Server) resolveTopupBudget(ctx context.Context, keyID string) (store.Budget, error) {
+	budgets, err := s.budgets.ListByScope(ctx, store.ScopeAPIKey, keyID)
+	if err != nil {
+		return store.Budget{}, err
+	}
+	if len(budgets) == 0 {
+		return store.Budget{}, store.ErrNotFound
+	}
+	return budgets[0], nil
+}
+
+func (s *Server) writeTopupResponse(w http.ResponseWriter, status int, rec store.KeyTopup, budget store.Budget) {
 	writeJSON(w, status, map[string]any{
 		"topup": map[string]any{
 			"id":               rec.ID,
@@ -183,6 +206,12 @@ func (s *Server) writeTopupResponse(w http.ResponseWriter, status int, rec store
 			"limit_before_usd": float64(rec.LimitBeforeMicros) / 1_000_000,
 			"limit_after_usd":  float64(rec.LimitAfterMicros) / 1_000_000,
 			"created_at":       rec.CreatedAt,
+		},
+		"budget": map[string]any{
+			"id":           budget.ID,
+			"limit_micros": budget.LimitMicros,
+			"period":       budget.Period,
+			"hard_cutoff":  budget.HardCutoff,
 		},
 	})
 }
