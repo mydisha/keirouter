@@ -91,6 +91,33 @@ func TestPostgresCompatibility(t *testing.T) {
 		require.Equal(t, "", empty)
 	})
 
+	t.Run("chain step pricing round-trips", func(t *testing.T) {
+		now := time.Now().UTC()
+		c := Chain{
+			ID: fmt.Sprintf("pg-price-%d", now.UnixNano()), TenantID: DefaultTenantID,
+			Name: "priced", Strategy: "priority", CreatedAt: now, UpdatedAt: now,
+		}
+		c.Steps = []ChainStep{{
+			ID: c.ID + "-s1", ChainID: c.ID, Position: 0, Provider: "openai", Model: "gpt-4o",
+			InputPerM: 2.5, OutputPerM: 10, CacheWritePerM: 3.125, CacheReadPerM: 0.25, CreatedAt: now,
+		}}
+		require.NoError(t, db.Chains().Create(ctx, c))
+
+		got, err := db.Chains().Get(ctx, c.ID)
+		require.NoError(t, err)
+		require.Len(t, got.Steps, 1)
+		require.Equal(t, 2.5, got.Steps[0].InputPerM)
+		require.Equal(t, 10.0, got.Steps[0].OutputPerM)
+		require.Equal(t, 3.125, got.Steps[0].CacheWritePerM)
+		require.Equal(t, 0.25, got.Steps[0].CacheReadPerM)
+
+		c.Steps[0].CacheReadPerM = 0.5
+		require.NoError(t, db.Chains().Update(ctx, c))
+		again, err := db.Chains().Get(ctx, c.ID)
+		require.NoError(t, err)
+		require.Equal(t, 0.5, again.Steps[0].CacheReadPerM)
+	})
+
 	t.Run("calendar grouping is UTC", func(t *testing.T) {
 		_, err := db.sql.ExecContext(ctx, "SET TIME ZONE 'America/Los_Angeles'")
 		require.NoError(t, err)
