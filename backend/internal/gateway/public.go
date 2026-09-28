@@ -75,7 +75,13 @@ func (s *Server) publicModelRows(ctx context.Context) ([]publicModelRow, error) 
 			continue
 		}
 		first := c.Steps[0]
-		price, _ := connectors.ModelPriceByProviderModel(first.Provider, first.Model)
+		// Chain-configured rates take precedence; all-zero means unset and the
+		// catalog price of the first step is shown instead.
+		inputPerM, outputPerM, cachedPerM, cacheWritePerM := c.InputPerM, c.OutputPerM, c.CacheReadPerM, c.CacheWritePerM
+		if inputPerM <= 0 && outputPerM <= 0 && cachedPerM <= 0 && cacheWritePerM <= 0 {
+			price, _ := connectors.ModelPriceByProviderModel(first.Provider, first.Model)
+			inputPerM, outputPerM, cachedPerM, cacheWritePerM = price.InputPerM, price.OutputPerM, price.CachedInputPerM, price.CacheWritePerM
+		}
 		u := usage[c.ID]
 		rows = append(rows, publicModelRow{
 			Name:        c.Name,
@@ -84,10 +90,10 @@ func (s *Server) publicModelRows(ctx context.Context) ([]publicModelRow, error) 
 			ProviderID:  "combo",
 			CapProvider: first.Provider,
 			CapModel:    first.Model,
-			InputPerM:   price.InputPerM,
-			OutputPerM:  price.OutputPerM,
-			CachedPerM:  price.CachedInputPerM,
-			CacheWrite:  price.CacheWritePerM,
+			InputPerM:   inputPerM,
+			OutputPerM:  outputPerM,
+			CachedPerM:  cachedPerM,
+			CacheWrite:  cacheWritePerM,
 			Requests:    u.TotalRequests,
 			Tokens:      u.PromptTokens + u.CompletionTokens,
 			Users:       u.DistinctKeys,
@@ -103,8 +109,9 @@ func (s *Server) publicModelRows(ctx context.Context) ([]publicModelRow, error) 
 }
 
 // publicModels serves GET /v1/public/models: one entry per routing chain, with
-// per-1M list prices (from the chain's first step), capabilities, and all-time
-// usage aggregated by chain_id. Aggregate only.
+// per-1M list prices (the chain's configured rates when set, otherwise the
+// first step's catalog price), capabilities, and all-time usage aggregated by
+// chain_id. Aggregate only.
 func (s *Server) publicModels(w http.ResponseWriter, r *http.Request) {
 	if s.cacheHit(w, "public-models") {
 		return

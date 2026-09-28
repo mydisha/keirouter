@@ -128,7 +128,7 @@ func TestPublicModelsHidesProviderSecrets(t *testing.T) {
 	require.Equal(t, "combo", gpt4o.ProviderID)
 	require.Equal(t, "combo", gpt4o.Provider)
 	require.NotEmpty(t, gpt4o.Capabilities)
-	require.Equal(t, 2.5, gpt4o.InputPerM, "price comes from the chain's first step")
+	require.Equal(t, 2.5, gpt4o.InputPerM, "unpriced chain falls back to the first step's catalog price")
 	require.Equal(t, 10.0, gpt4o.OutputPerM)
 	require.Equal(t, 2, gpt4o.Usage.Users)
 	require.Equal(t, int64(3), gpt4o.Usage.Requests)
@@ -215,6 +215,42 @@ func TestPublicModelsListsChainsOnly(t *testing.T) {
 
 	// Catalog ids must not leak in.
 	require.NotContains(t, rec.Body.String(), "openai/gpt-4o")
+}
+
+// TestPublicModelsUsesChainConfiguredPrice proves that when a chain has its own
+// rates configured, the landing page shows those rates, not the first step's
+// catalog price.
+func TestPublicModelsUsesChainConfiguredPrice(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	require.NoError(t, db.Chains().Create(context.Background(), store.Chain{
+		ID: "chain-priced", TenantID: store.DefaultTenantID, Name: "my-priced-combo",
+		Strategy: "priority",
+		InputPerM: 1.25, OutputPerM: 5.5, CacheWritePerM: 1.5625, CacheReadPerM: 0.125,
+		Steps:     []store.ChainStep{{Provider: "openai", Model: "gpt-4o", Position: 0}},
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	rec := httptest.NewRecorder()
+	gw.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/public/models", nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var payload struct {
+		Models []struct {
+			ModelID        string  `json:"model_id"`
+			InputPerM      float64 `json:"input_per_m"`
+			OutputPerM     float64 `json:"output_per_m"`
+			CachedPerM     float64 `json:"cached_per_m"`
+			CacheWritePerM float64 `json:"cache_write_per_m"`
+		} `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	require.Len(t, payload.Models, 1)
+	m := payload.Models[0]
+	// gpt-4o lists 2.5/10 in the catalog; the chain overrides every rate.
+	require.Equal(t, 1.25, m.InputPerM)
+	require.Equal(t, 5.5, m.OutputPerM)
+	require.Equal(t, 0.125, m.CachedPerM)
+	require.Equal(t, 1.5625, m.CacheWritePerM)
 }
 
 // TestPublicModelsCapabilitiesFromFirstStep proves capabilities are derived
