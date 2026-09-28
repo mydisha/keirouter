@@ -420,20 +420,46 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
         </div>
       </Card>
 
-      <Modal open={open} onClose={() => setOpen(false)} title={`Top up ${apiKey.name}`}>
-        <div className="space-y-4">
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Top up budget"
+        subtitle={`Add credit to ${apiKey.name}. This increases the key's spend limit immediately.`}
+      >
+        <div className="space-y-4 px-6 py-5">
           <Field label="Amount (USD)">
-            <Input type="number" min="0" step="0.01" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="25.00" autoFocus />
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              inputMode="decimal"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="25.00"
+              autoFocus
+            />
           </Field>
           <Field label="Reason (optional)">
-            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="manual invoice #123" maxLength={500} />
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="manual invoice #123"
+              maxLength={500}
+            />
           </Field>
-          {budget && valid && <p className="text-xs text-[var(--text-muted)]">New limit: ${(limit + parsed).toFixed(2)}</p>}
+          {budget && valid && (
+            <div className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3 text-sm">
+              <span className="text-[var(--text-muted)]">New limit</span>
+              <span className="font-semibold tabular-nums text-[var(--text)]">${(limit + parsed).toFixed(2)}</span>
+            </div>
+          )}
           {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setOpen(false)} disabled={submit.isPending}>Cancel</Button>
-            <Button onClick={() => submit.mutate()} disabled={!valid || submit.isPending}>{submit.isPending ? "Topping up…" : "Top up"}</Button>
-          </div>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-[var(--border)] px-6 py-4">
+          <Button variant="ghost" onClick={() => setOpen(false)} disabled={submit.isPending}>Cancel</Button>
+          <Button onClick={() => submit.mutate()} disabled={!valid || submit.isPending}>
+            {submit.isPending ? "Topping up…" : "Top up"}
+          </Button>
         </div>
       </Modal>
     </div>
