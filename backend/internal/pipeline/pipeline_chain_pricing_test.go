@@ -31,7 +31,7 @@ func TestAttemptForTargetsKeepsChainRates(t *testing.T) {
 }
 
 // TestPipelineForwardsChainStepPrice proves that the winning attempt's chain
-// step rates are forwarded through recordOutcomeWithTTFT into the meter and
+// rates are forwarded through recordOutcomeWithTTFT into the meter and
 // persisted as a chain-priced UsageRecord. The meter is built with no catalog
 // prices, so only the forwarded rates can price the request.
 func TestPipelineForwardsChainStepPrice(t *testing.T) {
