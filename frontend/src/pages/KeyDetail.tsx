@@ -342,7 +342,8 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
   };
 
   const parsed = Number(amount);
-  const valid = Number.isFinite(parsed) && parsed > 0 && Math.round(parsed * 1e6) === parsed * 1e6;
+  const amountStr = amount.trim();
+  const valid = /^\d*(\.\d{1,6})?$/.test(amountStr) && Number(amountStr) > 0;
 
   const submit = useMutation({
     mutationFn: () => api.topupKey(apiKey.id, { amount_usd: parsed, reason: reason.trim() || undefined, idempotency_key: idem }),
