@@ -4,9 +4,10 @@ import {
   Sparkles, Zap, MessageSquare, Layers, Route, Wifi, Monitor, Database, Clock,
   ArrowUpCircle, CheckCircle2, ExternalLink, XCircle, Terminal, RefreshCw,
   Gauge, Eye, EyeOff, KeyRound, Download, Upload, ShieldCheck, Info,
-  Palette, Shield,
+  Palette, Shield, Bell,
 } from "lucide-react";
-import { api, type EndpointSettings, type BrandingSettings, type HeadroomTestResult, type ForeignImportResult, type N9routerImportOptions, type N9routerAnalyzeResult } from "../lib/api";
+import { api, type EndpointSettings, type BrandingSettings, type HeadroomTestResult, type ForeignImportResult, type N9routerImportOptions, type N9routerAnalyzeResult, type LandingNotification } from "../lib/api";
+import { sanitizeHtml } from "../lib/sanitizeHtml";
 import { ChangelogMarkdown } from "../components/ChangelogMarkdown";
 import { PALETTES, getPaletteScales } from "../lib/palettes";
 import { applyShadeScale, generateShades } from "../lib/color-utils";
@@ -19,7 +20,7 @@ import {
 } from "../components/ui";
 
 // ── Tab definitions ─────────────────────────────────────────────────
-type SettingsTab = "saving" | "routing" | "network" | "branding" | "import-export" | "system";
+type SettingsTab = "saving" | "routing" | "network" | "branding" | "import-export" | "system" | "notifications";
 
 const settingsTabs = [
   { value: "saving" as const, label: "Token Saving", icon: Zap },
@@ -28,6 +29,7 @@ const settingsTabs = [
   { value: "branding" as const, label: "Branding", icon: Palette },
   { value: "import-export" as const, label: "Import / Export", icon: Database },
   { value: "system" as const, label: "System", icon: ArrowUpCircle },
+  { value: "notifications" as const, label: "Notification", icon: Bell },
 ];
 
 function useHashTab(defaultTab: SettingsTab): [SettingsTab, (t: SettingsTab) => void] {
@@ -155,6 +157,7 @@ export function SettingsPage() {
             {tab === "branding" && <BrandingTab />}
             {tab === "import-export" && <ImportExportTab />}
             {tab === "system" && <SystemTab />}
+            {tab === "notifications" && <NotificationTab />}
           </div>
 
           {save.isError && (
@@ -1151,6 +1154,125 @@ function BrandingTab() {
           </Button>
         </div>
       </div>
+    </Card>
+  );
+}
+
+// ── Notification Tab ────────────────────────────────────────────────
+const MAX_NOTIFICATIONS = 5;
+
+function NotificationTab() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const list = useQuery({ queryKey: ["landing-notifications"], queryFn: () => api.notifications() });
+  const save = useMutation({
+    mutationFn: (items: LandingNotification[]) => api.updateNotifications(items),
+    onSuccess: (data) => {
+      qc.setQueryData(["landing-notifications"], data);
+      qc.invalidateQueries({ queryKey: ["public-notifications"] });
+      toast.success("Notifications saved");
+    },
+    onError: (e) => toast.error("Save failed", (e as Error).message),
+  });
+
+  const [editing, setEditing] = useState<{ index: number; item: LandingNotification } | null>(null);
+  const items = list.data?.notifications ?? [];
+
+  const persist = (next: LandingNotification[]) => save.mutate(next);
+
+  const openAdd = () => {
+    setEditing({ index: -1, item: { id: "", title: "", body: "", tag: "", href: "" } });
+  };
+  const openEdit = (index: number) => setEditing({ index, item: { ...items[index] } });
+
+  const commit = () => {
+    if (!editing) return;
+    const it = editing.item;
+    if (!it.title.trim()) return;
+    const next = editing.index < 0 ? [...items, it] : items.map((x, i) => (i === editing.index ? it : x));
+    persist(next);
+    setEditing(null);
+  };
+
+  const remove = (index: number) => persist(items.filter((_, i) => i !== index));
+
+  if (list.isLoading) return <Spinner />;
+
+  return (
+    <Card>
+      <SectionHeader
+        title="Landing page notifications"
+        description={`Announcements shown in the landing page bell. Max ${MAX_NOTIFICATIONS}. Title and body support limited HTML (bold, italic, links).`}
+        icon={Bell}
+      />
+      <div className="divide-y divide-[var(--border)] border-t border-[var(--border)]">
+        {items.length === 0 && (
+          <p className="px-6 py-8 text-center text-sm text-[var(--text-muted)]">No notifications yet.</p>
+        )}
+        {items.map((n, i) => (
+          <div key={n.id || i} className="flex items-start justify-between gap-4 px-6 py-4">
+            <div className="min-w-0">
+              <p className="flex items-center gap-2 text-sm font-medium">
+                {n.title}
+                {n.tag && (
+                  <span className="rounded-full bg-[var(--bg-subtle)] px-2 py-0.5 text-[10px] font-semibold uppercase text-[var(--text-muted)]">{n.tag}</span>
+                )}
+              </p>
+              <p
+                className="mt-0.5 truncate text-xs text-[var(--text-muted)] [&_a]:underline"
+                dangerouslySetInnerHTML={{ __html: sanitizeHtml(n.body) }}
+              />
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <Button variant="ghost" onClick={() => openEdit(i)}>Edit</Button>
+              <Button variant="ghost" onClick={() => remove(i)}>Delete</Button>
+            </div>
+          </div>
+        ))}
+        <div className="flex justify-end px-6 py-4">
+          <Button onClick={openAdd} disabled={items.length >= MAX_NOTIFICATIONS || save.isPending}>
+            Add notification
+          </Button>
+        </div>
+      </div>
+
+      <Modal
+        open={editing !== null}
+        onClose={() => setEditing(null)}
+        title={editing && editing.index < 0 ? "Add notification" : "Edit notification"}
+      >
+        {editing && (
+          <>
+            <div className="space-y-4 px-6 py-5">
+              <Field label="Title (HTML allowed)">
+                <Input value={editing.item.title} onChange={(e) => setEditing({ ...editing, item: { ...editing.item, title: e.target.value } })} />
+              </Field>
+              <Field label="Tag (optional)">
+                <Input value={editing.item.tag ?? ""} onChange={(e) => setEditing({ ...editing, item: { ...editing.item, tag: e.target.value } })} />
+              </Field>
+              <Field label="Body (HTML allowed)">
+                <Input value={editing.item.body} onChange={(e) => setEditing({ ...editing, item: { ...editing.item, body: e.target.value } })} />
+              </Field>
+              <Field label="Link (optional)">
+                <Input value={editing.item.href ?? ""} onChange={(e) => setEditing({ ...editing, item: { ...editing.item, href: e.target.value } })} placeholder="https://…" />
+              </Field>
+              <div>
+                <p className="mb-1 text-xs font-medium text-[var(--text-muted)]">Preview</p>
+                <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3 text-sm">
+                  <p className="font-medium [&_a]:underline" dangerouslySetInnerHTML={{ __html: sanitizeHtml(editing.item.title) }} />
+                  <p className="mt-0.5 text-xs text-[var(--text-muted)] [&_a]:underline" dangerouslySetInnerHTML={{ __html: sanitizeHtml(editing.item.body) }} />
+                </div>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-[var(--border)] px-6 py-4">
+              <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
+              <Button onClick={commit} disabled={!editing.item.title.trim() || save.isPending}>
+                {save.isPending ? "Saving…" : "Save"}
+              </Button>
+            </div>
+          </>
+        )}
+      </Modal>
     </Card>
   );
 }
