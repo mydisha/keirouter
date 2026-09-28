@@ -1793,12 +1793,12 @@ func (s *Server) adminListChains(w http.ResponseWriter, r *http.Request) {
 		for _, st := range c.Steps {
 			steps = append(steps, map[string]any{
 				"provider": st.Provider, "model": st.Model, "position": st.Position,
-				"input_per_m": st.InputPerM, "output_per_m": st.OutputPerM,
-				"cache_write_per_m": st.CacheWritePerM, "cache_read_per_m": st.CacheReadPerM,
 			})
 		}
 		entry := map[string]any{
 			"id": c.ID, "name": c.Name, "strategy": c.Strategy, "steps": steps,
+			"input_per_m": c.InputPerM, "output_per_m": c.OutputPerM,
+			"cache_write_per_m": c.CacheWritePerM, "cache_read_per_m": c.CacheReadPerM,
 		}
 		if c.FallbackProvider != "" && c.FallbackModel != "" {
 			entry["fallback_provider"] = c.FallbackProvider
@@ -1811,17 +1811,17 @@ func (s *Server) adminListChains(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name             string `json:"name"`
-		Strategy         string `json:"strategy"`
-		FallbackProvider string `json:"fallback_provider"`
-		FallbackModel    string `json:"fallback_model"`
+		Name             string  `json:"name"`
+		Strategy         string  `json:"strategy"`
+		FallbackProvider string  `json:"fallback_provider"`
+		FallbackModel    string  `json:"fallback_model"`
+		InputPerM        float64 `json:"input_per_m"`
+		OutputPerM       float64 `json:"output_per_m"`
+		CacheWritePerM   float64 `json:"cache_write_per_m"`
+		CacheReadPerM    float64 `json:"cache_read_per_m"`
 		Steps            []struct {
-			Provider       string  `json:"provider"`
-			Model          string  `json:"model"`
-			InputPerM      float64 `json:"input_per_m"`
-			OutputPerM     float64 `json:"output_per_m"`
-			CacheWritePerM float64 `json:"cache_write_per_m"`
-			CacheReadPerM  float64 `json:"cache_read_per_m"`
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
 		} `json:"steps"`
 	}
 	if !decodeJSON(w, r, &body) {
@@ -1848,6 +1848,17 @@ func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if !validRate(body.InputPerM) || !validRate(body.OutputPerM) ||
+		!validRate(body.CacheWritePerM) || !validRate(body.CacheReadPerM) {
+		writeError(w, http.StatusBadRequest, "invalid chain price: rates must be finite and non-negative")
+		return
+	}
+	if (body.InputPerM > 0 || body.OutputPerM > 0 || body.CacheWritePerM > 0 || body.CacheReadPerM > 0) &&
+		(body.InputPerM <= 0 || body.OutputPerM <= 0) {
+		writeError(w, http.StatusBadRequest, "chain input and output price must be greater than 0")
+		return
+	}
+
 	now := time.Now()
 	chain := store.Chain{
 		ID:               uuid.NewString(),
@@ -1856,6 +1867,10 @@ func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 		Strategy:         defaultStr(body.Strategy, "priority"),
 		FallbackProvider: body.FallbackProvider,
 		FallbackModel:    body.FallbackModel,
+		InputPerM:        body.InputPerM,
+		OutputPerM:       body.OutputPerM,
+		CacheWritePerM:   body.CacheWritePerM,
+		CacheReadPerM:    body.CacheReadPerM,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	}
@@ -1864,20 +1879,9 @@ func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "unknown provider in step: "+st.Provider)
 			return
 		}
-		if !validRate(st.InputPerM) || !validRate(st.OutputPerM) ||
-			!validRate(st.CacheWritePerM) || !validRate(st.CacheReadPerM) {
-			writeError(w, http.StatusBadRequest, "invalid step price: rates must be finite and non-negative")
-			return
-		}
-		if st.InputPerM <= 0 || st.OutputPerM <= 0 {
-			writeError(w, http.StatusBadRequest, "step input and output price must be greater than 0")
-			return
-		}
 		chain.Steps = append(chain.Steps, store.ChainStep{
 			ID: uuid.NewString(), ChainID: chain.ID, Position: i,
 			Provider: st.Provider, Model: st.Model, CreatedAt: now,
-			InputPerM: st.InputPerM, OutputPerM: st.OutputPerM,
-			CacheWritePerM: st.CacheWritePerM, CacheReadPerM: st.CacheReadPerM,
 		})
 	}
 	if err := s.chains.Create(r.Context(), chain); err != nil {
@@ -1904,17 +1908,17 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Name             *string `json:"name"`
-		Strategy         *string `json:"strategy"`
-		FallbackProvider *string `json:"fallback_provider"`
-		FallbackModel    *string `json:"fallback_model"`
+		Name             *string  `json:"name"`
+		Strategy         *string  `json:"strategy"`
+		FallbackProvider *string  `json:"fallback_provider"`
+		FallbackModel    *string  `json:"fallback_model"`
+		InputPerM        *float64 `json:"input_per_m"`
+		OutputPerM       *float64 `json:"output_per_m"`
+		CacheWritePerM   *float64 `json:"cache_write_per_m"`
+		CacheReadPerM    *float64 `json:"cache_read_per_m"`
 		Steps            *[]struct {
-			Provider       string  `json:"provider"`
-			Model          string  `json:"model"`
-			InputPerM      float64 `json:"input_per_m"`
-			OutputPerM     float64 `json:"output_per_m"`
-			CacheWritePerM float64 `json:"cache_write_per_m"`
-			CacheReadPerM  float64 `json:"cache_read_per_m"`
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
 		} `json:"steps"`
 	}
 	if !decodeJSON(w, r, &body) {
@@ -1937,30 +1941,43 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 	if body.FallbackModel != nil {
 		existing.FallbackModel = *body.FallbackModel
 	}
+	if body.InputPerM != nil || body.OutputPerM != nil || body.CacheWritePerM != nil || body.CacheReadPerM != nil {
+		rates := []*float64{body.InputPerM, body.OutputPerM, body.CacheWritePerM, body.CacheReadPerM}
+		for _, r := range rates {
+			if r != nil && !validRate(*r) {
+				writeError(w, http.StatusBadRequest, "invalid chain price: rates must be finite and non-negative")
+				return
+			}
+		}
+		if body.InputPerM != nil {
+			existing.InputPerM = *body.InputPerM
+		}
+		if body.OutputPerM != nil {
+			existing.OutputPerM = *body.OutputPerM
+		}
+		if body.CacheWritePerM != nil {
+			existing.CacheWritePerM = *body.CacheWritePerM
+		}
+		if body.CacheReadPerM != nil {
+			existing.CacheReadPerM = *body.CacheReadPerM
+		}
+		priced := existing.InputPerM > 0 || existing.OutputPerM > 0 || existing.CacheWritePerM > 0 || existing.CacheReadPerM > 0
+		if priced && (existing.InputPerM <= 0 || existing.OutputPerM <= 0) {
+			writeError(w, http.StatusBadRequest, "chain input and output price must be greater than 0")
+			return
+		}
+	}
 	if body.Steps != nil {
 		now := time.Now()
 		existing.Steps = make([]store.ChainStep, len(*body.Steps))
 		for i, st := range *body.Steps {
-			if !validRate(st.InputPerM) || !validRate(st.OutputPerM) ||
-				!validRate(st.CacheWritePerM) || !validRate(st.CacheReadPerM) {
-				writeError(w, http.StatusBadRequest, "invalid step price: rates must be finite and non-negative")
-				return
-			}
-			if st.InputPerM <= 0 || st.OutputPerM <= 0 {
-				writeError(w, http.StatusBadRequest, "step input and output price must be greater than 0")
-				return
-			}
 			existing.Steps[i] = store.ChainStep{
-				ID:             uuid.NewString(),
-				ChainID:        id,
-				Position:       i,
-				Provider:       st.Provider,
-				Model:          st.Model,
-				CreatedAt:      now,
-				InputPerM:      st.InputPerM,
-				OutputPerM:     st.OutputPerM,
-				CacheWritePerM: st.CacheWritePerM,
-				CacheReadPerM:  st.CacheReadPerM,
+				ID:        uuid.NewString(),
+				ChainID:   id,
+				Position:  i,
+				Provider:  st.Provider,
+				Model:     st.Model,
+				CreatedAt: now,
 			}
 		}
 	}
@@ -2797,12 +2814,12 @@ func (s *Server) adminExportDatabase(w http.ResponseWriter, r *http.Request) {
 		for _, st := range c.Steps {
 			steps = append(steps, map[string]any{
 				"provider": st.Provider, "model": st.Model, "position": st.Position,
-				"input_per_m": st.InputPerM, "output_per_m": st.OutputPerM,
-				"cache_write_per_m": st.CacheWritePerM, "cache_read_per_m": st.CacheReadPerM,
 			})
 		}
 		chainsOut = append(chainsOut, map[string]any{
 			"name": c.Name, "strategy": c.Strategy, "steps": steps,
+			"input_per_m": c.InputPerM, "output_per_m": c.OutputPerM,
+			"cache_write_per_m": c.CacheWritePerM, "cache_read_per_m": c.CacheReadPerM,
 		})
 	}
 	export["chains"] = chainsOut
@@ -2946,16 +2963,16 @@ func (s *Server) adminImportDatabase(w http.ResponseWriter, r *http.Request) {
 	// Import chains.
 	if raw, ok := payload["chains"]; ok {
 		var chains []struct {
-			Name     string `json:"name"`
-			Strategy string `json:"strategy"`
-			Steps    []struct {
-				Provider       string  `json:"provider"`
-				Model          string  `json:"model"`
-				Position       int     `json:"position"`
-				InputPerM      float64 `json:"input_per_m"`
-				OutputPerM     float64 `json:"output_per_m"`
-				CacheWritePerM float64 `json:"cache_write_per_m"`
-				CacheReadPerM  float64 `json:"cache_read_per_m"`
+			Name           string  `json:"name"`
+			Strategy       string  `json:"strategy"`
+			InputPerM      float64 `json:"input_per_m"`
+			OutputPerM     float64 `json:"output_per_m"`
+			CacheWritePerM float64 `json:"cache_write_per_m"`
+			CacheReadPerM  float64 `json:"cache_read_per_m"`
+			Steps          []struct {
+				Provider string `json:"provider"`
+				Model    string `json:"model"`
+				Position int    `json:"position"`
 			} `json:"steps"`
 		}
 		if err := json.Unmarshal(raw, &chains); err == nil {
@@ -2966,6 +2983,8 @@ func (s *Server) adminImportDatabase(w http.ResponseWriter, r *http.Request) {
 					TenantID:  adminTenant,
 					Name:      c.Name,
 					Strategy:  defaultStr(c.Strategy, "priority"),
+					InputPerM: c.InputPerM, OutputPerM: c.OutputPerM,
+					CacheWritePerM: c.CacheWritePerM, CacheReadPerM: c.CacheReadPerM,
 					CreatedAt: now,
 					UpdatedAt: now,
 				}
@@ -2973,8 +2992,6 @@ func (s *Server) adminImportDatabase(w http.ResponseWriter, r *http.Request) {
 					chain.Steps = append(chain.Steps, store.ChainStep{
 						ID: uuid.NewString(), ChainID: chain.ID, Position: st.Position,
 						Provider: st.Provider, Model: st.Model, CreatedAt: now,
-						InputPerM: st.InputPerM, OutputPerM: st.OutputPerM,
-						CacheWritePerM: st.CacheWritePerM, CacheReadPerM: st.CacheReadPerM,
 					})
 				}
 				if err := s.chains.Create(ctx, chain); err == nil {
