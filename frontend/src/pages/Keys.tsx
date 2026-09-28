@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Plus, Copy, Check, ToggleLeft, ToggleRight, ArrowLeft, ArrowRight, Trash2, Wallet, Wrench, DollarSign, Gauge, Link2, Activity, Ban, ListFilter, Search, X } from "lucide-react";
-import { api, type APIKey, type CreatedKey, type Plan } from "../lib/api";
+import { api, type APIKey, type BudgetStatus, type CreatedKey, type Plan } from "../lib/api";
 import { dashboard } from "../lib/dashboardRoutes";
 import { microsToUSD, formatTokens } from "../lib/format";
 import { PageHeader } from "../components/Layout";
@@ -157,6 +157,7 @@ function KeyEmptyState({ onCreate }: { onCreate: () => void }) {
 
 function KeyRow({
   apiKey,
+  budget,
   selected,
   onSelect,
   onToggle,
@@ -165,6 +166,7 @@ function KeyRow({
   togglePending,
 }: {
   apiKey: APIKey;
+  budget?: BudgetStatus;
   selected: boolean;
   onSelect: () => void;
   onToggle: () => void;
@@ -204,12 +206,31 @@ function KeyRow({
         <KeyCopyButton icon={<KeyRound className="h-3 w-3" />} label="Key copied" value={apiKey.display} copiedMessage="Masked key identifier copied." />
       </div>
 
-      <div className="flex min-w-0 items-center gap-2 pl-12 text-xs md:pl-0">
-        <span className="truncate font-medium text-[var(--text)]">{apiKey.plan_name || "Custom plan"}</span>
-        <span className="text-[var(--text-muted)]">·</span>
-        <span className={modelCount > 0 ? "truncate text-amber-600 dark:text-amber-400" : "truncate text-[var(--text-muted)]"}>
-          {modelCount > 0 ? `${modelCount} model${modelCount > 1 ? "s" : ""}` : "Plan defaults"}
-        </span>
+      <div className="min-w-0 pl-12 text-xs md:pl-0">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate font-medium text-[var(--text)]">{apiKey.plan_name || "Custom plan"}</span>
+          <span className="text-[var(--text-muted)]">·</span>
+          <span className={modelCount > 0 ? "truncate text-amber-600 dark:text-amber-400" : "truncate text-[var(--text-muted)]"}>
+            {modelCount > 0 ? `${modelCount} model${modelCount > 1 ? "s" : ""}` : "Plan defaults"}
+          </span>
+        </div>
+        {budget && budget.limit_micros > 0 && (() => {
+          const limit = budget.limit_micros / 1_000_000;
+          const spent = budget.spent_micros / 1_000_000;
+          const pct = Math.min((spent / limit) * 100, 100);
+          const tone = pct >= 100 ? "bg-red-500" : pct >= (budget.alert_pct || 100) ? "bg-amber-500" : "bg-emerald-500";
+          return (
+            <div className="mt-2 min-w-[160px]" title={`$${spent.toFixed(2)} of $${limit.toFixed(2)}`}>
+              <div className="mb-1 flex justify-between text-[11px] text-[var(--text-muted)]">
+                <span className="tabular-nums">${spent.toFixed(2)} spent</span>
+                <span className="tabular-nums">${limit.toFixed(2)}</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
+                <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       <div className="flex items-center gap-1 pl-11 md:justify-end md:pl-0">
@@ -254,6 +275,14 @@ export function KeysPage() {
   const navigate = useNavigate();
   const keys = useQuery({ queryKey: ["keys"], queryFn: () => api.listKeys() });
   const access = useQuery({ queryKey: ["access-settings"], queryFn: () => api.accessSettings() });
+  const budgetStatus = useQuery({ queryKey: ["budget-status"], queryFn: () => api.budgetStatus() });
+  const budgetByKey = useMemo(() => {
+    const m = new Map<string, BudgetStatus>();
+    for (const b of budgetStatus.data?.budgets ?? []) {
+      if (b.scope_kind === "api_key") m.set(b.scope_id, b);
+    }
+    return m;
+  }, [budgetStatus.data]);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
@@ -630,6 +659,7 @@ export function KeysPage() {
                   <KeyRow
                     key={k.id}
                     apiKey={k}
+                    budget={budgetByKey.get(k.id)}
                     selected={selectedIds.has(k.id)}
                     onSelect={() => toggleSelect(k.id)}
                     onToggle={() => toggleDisabled.mutate({ id: k.id, disabled: !k.disabled })}
