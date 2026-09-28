@@ -300,8 +300,9 @@ func TestRecordUsesChainStepPrice(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "chain", cap.last.PricingSource)
-	// 1000/1M*2.5 = 0.0025 USD input; 500/1M*10 = 0.005 USD output → 7500 nanos.
-	require.Equal(t, int64(7500), cap.last.CostNanos)
+	// tokenCostNanos = tokens*rate*1000: 1000 tokens @ $2.5/M = 2,500,000 nanos;
+	// 500 tokens @ $10/M = 5,000,000 nanos → 7,500,000 nanos total.
+	require.Equal(t, int64(7_500_000), cap.last.CostNanos)
 }
 
 func TestRecordFallsBackToCatalogWhenNoChainPrice(t *testing.T) {
@@ -314,7 +315,7 @@ func TestRecordFallsBackToCatalogWhenNoChainPrice(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "catalog", cap.last.PricingSource)
-	require.Equal(t, int64(2000), cap.last.CostNanos) // 1000 + 1000 nanos
+	require.Equal(t, int64(2_000_000), cap.last.CostNanos) // 1,000,000 + 1,000,000 nanos
 }
 ```
 
@@ -345,7 +346,7 @@ In `Meter.Record` (`meter.go:199-207`), replace the `CalculateCost` call branch:
 	if u.PromptTokens+u.CompletionTokens == 0 && !ev.CacheHit {
 		cost.Pricing = PricingMatch{Status: "none", MatchKind: "none"}
 	} else if price, ok := chainPrice(ev); ok {
-		cost = calculateCostFromPrice(price, u, ev.CacheHit, savedTokens)
+		cost = calculateCostFromPrice(pricingMatch("chain", price, "chain", false), u, ev.CacheHit, savedTokens)
 	} else {
 		cost = m.CalculateCost(ev.Provider, ev.Model, u, ev.CacheHit, savedTokens)
 	}
@@ -369,12 +370,13 @@ func chainPrice(ev Event) (Price, bool) {
 }
 
 // calculateCostFromPrice runs the same token math as CalculateCost but with an
-// already-resolved price.
-func calculateCostFromPrice(p Price, uUsage core.Usage, cacheHit bool, savedInputTokens int) CostBreakdown {
+// already-resolved price match. It takes the full match so the catalog path
+// keeps its provenance (key, match kind, estimated status) instead of both
+// paths drifting.
+func calculateCostFromPrice(match PricingMatch, uUsage core.Usage, cacheHit bool, savedInputTokens int) CostBreakdown {
 	u := clampUsage(uUsage)
-	match := pricingMatch("chain", p, "chain", false)
 	out := CostBreakdown{Pricing: match}
-	p = effectivePrice(p, u.PromptTokens)
+	p := effectivePrice(match.Price, u.PromptTokens)
 	out.InputRatePerM = p.InputPerM
 	out.CachedRatePerM = p.CachedInputPerM
 	if out.CachedRatePerM == 0 {
@@ -408,14 +410,14 @@ func calculateCostFromPrice(p Price, uUsage core.Usage, cacheHit bool, savedInpu
 }
 ```
 
-Note: `CalculateCost` in `pricing.go` should be refactored to call `calculateCostFromPrice(match.Price, raw, cacheHit, savedInputTokens)` after `ResolvePrice`, so the two paths cannot drift. Keep the existing early return for `missing`/`none`:
+Note: `CalculateCost` in `pricing.go` should be refactored to call `calculateCostFromPrice(match, raw, cacheHit, savedInputTokens)` after `ResolvePrice`, so the two paths cannot drift. Keep the existing early return for `missing`/`none`:
 
 ```go
 	out := CostBreakdown{Pricing: match}
 	if match.Status == "missing" || match.Status == "none" {
 		return out
 	}
-	return calculateCostFromPrice(match.Price, raw, cacheHit, savedInputTokens)
+	return calculateCostFromPrice(match, raw, cacheHit, savedInputTokens)
 ```
 
 - [ ] **Step 9: Run meter tests to verify they pass**
