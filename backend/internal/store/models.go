@@ -239,6 +239,24 @@ type KeyTopup struct {
 	CreatedAt         time.Time
 }
 
+// KeyLimitAdjustment is one append-only manual correction to an API key's
+// budget limit. Unlike a top-up, DeltaMicros is signed: a negative value
+// reduces the limit (e.g. undoing a mistaken top-up), a positive value raises
+// it. All amounts are integer micro-USD (1 USD = 1,000,000 micros).
+type KeyLimitAdjustment struct {
+	ID                string
+	TenantID          string
+	KeyID             string
+	BudgetID          string
+	DeltaMicros       int64
+	Reason            string
+	LimitBeforeMicros int64
+	LimitAfterMicros  int64
+	IdempotencyKey    string
+	Actor             string
+	CreatedAt         time.Time
+}
+
 // AuditEntry is one append-only audit record.
 type AuditEntry struct {
 	ID        string

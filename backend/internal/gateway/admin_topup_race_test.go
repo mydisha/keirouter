@@ -170,3 +170,106 @@ func TestTopupRace_NoBudgetCreatesExactlyOne(t *testing.T) {
 	require.NoError(t, s.db.SQL().QueryRowContext(ctx, "SELECT COUNT(*) FROM key_topups WHERE key_id = $1", keyID).Scan(&count))
 	require.Equal(t, n, count)
 }
+
+// callAdjust invokes the adjust-limit handler once in its own request context.
+func callAdjust(s *Server, keyID, body string) int {
+	r := httptest.NewRequest(http.MethodPost, "/keys/"+keyID+"/limit", strings.NewReader(body))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", keyID)
+	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	s.adminAdjustKeyLimit(w, r)
+	return w.Code
+}
+
+// Concurrent absolute-limit adjustments must serialize behind the same per-key
+// lock: the final limit is one of the requested values (never an additive
+// mash-up), and each committed adjustment's before/after chain stays coherent.
+func TestAdjustRace_ConcurrentSetsSerialize(t *testing.T) {
+	s := newTopupPostgresServer(t)
+	ctx := context.Background()
+	issued, err := s.identity.Create(ctx, store.DefaultTenantID, "", "race-adjust")
+	require.NoError(t, err)
+	keyID := issued.Record.ID
+	budgetID := "b-race-adj-" + keyID
+	require.NoError(t, s.budgets.Create(ctx, store.Budget{
+		ID: budgetID, TenantID: adminTenant, ScopeKind: store.ScopeAPIKey, ScopeID: keyID,
+		LimitMicros: 0, Period: "total", AlertPct: 80, HardCutoff: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	const n = 25
+	var wg sync.WaitGroup
+	codes := make([]int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			// distinct, non-zero target limits; none equals the initial 0, so no
+			// request is a legitimate no-op
+			codes[i] = callAdjust(s, keyID, fmt.Sprintf(`{"limit_usd":%d,"reason":"race","idempotency_key":"adj-%d"}`, i+1, i))
+		}(i)
+	}
+	wg.Wait()
+
+	for i, code := range codes {
+		require.Equal(t, http.StatusCreated, code, "adjust %d", i)
+	}
+
+	b, err := s.budgets.Get(ctx, budgetID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, b.LimitMicros, int64(1_000_000))
+	require.LessOrEqual(t, b.LimitMicros, int64(n)*1_000_000)
+	require.Zero(t, b.LimitMicros%1_000_000, "final limit must be one requested value, not an additive blend")
+
+	adjs, err := s.db.LimitAdjustments().ListByKey(ctx, keyID)
+	require.NoError(t, err)
+	require.Len(t, adjs, n)
+	// each recorded delta equals after-before (coherent snapshot under the lock)
+	for _, a := range adjs {
+		require.Equal(t, a.LimitAfterMicros-a.LimitBeforeMicros, a.DeltaMicros)
+	}
+}
+
+func TestAdjustRace_SameIdempotencyKeyAppliesOnce(t *testing.T) {
+	s := newTopupPostgresServer(t)
+	ctx := context.Background()
+	issued, err := s.identity.Create(ctx, store.DefaultTenantID, "", "race-adjust-same")
+	require.NoError(t, err)
+	keyID := issued.Record.ID
+	budgetID := "b-race-adj2-" + keyID
+	require.NoError(t, s.budgets.Create(ctx, store.Budget{
+		ID: budgetID, TenantID: adminTenant, ScopeKind: store.ScopeAPIKey, ScopeID: keyID,
+		LimitMicros: 5_000_000, Period: "total", AlertPct: 80, HardCutoff: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	const n = 25
+	var wg sync.WaitGroup
+	codes := make([]int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			codes[i] = callAdjust(s, keyID, `{"limit_usd":1,"reason":"same","idempotency_key":"adj-same"}`)
+		}(i)
+	}
+	wg.Wait()
+
+	b, err := s.budgets.Get(ctx, budgetID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1_000_000), b.LimitMicros)
+
+	adjs, err := s.db.LimitAdjustments().ListByKey(ctx, keyID)
+	require.NoError(t, err)
+	require.Len(t, adjs, 1, "only one adjustment row may exist")
+
+	created := 0
+	for _, c := range codes {
+		require.Contains(t, []int{http.StatusCreated, http.StatusOK}, c)
+		if c == http.StatusCreated {
+			created++
+		}
+	}
+	require.Equal(t, 1, created)
+}

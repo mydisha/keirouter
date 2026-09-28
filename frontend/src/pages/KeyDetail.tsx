@@ -13,6 +13,7 @@ import {
   Save,
   Settings as SettingsIcon,
   Shield,
+  SlidersHorizontal,
   Wallet,
 } from "lucide-react";
 import {
@@ -321,6 +322,7 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
   const toast = useToast();
   const status = useQuery({ queryKey: ["budget-status"], queryFn: () => api.budgetStatus() });
   const topups = useQuery({ queryKey: ["key-topups", apiKey.id], queryFn: () => api.listKeyTopups(apiKey.id) });
+  const adjustments = useQuery({ queryKey: ["key-limit-adjustments", apiKey.id], queryFn: () => api.listKeyLimitAdjustments(apiKey.id) });
 
   const budget = useMemo(
     () => status.data?.budgets.find((b) => b.scope_kind === "api_key" && b.scope_id === apiKey.id),
@@ -333,6 +335,12 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
   const [idem, setIdem] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [newLimit, setNewLimit] = useState("");
+  const [adjustReason, setAdjustReason] = useState("");
+  const [adjustIdem, setAdjustIdem] = useState("");
+  const [adjustError, setAdjustError] = useState<string | null>(null);
+
   const openModal = () => {
     setAmount("");
     setReason("");
@@ -341,9 +349,26 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
     setOpen(true);
   };
 
+  const openAdjust = () => {
+    setNewLimit(budget ? (budget.limit_micros / 1_000_000).toFixed(2) : "0");
+    setAdjustReason("");
+    setAdjustError(null);
+    setAdjustIdem(crypto.randomUUID());
+    setAdjustOpen(true);
+  };
+
   const parsed = Number(amount);
   const amountStr = amount.trim();
   const valid = /^\d*(\.\d{1,6})?$/.test(amountStr) && Number(amountStr) > 0;
+
+  const parsedLimit = Number(newLimit);
+  const limitStr = newLimit.trim();
+  // Same decimal-string rule as top-up, but a zero limit is allowed here.
+  const limitValid =
+    /^\d*(\.\d{1,6})?$/.test(limitStr) &&
+    limitStr !== "" &&
+    parsedLimit >= 0 &&
+    parsedLimit <= 1_000_000;
 
   const submit = useMutation({
     mutationFn: () => api.topupKey(apiKey.id, { amount_usd: parsed, reason: reason.trim() || undefined, idempotency_key: idem }),
@@ -358,6 +383,19 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
     onError: (e) => { setError(e instanceof Error ? e.message : "Please try again."); },
   });
 
+  const adjust = useMutation({
+    mutationFn: () => api.adjustKeyLimit(apiKey.id, { limit_usd: parsedLimit, reason: adjustReason.trim(), idempotency_key: adjustIdem }),
+    onSuccess: async (data) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["budget-status"] }),
+        qc.invalidateQueries({ queryKey: ["key-limit-adjustments", apiKey.id] }),
+      ]);
+      setAdjustOpen(false);
+      toast.success("Limit adjusted", `New limit: $${data.adjustment.limit_after_usd.toFixed(2)}.`);
+    },
+    onError: (e) => { setAdjustError(e instanceof Error ? e.message : "Please try again."); },
+  });
+
   const limit = budget ? budget.limit_micros / 1_000_000 : 0;
   const spent = budget ? budget.spent_micros / 1_000_000 : 0;
   const remaining = Math.max(limit - spent, 0);
@@ -369,7 +407,14 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
         <CardHeader
           title="Budget"
           description="Spend limit for this key. Top-ups increase the limit and are recorded below."
-          action={<Button onClick={openModal}><Wallet className="h-4 w-4" />Top up</Button>}
+          action={
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={openAdjust}>
+                <SlidersHorizontal className="h-4 w-4" />Adjust limit
+              </Button>
+              <Button onClick={openModal}><Wallet className="h-4 w-4" />Top up</Button>
+            </div>
+          }
         />
         <div className="space-y-4 p-4 sm:p-5">
           {status.isLoading ? (
@@ -420,6 +465,32 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
         </div>
       </Card>
 
+      <Card>
+        <CardHeader title="Limit adjustments" description="Manual corrections to this key's limit, newest first." />
+        <div className="p-4 sm:p-5">
+          {adjustments.isLoading ? <Spinner /> : !adjustments.data?.adjustments?.length ? (
+            <EmptyState title="No adjustments yet" hint="Manual corrections to the spend limit will appear here with their reason and before/after limit." />
+          ) : (
+            <div className="divide-y divide-[var(--border)]">
+              {adjustments.data.adjustments.map((a) => (
+                <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
+                  <div className="min-w-0">
+                    <p className={`font-medium ${a.delta_usd < 0 ? "text-red-600 dark:text-red-400" : "text-[var(--text)]"}`}>
+                      {a.delta_usd < 0 ? "−" : "+"}${Math.abs(a.delta_usd).toFixed(2)}
+                    </p>
+                    <p className="truncate text-xs text-[var(--text-muted)]">{a.reason || "No reason provided"}</p>
+                  </div>
+                  <div className="text-right text-xs text-[var(--text-muted)]">
+                    <p className="tabular-nums">${a.limit_before_usd.toFixed(2)} → ${a.limit_after_usd.toFixed(2)}</p>
+                    <p>{new Date(a.created_at).toLocaleString()}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+
       <Modal
         open={open}
         onClose={() => setOpen(false)}
@@ -459,6 +530,54 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
           <Button variant="ghost" onClick={() => setOpen(false)} disabled={submit.isPending}>Cancel</Button>
           <Button onClick={() => submit.mutate()} disabled={!valid || submit.isPending}>
             {submit.isPending ? "Topping up…" : "Top up"}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={adjustOpen}
+        onClose={() => setAdjustOpen(false)}
+        title="Adjust limit"
+        subtitle={`Set ${apiKey.name}'s spend limit to an exact amount. Use this to undo a mistaken top-up.`}
+      >
+        <div className="space-y-4 px-6 py-5">
+          <Field label="New limit (USD)">
+            <Input
+              type="number"
+              min="0"
+              step="0.01"
+              inputMode="decimal"
+              value={newLimit}
+              onChange={(e) => setNewLimit(e.target.value)}
+              placeholder="0.00"
+              autoFocus
+            />
+          </Field>
+          {budget && limitValid && (
+            <div className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3 text-sm">
+              <span className="text-[var(--text-muted)]">Change</span>
+              <span className="font-semibold tabular-nums text-[var(--text)]">
+                ${limit.toFixed(2)} → ${parsedLimit.toFixed(2)}
+              </span>
+            </div>
+          )}
+          <Field label="Reason">
+            <Input
+              value={adjustReason}
+              onChange={(e) => setAdjustReason(e.target.value)}
+              placeholder="undo mistaken top-up"
+              maxLength={500}
+            />
+          </Field>
+          {adjustError && <p className="text-sm text-red-600 dark:text-red-400">{adjustError}</p>}
+        </div>
+        <div className="flex justify-end gap-2 border-t border-[var(--border)] px-6 py-4">
+          <Button variant="ghost" onClick={() => setAdjustOpen(false)} disabled={adjust.isPending}>Cancel</Button>
+          <Button
+            onClick={() => adjust.mutate()}
+            disabled={!limitValid || adjustReason.trim() === "" || adjust.isPending}
+          >
+            {adjust.isPending ? "Adjusting…" : "Adjust limit"}
           </Button>
         </div>
       </Modal>

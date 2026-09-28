@@ -123,6 +123,42 @@ func (r *BudgetRepo) IncrementLimitOnTx(ctx context.Context, tx *sql.Tx, id stri
 	return before, after, nil
 }
 
+// SetLimitOnTx sets a budget's spend limit to an absolute value inside an
+// existing transaction and returns the limit before and after. It powers the
+// "adjust limit" correction path, where an operator may reduce a limit after a
+// mistaken top-up.
+//
+// The row is read with FOR UPDATE on Postgres (the enclosing transaction also
+// takes LockKeyTopup), so the returned "before" cannot go stale. like
+// IncrementLimitOnTx, the write is a single UPDATE and its RowsAffected is
+// checked. A negative target is rejected with ErrInvalidLimit before any write,
+// so a bad correction fails closed. All values are int64 micro-USD.
+func (r *BudgetRepo) SetLimitOnTx(ctx context.Context, tx *sql.Tx, id string, newLimitMicros int64) (int64, int64, error) {
+	if newLimitMicros < 0 {
+		return 0, 0, ErrInvalidLimit
+	}
+	sel := r.db.rebind(`SELECT limit_micros FROM budgets WHERE id = ?`)
+	if r.db.Dialect() == DialectPostgres {
+		sel += " FOR UPDATE"
+	}
+	var before int64
+	if err := tx.QueryRowContext(ctx, sel, id).Scan(&before); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, 0, ErrNotFound
+		}
+		return 0, 0, fmt.Errorf("store: read budget limit: %w", err)
+	}
+	up := r.db.rebind(`UPDATE budgets SET limit_micros = ?, updated_at = ? WHERE id = ?`)
+	res, err := tx.ExecContext(ctx, up, newLimitMicros, formatTime(time.Now()), id)
+	if err != nil {
+		return 0, 0, fmt.Errorf("store: set budget limit: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return 0, 0, ErrNotFound
+	}
+	return before, newLimitMicros, nil
+}
+
 // LockKeyTopup serializes concurrent top-ups for one API key. On Postgres it
 // takes a transaction-scoped advisory lock keyed by the key id, so two requests
 // cannot both create the key's budget or lose an increment. On SQLite, whose

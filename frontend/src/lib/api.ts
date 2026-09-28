@@ -368,6 +368,15 @@ export interface KeyTopup {
   created_at: string;
 }
 
+export interface KeyLimitAdjustment {
+  id: string;
+  delta_usd: number;
+  reason: string;
+  limit_before_usd: number;
+  limit_after_usd: number;
+  created_at: string;
+}
+
 export interface UsageSummary {
   total_requests: number;
   prompt_tokens: number;
@@ -1370,6 +1379,10 @@ export const api = {
     request<{ topups: KeyTopup[] }>("GET", `/keys/${keyId}/topups`),
   topupKey: (keyId: string, input: { amount_usd: number; reason?: string; idempotency_key: string }) =>
     request<{ topup: KeyTopup }>("POST", `/keys/${keyId}/topup`, input),
+  listKeyLimitAdjustments: (keyId: string) =>
+    request<{ adjustments: KeyLimitAdjustment[] }>("GET", `/keys/${keyId}/limit-adjustments`),
+  adjustKeyLimit: (keyId: string, input: { limit_usd: number; reason: string; idempotency_key: string }) =>
+    request<{ adjustment: KeyLimitAdjustment }>("POST", `/keys/${keyId}/limit`, input),
 
   usage: (period: string) => request<UsageSummary>("GET", `/usage?period=${period}&tz=${browserTZ()}`),
   usageInsights: (period: string) =>

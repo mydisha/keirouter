@@ -15,6 +15,11 @@ var ErrNotFound = errors.New("store: not found")
 // ErrLimitOverflow is returned when a limit increment would exceed int64.
 var ErrLimitOverflow = errors.New("store: limit overflow")
 
+// ErrInvalidLimit is returned when a caller tries to set a budget limit below
+// zero. A spend limit is a non-negative credit balance; negative limits are
+// rejected rather than silently clamped so a mis-signed adjustment fails loudly.
+var ErrInvalidLimit = errors.New("store: limit must not be negative")
+
 // sqlExec abstracts *sql.DB and *sql.Tx so repository helpers can run on
 // either a direct connection or inside an open transaction.
 type sqlExec interface {
