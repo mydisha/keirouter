@@ -149,6 +149,31 @@ function ModelCard({ model }: { model: PublicModel }) {
   );
 }
 
+function ProviderFilterButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={`rounded-xl border px-4 py-2 text-sm font-[650] transition-colors ${
+        active
+          ? "border-[var(--green)] bg-[var(--green)] text-[var(--on-accent)]"
+          : "border-[var(--line)] text-[var(--green)] hover:bg-[var(--soft)]"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function PublicLanding() {
   const overview = useQuery({
     queryKey: ["public-overview"],
@@ -166,6 +191,29 @@ export default function PublicLanding() {
   const modelList = models.data ?? [];
   const overviewData = overview.data;
   const [modelVisible, setModelVisible] = useState(MODEL_PAGE);
+  const [providerFilter, setProviderFilter] = useState<string | null>(null);
+
+  // Providers in the order models arrive (already sorted by popularity), so the
+  // busiest provider leads. Keyed by provider_id; label falls back to the id.
+  const providers = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const m of modelList) {
+      if (!seen.has(m.provider_id)) seen.set(m.provider_id, m.provider || m.provider_id);
+    }
+    return [...seen.entries()].map(([id, label]) => ({ id, label }));
+  }, [modelList]);
+
+  const filteredModels = useMemo(
+    () => (providerFilter ? modelList.filter((m) => m.provider_id === providerFilter) : modelList),
+    [modelList, providerFilter],
+  );
+
+  // Changing the filter re-collapses pagination so a short result list can't
+  // strand the user past the end of the new set.
+  const selectProvider = (id: string | null) => {
+    setProviderFilter(id);
+    setModelVisible(MODEL_PAGE);
+  };
 
   // The portal branding provider rewrites document.title when /portal mounts;
   // re-assert the landing title on mount so it survives that navigation.
@@ -226,19 +274,37 @@ export default function PublicLanding() {
           <p className="mt-6 text-sm text-[var(--muted)]">Belum ada model tersedia.</p>
         ) : (
           <>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {modelList.slice(0, modelVisible).map((m) => (
-                <ModelCard key={m.model_id} model={m} />
+            <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Filter model berdasarkan provider">
+              <ProviderFilterButton active={providerFilter === null} onClick={() => selectProvider(null)}>
+                Semua
+              </ProviderFilterButton>
+              {providers.map((p) => (
+                <ProviderFilterButton
+                  key={p.id}
+                  active={providerFilter === p.id}
+                  onClick={() => selectProvider(p.id)}
+                >
+                  {p.label}
+                </ProviderFilterButton>
               ))}
             </div>
-            {modelVisible < modelList.length && (
+            {filteredModels.length === 0 ? (
+              <p className="mt-6 text-sm text-[var(--muted)]">Belum ada model untuk provider ini.</p>
+            ) : (
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {filteredModels.slice(0, modelVisible).map((m) => (
+                  <ModelCard key={m.model_id} model={m} />
+                ))}
+              </div>
+            )}
+            {modelVisible < filteredModels.length && (
               <div className="mt-6 flex justify-center">
                 <button
                   type="button"
                   onClick={() => setModelVisible((n) => n + MODEL_PAGE)}
                   className="rounded-xl border border-[var(--line)] px-5 py-3 text-sm font-[650] text-[var(--green)] transition-colors hover:bg-[var(--soft)]"
                 >
-                  Tampilkan lebih banyak ({fmtCount(modelList.length - modelVisible)} lagi)
+                  Tampilkan lebih banyak ({fmtCount(filteredModels.length - modelVisible)} lagi)
                 </button>
               </div>
             )}
