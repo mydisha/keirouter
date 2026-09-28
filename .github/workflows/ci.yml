@@ -83,6 +83,10 @@ jobs:
         working-directory: frontend
         run: npm run build
 
+      - name: Test
+        working-directory: frontend
+        run: npm test
+
   deploy:
     name: Deploy Artifacts
     runs-on: ubuntu-latest

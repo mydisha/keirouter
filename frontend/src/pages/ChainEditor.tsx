@@ -58,7 +58,7 @@ export function ChainEditorPage() {
     duplicateKeys.add(key);
     return false;
   });
-  const needsPricing = completeSteps.some((step) => step.inputPerM <= 0 && step.outputPerM <= 0 && step.cacheWritePerM <= 0 && step.cacheReadPerM <= 0);
+  const needsPricing = completeSteps.some((step) => step.inputPerM <= 0 || step.outputPerM <= 0);
   const validationMessage = !name.trim() ? "Add a chain name to continue." : !isValidChainName(name.trim()) ? "Use up to 128 letters, numbers, hyphens, underscores, or dots; begin with a letter or number." : completeSteps.length === 0 ? "Add at least one model to the route." : incompleteSteps ? "Complete or remove every model row before saving." : duplicate ? "Each route step must be a different provider/model target." : fallbackEnabled && (!fallback.provider || !fallback.model) ? "Choose the final fallback model or turn it off." : needsPricing ? "Set input and output price for every route step." : "";
   const valid = !validationMessage;
   const routeChain = useMemo(() => ({ id: existing?.id ?? "draft", name, strategy, steps: completeSteps.map((step, position) => ({ provider: step.provider, model: step.model, position, input_per_m: step.inputPerM, output_per_m: step.outputPerM, cache_write_per_m: step.cacheWritePerM, cache_read_per_m: step.cacheReadPerM } as ChainStep)), fallback_provider: fallbackEnabled ? fallback.provider : "", fallback_model: fallbackEnabled ? fallback.model : "" } as Chain), [completeSteps, existing?.id, fallback.model, fallback.provider, fallbackEnabled, name, strategy]);
