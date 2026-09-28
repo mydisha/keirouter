@@ -96,6 +96,41 @@ func TestResolveTargetsChainPrefix(t *testing.T) {
 	}
 }
 
+func TestResolveTargetsFallbackTargetCarriesChainPrice(t *testing.T) {
+	// The explicit last-resort fallback target must be billed at the chain
+	// price too, so it carries the four chain rates like the chain steps.
+	// Rates are non-zero so a missing copy fails the assertion.
+	chains := &fakeChains{chains: []store.Chain{{
+		ID:       "c-price",
+		Name:     "priced",
+		Strategy: "priority",
+		Steps: []store.ChainStep{
+			{Position: 0, Provider: "openai", Model: "gpt-4o"},
+		},
+		FallbackProvider: "gemini",
+		FallbackModel:    "gemini-2.0",
+		InputPerM:        2.5,
+		OutputPerM:       10,
+		CacheWritePerM:   3.125,
+		CacheReadPerM:    0.25,
+	}}}
+
+	res, err := resolveTargets(context.Background(), chains, &fakeAliases{}, nil, "t1", "chain:priced")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(res.Targets) != 2 {
+		t.Fatalf("got %d targets, want 2: %+v", len(res.Targets), res.Targets)
+	}
+	last := res.Targets[len(res.Targets)-1]
+	if last.Provider != "gemini" || last.Model != "gemini-2.0" {
+		t.Fatalf("last target = %+v, want fallback gemini/gemini-2.0", last)
+	}
+	if last.InputPerM != 2.5 || last.OutputPerM != 10 || last.CacheWritePerM != 3.125 || last.CacheReadPerM != 0.25 {
+		t.Fatalf("fallback target rates = %+v, want chain rates 2.5/10/3.125/0.25", last)
+	}
+}
+
 func TestResolveTargetsChainDefaultStrategyIsFallback(t *testing.T) {
 	chains := &fakeChains{chains: []store.Chain{{
 		ID:   "c2",

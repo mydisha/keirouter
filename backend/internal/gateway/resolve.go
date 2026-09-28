@@ -130,8 +130,12 @@ func chainResult(ctx context.Context, chains ChainSource, latency LatencyReader,
 			// Append fallback model as last-resort target when configured.
 			if c.FallbackProvider != "" && c.FallbackModel != "" {
 				targets = append(targets, dispatch.Target{
-					Provider: c.FallbackProvider,
-					Model:    c.FallbackModel,
+					Provider:       c.FallbackProvider,
+					Model:          c.FallbackModel,
+					InputPerM:      c.InputPerM,
+					OutputPerM:     c.OutputPerM,
+					CacheWritePerM: c.CacheWritePerM,
+					CacheReadPerM:  c.CacheReadPerM,
 				})
 			}
 			return resolveResult{Targets: targets, PlanOpts: opts}, nil

@@ -260,7 +260,7 @@ func clampUsage(u core.Usage) core.Usage {
 	return u
 }
 
-// chainPrice returns the operator-configured step price when present. All-zero
+// chainPrice returns the operator-configured chain price when present. All-zero
 // rates mean "unset" and fall back to catalog resolution.
 func chainPrice(ev Event) (Price, bool) {
 	if ev.InputPerM <= 0 && ev.OutputPerM <= 0 && ev.CacheWritePerM <= 0 && ev.CacheReadPerM <= 0 {
