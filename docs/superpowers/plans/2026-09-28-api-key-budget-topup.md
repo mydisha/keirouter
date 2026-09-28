@@ -1206,25 +1206,30 @@ func TestTopupRace_DistinctKeysAllApplyExactlyOnce(t *testing.T) {
 	issued, err := s.identity.Create(ctx, store.DefaultTenantID, "", "race-distinct")
 	require.NoError(t, err)
 	keyID := issued.Record.ID
+	budgetID := "b-race-1-" + keyID
 	require.NoError(t, s.budgets.Create(ctx, store.Budget{
-		ID: "b-race-1", TenantID: adminTenant, ScopeKind: store.ScopeAPIKey, ScopeID: keyID,
+		ID: budgetID, TenantID: adminTenant, ScopeKind: store.ScopeAPIKey, ScopeID: keyID,
 		LimitMicros: 0, Period: "total", AlertPct: 80, HardCutoff: true,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}))
 
 	const n = 25
 	var wg sync.WaitGroup
+	codes := make([]int, n)
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			code := callTopup(s, keyID, fmt.Sprintf(`{"amount_usd":1,"idempotency_key":"race-%d"}`, i))
-			require.Equal(t, http.StatusCreated, code)
+			codes[i] = callTopup(s, keyID, fmt.Sprintf(`{"amount_usd":1,"idempotency_key":"race-%d"}`, i))
 		}(i)
 	}
 	wg.Wait()
 
-	b, err := s.budgets.Get(ctx, "b-race-1")
+	for i, code := range codes {
+		require.Equal(t, http.StatusCreated, code, "top-up %d", i)
+	}
+
+	b, err := s.budgets.Get(ctx, budgetID)
 	require.NoError(t, err)
 	require.Equal(t, int64(n)*1_000_000, b.LimitMicros, "limit must equal n * amount")
 
@@ -1253,8 +1258,9 @@ func TestTopupRace_SameIdempotencyKeyCreditsOnce(t *testing.T) {
 	issued, err := s.identity.Create(ctx, store.DefaultTenantID, "", "race-same-idem")
 	require.NoError(t, err)
 	keyID := issued.Record.ID
+	budgetID := "b-race-2-" + keyID
 	require.NoError(t, s.budgets.Create(ctx, store.Budget{
-		ID: "b-race-2", TenantID: adminTenant, ScopeKind: store.ScopeAPIKey, ScopeID: keyID,
+		ID: budgetID, TenantID: adminTenant, ScopeKind: store.ScopeAPIKey, ScopeID: keyID,
 		LimitMicros: 0, Period: "total", AlertPct: 80, HardCutoff: true,
 		CreatedAt: time.Now(), UpdatedAt: time.Now(),
 	}))
@@ -1271,7 +1277,7 @@ func TestTopupRace_SameIdempotencyKeyCreditsOnce(t *testing.T) {
 	}
 	wg.Wait()
 
-	b, err := s.budgets.Get(ctx, "b-race-2")
+	b, err := s.budgets.Get(ctx, budgetID)
 	require.NoError(t, err)
 	require.Equal(t, int64(3_000_000), b.LimitMicros, "limit must be credited exactly once")
 
