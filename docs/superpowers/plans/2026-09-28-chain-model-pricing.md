@@ -26,8 +26,14 @@
 ### Task 1: Persist step rates (migration + model + repo)
 
 **Files:**
-- Create: `backend/internal/store/migrations/0031_chain_step_pricing.sql`
+- Create: `backend/internal/store/migrations/0031_chain_step_pricing.sqlite.sql`
 - Create: `backend/internal/store/migrations/0031_chain_step_pricing.postgres.sql`
+
+> Migration runner note: `migrationVersion` strips `.sql` then `.postgres`/`.sqlite`,
+> so a suffixless `.sql` and a `.postgres.sql` with the same number collapse to one
+> version and only one would apply. Use the repo's 0028 split: a self-contained
+> `.sqlite.sql` (adds `REAL` columns) and a self-contained `.postgres.sql`
+> (adds columns AND converts them to `DOUBLE PRECISION`).
 - Modify: `backend/internal/store/models.go:118-125` (`ChainStep`)
 - Modify: `backend/internal/store/repo_budgets.go:143-149`, `:244-250`, `:254-276`
 
@@ -93,7 +99,7 @@ Expected: FAIL — unknown fields `InputPerM` etc. (compile error).
 
 - [ ] **Step 3: Add the migration files**
 
-`backend/internal/store/migrations/0031_chain_step_pricing.sql`:
+`backend/internal/store/migrations/0031_chain_step_pricing.sqlite.sql`:
 
 ```sql
 ALTER TABLE chain_steps ADD COLUMN input_per_m REAL NOT NULL DEFAULT 0;
@@ -105,13 +111,15 @@ ALTER TABLE chain_steps ADD COLUMN cache_read_per_m REAL NOT NULL DEFAULT 0;
 `backend/internal/store/migrations/0031_chain_step_pricing.postgres.sql`:
 
 ```sql
+ALTER TABLE chain_steps ADD COLUMN input_per_m REAL NOT NULL DEFAULT 0;
+ALTER TABLE chain_steps ADD COLUMN output_per_m REAL NOT NULL DEFAULT 0;
+ALTER TABLE chain_steps ADD COLUMN cache_write_per_m REAL NOT NULL DEFAULT 0;
+ALTER TABLE chain_steps ADD COLUMN cache_read_per_m REAL NOT NULL DEFAULT 0;
 ALTER TABLE chain_steps ALTER COLUMN input_per_m TYPE DOUBLE PRECISION;
 ALTER TABLE chain_steps ALTER COLUMN output_per_m TYPE DOUBLE PRECISION;
 ALTER TABLE chain_steps ALTER COLUMN cache_write_per_m TYPE DOUBLE PRECISION;
 ALTER TABLE chain_steps ALTER COLUMN cache_read_per_m TYPE DOUBLE PRECISION;
 ```
-
-(The `.sqlite.sql` variant is unnecessary: the base `.sql` uses `REAL`, which is SQLite's 8-byte float.)
 
 - [ ] **Step 4: Add fields to `ChainStep`**
 
@@ -181,7 +189,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add backend/internal/store/migrations/0031_chain_step_pricing.sql \
+git add backend/internal/store/migrations/0031_chain_step_pricing.sqlite.sql \
   backend/internal/store/migrations/0031_chain_step_pricing.postgres.sql \
   backend/internal/store/models.go backend/internal/store/repo_budgets.go \
   backend/internal/store/repo_chain_pricing_test.go \

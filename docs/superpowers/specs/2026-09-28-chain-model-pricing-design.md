@@ -80,8 +80,9 @@ Non-goals:
 
 ### Data model
 
-`chain_steps` gains four columns (migration `0031_chain_step_pricing.sql` +
-Postgres counterpart):
+`chain_steps` gains four columns (migration `0031_chain_step_pricing.sqlite.sql`
+and `0031_chain_step_pricing.postgres.sql`; Postgres converts them to
+`DOUBLE PRECISION`):
 
 ```
 input_per_m        REAL NOT NULL DEFAULT 0
