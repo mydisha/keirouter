@@ -35,3 +35,32 @@ func TestRecordPersistsChainID(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "chain-9", cap.last.ChainID)
 }
+
+func TestRecordUsesChainStepPrice(t *testing.T) {
+	cap := &chainCaptureStore{}
+	m := New(cap, nil, nil) // no catalog prices at all
+	_, err := m.Record(context.Background(), Event{
+		TenantID: store.DefaultTenantID, Provider: "openai", Model: "gpt-4o", ChainID: "c1",
+		InputPerM: 2.5, OutputPerM: 10, CacheWritePerM: 3.125, CacheReadPerM: 0.25,
+		Status: "success",
+		Usage:  core.Usage{PromptTokens: 1000, CompletionTokens: 500, Source: core.UsageSourceProvider},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "chain", cap.last.PricingSource)
+	// 1000/1M*2.5 = 0.0025 USD input; 500/1M*10 = 0.005 USD output
+	// = 0.0075 USD → 7,500,000 nanodollars (tokenCostNanos: tokens*rate*1000).
+	require.Equal(t, int64(7_500_000), cap.last.CostNanos)
+}
+
+func TestRecordFallsBackToCatalogWhenNoChainPrice(t *testing.T) {
+	cap := &chainCaptureStore{}
+	m := New(cap, nil, map[string]Price{"openai/gpt-4o": {InputPerM: 1, OutputPerM: 2, Source: "catalog"}})
+	_, err := m.Record(context.Background(), Event{
+		TenantID: store.DefaultTenantID, Provider: "openai", Model: "gpt-4o", ChainID: "c1",
+		Status: "success",
+		Usage:  core.Usage{PromptTokens: 1000, CompletionTokens: 500, Source: core.UsageSourceProvider},
+	})
+	require.NoError(t, err)
+	require.Equal(t, "catalog", cap.last.PricingSource)
+	require.Equal(t, int64(2_000_000), cap.last.CostNanos) // 1,000,000 + 1,000,000 nanos
+}

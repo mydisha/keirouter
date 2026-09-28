@@ -115,6 +115,14 @@ type Event struct {
 	ProjectID string
 	APIKeyID  string
 	ChainID   string
+
+	// Optional per-step price override from the serving chain step. When any
+	// rate is > 0 the meter prices from these instead of the catalog.
+	InputPerM      float64
+	OutputPerM     float64
+	CacheWritePerM float64
+	CacheReadPerM  float64
+
 	Provider  string
 	Model     string
 	AccountID string
@@ -202,6 +210,8 @@ func (m *Meter) Record(ctx context.Context, ev Event) (int64, error) {
 		// including a nominally successful response whose provider omitted usage.
 		// Do not inflate coverage merely because the target exists in the catalog.
 		cost.Pricing = PricingMatch{Status: "none", MatchKind: "none"}
+	} else if price, ok := chainPrice(ev); ok {
+		cost = calculateCostFromPrice(pricingMatch("chain", price, "chain", false), u, ev.CacheHit, savedTokens)
 	} else {
 		cost = m.CalculateCost(ev.Provider, ev.Model, u, ev.CacheHit, savedTokens)
 	}
