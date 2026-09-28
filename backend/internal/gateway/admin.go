@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"sort"
@@ -1790,7 +1791,11 @@ func (s *Server) adminListChains(w http.ResponseWriter, r *http.Request) {
 	for _, c := range chains {
 		steps := make([]map[string]any, 0, len(c.Steps))
 		for _, st := range c.Steps {
-			steps = append(steps, map[string]any{"provider": st.Provider, "model": st.Model, "position": st.Position})
+			steps = append(steps, map[string]any{
+				"provider": st.Provider, "model": st.Model, "position": st.Position,
+				"input_per_m": st.InputPerM, "output_per_m": st.OutputPerM,
+				"cache_write_per_m": st.CacheWritePerM, "cache_read_per_m": st.CacheReadPerM,
+			})
 		}
 		entry := map[string]any{
 			"id": c.ID, "name": c.Name, "strategy": c.Strategy, "steps": steps,
@@ -1811,8 +1816,12 @@ func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 		FallbackProvider string `json:"fallback_provider"`
 		FallbackModel    string `json:"fallback_model"`
 		Steps            []struct {
-			Provider string `json:"provider"`
-			Model    string `json:"model"`
+			Provider       string  `json:"provider"`
+			Model          string  `json:"model"`
+			InputPerM      float64 `json:"input_per_m"`
+			OutputPerM     float64 `json:"output_per_m"`
+			CacheWritePerM float64 `json:"cache_write_per_m"`
+			CacheReadPerM  float64 `json:"cache_read_per_m"`
 		} `json:"steps"`
 	}
 	if !decodeJSON(w, r, &body) {
@@ -1855,9 +1864,16 @@ func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "unknown provider in step: "+st.Provider)
 			return
 		}
+		if !validRate(st.InputPerM) || !validRate(st.OutputPerM) ||
+			!validRate(st.CacheWritePerM) || !validRate(st.CacheReadPerM) {
+			writeError(w, http.StatusBadRequest, "invalid step price: rates must be finite and non-negative")
+			return
+		}
 		chain.Steps = append(chain.Steps, store.ChainStep{
 			ID: uuid.NewString(), ChainID: chain.ID, Position: i,
 			Provider: st.Provider, Model: st.Model, CreatedAt: now,
+			InputPerM: st.InputPerM, OutputPerM: st.OutputPerM,
+			CacheWritePerM: st.CacheWritePerM, CacheReadPerM: st.CacheReadPerM,
 		})
 	}
 	if err := s.chains.Create(r.Context(), chain); err != nil {
@@ -1889,8 +1905,12 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 		FallbackProvider *string `json:"fallback_provider"`
 		FallbackModel    *string `json:"fallback_model"`
 		Steps            *[]struct {
-			Provider string `json:"provider"`
-			Model    string `json:"model"`
+			Provider       string  `json:"provider"`
+			Model          string  `json:"model"`
+			InputPerM      float64 `json:"input_per_m"`
+			OutputPerM     float64 `json:"output_per_m"`
+			CacheWritePerM float64 `json:"cache_write_per_m"`
+			CacheReadPerM  float64 `json:"cache_read_per_m"`
 		} `json:"steps"`
 	}
 	if !decodeJSON(w, r, &body) {
@@ -1917,13 +1937,22 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		existing.Steps = make([]store.ChainStep, len(*body.Steps))
 		for i, st := range *body.Steps {
+			if !validRate(st.InputPerM) || !validRate(st.OutputPerM) ||
+				!validRate(st.CacheWritePerM) || !validRate(st.CacheReadPerM) {
+				writeError(w, http.StatusBadRequest, "invalid step price: rates must be finite and non-negative")
+				return
+			}
 			existing.Steps[i] = store.ChainStep{
-				ID:        uuid.NewString(),
-				ChainID:   id,
-				Position:  i,
-				Provider:  st.Provider,
-				Model:     st.Model,
-				CreatedAt: now,
+				ID:             uuid.NewString(),
+				ChainID:        id,
+				Position:       i,
+				Provider:       st.Provider,
+				Model:          st.Model,
+				CreatedAt:      now,
+				InputPerM:      st.InputPerM,
+				OutputPerM:     st.OutputPerM,
+				CacheWritePerM: st.CacheWritePerM,
+				CacheReadPerM:  st.CacheReadPerM,
 			}
 		}
 	}
@@ -3295,6 +3324,12 @@ func defaultBool(v, def bool) bool {
 // and "chain:name" formats in resolveTargets. Dots are allowed because model ids
 // commonly contain version dots (e.g. deepseek-v4.1-flash) and resolveTargets
 // only splits on "/" and ":".
+// validRate reports whether r is a finite, non-negative price. NaN and Inf are
+// rejected so a malformed rate can never poison cost math.
+func validRate(r float64) bool {
+	return r >= 0 && !math.IsNaN(r) && !math.IsInf(r, 0)
+}
+
 func validateChainName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
