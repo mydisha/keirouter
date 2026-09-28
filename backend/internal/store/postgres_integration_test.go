@@ -67,6 +67,30 @@ func TestPostgresCompatibility(t *testing.T) {
 		require.Equal(t, len(records), count)
 	})
 
+	t.Run("chain_id persists and aggregates per chain", func(t *testing.T) {
+		now := time.Now().UTC()
+		prefix := fmt.Sprintf("pg-chain-%d", now.UnixNano())
+		require.NoError(t, db.Usage().RecordBatch(ctx, []UsageRecord{
+			{ID: prefix + "-a", TenantID: DefaultTenantID, APIKeyID: "k1", Provider: "openai", Model: "gpt-4o", ChainID: "c1", Status: "success", PromptTokens: 100, CompletionTokens: 20, CreatedAt: now},
+			{ID: prefix + "-b", TenantID: DefaultTenantID, APIKeyID: "k2", Provider: "openai", Model: "gpt-4o", ChainID: "c1", Status: "success", PromptTokens: 100, CompletionTokens: 20, CreatedAt: now},
+			{ID: prefix + "-c", TenantID: DefaultTenantID, APIKeyID: "k1", Provider: "openai", Model: "gpt-4o", ChainID: "", Status: "success", PromptTokens: 5, CompletionTokens: 5, CreatedAt: now},
+		}))
+
+		got, err := db.Usage().ChainUsageAccurate(ctx, DefaultTenantID, time.Time{})
+		require.NoError(t, err)
+		c1 := got["c1"]
+		require.Equal(t, int64(2), c1.TotalRequests)
+		require.Equal(t, int64(200), c1.PromptTokens)
+		require.Equal(t, int64(40), c1.CompletionTokens)
+		require.Equal(t, 2, c1.DistinctKeys)
+
+		// Empty chain_id (direct target) must be excluded from the aggregate.
+		var empty string
+		q := db.rebind("SELECT chain_id FROM usage_records WHERE id = ?")
+		require.NoError(t, db.sql.QueryRowContext(ctx, q, prefix+"-c").Scan(&empty))
+		require.Equal(t, "", empty)
+	})
+
 	t.Run("calendar grouping is UTC", func(t *testing.T) {
 		_, err := db.sql.ExecContext(ctx, "SET TIME ZONE 'America/Los_Angeles'")
 		require.NoError(t, err)
