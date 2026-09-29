@@ -1322,16 +1322,17 @@ function CurrencyTab() {
   });
 
   const update = (patch: Partial<CurrencyStatus["config"]>) => {
-    if (!local) return;
-    const next = { ...local, ...patch };
-    setLocal(next);
-    save.mutate(patch);
+    if (local) setLocal({ ...local, ...patch });
   };
 
-  if (status.isLoading || !local) return <Spinner />;
+  const handleSave = () => {
+    if (local) save.mutate(local);
+  };
+
   if (status.isError) {
     return <ErrorBanner message={`Failed to load currency settings: ${(status.error as Error)?.message ?? "unknown error"}`} />;
   }
+  if (status.isLoading || !local) return <Spinner />;
 
   const st = status.data!;
   const sourceLabel: Record<string, string> = {
@@ -1408,9 +1409,14 @@ function CurrencyTab() {
             </p>
             {st.last_error && <p className="mt-1 text-xs text-red-500">Last error: {st.last_error}</p>}
           </div>
-          <Button onClick={() => refresh.mutate()} disabled={refresh.isPending}>
-            {refresh.isPending ? "Refreshing…" : "Refresh now"}
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+              {refresh.isPending ? "Refreshing…" : "Refresh now"}
+            </Button>
+            <Button onClick={handleSave} disabled={save.isPending}>
+              {save.isPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
         </div>
       </div>
     </Card>
