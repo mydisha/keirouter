@@ -24,6 +24,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/config"
 	"github.com/mydisha/keirouter/backend/internal/connectors"
 	"github.com/mydisha/keirouter/backend/internal/consolelog"
+	"github.com/mydisha/keirouter/backend/internal/currency"
 	"github.com/mydisha/keirouter/backend/internal/dispatch"
 	"github.com/mydisha/keirouter/backend/internal/fastjson"
 	"github.com/mydisha/keirouter/backend/internal/guardrails"
@@ -60,6 +61,7 @@ type Server struct {
 	usage               *store.UsageRepo
 	resources           *store.ResourceRepo
 	settings            *store.SettingsRepo
+	currencySvc         *currency.Service
 	vault               *vault.Vault
 	codecs              *transform.Registry
 	metrics             *observ.Metrics
@@ -205,6 +207,10 @@ func New(d Deps) *Server {
 		healthChecker:       d.HealthChecker,
 		providerHealth:      d.ProviderHealth,
 		probeRunner:         d.ProbeRunner,
+	}
+	s.currencySvc = currency.New(d.Settings)
+	if d.Settings != nil {
+		s.currencySvc.Start(context.Background())
 	}
 	s.router = s.routes()
 	startSystemCollector(d.Resources)

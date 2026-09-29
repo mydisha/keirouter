@@ -122,6 +122,10 @@ func (s *Server) mountAdmin(r chi.Router) {
 	r.Post("/settings/sqlite/restore", s.adminSQLiteRestore)
 	r.Post("/settings/proxy-test", s.adminTestProxy)
 
+	r.Get("/settings/currency", s.adminGetCurrency)
+	r.Post("/settings/currency", s.adminUpdateCurrency)
+	r.Post("/settings/currency/refresh", s.adminRefreshCurrency)
+
 	// Update check (queries GitHub for the latest release + changelog).
 	r.Get("/update/check", s.adminUpdateCheck)
 
