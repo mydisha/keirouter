@@ -9,6 +9,13 @@ import { NotificationPopup } from "./NotificationPopup";
 
 type Theme = "light" | "dark";
 
+// Shared with the dashboard ThemeProvider, so a saved choice carries over.
+const THEME_STORAGE_KEY = "keirouter-theme";
+
+function storedTheme(): Theme {
+  return localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
+}
+
 // Real, existing destination: the project repository README (same URL the
 // desktop tray opens and the README badges reference). There is no in-app
 // docs route and no terms-of-service page in this repo, so the dead `/docs`
@@ -140,9 +147,15 @@ function TabLink({
 }
 
 export function PublicLayout({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>("light");
+  const [theme, setTheme] = useState<Theme>(storedTheme);
   const [active, setActive] = useState("overview");
   const [announcementOpen, setAnnouncementOpen] = useState(false);
+
+  const toggleTheme = () => {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    localStorage.setItem(THEME_STORAGE_KEY, next);
+    setTheme(next);
+  };
 
   return (
     <div className="landing-root min-h-dvh" data-theme={theme}>
@@ -159,7 +172,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
           ))}
         </div>
         <AnnouncementButton onClick={() => setAnnouncementOpen((v) => !v)} />
-        <ThemeButton theme={theme} onToggle={() => setTheme(theme === "dark" ? "light" : "dark")} />
+        <ThemeButton theme={theme} onToggle={toggleTheme} />
       </nav>
 
       {/* Mobile: top bar + fixed bottom dock. */}
@@ -167,7 +180,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
         <Brand />
         <div className="flex items-center gap-2">
           <AnnouncementButton onClick={() => setAnnouncementOpen((v) => !v)} />
-          <ThemeButton theme={theme} onToggle={() => setTheme(theme === "dark" ? "light" : "dark")} />
+          <ThemeButton theme={theme} onToggle={toggleTheme} />
         </div>
       </header>
       <nav
