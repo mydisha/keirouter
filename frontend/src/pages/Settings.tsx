@@ -4,9 +4,9 @@ import {
   Sparkles, Zap, MessageSquare, Layers, Route, Wifi, Monitor, Database, Clock,
   ArrowUpCircle, CheckCircle2, ExternalLink, XCircle, Terminal, RefreshCw,
   Gauge, Eye, EyeOff, KeyRound, Download, Upload, ShieldCheck, Info,
-  Palette, Shield, Bell,
+  Palette, Shield, Bell, CircleDollarSign,
 } from "lucide-react";
-import { api, type EndpointSettings, type BrandingSettings, type HeadroomTestResult, type ForeignImportResult, type N9routerImportOptions, type N9routerAnalyzeResult, type LandingNotification } from "../lib/api";
+import { api, type EndpointSettings, type BrandingSettings, type HeadroomTestResult, type ForeignImportResult, type N9routerImportOptions, type N9routerAnalyzeResult, type LandingNotification, type CurrencyStatus } from "../lib/api";
 import { sanitizeHtml } from "../lib/sanitizeHtml";
 import { ChangelogMarkdown } from "../components/ChangelogMarkdown";
 import { PALETTES, getPaletteScales } from "../lib/palettes";
@@ -20,7 +20,7 @@ import {
 } from "../components/ui";
 
 // ── Tab definitions ─────────────────────────────────────────────────
-type SettingsTab = "saving" | "routing" | "network" | "branding" | "import-export" | "system" | "notifications";
+type SettingsTab = "saving" | "routing" | "network" | "branding" | "import-export" | "system" | "notifications" | "currency";
 
 const settingsTabs = [
   { value: "saving" as const, label: "Token Saving", icon: Zap },
@@ -30,6 +30,7 @@ const settingsTabs = [
   { value: "import-export" as const, label: "Import / Export", icon: Database },
   { value: "system" as const, label: "System", icon: ArrowUpCircle },
   { value: "notifications" as const, label: "Notification", icon: Bell },
+  { value: "currency" as const, label: "Currency", icon: CircleDollarSign },
 ];
 
 function useHashTab(defaultTab: SettingsTab): [SettingsTab, (t: SettingsTab) => void] {
@@ -158,6 +159,7 @@ export function SettingsPage() {
             {tab === "import-export" && <ImportExportTab />}
             {tab === "system" && <SystemTab />}
             {tab === "notifications" && <NotificationTab />}
+            {tab === "currency" && <CurrencyTab />}
           </div>
 
           {save.isError && (
@@ -1283,6 +1285,134 @@ function NotificationTab() {
           </>
         )}
       </Modal>
+    </Card>
+  );
+}
+
+// ── Currency Tab ────────────────────────────────────────────────────
+function CurrencyTab() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const status = useQuery({ queryKey: ["currency-settings"], queryFn: () => api.currencySettings() });
+  const [local, setLocal] = useState<CurrencyStatus["config"] | null>(null);
+
+  useEffect(() => {
+    if (status.data) setLocal(status.data.config);
+  }, [status.data]);
+
+  const save = useMutation({
+    mutationFn: (patch: Partial<CurrencyStatus["config"]>) => api.updateCurrencySettings(patch),
+    onSuccess: (data) => {
+      setLocal(data.config);
+      qc.setQueryData(["currency-settings"], data);
+      toast.success("Currency settings saved");
+    },
+    onError: (e) => toast.error("Save failed", (e as Error).message),
+  });
+
+  const refresh = useMutation({
+    mutationFn: () => api.refreshCurrency(),
+    onSuccess: (data) => {
+      setLocal(data.config);
+      qc.setQueryData(["currency-settings"], data);
+      if (data.last_error) toast.error("Refresh failed", data.last_error);
+      else toast.success("Rate updated", `1 USD = ${data.effective_rate} IDR`);
+    },
+    onError: (e) => toast.error("Refresh failed", (e as Error).message),
+  });
+
+  const update = (patch: Partial<CurrencyStatus["config"]>) => {
+    if (!local) return;
+    const next = { ...local, ...patch };
+    setLocal(next);
+    save.mutate(patch);
+  };
+
+  if (status.isLoading || !local) return <Spinner />;
+  if (status.isError) {
+    return <ErrorBanner message={`Failed to load currency settings: ${(status.error as Error)?.message ?? "unknown error"}`} />;
+  }
+
+  const st = status.data!;
+  const sourceLabel: Record<string, string> = {
+    api: "Live API",
+    override: "Manual override",
+    none: "No rate yet",
+  };
+
+  return (
+    <Card>
+      <SectionHeader
+        title="Currency"
+        description="USD→IDR rate used to convert IDR top-ups into USD credit. Auto-refreshes on an interval, with an optional manual override."
+        icon={CircleDollarSign}
+      />
+      <div className="divide-y divide-[var(--border)] border-t border-[var(--border)]">
+        <div className="px-6 py-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Auto refresh</span>
+                <Toggle checked={local.auto_refresh_enabled} onChange={(v) => update({ auto_refresh_enabled: v })} />
+              </div>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Fetch the rate automatically in the background.</p>
+            </div>
+            <Field label="Refresh interval (hours)">
+              <Input
+                type="number"
+                min={1}
+                value={local.refresh_interval_h}
+                onChange={(e) => update({ refresh_interval_h: Number(e.target.value) || 1 })}
+              />
+              <p className="mt-1 text-xs text-[var(--text-muted)]">Default 24. The upstream rate updates about once a day.</p>
+            </Field>
+          </div>
+        </div>
+
+        <div className="px-6 py-5">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Override rate</span>
+                <Toggle checked={local.override_enabled} onChange={(v) => update({ override_enabled: v })} />
+              </div>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">While on, the API rate is ignored entirely.</p>
+            </div>
+            <Field label="IDR per 1 USD">
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                disabled={!local.override_enabled}
+                value={local.override_rate}
+                onChange={(e) => update({ override_rate: Number(e.target.value) || 0 })}
+              />
+            </Field>
+          </div>
+        </div>
+
+        <div className="px-6 py-5">
+          <Field label="Source URL">
+            <Input value={local.source_url} onChange={(e) => update({ source_url: e.target.value })} />
+          </Field>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-5">
+          <div className="text-sm">
+            <p className="font-medium">
+              1 USD = {st.effective_rate > 0 ? `${st.effective_rate} IDR` : "—"}
+            </p>
+            <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+              Source: {sourceLabel[st.source] ?? st.source}
+              {st.fetched_at ? ` · updated ${new Date(st.fetched_at).toLocaleString()}` : ""}
+            </p>
+            {st.last_error && <p className="mt-1 text-xs text-red-500">Last error: {st.last_error}</p>}
+          </div>
+          <Button onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+            {refresh.isPending ? "Refreshing…" : "Refresh now"}
+          </Button>
+        </div>
+      </div>
     </Card>
   );
 }
