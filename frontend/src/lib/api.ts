@@ -144,6 +144,26 @@ export interface EndpointSettings {
   request_timeout_ms: number;
 }
 
+export interface CurrencyConfig {
+  auto_refresh_enabled: boolean;
+  refresh_interval_h: number;
+  override_enabled: boolean;
+  override_rate: number;
+  source_url: string;
+  rate: number;
+  fetched_at: string;
+  source: string;
+  last_error: string;
+}
+
+export interface CurrencyStatus {
+  config: CurrencyConfig;
+  effective_rate: number;
+  source: string;
+  fetched_at: string;
+  last_error: string;
+}
+
 export interface ProviderRoutingSettings {
   routing_strategy: "inherit" | "fill-first" | "round-robin" | "smart-round-robin" | string;
   sticky_limit: number;
@@ -1431,6 +1451,10 @@ export const api = {
   endpointSettings: () => request<EndpointSettings>("GET", "/settings/endpoint"),
   updateEndpointSettings: (patch: Partial<EndpointSettings>) =>
     request<EndpointSettings>("POST", "/settings/endpoint", patch),
+  currencySettings: () => request<CurrencyStatus>("GET", "/settings/currency"),
+  updateCurrencySettings: (patch: Partial<Pick<CurrencyConfig, "auto_refresh_enabled" | "refresh_interval_h" | "override_enabled" | "override_rate" | "source_url">>) =>
+    request<CurrencyStatus>("POST", "/settings/currency", patch),
+  refreshCurrency: () => request<CurrencyStatus>("POST", "/settings/currency/refresh", {}),
   testHeadroom: (body?: { url?: string; timeout_ms?: number }) =>
     request<HeadroomTestResult>("POST", "/settings/headroom-test", body ?? {}),
 
