@@ -2,6 +2,7 @@ package currency
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -155,5 +156,25 @@ func TestRefreshKeepsOldRateOnFailure(t *testing.T) {
 	}
 	if len(saved) == 0 || saved[len(saved)-1].LastError == "" {
 		t.Fatal("failure state must be persisted")
+	}
+}
+
+func TestRefreshDoesNotWipeRateOnReadError(t *testing.T) {
+	var saved []Settings
+	svc := New(nil)
+	svc.persist = func(_ context.Context, s Settings) error { saved = append(saved, s); return nil }
+	svc.initial = Settings{SourceURL: "http://example.invalid", Rate: 16000, Source: SourceAPI, FetchedAt: time.Now().UTC().Format(time.RFC3339), RefreshIntervalH: 24}
+	svc.readErr = errors.New("boom")
+
+	if _, err := svc.Refresh(context.Background()); err == nil {
+		t.Fatal("expected error when the settings read fails")
+	}
+	for _, s := range saved {
+		if s.Rate == 0 {
+			t.Fatalf("stored rate must not be wiped, persisted %+v", s)
+		}
+	}
+	if len(saved) != 0 {
+		t.Fatalf("no persist should happen on a read error, got %d", len(saved))
 	}
 }

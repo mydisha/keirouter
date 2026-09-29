@@ -116,24 +116,34 @@ func ParseUSDIDR(body []byte) (float64, error) {
 type Service struct {
 	settings *store.SettingsRepo
 
-	// persist and initial are seams for tests; when nil they fall back to
-	// settings.Set / settings.Get.
+	// persist, initial and readErr are seams for tests; when nil they fall back
+	// to settings.Set / settings.Get.
 	persist func(ctx context.Context, s Settings) error
 	initial Settings
+	readErr error
 }
 
 // New returns a currency service backed by the given settings repo.
 func New(settings *store.SettingsRepo) *Service { return &Service{settings: settings} }
 
-func (svc *Service) readRaw(ctx context.Context) string {
+// readRaw returns the stored blob and whether the read succeeded. A missing key
+// (store.ErrNotFound) or an absent repo is a successful empty read; any other
+// repo error is reported so callers can avoid overwriting stored state.
+func (svc *Service) readRaw(ctx context.Context) (string, error) {
+	if svc.readErr != nil {
+		return "", svc.readErr
+	}
 	if svc.settings == nil {
-		return ""
+		return "", nil
 	}
 	raw, err := svc.settings.Get(ctx, SettingsKey)
-	if err != nil {
-		return ""
+	if errors.Is(err, store.ErrNotFound) {
+		return "", nil
 	}
-	return raw
+	if err != nil {
+		return "", err
+	}
+	return raw, nil
 }
 
 func (svc *Service) writeRaw(ctx context.Context, s Settings) error {
@@ -150,20 +160,34 @@ func (svc *Service) writeRaw(ctx context.Context, s Settings) error {
 	return svc.settings.Set(ctx, SettingsKey, string(raw))
 }
 
-// Load reads the persisted settings, applying defaults. Never errors.
-func (svc *Service) Load(ctx context.Context) Settings {
-	if svc.initial != (Settings{}) {
-		return Defaults(svc.initial)
+// load reads the persisted settings strictly, reporting a repo read error so
+// callers that write back can abort instead of clobbering stored state.
+func (svc *Service) load(ctx context.Context) (Settings, error) {
+	raw, err := svc.readRaw(ctx)
+	if err != nil {
+		return Settings{}, err
 	}
-	raw := svc.readRaw(ctx)
+	if svc.initial != (Settings{}) {
+		return Defaults(svc.initial), nil
+	}
 	if raw == "" {
-		return Defaults(Settings{})
+		return Defaults(Settings{}), nil
 	}
 	var s Settings
 	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		return Defaults(Settings{}), nil
+	}
+	return Defaults(s), nil
+}
+
+// Load reads the persisted settings, applying defaults. Never errors; a read
+// failure is treated as an empty config for display purposes.
+func (svc *Service) Load(ctx context.Context) Settings {
+	s, err := svc.load(ctx)
+	if err != nil {
 		return Defaults(Settings{})
 	}
-	return Defaults(s)
+	return s
 }
 
 // Save validates and persists settings.
@@ -201,7 +225,12 @@ func (svc *Service) Fetch(ctx context.Context, sourceURL string) (float64, error
 // Refresh fetches the rate and persists it. On failure it keeps the previous
 // rate and records the error; the returned error mirrors the failure.
 func (svc *Service) Refresh(ctx context.Context) (Settings, error) {
-	s := svc.Load(ctx)
+	s, err := svc.load(ctx)
+	if err != nil {
+		// Fail closed: the stored state could not be read, so never write a
+		// zeroed blob over it.
+		return Settings{}, err
+	}
 	rate, err := svc.Fetch(ctx, s.SourceURL)
 	if err != nil {
 		s.LastError = err.Error()
