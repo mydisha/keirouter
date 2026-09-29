@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/store"
@@ -66,6 +67,10 @@ func Defaults(s Settings) Settings {
 	return s
 }
 
+// ErrInvalidConfig wraps a Validate failure so write handlers can map it to a
+// 400 while other (read/write) errors are treated as 500.
+var ErrInvalidConfig = errors.New("invalid currency config")
+
 // Validate rejects a configuration that cannot be persisted or used.
 func Validate(s Settings) error {
 	if s.RefreshIntervalH < 1 {
@@ -115,6 +120,10 @@ func ParseUSDIDR(body []byte) (float64, error) {
 // Service owns currency settings persistence and a background refresh loop.
 type Service struct {
 	settings *store.SettingsRepo
+
+	// mu serializes read-modify-write cycles on the single settings blob so
+	// concurrent Refresh/Update calls cannot silently lose each other's writes.
+	mu sync.Mutex
 
 	// persist, initial and readErr are seams for tests; when nil they fall back
 	// to settings.Set / settings.Get.
@@ -190,11 +199,41 @@ func (svc *Service) Load(ctx context.Context) Settings {
 	return s
 }
 
+// LoadStrict reads settings and returns an error if the read fails, unlike Load
+// which is best-effort. Write paths use it so a read blip cannot wipe state.
+func (svc *Service) LoadStrict(ctx context.Context) (Settings, error) {
+	return svc.load(ctx)
+}
+
+// Update strictly loads the current settings, applies mutate, validates and
+// persists, all under the mutex so concurrent writers cannot lose updates. A
+// validation failure is wrapped in ErrInvalidConfig.
+func (svc *Service) Update(ctx context.Context, mutate func(*Settings)) (Settings, error) {
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	cur, err := svc.load(ctx)
+	if err != nil {
+		return Settings{}, err
+	}
+	mutate(&cur)
+	if err := svc.saveLocked(ctx, cur); err != nil {
+		return cur, err
+	}
+	return cur, nil
+}
+
 // Save validates and persists settings.
 func (svc *Service) Save(ctx context.Context, s Settings) error {
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	return svc.saveLocked(ctx, s)
+}
+
+// saveLocked validates and persists s. Callers must hold svc.mu.
+func (svc *Service) saveLocked(ctx context.Context, s Settings) error {
 	s = Defaults(s)
 	if err := Validate(s); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrInvalidConfig, err)
 	}
 	return svc.writeRaw(ctx, s)
 }
@@ -223,28 +262,37 @@ func (svc *Service) Fetch(ctx context.Context, sourceURL string) (float64, error
 }
 
 // Refresh fetches the rate and persists it. On failure it keeps the previous
-// rate and records the error; the returned error mirrors the failure.
+// rate and records the error; the returned error mirrors the failure. The
+// network fetch happens outside the lock; only the read-modify-write is locked,
+// so a config change made during the fetch is not clobbered.
 func (svc *Service) Refresh(ctx context.Context) (Settings, error) {
-	s, err := svc.load(ctx)
+	src, err := svc.LoadStrict(ctx)
 	if err != nil {
 		// Fail closed: the stored state could not be read, so never write a
 		// zeroed blob over it.
 		return Settings{}, err
 	}
-	rate, err := svc.Fetch(ctx, s.SourceURL)
+	rate, fetchErr := svc.Fetch(ctx, src.SourceURL)
+
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	cur, err := svc.load(ctx)
 	if err != nil {
-		s.LastError = err.Error()
-		_ = svc.writeRaw(ctx, s)
-		return s, err
+		return Settings{}, err
 	}
-	s.Rate = rate
-	s.FetchedAt = time.Now().UTC().Format(time.RFC3339)
-	s.Source = SourceAPI
-	s.LastError = ""
-	if werr := svc.writeRaw(ctx, s); werr != nil {
-		return s, werr
+	if fetchErr != nil {
+		cur.LastError = fetchErr.Error()
+		_ = svc.writeRaw(ctx, cur)
+		return cur, fetchErr
 	}
-	return s, nil
+	cur.Rate = rate
+	cur.FetchedAt = time.Now().UTC().Format(time.RFC3339)
+	cur.Source = SourceAPI
+	cur.LastError = ""
+	if werr := svc.writeRaw(ctx, cur); werr != nil {
+		return cur, werr
+	}
+	return cur, nil
 }
 
 // Current returns the effective rate for consumers (e.g. top-up conversion).

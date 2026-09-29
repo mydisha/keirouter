@@ -159,8 +159,7 @@ func TestRefreshKeepsOldRateOnFailure(t *testing.T) {
 	}
 }
 
-func TestRefreshDoesNotWipeRateOnReadError(t *testing.T) {
-	var saved []Settings
+func TestRefreshDoesNotWipeRateOnReadError(t *testing.T) {	var saved []Settings
 	svc := New(nil)
 	svc.persist = func(_ context.Context, s Settings) error { saved = append(saved, s); return nil }
 	svc.initial = Settings{SourceURL: "http://example.invalid", Rate: 16000, Source: SourceAPI, FetchedAt: time.Now().UTC().Format(time.RFC3339), RefreshIntervalH: 24}
@@ -176,5 +175,50 @@ func TestRefreshDoesNotWipeRateOnReadError(t *testing.T) {
 	}
 	if len(saved) != 0 {
 		t.Fatalf("no persist should happen on a read error, got %d", len(saved))
+	}
+}
+
+func TestUpdateMutatesStrictlyLoadedSettings(t *testing.T) {
+	var saved []Settings
+	svc := New(nil)
+	svc.persist = func(_ context.Context, s Settings) error { saved = append(saved, s); return nil }
+	svc.initial = Settings{RefreshIntervalH: 6, AutoRefreshEnabled: false, SourceURL: DefaultSourceURL, Rate: 16000, Source: SourceAPI}
+
+	out, err := svc.Update(context.Background(), func(s *Settings) { s.RefreshIntervalH = 12 })
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if out.RefreshIntervalH != 12 {
+		t.Fatalf("mutate not applied: %d", out.RefreshIntervalH)
+	}
+	if out.Rate != 16000 || out.Source != SourceAPI {
+		t.Fatalf("read-only state must be preserved: %+v", out)
+	}
+	if len(saved) == 0 || saved[len(saved)-1].Rate != 16000 {
+		t.Fatalf("persisted result must keep the fetched rate: %+v", saved)
+	}
+}
+
+func TestUpdateFailsClosedOnReadError(t *testing.T) {
+	var saved []Settings
+	svc := New(nil)
+	svc.persist = func(_ context.Context, s Settings) error { saved = append(saved, s); return nil }
+	svc.initial = Settings{RefreshIntervalH: 6, SourceURL: DefaultSourceURL, Rate: 16000}
+	svc.readErr = errors.New("boom")
+
+	if _, err := svc.Update(context.Background(), func(s *Settings) { s.RefreshIntervalH = 12 }); err == nil {
+		t.Fatal("expected error when the settings read fails")
+	}
+	if len(saved) != 0 {
+		t.Fatalf("no write on read error, got %d", len(saved))
+	}
+}
+
+func TestUpdateWrapsValidationError(t *testing.T) {
+	svc := New(nil)
+	svc.initial = Settings{RefreshIntervalH: 6, SourceURL: DefaultSourceURL}
+	_, err := svc.Update(context.Background(), func(s *Settings) { s.OverrideEnabled = true; s.OverrideRate = 0 })
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("expected ErrInvalidConfig, got %v", err)
 	}
 }

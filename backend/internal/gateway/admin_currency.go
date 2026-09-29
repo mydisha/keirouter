@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/mydisha/keirouter/backend/internal/currency"
@@ -45,24 +46,31 @@ func (s *Server) adminUpdateCurrency(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &patch) {
 		return
 	}
-	cur := s.currencySvc.Load(r.Context())
-	if patch.AutoRefreshEnabled != nil {
-		cur.AutoRefreshEnabled = *patch.AutoRefreshEnabled
-	}
-	if patch.RefreshIntervalH != nil {
-		cur.RefreshIntervalH = *patch.RefreshIntervalH
-	}
-	if patch.OverrideEnabled != nil {
-		cur.OverrideEnabled = *patch.OverrideEnabled
-	}
-	if patch.OverrideRate != nil {
-		cur.OverrideRate = *patch.OverrideRate
-	}
-	if patch.SourceURL != nil {
-		cur.SourceURL = *patch.SourceURL
-	}
-	if err := s.currencySvc.Save(r.Context(), cur); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+	// Strict load + mutate + save under the service mutex. A read/write failure
+	// is a server error; only Validate failures are the client's fault.
+	cur, err := s.currencySvc.Update(r.Context(), func(c *currency.Settings) {
+		if patch.AutoRefreshEnabled != nil {
+			c.AutoRefreshEnabled = *patch.AutoRefreshEnabled
+		}
+		if patch.RefreshIntervalH != nil {
+			c.RefreshIntervalH = *patch.RefreshIntervalH
+		}
+		if patch.OverrideEnabled != nil {
+			c.OverrideEnabled = *patch.OverrideEnabled
+		}
+		if patch.OverrideRate != nil {
+			c.OverrideRate = *patch.OverrideRate
+		}
+		if patch.SourceURL != nil {
+			c.SourceURL = *patch.SourceURL
+		}
+	})
+	if err != nil {
+		if errors.Is(err, currency.ErrInvalidConfig) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, currencyStatusOf(cur))

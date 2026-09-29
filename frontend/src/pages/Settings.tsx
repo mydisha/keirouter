@@ -1326,7 +1326,14 @@ function CurrencyTab() {
   };
 
   const handleSave = () => {
-    if (local) save.mutate(local);
+    if (!local) return;
+    save.mutate({
+      auto_refresh_enabled: local.auto_refresh_enabled,
+      refresh_interval_h: local.refresh_interval_h,
+      override_enabled: local.override_enabled,
+      override_rate: local.override_rate,
+      source_url: local.source_url,
+    });
   };
 
   if (status.isError) {
