@@ -4,12 +4,19 @@
 package currency
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"math"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
+
+	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
 // SettingsKey is the settings-store key holding the currency JSON blob.
@@ -103,4 +110,148 @@ func ParseUSDIDR(body []byte) (float64, error) {
 		return 0, errors.New("currency: response has no valid IDR rate")
 	}
 	return rate, nil
+}
+
+// Service owns currency settings persistence and a background refresh loop.
+type Service struct {
+	settings *store.SettingsRepo
+
+	// persist and initial are seams for tests; when nil they fall back to
+	// settings.Set / settings.Get.
+	persist func(ctx context.Context, s Settings) error
+	initial Settings
+}
+
+// New returns a currency service backed by the given settings repo.
+func New(settings *store.SettingsRepo) *Service { return &Service{settings: settings} }
+
+func (svc *Service) readRaw(ctx context.Context) string {
+	if svc.settings == nil {
+		return ""
+	}
+	raw, err := svc.settings.Get(ctx, SettingsKey)
+	if err != nil {
+		return ""
+	}
+	return raw
+}
+
+func (svc *Service) writeRaw(ctx context.Context, s Settings) error {
+	if svc.persist != nil {
+		return svc.persist(ctx, s)
+	}
+	if svc.settings == nil {
+		return nil
+	}
+	raw, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	return svc.settings.Set(ctx, SettingsKey, string(raw))
+}
+
+// Load reads the persisted settings, applying defaults. Never errors.
+func (svc *Service) Load(ctx context.Context) Settings {
+	if svc.initial != (Settings{}) {
+		return Defaults(svc.initial)
+	}
+	raw := svc.readRaw(ctx)
+	if raw == "" {
+		return Defaults(Settings{})
+	}
+	var s Settings
+	if err := json.Unmarshal([]byte(raw), &s); err != nil {
+		return Defaults(Settings{})
+	}
+	return Defaults(s)
+}
+
+// Save validates and persists settings.
+func (svc *Service) Save(ctx context.Context, s Settings) error {
+	s = Defaults(s)
+	if err := Validate(s); err != nil {
+		return err
+	}
+	return svc.writeRaw(ctx, s)
+}
+
+// Fetch retrieves the USD->IDR rate from sourceURL.
+func (svc *Service) Fetch(ctx context.Context, sourceURL string) (float64, error) {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("currency: upstream status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0, err
+	}
+	return ParseUSDIDR(body)
+}
+
+// Refresh fetches the rate and persists it. On failure it keeps the previous
+// rate and records the error; the returned error mirrors the failure.
+func (svc *Service) Refresh(ctx context.Context) (Settings, error) {
+	s := svc.Load(ctx)
+	rate, err := svc.Fetch(ctx, s.SourceURL)
+	if err != nil {
+		s.LastError = err.Error()
+		_ = svc.writeRaw(ctx, s)
+		return s, err
+	}
+	s.Rate = rate
+	s.FetchedAt = time.Now().UTC().Format(time.RFC3339)
+	s.Source = SourceAPI
+	s.LastError = ""
+	if werr := svc.writeRaw(ctx, s); werr != nil {
+		return s, werr
+	}
+	return s, nil
+}
+
+// Current returns the effective rate for consumers (e.g. top-up conversion).
+func (svc *Service) Current(ctx context.Context) (float64, string, bool) {
+	return Resolve(svc.Load(ctx))
+}
+
+// Start launches the background refresh loop. It refreshes once on start when
+// no rate exists and auto-refresh is on, then re-checks every minute and
+// refreshes when the configured interval has elapsed.
+func (svc *Service) Start(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s := svc.Load(ctx)
+				if !s.AutoRefreshEnabled {
+					continue
+				}
+				last := time.Time{}
+				if s.FetchedAt != "" {
+					if t, err := time.Parse(time.RFC3339, s.FetchedAt); err == nil {
+						last = t
+					}
+				}
+				due := s.Rate == 0 || time.Since(last) >= time.Duration(s.RefreshIntervalH)*time.Hour
+				if due {
+					if _, err := svc.Refresh(ctx); err != nil {
+						slog.Default().Warn("currency refresh failed", "err", err)
+					}
+				}
+			}
+		}
+	}()
 }

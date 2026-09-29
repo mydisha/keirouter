@@ -1,8 +1,12 @@
 package currency
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseUSDIDR(t *testing.T) {
@@ -86,5 +90,70 @@ func TestResolve(t *testing.T) {
 	// Nothing available.
 	if _, _, ok := Resolve(Settings{}); ok {
 		t.Fatal("empty settings should not resolve")
+	}
+}
+
+func TestFetch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"result":"success","rates":{"IDR":16600}}`))
+	}))
+	defer srv.Close()
+
+	svc := New(nil)
+	rate, err := svc.Fetch(context.Background(), srv.URL)
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if rate != 16600 {
+		t.Fatalf("rate = %v, want 16600", rate)
+	}
+}
+
+func TestFetchRejectsHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	if _, err := New(nil).Fetch(context.Background(), srv.URL); err == nil {
+		t.Fatal("expected error on 500")
+	}
+}
+
+func TestLoadSaveRoundTripNilRepo(t *testing.T) {
+	svc := New(nil)
+	// With no repo, Load returns defaults and Save is a no-op (best-effort).
+	if got := svc.Load(context.Background()); got.RefreshIntervalH != DefaultIntervalH {
+		t.Fatalf("load defaults: %+v", got)
+	}
+	if err := svc.Save(context.Background(), Defaults(Settings{})); err != nil {
+		t.Fatalf("save without repo: %v", err)
+	}
+}
+
+func TestRefreshKeepsOldRateOnFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	var saved []Settings
+	svc := New(nil)
+	svc.persist = func(_ context.Context, s Settings) error { saved = append(saved, s); return nil }
+	svc.initial = Settings{SourceURL: srv.URL, Rate: 16000, Source: SourceAPI, FetchedAt: time.Now().UTC().Format(time.RFC3339), RefreshIntervalH: 24}
+
+	out, err := svc.Refresh(context.Background())
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if out.Rate != 16000 {
+		t.Fatalf("old rate must be kept, got %v", out.Rate)
+	}
+	if out.LastError == "" {
+		t.Fatal("last_error must be set")
+	}
+	if len(saved) == 0 || saved[len(saved)-1].LastError == "" {
+		t.Fatal("failure state must be persisted")
 	}
 }
