@@ -55,6 +55,18 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+func TestDefaultsPreservesExplicitAutoRefreshFalse(t *testing.T) {
+	// A persisted config that is non-zero (so it isn't treated as fresh) but has
+	// auto-refresh explicitly false must stay false.
+	s := Defaults(Settings{RefreshIntervalH: 6, AutoRefreshEnabled: false})
+	if s.AutoRefreshEnabled {
+		t.Fatal("explicit auto_refresh_enabled=false must be preserved")
+	}
+	if s.RefreshIntervalH != 6 {
+		t.Fatalf("interval = %d, want 6", s.RefreshIntervalH)
+	}
+}
+
 func TestResolve(t *testing.T) {
 	// Override wins when enabled and positive.
 	rate, src, ok := Resolve(Settings{OverrideEnabled: true, OverrideRate: 17000, Rate: 16000, Source: SourceAPI})
