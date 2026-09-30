@@ -519,6 +519,73 @@ func (s *Server) adminBansosRotate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"key_id": cfg.KeyID, "key": issued.Plaintext, "masked_display": cfg.MaskedDisplay})
 }
 
+// publicBansos serves GET /v1/public/bansos: the public, plaintext-free state.
+// Served live (no insights cache) so the active toggle is never stale.
+func (s *Server) publicBansos(w http.ResponseWriter, r *http.Request) {
+	cfg, ok, err := s.loadBansos(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "bansos unavailable")
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"active": false, "exists": false, "mode": bansosModeUnlimited,
+			"masked_display": "", "allowed_models": []string{}, "rpm": 0, "tpm": 0,
+			"credit_remaining_usd": nil,
+		})
+		return
+	}
+	credit, err := s.bansosCreditView(r.Context(), cfg.KeyID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "bansos unavailable")
+		return
+	}
+	var remaining any
+	if credit != nil {
+		remaining = credit["remaining_usd"]
+	}
+	models := cfg.AllowedModels
+	if models == nil {
+		models = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"exists":               true,
+		"active":               cfg.Active,
+		"mode":                 cfg.Mode,
+		"masked_display":       cfg.MaskedDisplay,
+		"allowed_models":       models,
+		"rpm":                  cfg.RPM,
+		"tpm":                  cfg.TPM,
+		"credit_remaining_usd": remaining,
+		"updated_at":           cfg.UpdatedAt,
+	})
+}
+
+// publicBansosKey serves GET /v1/public/bansos/key: the revealable plaintext,
+// only while the bansos is active.
+func (s *Server) publicBansosKey(w http.ResponseWriter, r *http.Request) {
+	cfg, ok, err := s.loadBansos(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "bansos unavailable")
+		return
+	}
+	if !ok || !cfg.Active {
+		writeError(w, http.StatusForbidden, "bansos is not active")
+		return
+	}
+	if key, err := s.identity.Get(r.Context(), cfg.KeyID); err != nil || key.Disabled {
+		writeError(w, http.StatusForbidden, "bansos is not active")
+		return
+	}
+	plaintext, err := s.vault.Sealer().OpenString(cfg.SealedKey)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "bansos unavailable")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"key": plaintext})
+}
+
 func normalizeModelPatterns(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, m := range in {

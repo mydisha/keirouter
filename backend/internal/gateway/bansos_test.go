@@ -299,3 +299,47 @@ func TestGenericKeyEndpointsRejectBansosKey(t *testing.T) {
 		`{"limit_usd":1,"reason":"test","idempotency_key":"y"}`)
 	require.Equal(t, http.StatusBadRequest, aw.Code, aw.Body.String())
 }
+
+func TestPublicBansosEndpoints(t *testing.T) {
+	s, _ := newBansosTestServer(t)
+	ctx := context.Background()
+
+	// Unconfigured: public state is a non-breaking zero state.
+	rw := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rw, httptest.NewRequest(http.MethodGet, "/v1/public/bansos", nil))
+	require.Equal(t, http.StatusOK, rw.Code, rw.Body.String())
+	require.Contains(t, rw.Body.String(), `"active":false`)
+
+	// Configure but keep inactive.
+	w := callBansosHandler(t, s, s.adminCreateBansos, http.MethodPost, "/bansos",
+		`{"mode":"credit","allowed_models":["claude-*"],"credit_limit_usd":10}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created struct {
+		Key string `json:"key"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	cfg, _, err := s.loadBansos(ctx)
+	require.NoError(t, err)
+
+	// Inactive -> key endpoint 403, state has no plaintext.
+	kw := httptest.NewRecorder()
+	s.Handler().ServeHTTP(kw, httptest.NewRequest(http.MethodGet, "/v1/public/bansos/key", nil))
+	require.Equal(t, http.StatusForbidden, kw.Code, kw.Body.String())
+
+	sw := httptest.NewRecorder()
+	s.Handler().ServeHTTP(sw, httptest.NewRequest(http.MethodGet, "/v1/public/bansos", nil))
+	require.Equal(t, http.StatusOK, sw.Code, sw.Body.String())
+	require.NotContains(t, sw.Body.String(), created.Key)
+	require.Contains(t, sw.Body.String(), cfg.MaskedDisplay)
+
+	// Activate -> key endpoint returns the plaintext.
+	require.NoError(t, s.identity.SetDisabled(ctx, cfg.KeyID, false))
+	cfg.Active = true
+	require.NoError(t, s.saveBansos(ctx, cfg))
+
+	kw2 := httptest.NewRecorder()
+	s.Handler().ServeHTTP(kw2, httptest.NewRequest(http.MethodGet, "/v1/public/bansos/key", nil))
+	require.Equal(t, http.StatusOK, kw2.Code, kw2.Body.String())
+	require.Contains(t, kw2.Body.String(), created.Key)
+	require.Equal(t, "no-store", kw2.Header().Get("Cache-Control"))
+}
