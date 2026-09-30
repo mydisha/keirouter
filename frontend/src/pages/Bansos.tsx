@@ -206,11 +206,9 @@ export function BansosPage() {
 
           <Card>
             <h2 className="text-lg font-[650] text-[var(--ink)]">Model yang diizinkan</h2>
-            {models.length === 0 && (
-              <div className="mt-3">
-                <ModelMultiSelect value={data.allowed_models} onChange={(v) => update.mutate({ allowed_models: v })} />
-              </div>
-            )}
+            <div className="mt-3">
+              <ModelMultiSelect value={data.allowed_models} onChange={(v) => update.mutate({ allowed_models: v })} />
+            </div>
             <div className="mt-3 flex flex-wrap gap-2">
               {data.allowed_models.map((m) => (
                 <span key={m} className="rounded-lg border border-[var(--line)] bg-[var(--soft)] px-2.5 py-1 font-mono text-xs">{m}</span>
