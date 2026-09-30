@@ -6,6 +6,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ type Config struct {
 	Log            LogConfig            `koanf:"log"`
 	Data           DataConfig           `koanf:"data"`
 	Guardrails     GuardrailsConfig     `koanf:"guardrails"`
+	PortalSSO      PortalSSOConfig      `koanf:"portal_sso"`
 }
 
 // DefaultMaxRequestBodyBytes is the default maximum size accepted for inbound
@@ -109,6 +111,18 @@ type SecurityConfig struct {
 	// Set false to ignore forwarded headers entirely and base the flag only on a
 	// direct TLS connection. Default true.
 	TrustForwardedHeaders bool `koanf:"trust_forwarded_headers"`
+}
+
+// PortalSSOConfig configures Google sign-in for the public usage portal.
+// The client secret is intended to be supplied via environment variable
+// (KEIROUTER_PORTAL_SSO__GOOGLE_CLIENT_SECRET), never committed to YAML.
+type PortalSSOConfig struct {
+	Enabled            bool          `koanf:"enabled"`
+	GoogleClientID     string        `koanf:"google_client_id"`
+	GoogleClientSecret string        `koanf:"google_client_secret"`
+	AllowedDomains     []string      `koanf:"allowed_domains"`
+	RedirectURL        string        `koanf:"redirect_url"`
+	SessionTTL         time.Duration `koanf:"session_ttl"`
 }
 
 // CacheConfig configures the semantic response cache.
@@ -359,6 +373,10 @@ func Default() Config {
 			},
 		},
 		Log: LogConfig{Level: "info", Format: "text"},
+		PortalSSO: PortalSSOConfig{
+			Enabled:    false,
+			SessionTTL: 24 * time.Hour,
+		},
 	}
 }
 
@@ -483,6 +501,14 @@ func (c *Config) validate() error {
 	}
 	if c.Health.MaxModelsPerProvider <= 0 {
 		c.Health.MaxModelsPerProvider = 8
+	}
+	if c.PortalSSO.Enabled {
+		if c.PortalSSO.GoogleClientID == "" || c.PortalSSO.GoogleClientSecret == "" {
+			return errors.New("portal_sso.enabled requires google_client_id and google_client_secret")
+		}
+		if c.PortalSSO.SessionTTL <= 0 {
+			c.PortalSSO.SessionTTL = 24 * time.Hour
+		}
 	}
 	return nil
 }

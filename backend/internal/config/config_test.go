@@ -106,3 +106,26 @@ func TestLoadMaxRequestBodyBytesFromEnv(t *testing.T) {
 		t.Fatalf("max request body from env = %d, want %d", got, int64(64<<20))
 	}
 }
+
+func TestPortalSSOValidation(t *testing.T) {
+	// Enabled without credentials must fail closed.
+	cfg := Default()
+	cfg.PortalSSO.Enabled = true
+	if err := cfg.validate(); err == nil {
+		t.Fatal("expected error when portal_sso enabled without client id/secret")
+	}
+
+	cfg = Default()
+	cfg.PortalSSO.Enabled = true
+	cfg.PortalSSO.GoogleClientID = "id"
+	cfg.PortalSSO.GoogleClientSecret = "secret"
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("expected valid config, got %v", err)
+	}
+
+	// Disabled without credentials is fine.
+	cfg = Default()
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("disabled portal_sso must validate, got %v", err)
+	}
+}
