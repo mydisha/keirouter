@@ -161,7 +161,14 @@ type session struct {
 
 // IssueSession mints a signed session token valid for the configured TTL.
 func (s *Service) IssueSession() (string, error) {
-	payload := session{Sub: "dashboard", Exp: time.Now().Add(s.ttl).Unix()}
+	return s.IssueSessionFor("dashboard")
+}
+
+// IssueSessionFor mints a signed session token for the given subject audience.
+// The portal uses a distinct subject (e.g. "portal:<google_sub>") so a portal
+// token can never be accepted by the dashboard middleware.
+func (s *Service) IssueSessionFor(sub string) (string, error) {
+	payload := session{Sub: sub, Exp: time.Now().Add(s.ttl).Unix()}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
@@ -172,22 +179,36 @@ func (s *Service) IssueSession() (string, error) {
 
 // VerifySession reports whether a session token is valid and unexpired.
 func (s *Service) VerifySession(token string) bool {
+	return s.VerifySessionSub(token, "dashboard")
+}
+
+// VerifySessionSub reports whether a token is valid and carries the given sub.
+func (s *Service) VerifySessionSub(token, sub string) bool {
+	got, ok := s.SessionSubject(token)
+	return ok && got == sub
+}
+
+// SessionSubject returns the signed subject of a valid, unexpired token.
+func (s *Service) SessionSubject(token string) (string, bool) {
 	body, sig, ok := strings.Cut(token, ".")
 	if !ok {
-		return false
+		return "", false
 	}
 	if !hmac.Equal([]byte(sig), []byte(s.sign(body))) {
-		return false
+		return "", false
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(body)
 	if err != nil {
-		return false
+		return "", false
 	}
 	var p session
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return false
+		return "", false
 	}
-	return time.Now().Unix() < p.Exp
+	if time.Now().Unix() >= p.Exp {
+		return "", false
+	}
+	return p.Sub, true
 }
 
 // TTL returns the session lifetime.

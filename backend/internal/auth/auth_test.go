@@ -112,3 +112,24 @@ func TestSession_SigningKeyPersistsAcrossInstances(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, svc2.VerifySession(token))
 }
+
+func TestSessionAudienceIsolation(t *testing.T) {
+	svc, _ := newTestAuth(t)
+
+	admin, err := svc.IssueSession()
+	require.NoError(t, err)
+	portal, err := svc.IssueSessionFor("portal:sub-1")
+	require.NoError(t, err)
+
+	require.True(t, svc.VerifySession(admin), "admin session must verify as dashboard")
+	require.False(t, svc.VerifySession(portal), "portal session must NOT verify as dashboard")
+	require.True(t, svc.VerifySessionSub(portal, "portal:sub-1"))
+	require.False(t, svc.VerifySessionSub(portal, "portal:other"))
+
+	got, ok := svc.SessionSubject(portal)
+	require.True(t, ok)
+	require.Equal(t, "portal:sub-1", got)
+
+	_, ok = svc.SessionSubject("garbage")
+	require.False(t, ok)
+}
