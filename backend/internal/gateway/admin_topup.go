@@ -48,7 +48,12 @@ type topupRequest struct {
 }
 
 func (s *Server) adminTopupKey(w http.ResponseWriter, r *http.Request) {
-	keyID := chi.URLParam(r, "id")
+	s.topupKeyCore(w, r, chi.URLParam(r, "id"))
+}
+
+// topupKeyCore credits a key's api_key budget and records the ledger row. It is
+// shared by the generic key endpoint and the bansos endpoint.
+func (s *Server) topupKeyCore(w http.ResponseWriter, r *http.Request, keyID string) {
 	key, err := s.identity.Get(r.Context(), keyID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {

@@ -457,6 +457,68 @@ func (s *Server) adminUpdateBansos(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
+// adminBansosTopup credits the bansos key's budget, reusing the shared top-up
+// core. Only valid while the bansos is in credit mode.
+func (s *Server) adminBansosTopup(w http.ResponseWriter, r *http.Request) {
+	cfg, ok, err := s.loadBansos(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "bansos not configured")
+		return
+	}
+	if cfg.Mode != bansosModeCredit {
+		writeError(w, http.StatusBadRequest, "bansos is not in credit mode")
+		return
+	}
+	s.topupKeyCore(w, r, cfg.KeyID)
+}
+
+// adminBansosRotate mints new key material for the bansos key in place, so the
+// previously shared plaintext stops working immediately.
+func (s *Server) adminBansosRotate(w http.ResponseWriter, r *http.Request) {
+	cfg, ok, err := s.loadBansos(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusNotFound, "bansos not configured")
+		return
+	}
+	existing, err := s.identity.Get(r.Context(), cfg.KeyID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	issued, err := s.identity.Generate(existing.TenantID, existing.ProjectID, existing.Name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	sealed, err := s.vault.Sealer().SealString(issued.Plaintext)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	if err := s.identity.Keys().SetKeyMaterial(r.Context(), cfg.KeyID, issued.Record.KeyHash, issued.Record.LookupHash, issued.Record.Display); err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	s.identity.InvalidateAuthCacheForKey(cfg.KeyID)
+
+	cfg.SealedKey = sealed
+	cfg.MaskedDisplay = issued.Record.Display
+	cfg.UpdatedAt = time.Now()
+	if err := s.saveBansos(r.Context(), cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"key_id": cfg.KeyID, "key": issued.Plaintext, "masked_display": cfg.MaskedDisplay})
+}
+
 func normalizeModelPatterns(in []string) []string {
 	out := make([]string, 0, len(in))
 	for _, m := range in {

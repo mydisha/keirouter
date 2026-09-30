@@ -189,3 +189,54 @@ func TestAdminUpdateBansosToggleAndMode(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, key.Disabled)
 }
+
+func TestAdminBansosTopupAndRotate(t *testing.T) {
+	s, db := newBansosTestServer(t)
+	ctx := context.Background()
+
+	w := callBansosHandler(t, s, s.adminCreateBansos, http.MethodPost, "/bansos",
+		`{"mode":"credit","allowed_models":["claude-*"],"credit_limit_usd":1}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created struct {
+		KeyID string `json:"key_id"`
+		Key   string `json:"key"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	// Top-up increases the limit.
+	w2 := callBansosHandler(t, s, s.adminBansosTopup, http.MethodPost, "/bansos/topup",
+		`{"amount_usd":2,"idempotency_key":"b-1"}`)
+	require.Equal(t, http.StatusCreated, w2.Code, w2.Body.String())
+	budgets, err := db.Budgets().ListByScope(ctx, store.ScopeAPIKey, created.KeyID)
+	require.NoError(t, err)
+	require.Len(t, budgets, 1)
+	require.EqualValues(t, 3_000_000, budgets[0].LimitMicros)
+
+	// Rotate replaces the key material; the old plaintext no longer authenticates.
+	// The key must be active for authentication to be meaningful (create mints it
+	// disabled).
+	wAct := callBansosHandler(t, s, s.adminUpdateBansos, http.MethodPatch, "/bansos", `{"active":true}`)
+	require.Equal(t, http.StatusOK, wAct.Code, wAct.Body.String())
+	w3 := callBansosHandler(t, s, s.adminBansosRotate, http.MethodPost, "/bansos/rotate", "")
+	require.Equal(t, http.StatusOK, w3.Code, w3.Body.String())
+	var rotated struct {
+		Key string `json:"key"`
+	}
+	require.NoError(t, json.Unmarshal(w3.Body.Bytes(), &rotated))
+	require.NotEqual(t, created.Key, rotated.Key)
+
+	_, err = s.identity.Authenticate(ctx, created.Key)
+	require.Error(t, err, "old plaintext must stop authenticating")
+	rec, err := s.identity.Authenticate(ctx, rotated.Key)
+	require.NoError(t, err)
+	require.Equal(t, created.KeyID, rec.ID)
+
+	// Top-up on unlimited mode is rejected.
+	cfg, _, err := s.loadBansos(ctx)
+	require.NoError(t, err)
+	cfg.Mode = bansosModeUnlimited
+	require.NoError(t, s.saveBansos(ctx, cfg))
+	w4 := callBansosHandler(t, s, s.adminBansosTopup, http.MethodPost, "/bansos/topup",
+		`{"amount_usd":1,"idempotency_key":"b-2"}`)
+	require.Equal(t, http.StatusBadRequest, w4.Code, w4.Body.String())
+}
