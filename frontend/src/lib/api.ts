@@ -405,6 +405,28 @@ export interface KeyLimitAdjustment {
   created_at: string;
 }
 
+export interface BansosCredit {
+  limit_usd: number;
+  spent_usd: number;
+  remaining_usd: number;
+  period: string;
+}
+
+export interface Bansos {
+  exists: boolean;
+  key_id?: string;
+  plan_id?: string;
+  active: boolean;
+  mode: "credit" | "unlimited";
+  masked_display: string;
+  allowed_models: string[];
+  rpm: number;
+  tpm: number;
+  credit: BansosCredit | null;
+  updated_at?: string;
+  key?: string;
+}
+
 export interface UsageSummary {
   total_requests: number;
   prompt_tokens: number;
@@ -1364,6 +1386,27 @@ export const api = {
     request<{ id: string; disabled?: boolean; allowed_models?: string[] }>("PATCH", `/keys/${id}`, patch),
   deleteKey: (id: string) => request<void>("DELETE", `/keys/${id}`),
   deleteKeys: (ids: string[]) => Promise.all(ids.map((id) => request<void>("DELETE", `/keys/${id}`))),
+
+  getBansos: () => request<Bansos>("GET", "/bansos"),
+  createBansos: (input: {
+    mode: "credit" | "unlimited";
+    allowed_models: string[];
+    rpm?: number;
+    tpm?: number;
+    credit_limit_usd?: number;
+  }) => request<Bansos>("POST", "/bansos", input),
+  updateBansos: (patch: {
+    active?: boolean;
+    mode?: "credit" | "unlimited";
+    allowed_models?: string[];
+    rpm?: number;
+    tpm?: number;
+    credit_limit_usd?: number;
+  }) => request<Bansos>("PATCH", "/bansos", patch),
+  topupBansos: (input: { amount_usd: number; reason?: string; idempotency_key: string }) =>
+    request<{ topup: KeyTopup }>("POST", "/bansos/topup", input),
+  rotateBansos: () =>
+    request<{ key_id: string; key: string; masked_display: string }>("POST", "/bansos/rotate"),
 
   listAccounts: () => request<{ accounts: Account[] }>("GET", "/accounts"),
   createAccount: (input: AccountInput) =>
