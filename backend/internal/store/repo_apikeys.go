@@ -176,6 +176,22 @@ func (r *APIKeyRepo) SetPlanID(ctx context.Context, id string, planID string) er
 	return err
 }
 
+// SetKeyMaterial replaces a key's hashes and display. Used to rotate key
+// material in place (same id, same scopes) so the previous plaintext stops
+// authenticating immediately.
+func (r *APIKeyRepo) SetKeyMaterial(ctx context.Context, id, keyHash, lookupHash, display string) error {
+	q := r.db.rebind(`UPDATE api_keys SET key_hash = ?, lookup_hash = ?, display = ? WHERE id = ?`)
+	res, err := r.db.sql.ExecContext(ctx, q, keyHash, lookupHash, display, id)
+	if err != nil {
+		return fmt.Errorf("store: set key material: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ---- per-key model access ---------------------------------------------------
 
 // SetAllowedModels replaces the allowed-models list for an API key. An empty
