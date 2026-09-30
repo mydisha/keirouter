@@ -50,6 +50,10 @@ type adjustLimitRequest struct {
 // records every change in the append-only key_limit_adjustments ledger.
 func (s *Server) adminAdjustKeyLimit(w http.ResponseWriter, r *http.Request) {
 	keyID := chi.URLParam(r, "id")
+	if keyID == s.bansosKeyID(r.Context()) {
+		writeError(w, http.StatusBadRequest, "the bansos key is managed from the Bansos page")
+		return
+	}
 	key, err := s.identity.Get(r.Context(), keyID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {

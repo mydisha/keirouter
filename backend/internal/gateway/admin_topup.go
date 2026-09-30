@@ -48,7 +48,12 @@ type topupRequest struct {
 }
 
 func (s *Server) adminTopupKey(w http.ResponseWriter, r *http.Request) {
-	s.topupKeyCore(w, r, chi.URLParam(r, "id"))
+	id := chi.URLParam(r, "id")
+	if id == s.bansosKeyID(r.Context()) {
+		writeError(w, http.StatusBadRequest, "the bansos key is managed from the Bansos page")
+		return
+	}
+	s.topupKeyCore(w, r, id)
 }
 
 // topupKeyCore credits a key's api_key budget and records the ledger row. It is

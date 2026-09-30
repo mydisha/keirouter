@@ -376,6 +376,7 @@ func (s *Server) adminProviderModels(w http.ResponseWriter, r *http.Request) {
 // ---- API keys ---------------------------------------------------------------
 
 func (s *Server) adminListKeys(w http.ResponseWriter, r *http.Request) {
+	bansosID := s.bansosKeyID(r.Context())
 	keys, err := s.identity.List(r.Context(), adminTenant)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
@@ -383,6 +384,9 @@ func (s *Server) adminListKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(keys))
 	for _, k := range keys {
+		if k.ID == bansosID {
+			continue
+		}
 		entry := map[string]any{
 			"id": k.ID, "name": k.Name, "display": k.Display,
 			"disabled": k.Disabled, "plan_id": k.PlanID, "created_at": k.CreatedAt,
@@ -615,7 +619,12 @@ func (s *Server) adminCreateKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminDeleteKey(w http.ResponseWriter, r *http.Request) {
-	if err := s.identity.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
+	id := chi.URLParam(r, "id")
+	if id == s.bansosKeyID(r.Context()) {
+		writeError(w, http.StatusBadRequest, "the bansos key is managed from the Bansos page")
+		return
+	}
+	if err := s.identity.Delete(r.Context(), id); err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
@@ -625,6 +634,10 @@ func (s *Server) adminDeleteKey(w http.ResponseWriter, r *http.Request) {
 // adminUpdateKey toggles a key's disabled state and/or updates its model access.
 func (s *Server) adminUpdateKey(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if id == s.bansosKeyID(r.Context()) {
+		writeError(w, http.StatusBadRequest, "the bansos key is managed from the Bansos page")
+		return
+	}
 	var body struct {
 		Disabled      *bool    `json:"disabled"`
 		AllowedModels []string `json:"allowed_models"`

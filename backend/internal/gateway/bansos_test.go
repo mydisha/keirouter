@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mydisha/keirouter/backend/internal/config"
@@ -239,4 +240,62 @@ func TestAdminBansosTopupAndRotate(t *testing.T) {
 	w4 := callBansosHandler(t, s, s.adminBansosTopup, http.MethodPost, "/bansos/topup",
 		`{"amount_usd":1,"idempotency_key":"b-2"}`)
 	require.Equal(t, http.StatusBadRequest, w4.Code, w4.Body.String())
+}
+
+func callBansosHandlerWithID(t *testing.T, s *Server, h func(http.ResponseWriter, *http.Request), method, target, id, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	var r *http.Request
+	if body != "" {
+		r = httptest.NewRequest(method, target, strings.NewReader(body))
+	} else {
+		r = httptest.NewRequest(method, target, nil)
+	}
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", id)
+	r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+	w := httptest.NewRecorder()
+	h(w, r)
+	return w
+}
+
+func TestGenericKeyEndpointsRejectBansosKey(t *testing.T) {
+	s, _ := newBansosTestServer(t)
+	ctx := context.Background()
+
+	w := callBansosHandler(t, s, s.adminCreateBansos, http.MethodPost, "/bansos",
+		`{"mode":"unlimited","allowed_models":["claude-*"]}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	var created struct {
+		KeyID string `json:"key_id"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	// List excludes the bansos key.
+	lw := callBansosHandler(t, s, s.adminListKeys, http.MethodGet, "/keys", "")
+	require.Equal(t, http.StatusOK, lw.Code, lw.Body.String())
+	require.NotContains(t, lw.Body.String(), created.KeyID)
+
+	// Create a normal key so the list is non-trivial and the filter is proven.
+	normal, err := s.identity.Create(ctx, store.DefaultTenantID, "", "normal")
+	require.NoError(t, err)
+	lw2 := callBansosHandler(t, s, s.adminListKeys, http.MethodGet, "/keys", "")
+	require.Contains(t, lw2.Body.String(), normal.Record.ID)
+
+	// Delete rejects the bansos key.
+	dw := callBansosHandlerWithID(t, s, s.adminDeleteKey, http.MethodDelete, "/keys/"+created.KeyID, created.KeyID, "")
+	require.Equal(t, http.StatusBadRequest, dw.Code, dw.Body.String())
+
+	// PATCH rejects the bansos key.
+	pw := callBansosHandlerWithID(t, s, s.adminUpdateKey, http.MethodPatch, "/keys/"+created.KeyID, created.KeyID, `{"disabled":true}`)
+	require.Equal(t, http.StatusBadRequest, pw.Code, pw.Body.String())
+
+	// Top-up endpoint rejects the bansos key.
+	tw := callBansosHandlerWithID(t, s, s.adminTopupKey, http.MethodPost, "/keys/"+created.KeyID+"/topup", created.KeyID,
+		`{"amount_usd":1,"idempotency_key":"x"}`)
+	require.Equal(t, http.StatusBadRequest, tw.Code, tw.Body.String())
+
+	// Limit adjust endpoint rejects the bansos key.
+	aw := callBansosHandlerWithID(t, s, s.adminAdjustKeyLimit, http.MethodPost, "/keys/"+created.KeyID+"/limit", created.KeyID,
+		`{"limit_usd":1,"reason":"test","idempotency_key":"y"}`)
+	require.Equal(t, http.StatusBadRequest, aw.Code, aw.Body.String())
 }
