@@ -5,7 +5,7 @@ import { api, type Bansos } from "../lib/api";
 import { PageHeader } from "../components/Layout";
 import { ModelMultiSelect } from "../components/ModelSelect";
 import { useToast } from "../components/Toast";
-import { Card, Button, Input, Field, Badge, Spinner, ErrorBanner, Toggle } from "../components/ui";
+import { Card, CardHeader, Button, Input, Field, Badge, Spinner, ErrorBanner, Toggle, Select, Modal } from "../components/ui";
 
 function uuid() {
   return crypto.randomUUID();
@@ -25,6 +25,8 @@ export function BansosPage() {
   const [tpm, setTpm] = useState("");
   const [creditUSD, setCreditUSD] = useState("");
   const [topupUSD, setTopupUSD] = useState("");
+  const [creditModalOpen, setCreditModalOpen] = useState(false);
+  const [creditModalUSD, setCreditModalUSD] = useState("");
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["bansos"] });
 
@@ -79,12 +81,12 @@ export function BansosPage() {
   const notConfigured = !data?.exists;
 
   return (
-    <div className="p-6">
+    <div>
       <PageHeader title="Bansos" description="Legal API key untuk dibagikan secara publik" icon={Gift} />
 
       {createdKey && (
-        <Card className="mb-4 border-[var(--green)]">
-          <p className="text-sm font-[650] text-[var(--ink)]">Simpan key ini sekarang — hanya ditampilkan sekali.</p>
+        <Card className="mb-4 border-[var(--green)] p-5 sm:p-6">
+          <p className="text-sm font-semibold text-[var(--ink)]">Simpan key ini sekarang — hanya ditampilkan sekali.</p>
           <div className="mt-2 flex items-center gap-2">
             <code className="min-w-0 flex-1 truncate rounded-lg border border-[var(--line)] bg-[var(--soft)] px-3 py-2 font-mono text-sm">
               {showCreated ? createdKey : "•".repeat(24)}
@@ -98,52 +100,53 @@ export function BansosPage() {
       )}
 
       {rotateKey && (
-        <Card className="mb-4 border-[var(--green)]">
-          <p className="text-sm font-[650] text-[var(--ink)]">Key baru (key lama langsung tidak berlaku):</p>
-          <code className="mt-2 block break-all rounded-lg border border-[var(--line)] bg-[var(--soft)] px-3 py-2 font-mono text-sm">{rotateKey}</code>
+        <Card className="mb-4 border-[var(--green)] p-5 sm:p-6">
+          <p className="text-sm font-semibold text-[var(--ink)]">Key baru (key lama langsung tidak berlaku):</p>
+          <code className="mt-3 block break-all rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-3 py-2 font-mono text-sm">{rotateKey}</code>
         </Card>
       )}
 
       {notConfigured ? (
         <Card>
-          <h2 className="text-lg font-[650] text-[var(--ink)]">Buat bansos</h2>
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <Field label="Mode limit">
-              <select
-                className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper)] px-3 py-2 text-sm"
-                value={mode}
-                onChange={(e) => setMode(e.target.value as "credit" | "unlimited")}
-              >
-                <option value="unlimited">Unlimited</option>
-                <option value="credit">Credit</option>
-              </select>
-            </Field>
-            {mode === "credit" && (
-              <Field label="Kredit awal (USD)">
-                <Input value={creditUSD} onChange={(e) => setCreditUSD(e.target.value)} inputMode="decimal" placeholder="10" />
+          <CardHeader title="Buat bansos" description="Buat satu API key publik yang bisa dipakai bersama." />
+          <div className="p-5 sm:p-6">
+            <div className="grid gap-4 md:grid-cols-2">
+              <Field label="Mode limit">
+                <Select
+                  value={mode}
+                  onChange={(e) => setMode(e.target.value as "credit" | "unlimited")}
+                >
+                  <option value="unlimited">Unlimited</option>
+                  <option value="credit">Credit</option>
+                </Select>
               </Field>
-            )}
-            <Field label="RPM (opsional)">
-              <Input value={rpm} onChange={(e) => setRpm(e.target.value)} inputMode="numeric" placeholder="60" />
-            </Field>
-            <Field label="TPM (opsional)">
-              <Input value={tpm} onChange={(e) => setTpm(e.target.value)} inputMode="numeric" placeholder="200000" />
-            </Field>
-          </div>
-          <div className="mt-4">
-            <Field label="Model yang diizinkan (minimal 1)">
-              <ModelMultiSelect value={models} onChange={setModels} />
-            </Field>
-          </div>
-          <div className="mt-4">
-            <Button onClick={() => create.mutate()} disabled={models.length === 0 || create.isPending}>
-              <Plus className="h-4 w-4" /> Buat bansos
-            </Button>
+              {mode === "credit" && (
+                <Field label="Kredit awal (USD)">
+                  <Input value={creditUSD} onChange={(e) => setCreditUSD(e.target.value)} inputMode="decimal" placeholder="10" />
+                </Field>
+              )}
+              <Field label="RPM (opsional)">
+                <Input value={rpm} onChange={(e) => setRpm(e.target.value)} inputMode="numeric" placeholder="60" />
+              </Field>
+              <Field label="TPM (opsional)">
+                <Input value={tpm} onChange={(e) => setTpm(e.target.value)} inputMode="numeric" placeholder="200000" />
+              </Field>
+            </div>
+            <div className="mt-4">
+              <Field label="Model yang diizinkan (minimal 1)">
+                <ModelMultiSelect value={models} onChange={setModels} />
+              </Field>
+            </div>
+            <div className="mt-5 flex justify-end">
+              <Button onClick={() => create.mutate()} disabled={models.length === 0 || create.isPending}>
+                <Plus className="h-4 w-4" /> Buat bansos
+              </Button>
+            </div>
           </div>
         </Card>
       ) : (
         <div className="grid gap-4">
-          <Card>
+          <Card className="p-5 sm:p-6">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-[var(--muted)]">Status</p>
@@ -152,7 +155,7 @@ export function BansosPage() {
               <Toggle checked={data.active} onChange={(v) => update.mutate({ active: v })} />
             </div>
             <div className="mt-4 flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate rounded-lg border border-[var(--line)] bg-[var(--soft)] px-3 py-2 font-mono text-sm">
+              <code className="min-w-0 flex-1 truncate rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-3 py-2 font-mono text-sm">
                 {data.masked_display}
               </code>
               <Button variant="secondary" onClick={() => rotate.mutate()} disabled={rotate.isPending}>
@@ -162,77 +165,110 @@ export function BansosPage() {
           </Card>
 
           <Card>
-            <h2 className="text-lg font-[650] text-[var(--ink)]">Limit</h2>
-            <div className="mt-3 grid gap-4 md:grid-cols-2">
-              <Field label="Mode">
-                <select
-                  className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper)] px-3 py-2 text-sm"
-                  value={data.mode}
-                  onChange={(e) => {
-                    const next = e.target.value as "credit" | "unlimited";
-                    const patch: Parameters<typeof api.updateBansos>[0] = { mode: next };
-                    if (next === "credit" && !(data.credit && data.credit.limit_usd > 0)) {
-                      // Credit with no positive limit fails closed on the server,
-                      // so require an amount instead of sending a 400 patch.
-                      const input = window.prompt("Kredit awal (USD):");
-                      if (input === null) return;
-                      const amount = Number(input);
-                      if (!Number.isFinite(amount) || amount <= 0) {
-                        toast.error("Kredit harus lebih dari 0");
+            <CardHeader title="Limit" />
+            <div className="p-5 sm:p-6">
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="Mode">
+                  <Select
+                    value={data.mode}
+                    onChange={(e) => {
+                      const next = e.target.value as "credit" | "unlimited";
+                      if (next === "credit" && !(data.credit && data.credit.limit_usd > 0)) {
+                        // Credit with no positive limit fails closed on the server,
+                        // so collect the starting amount in a themed dialog.
+                        setCreditModalUSD("");
+                        setCreditModalOpen(true);
                         return;
                       }
-                      patch.credit_limit_usd = amount;
-                    }
-                    update.mutate(patch);
-                  }}
-                >
-                  <option value="unlimited">Unlimited</option>
-                  <option value="credit">Credit</option>
-                </select>
-              </Field>
-              <Field label="RPM">
-                <Input
-                  defaultValue={String(data.rpm || "")}
-                  onBlur={(e) => update.mutate({ rpm: Number(e.target.value) || 0 })}
-                  inputMode="numeric"
-                />
-              </Field>
-              <Field label="TPM">
-                <Input
-                  defaultValue={String(data.tpm || "")}
-                  onBlur={(e) => update.mutate({ tpm: Number(e.target.value) || 0 })}
-                  inputMode="numeric"
-                />
-              </Field>
-            </div>
-            {data.mode === "credit" && (
-              <div className="mt-4 rounded-lg border border-[var(--line)] p-4">
-                <p className="text-sm text-[var(--muted)]">
-                  Limit: ${data.credit?.limit_usd ?? 0} · Terpakai: ${data.credit?.spent_usd.toFixed(4) ?? 0} · Sisa: ${data.credit?.remaining_usd.toFixed(4) ?? 0}
-                </p>
-                <div className="mt-2 flex items-end gap-2">
-                  <Field label="Tambah kredit (USD)">
-                    <Input value={topupUSD} onChange={(e) => setTopupUSD(e.target.value)} inputMode="decimal" placeholder="5" />
-                  </Field>
-                  <Button onClick={() => topup.mutate()} disabled={!topupUSD || topup.isPending}>Top up</Button>
-                </div>
+                      update.mutate({ mode: next });
+                    }}
+                  >
+                    <option value="unlimited">Unlimited</option>
+                    <option value="credit">Credit</option>
+                  </Select>
+                </Field>
+                <Field label="RPM">
+                  <Input
+                    defaultValue={String(data.rpm || "")}
+                    onBlur={(e) => update.mutate({ rpm: Number(e.target.value) || 0 })}
+                    inputMode="numeric"
+                  />
+                </Field>
+                <Field label="TPM">
+                  <Input
+                    defaultValue={String(data.tpm || "")}
+                    onBlur={(e) => update.mutate({ tpm: Number(e.target.value) || 0 })}
+                    inputMode="numeric"
+                  />
+                </Field>
               </div>
-            )}
+              {data.mode === "credit" && (
+                <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
+                  <p className="text-sm text-[var(--muted)]">
+                    Limit: ${data.credit?.limit_usd ?? 0} · Terpakai: ${data.credit?.spent_usd.toFixed(4) ?? 0} · Sisa: ${data.credit?.remaining_usd.toFixed(4) ?? 0}
+                  </p>
+                  <div className="mt-3 flex items-end gap-2">
+                    <Field label="Tambah kredit (USD)">
+                      <Input value={topupUSD} onChange={(e) => setTopupUSD(e.target.value)} inputMode="decimal" placeholder="5" />
+                    </Field>
+                    <Button onClick={() => topup.mutate()} disabled={!topupUSD || topup.isPending}>Top up</Button>
+                  </div>
+                </div>
+              )}
+            </div>
           </Card>
 
           <Card>
-            <h2 className="text-lg font-[650] text-[var(--ink)]">Model yang diizinkan</h2>
-            <div className="mt-3">
+            <CardHeader title="Model yang diizinkan" />
+            <div className="p-5 sm:p-6">
               <ModelMultiSelect value={data.allowed_models} onChange={(v) => update.mutate({ allowed_models: v })} />
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {data.allowed_models.map((m) => (
-                <span key={m} className="rounded-lg border border-[var(--line)] bg-[var(--soft)] px-2.5 py-1 font-mono text-xs">{m}</span>
-              ))}
+              <div className="mt-3 flex flex-wrap gap-2">
+                {data.allowed_models.map((m) => (
+                  <span key={m} className="rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] px-2.5 py-1 font-mono text-xs">{m}</span>
+                ))}
+              </div>
             </div>
           </Card>
         </div>
       )}
+
+      <Modal
+        open={creditModalOpen}
+        onClose={() => setCreditModalOpen(false)}
+        title="Aktifkan mode kredit"
+        subtitle="Masukkan kredit awal (USD) untuk membatasi pemakaian."
+      >
+        <div className="space-y-4 px-6 py-5">
+          <Field label="Kredit awal (USD)">
+            <Input
+              value={creditModalUSD}
+              onChange={(e) => setCreditModalUSD(e.target.value)}
+              inputMode="decimal"
+              placeholder="10"
+              data-modal-autofocus
+            />
+          </Field>
+        </div>
+        <div className="flex justify-end gap-2 border-t border-[var(--border)] px-6 py-4">
+          <Button variant="secondary" onClick={() => setCreditModalOpen(false)}>Batal</Button>
+          <Button
+            onClick={() => {
+              const amount = Number(creditModalUSD);
+              if (!Number.isFinite(amount) || amount <= 0) {
+                toast.error("Kredit harus lebih dari 0");
+                return;
+              }
+              update.mutate(
+                { mode: "credit", credit_limit_usd: amount },
+                { onSuccess: () => setCreditModalOpen(false) },
+              );
+            }}
+            disabled={update.isPending}
+          >
+            Simpan
+          </Button>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Cpu, Eye, EyeOff, Gift, Gauge, Copy, Check } from "lucide-react";
+import { Cpu, Eye, EyeOff, Gift, Gauge, Copy, Check, Globe } from "lucide-react";
 import { fetchPublicBansos, fetchPublicBansosKey } from "../lib/publicApi";
 import { PublicLayout } from "../components/PublicLayout";
 
@@ -37,7 +37,10 @@ export default function PublicBansos() {
   });
   const [revealed, setRevealed] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedBase, setCopiedBase] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  const baseURL = `${window.location.origin}/v1`;
 
   useEffect(() => {
     document.title = "Bansos — Tokenizer";
@@ -72,6 +75,16 @@ export default function PublicBansos() {
     }
   };
 
+  const copyBase = async () => {
+    try {
+      await navigator.clipboard.writeText(baseURL);
+      setCopiedBase(true);
+      setTimeout(() => setCopiedBase(false), 1500);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+
   return (
     <PublicLayout>
       <div className="text-center">
@@ -92,7 +105,31 @@ export default function PublicBansos() {
           Belum tersedia saat ini. Silakan cek kembali nanti.
         </div>
       ) : (
-        <div className="mt-10 grid gap-4 md:grid-cols-2">
+        <div className="mt-10 space-y-4">
+          <section className="rounded-[22px] border border-[var(--line)] bg-[var(--paper)] p-5 sm:p-6">
+            <div className="flex items-center gap-2 text-[var(--muted)]">
+              <Globe className="h-4 w-4 text-[var(--green)]" aria-hidden="true" />
+              <p className="text-[11px] uppercase tracking-[0.7px]">Base URL</p>
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate rounded-xl border border-[var(--line)] bg-[var(--soft)] px-3 py-2 font-mono text-sm text-[var(--ink)]">
+                {baseURL}
+              </code>
+              <button
+                type="button"
+                onClick={copyBase}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--line)] px-3 py-2 text-sm font-[650] text-[var(--green)] hover:bg-[var(--soft)]"
+              >
+                {copiedBase ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                {copiedBase ? "Tersalin" : "Copy"}
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-[var(--muted)]">
+              Gunakan base URL ini dengan API key di bawah. Kompatibel dengan OpenAI, Anthropic, dan Gemini SDK.
+            </p>
+          </section>
+
+          <div className="grid gap-4 md:grid-cols-2">
           <section className="rounded-[22px] border border-[var(--line)] bg-[var(--paper)] p-5 sm:p-6">
             <div className="flex items-center gap-2 text-[var(--muted)]">
               <Cpu className="h-4 w-4 text-[var(--green)]" aria-hidden="true" />
@@ -167,6 +204,7 @@ export default function PublicBansos() {
               )}
             </div>
           </section>
+        </div>
         </div>
       )}
 

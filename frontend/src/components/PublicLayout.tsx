@@ -25,7 +25,7 @@ const DOCS_URL = "https://github.com/mydisha/keirouter#readme";
 const TABS = [
   { id: "overview", label: "Home", href: "#overview", d: "M3 11l9-8 9 8M5 10v10h14V10" },
   { id: "models", label: "Model", href: "#models", d: "M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7" },
-  { id: "bansos", label: "Bansos", href: "/bansos", d: "M14 4a3 3 0 0 1 3 3v6a4 4 0 1 1-8 0V7a3 3 0 0 1 3-3ZM5 21v-1a4 4 0 0 1 4-4M9 20h.01", trailing: true },
+  { id: "bansos", label: "Bansos", href: "/bansos", d: "M4 8h16a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7M7.5 8a2.5 2.5 0 0 1 0-5A4.8 8 0 0 1 12 8a4.8 8 0 0 1 4.5-5 2.5 2.5 0 0 1 0 5", trailing: true },
   { id: "purchase", label: "Beli", href: "#purchase", d: "M3 7V5h16v3M3 8h18v12H3V8Zm18 4h-6v4h6" },
   { id: "balance", label: "Saldo", href: "#balance", d: "M14 10a6 6 0 1 1-2-4M13 11l9-9m-4 4 3 3m-6 0 3 3" },
   { id: "docs", label: "Docs", href: DOCS_URL, d: "M3 4h7l2 2 2-2h7v16h-7l-2 1-2-1H3V4Zm9 2v15" },
