@@ -33,6 +33,7 @@ const KeyDetailPage = lazy(routeLoaders["/key-detail"]);
 const GuardrailsPage = lazy(routeLoaders["/guardrails"]);
 const ProviderHealthPage = lazy(routeLoaders["/provider-health"]);
 const PublicLanding = lazy(() => import("./pages/PublicLanding"));
+const PublicBansos = lazy(() => import("./pages/PublicBansos"));
 
 function PageFallback() {
   return (
@@ -48,6 +49,7 @@ export function App() {
       <Routes>
         {/* Public landing — no auth. */}
         <Route path="/" element={<PublicLanding />} />
+        <Route path="/bansos" element={<PublicBansos />} />
         <Route path="portal" element={
           <PortalBrandingProvider>
             <KeyPortalPage />
