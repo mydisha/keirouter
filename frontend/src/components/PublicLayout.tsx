@@ -194,7 +194,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
         </div>
       </header>
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-[var(--line)] bg-[var(--nav-surface)] px-1 pb-[env(safe-area-inset-bottom)] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-[var(--line)] bg-[var(--nav-surface)] px-1 pb-[env(safe-area-inset-bottom)] md:hidden"
         role="tablist"
         aria-label="Navigasi utama"
       >
