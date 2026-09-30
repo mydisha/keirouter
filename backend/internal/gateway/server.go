@@ -34,6 +34,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/oauth"
 	"github.com/mydisha/keirouter/backend/internal/observ"
 	"github.com/mydisha/keirouter/backend/internal/pipeline"
+	"github.com/mydisha/keirouter/backend/internal/portalauth"
 	"github.com/mydisha/keirouter/backend/internal/store"
 	"github.com/mydisha/keirouter/backend/internal/transform"
 	"github.com/mydisha/keirouter/backend/internal/tunnel/cloudflare"
@@ -92,6 +93,7 @@ type Server struct {
 	healthChecker       *healthcheck.Checker
 	providerHealth      *health.Service
 	probeRunner         *health.ProbeRunner
+	portalSSO           *portalauth.Service
 	router              chi.Router
 }
 
@@ -208,6 +210,14 @@ func New(d Deps) *Server {
 		providerHealth:      d.ProviderHealth,
 		probeRunner:         d.ProbeRunner,
 	}
+	if d.Config.PortalSSO.Enabled {
+		s.portalSSO = portalauth.New(portalauth.Config{
+			ClientID:       d.Config.PortalSSO.GoogleClientID,
+			ClientSecret:   d.Config.PortalSSO.GoogleClientSecret,
+			RedirectURL:    d.Config.PortalSSO.RedirectURL,
+			AllowedDomains: d.Config.PortalSSO.AllowedDomains,
+		})
+	}
 	s.currencySvc = currency.New(d.Settings)
 	if d.Settings != nil {
 		s.currencySvc.Start(context.Background())
@@ -316,8 +326,19 @@ func (s *Server) routes() chi.Router {
 	})
 
 	// Public portal endpoints (no auth required)
-	r.Get("/v1/portal/keys/{id}/usage", s.handlePortalKeyUsage)
 	r.Get("/v1/portal/branding", s.portalBranding)
+
+	// Public portal SSO + portal-scoped API. Session cookie is isolated from
+	// the dashboard cookie so a portal session can never reach admin routes.
+	r.Get("/portal/auth/google/start", s.handlePortalLoginStart)
+	r.Get("/portal/auth/google/callback", s.handlePortalLoginCallback)
+	r.Get("/portal/auth/status", s.handlePortalStatus)
+	r.Group(func(r chi.Router) {
+		r.Use(s.portalSessionMiddleware)
+		r.Post("/portal/auth/claim", s.handlePortalClaim)
+		r.Get("/portal/usage", s.handlePortalUsage)
+		r.Post("/portal/auth/logout", s.handlePortalLogout)
+	})
 
 	// Public landing API: read-only aggregates, no auth, per-IP limited.
 	r.Group(func(r chi.Router) {

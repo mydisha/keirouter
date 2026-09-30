@@ -155,8 +155,9 @@ func (s *Service) CompleteOnboarding(ctx context.Context) error {
 
 // session is the signed token payload.
 type session struct {
-	Sub string `json:"sub"`
-	Exp int64  `json:"exp"`
+	Sub   string `json:"sub"`
+	Email string `json:"email,omitempty"`
+	Exp   int64  `json:"exp"`
 }
 
 // IssueSession mints a signed session token valid for the configured TTL.
@@ -168,8 +169,17 @@ func (s *Service) IssueSession() (string, error) {
 // The portal uses a distinct subject (e.g. "portal:<google_sub>") so a portal
 // token can never be accepted by the dashboard middleware.
 func (s *Service) IssueSessionFor(sub string) (string, error) {
-	payload := session{Sub: sub, Exp: time.Now().Add(s.ttl).Unix()}
-	raw, err := json.Marshal(payload)
+	return s.issue(session{Sub: sub, Exp: time.Now().Add(s.ttl).Unix()})
+}
+
+// IssuePortalSession mints a portal token carrying the verified Google subject
+// and email, so the claim handler can bind without a second id_token lookup.
+func (s *Service) IssuePortalSession(sub, email string) (string, error) {
+	return s.issue(session{Sub: sub, Email: email, Exp: time.Now().Add(s.ttl).Unix()})
+}
+
+func (s *Service) issue(p session) (string, error) {
+	raw, err := json.Marshal(p)
 	if err != nil {
 		return "", err
 	}
@@ -190,25 +200,37 @@ func (s *Service) VerifySessionSub(token, sub string) bool {
 
 // SessionSubject returns the signed subject of a valid, unexpired token.
 func (s *Service) SessionSubject(token string) (string, bool) {
+	p, ok := s.claims(token)
+	return p.Sub, ok
+}
+
+// SessionEmail returns the email claim of a valid, unexpired token.
+func (s *Service) SessionEmail(token string) (string, bool) {
+	p, ok := s.claims(token)
+	return p.Email, ok
+}
+
+// claims verifies the signature and expiry and returns the decoded payload.
+func (s *Service) claims(token string) (session, bool) {
 	body, sig, ok := strings.Cut(token, ".")
 	if !ok {
-		return "", false
+		return session{}, false
 	}
 	if !hmac.Equal([]byte(sig), []byte(s.sign(body))) {
-		return "", false
+		return session{}, false
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(body)
 	if err != nil {
-		return "", false
+		return session{}, false
 	}
 	var p session
 	if err := json.Unmarshal(raw, &p); err != nil {
-		return "", false
+		return session{}, false
 	}
 	if time.Now().Unix() >= p.Exp {
-		return "", false
+		return session{}, false
 	}
-	return p.Sub, true
+	return p, true
 }
 
 // TTL returns the session lifetime.
