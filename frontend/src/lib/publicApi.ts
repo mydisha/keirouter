@@ -66,3 +66,20 @@ export const fetchPublicModels = () =>
 
 export const fetchPublicNotifications = () =>
   getJSON<{ notifications: LandingNotification[] }>("/v1/public/notifications").then((d) => d.notifications);
+
+export interface PublicBansos {
+  exists: boolean;
+  active: boolean;
+  mode: "credit" | "unlimited";
+  masked_display: string;
+  allowed_models: string[];
+  rpm: number;
+  tpm: number;
+  credit_remaining_usd: number | null;
+  updated_at?: string;
+}
+
+export const fetchPublicBansos = () => getJSON<PublicBansos>("/v1/public/bansos");
+
+export const fetchPublicBansosKey = () =>
+  getJSON<{ key: string }>("/v1/public/bansos/key").then((d) => d.key);

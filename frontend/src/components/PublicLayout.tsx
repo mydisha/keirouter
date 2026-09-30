@@ -25,6 +25,7 @@ const DOCS_URL = "https://github.com/mydisha/keirouter#readme";
 const TABS = [
   { id: "overview", label: "Home", href: "#overview", d: "M3 11l9-8 9 8M5 10v10h14V10" },
   { id: "models", label: "Model", href: "#models", d: "M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7" },
+  { id: "bansos", label: "Bansos", href: "/bansos", d: "M14 4a3 3 0 0 1 3 3v6a4 4 0 1 1-8 0V7a3 3 0 0 1 3-3ZM5 21v-1a4 4 0 0 1 4-4M9 20h.01", trailing: true },
   { id: "purchase", label: "Beli", href: "#purchase", d: "M3 7V5h16v3M3 8h18v12H3V8Zm18 4h-6v4h6" },
   { id: "balance", label: "Saldo", href: "#balance", d: "M14 10a6 6 0 1 1-2-4M13 11l9-9m-4 4 3 3m-6 0 3 3" },
   { id: "docs", label: "Docs", href: DOCS_URL, d: "M3 4h7l2 2 2-2h7v16h-7l-2 1-2-1H3V4Zm9 2v15" },
@@ -140,8 +141,17 @@ function TabLink({
         stacked ? "flex-col gap-1 px-1 py-1.5 text-[10px]" : "px-3 py-2 text-[13px]"
       } ${isActive ? "bg-[var(--accent-bg)] font-[650] text-[var(--green)]" : "text-[var(--muted)] hover:bg-[var(--soft)]"}`}
     >
-      <UiIcon d={tab.d} size={stacked ? 20 : 17} />
-      <span>{tab.label}</span>
+      {"trailing" in tab && tab.trailing ? (
+        <>
+          <span>{tab.label}</span>
+          <UiIcon d={tab.d} size={stacked ? 20 : 17} />
+        </>
+      ) : (
+        <>
+          <UiIcon d={tab.d} size={stacked ? 20 : 17} />
+          <span>{tab.label}</span>
+        </>
+      )}
     </a>
   );
 }
