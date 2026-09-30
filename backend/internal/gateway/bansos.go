@@ -203,6 +203,10 @@ func (s *Server) adminCreateBansos(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if m <= 0 {
+			writeError(w, http.StatusBadRequest, "credit_limit_usd must be greater than zero in credit mode")
+			return
+		}
 		creditMicros = m
 	}
 
@@ -226,6 +230,18 @@ func (s *Server) adminCreateBansos(w http.ResponseWriter, r *http.Request) {
 	issued.Record.PlanID = plan.ID
 	issued.Record.Disabled = true
 
+	cfg := bansosConfig{
+		KeyID: issued.Record.ID, PlanID: plan.ID, Active: false, Mode: mode,
+		SealedKey: sealed, MaskedDisplay: issued.Record.Display,
+		AllowedModels: models, RPM: body.RPM, TPM: body.TPM,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	settingsJSON, err := json.Marshal(cfg)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "transaction start failed")
@@ -233,6 +249,17 @@ func (s *Server) adminCreateBansos(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Claim the single bansos settings key first with a plain INSERT (no upsert):
+	// the unique key is the exclusive lock that makes create atomic and turns a
+	// concurrent second create into a 409 instead of a last-write-wins orphan.
+	if err := s.settings.InsertIfAbsentOnTx(r.Context(), tx, bansosSettingsKey, string(settingsJSON)); err != nil {
+		if errors.Is(err, store.ErrAlreadyExists) {
+			writeError(w, http.StatusConflict, "bansos already exists")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
 	if err := s.db.Plans().CreateOnTx(r.Context(), tx, plan); err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
@@ -260,16 +287,6 @@ func (s *Server) adminCreateBansos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cfg := bansosConfig{
-		KeyID: issued.Record.ID, PlanID: plan.ID, Active: false, Mode: mode,
-		SealedKey: sealed, MaskedDisplay: issued.Record.Display,
-		AllowedModels: models, RPM: body.RPM, TPM: body.TPM,
-		CreatedAt: now, UpdatedAt: now,
-	}
-	if err := s.saveBansos(r.Context(), cfg); err != nil {
-		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
-		return
-	}
 	if s.budgetEngine != nil {
 		s.budgetEngine.InvalidateBudgetCache()
 	}
@@ -285,9 +302,11 @@ func (s *Server) adminCreateBansos(w http.ResponseWriter, r *http.Request) {
 }
 
 // adminUpdateBansos patches the bansos config. All fields are optional; an
-// omitted field is left unchanged. The resulting state must never be active
-// with zero allowed models, so activation and model clearing are validated
-// together as a fail-closed invariant before any mutation.
+// omitted field is left unchanged. Every field is parsed and validated before
+// the first write, so a partially invalid combined patch can never persist a
+// partial change. The resulting state must never be active with zero allowed
+// models, and a resulting credit mode must have a strictly positive limit, so
+// both are enforced as fail-closed invariants before any mutation.
 func (s *Server) adminUpdateBansos(w http.ResponseWriter, r *http.Request) {
 	cfg, ok, err := s.loadBansos(r.Context())
 	if err != nil {
@@ -312,6 +331,24 @@ func (s *Server) adminUpdateBansos(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
+	// ── Validate every field before performing any mutation ────────────────
+	resultingMode := cfg.Mode
+	if body.Mode != nil {
+		if *body.Mode != bansosModeUnlimited && *body.Mode != bansosModeCredit {
+			writeError(w, http.StatusBadRequest, "mode must be credit or unlimited")
+			return
+		}
+		resultingMode = *body.Mode
+	}
+	if body.RPM != nil && *body.RPM < 0 {
+		writeError(w, http.StatusBadRequest, "rpm must not be negative")
+		return
+	}
+	if body.TPM != nil && *body.TPM < 0 {
+		writeError(w, http.StatusBadRequest, "tpm must not be negative")
+		return
+	}
+
 	effectiveActive := cfg.Active
 	if body.Active != nil {
 		effectiveActive = *body.Active
@@ -325,6 +362,52 @@ func (s *Server) adminUpdateBansos(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve the effective credit limit. The budget lookup is a read and is safe
+	// before mutation. A resulting credit mode must have a strictly positive
+	// limit (incoming amount, else the existing budget's) or the budget would
+	// fail open in budget.Engine.Check.
+	var (
+		creditLimitMicros int64
+		creditLimitSet    bool
+	)
+	if body.CreditLimitUSD != nil {
+		m, err := usdLimitToMicros(*body.CreditLimitUSD)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		creditLimitMicros = m
+		creditLimitSet = true
+	}
+	var existingBudgets []store.Budget
+	if resultingMode == bansosModeCredit || body.Mode != nil || creditLimitSet {
+		existingBudgets, err = s.budgets.ListByScope(ctx, store.ScopeAPIKey, cfg.KeyID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+			return
+		}
+	}
+	if resultingMode == bansosModeCredit {
+		effectiveLimit := creditLimitMicros
+		if !creditLimitSet && len(existingBudgets) > 0 {
+			effectiveLimit = existingBudgets[0].LimitMicros
+		}
+		if effectiveLimit <= 0 {
+			writeError(w, http.StatusBadRequest, "credit_limit_usd must be greater than zero in credit mode")
+			return
+		}
+	}
+
+	var plan store.Plan
+	if body.RPM != nil || body.TPM != nil || body.Mode != nil {
+		plan, err = s.db.Plans().Get(ctx, cfg.PlanID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+			return
+		}
+	}
+
+	// ── All validations passed; apply the mutations ────────────────────────
 	if body.AllowedModels != nil {
 		if err := s.identity.Keys().SetAllowedModels(ctx, cfg.KeyID, effectiveModels); err != nil {
 			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
@@ -334,24 +417,11 @@ func (s *Server) adminUpdateBansos(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.RPM != nil || body.TPM != nil || body.Mode != nil {
-		plan, err := s.db.Plans().Get(ctx, cfg.PlanID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
-			return
-		}
 		if body.RPM != nil {
-			if *body.RPM < 0 {
-				writeError(w, http.StatusBadRequest, "rpm must not be negative")
-				return
-			}
 			plan.RPMLimit = *body.RPM
 			cfg.RPM = *body.RPM
 		}
 		if body.TPM != nil {
-			if *body.TPM < 0 {
-				writeError(w, http.StatusBadRequest, "tpm must not be negative")
-				return
-			}
 			plan.TPMLimit = *body.TPM
 			cfg.TPM = *body.TPM
 		}
@@ -362,69 +432,31 @@ func (s *Server) adminUpdateBansos(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if body.Mode != nil {
-		mode := *body.Mode
-		if mode != bansosModeUnlimited && mode != bansosModeCredit {
-			writeError(w, http.StatusBadRequest, "mode must be credit or unlimited")
-			return
-		}
-		if mode != cfg.Mode {
-			if mode == bansosModeUnlimited {
-				budgets, err := s.budgets.ListByScope(ctx, store.ScopeAPIKey, cfg.KeyID)
-				if err != nil {
+	if body.Mode != nil && *body.Mode != cfg.Mode {
+		if *body.Mode == bansosModeUnlimited {
+			for _, b := range existingBudgets {
+				if err := s.budgets.Delete(ctx, b.ID); err != nil {
 					writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 					return
-				}
-				for _, b := range budgets {
-					if err := s.budgets.Delete(ctx, b.ID); err != nil {
-						writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
-						return
-					}
-				}
-			} else {
-				var limitMicros int64
-				if body.CreditLimitUSD != nil {
-					m, err := usdLimitToMicros(*body.CreditLimitUSD)
-					if err != nil {
-						writeError(w, http.StatusBadRequest, err.Error())
-						return
-					}
-					limitMicros = m
-				}
-				existing, err := s.budgets.ListByScope(ctx, store.ScopeAPIKey, cfg.KeyID)
-				if err != nil {
-					writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
-					return
-				}
-				if len(existing) == 0 {
-					now := time.Now()
-					if err := s.budgets.Create(ctx, store.Budget{
-						ID: uuid.NewString(), TenantID: adminTenant, ScopeKind: store.ScopeAPIKey,
-						ScopeID: cfg.KeyID, LimitMicros: limitMicros, Period: "total",
-						AlertPct: 80, HardCutoff: true, CreatedAt: now, UpdatedAt: now,
-					}); err != nil {
-						writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
-						return
-					}
 				}
 			}
-			cfg.Mode = mode
+		} else if len(existingBudgets) == 0 {
+			now := time.Now()
+			if err := s.budgets.Create(ctx, store.Budget{
+				ID: uuid.NewString(), TenantID: adminTenant, ScopeKind: store.ScopeAPIKey,
+				ScopeID: cfg.KeyID, LimitMicros: creditLimitMicros, Period: "total",
+				AlertPct: 80, HardCutoff: true, CreatedAt: now, UpdatedAt: now,
+			}); err != nil {
+				writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+				return
+			}
 		}
-	} else if body.CreditLimitUSD != nil && cfg.Mode == bansosModeCredit {
+		cfg.Mode = *body.Mode
+	} else if creditLimitSet && resultingMode == bansosModeCredit {
 		// Absolute limit edit while staying in credit mode.
-		m, err := usdLimitToMicros(*body.CreditLimitUSD)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		budgets, err := s.budgets.ListByScope(ctx, store.ScopeAPIKey, cfg.KeyID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
-			return
-		}
-		if len(budgets) > 0 {
-			b := budgets[0]
-			b.LimitMicros = m
+		if len(existingBudgets) > 0 {
+			b := existingBudgets[0]
+			b.LimitMicros = creditLimitMicros
 			b.UpdatedAt = time.Now()
 			if err := s.budgets.Update(ctx, b); err != nil {
 				writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))

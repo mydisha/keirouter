@@ -6,7 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	sqlite "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
+
+// ErrAlreadyExists is returned when an insert conflicts with an existing row.
+var ErrAlreadyExists = errors.New("store: already exists")
 
 // TenantRepo persists tenants and projects.
 type TenantRepo struct{ db *DB }
@@ -87,6 +94,40 @@ func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 		return fmt.Errorf("store: delete setting: %w", err)
 	}
 	return nil
+}
+
+// InsertIfAbsentOnTx inserts a setting inside an existing transaction and
+// returns ErrAlreadyExists when the key is already present. Unlike Set, this
+// never overwrites, so it can be used as an exclusive lock: a concurrent
+// creator that loses the race gets ErrAlreadyExists instead of clobbering the
+// winner's row. The check is the DB's unique constraint, not a read-then-write.
+func (r *SettingsRepo) InsertIfAbsentOnTx(ctx context.Context, tx *sql.Tx, key, value string) error {
+	q := r.db.rebind(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)`)
+	_, err := tx.ExecContext(ctx, q, key, value, formatTime(time.Now()))
+	if err != nil {
+		if isUniqueViolation(err) {
+			return ErrAlreadyExists
+		}
+		return fmt.Errorf("store: insert setting: %w", err)
+	}
+	return nil
+}
+
+// isUniqueViolation reports whether err is a unique/primary-key constraint
+// violation from either supported engine. modernc SQLite reports result codes
+// SQLITE_CONSTRAINT_PRIMARYKEY (1555) and SQLITE_CONSTRAINT_UNIQUE (2067);
+// Postgres reports SQLSTATE 23505.
+func isUniqueViolation(err error) bool {
+	var se *sqlite.Error
+	if errors.As(err, &se) {
+		code := se.Code()
+		return code == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY || code == sqlite3.SQLITE_CONSTRAINT_UNIQUE
+	}
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		return pe.Code == "23505"
+	}
+	return false
 }
 
 // AuditRepo appends and reads audit entries.

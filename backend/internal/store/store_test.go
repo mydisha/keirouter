@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 	"time"
 
@@ -19,6 +20,49 @@ func newTestDB(t *testing.T) *DB {
 	require.NoError(t, db.Tenants().EnsureDefault(ctx))
 	t.Cleanup(func() { _ = db.Close() })
 	return db
+}
+
+// InsertIfAbsentOnTx inserts a settings row inside a transaction and reports
+// ErrAlreadyExists when the key is taken, unlike Set's upsert. This is the
+// exclusive lock that makes bansos create atomic.
+func TestSettingsRepo_InsertIfAbsentOnTx(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	// Commit a first insert.
+	tx := mustTx(t, db)
+	require.NoError(t, db.Settings().InsertIfAbsentOnTx(ctx, tx, "lock", "v1"))
+	require.NoError(t, tx.Commit())
+
+	got, err := db.Settings().Get(ctx, "lock")
+	require.NoError(t, err)
+	require.Equal(t, "v1", got)
+
+	// A second insert on the taken key errors with the sentinel; roll back so
+	// the write lock is released before the next statement.
+	tx2 := mustTx(t, db)
+	require.ErrorIs(t, db.Settings().InsertIfAbsentOnTx(ctx, tx2, "lock", "v2"), ErrAlreadyExists)
+	require.NoError(t, tx2.Rollback())
+
+	// The original value is untouched.
+	got, err = db.Settings().Get(ctx, "lock")
+	require.NoError(t, err)
+	require.Equal(t, "v1", got)
+
+	// A rolled-back insert does not reserve the key.
+	tx3 := mustTx(t, db)
+	require.NoError(t, db.Settings().InsertIfAbsentOnTx(ctx, tx3, "fresh", "v"))
+	require.NoError(t, tx3.Rollback())
+	_, err = db.Settings().Get(ctx, "fresh")
+	require.ErrorIs(t, err, ErrNotFound)
+}
+
+func mustTx(t *testing.T, db *DB) *sql.Tx {
+	t.Helper()
+	tx, err := db.sql.BeginTx(context.Background(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
+	return tx
 }
 
 func TestMigrate_Idempotent(t *testing.T) {

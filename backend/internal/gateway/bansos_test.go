@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -240,6 +241,146 @@ func TestAdminBansosTopupAndRotate(t *testing.T) {
 	w4 := callBansosHandler(t, s, s.adminBansosTopup, http.MethodPost, "/bansos/topup",
 		`{"amount_usd":1,"idempotency_key":"b-2"}`)
 	require.Equal(t, http.StatusBadRequest, w4.Code, w4.Body.String())
+}
+
+// Finding 1: a credit budget with a zero (or absent) limit must never be
+// created, because budget.Engine.Check only blocks when LimitMicros > 0.
+func TestAdminCreateBansosRejectsZeroCreditLimit(t *testing.T) {
+	s, db := newBansosTestServer(t)
+	ctx := context.Background()
+
+	w := callBansosHandler(t, s, s.adminCreateBansos, http.MethodPost, "/bansos",
+		`{"mode":"credit","allowed_models":["claude-*"],"credit_limit_usd":0}`)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	// Fail closed: no settings doc, no key, no plan leaked from the rejected create.
+	_, ok, err := s.loadBansos(ctx)
+	require.NoError(t, err)
+	require.False(t, ok)
+	keys, err := db.APIKeys().List(ctx, adminTenant)
+	require.NoError(t, err)
+	require.Empty(t, keys)
+	require.Empty(t, bansosPlans(t, db, ctx))
+}
+
+// Finding 1: switching an unlimited bansos to credit via the UI's
+// `{mode:"credit"}` patch (no amount) must fail closed rather than create a
+// zero-limit budget that permits unbounded spend.
+func TestAdminUpdateBansosCreditRequiresPositiveLimit(t *testing.T) {
+	s, db := newBansosTestServer(t)
+	ctx := context.Background()
+
+	w := callBansosHandler(t, s, s.adminCreateBansos, http.MethodPost, "/bansos",
+		`{"mode":"unlimited","allowed_models":["claude-*"]}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	cfg, _, err := s.loadBansos(ctx)
+	require.NoError(t, err)
+
+	w2 := callBansosHandler(t, s, s.adminUpdateBansos, http.MethodPatch, "/bansos", `{"mode":"credit"}`)
+	require.Equal(t, http.StatusBadRequest, w2.Code, w2.Body.String())
+
+	// No budget row was created for the key.
+	budgets, err := db.Budgets().ListByScope(ctx, store.ScopeAPIKey, cfg.KeyID)
+	require.NoError(t, err)
+	require.Empty(t, budgets)
+
+	// The mode is unchanged.
+	got, _, err := s.loadBansos(ctx)
+	require.NoError(t, err)
+	require.Equal(t, bansosModeUnlimited, got.Mode)
+
+	// A zero explicit limit is likewise rejected (usdLimitToMicros allows 0).
+	w3 := callBansosHandler(t, s, s.adminUpdateBansos, http.MethodPatch, "/bansos", `{"mode":"credit","credit_limit_usd":0}`)
+	require.Equal(t, http.StatusBadRequest, w3.Code, w3.Body.String())
+	budgets, err = db.Budgets().ListByScope(ctx, store.ScopeAPIKey, cfg.KeyID)
+	require.NoError(t, err)
+	require.Empty(t, budgets)
+}
+
+// Finding 2: a malformed combined PATCH must not persist any field. The valid
+// allowed_models change must be rolled back when a later field (negative rpm)
+// fails validation.
+func TestAdminUpdateBansosMalformedPatchPersistsNothing(t *testing.T) {
+	s, db := newBansosTestServer(t)
+	ctx := context.Background()
+
+	w := callBansosHandler(t, s, s.adminCreateBansos, http.MethodPost, "/bansos",
+		`{"mode":"unlimited","allowed_models":["claude-*"]}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	cfg, _, err := s.loadBansos(ctx)
+	require.NoError(t, err)
+
+	w2 := callBansosHandler(t, s, s.adminUpdateBansos, http.MethodPatch, "/bansos",
+		`{"allowed_models":["gpt-5"],"rpm":-1}`)
+	require.Equal(t, http.StatusBadRequest, w2.Code, w2.Body.String())
+
+	models, err := db.APIKeys().GetAllowedModels(ctx, cfg.KeyID)
+	require.NoError(t, err)
+	require.Equal(t, []string{"claude-*"}, models, "rejected patch must not change the allowlist")
+}
+
+// Finding 3: create must be atomic and the settings key must be an exclusive
+// lock, so two concurrent creates cannot both succeed and last-write-wins.
+func TestAdminCreateBansosConcurrentOnlyOneWins(t *testing.T) {
+	s, db := newBansosTestServer(t)
+	ctx := context.Background()
+
+	const n = 2
+	codes := make([]int, n)
+	bodies := make([]string, n)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			r := httptest.NewRequest(http.MethodPost, "/bansos",
+				strings.NewReader(`{"mode":"unlimited","allowed_models":["claude-*"]}`))
+			rec := httptest.NewRecorder()
+			s.adminCreateBansos(rec, r)
+			codes[i] = rec.Code
+			bodies[i] = rec.Body.String()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	created, conflicts := 0, 0
+	for i := 0; i < n; i++ {
+		switch codes[i] {
+		case http.StatusCreated:
+			created++
+		case http.StatusConflict:
+			conflicts++
+		}
+	}
+	require.Equal(t, 1, created, "exactly one create must win; bodies=%v", bodies)
+	require.Equal(t, 1, conflicts, "the loser must get 409; bodies=%v", bodies)
+
+	// Exactly one settings doc, one key, one plan survived.
+	_, ok, err := s.loadBansos(ctx)
+	require.NoError(t, err)
+	require.True(t, ok)
+	keys, err := db.APIKeys().List(ctx, adminTenant)
+	require.NoError(t, err)
+	require.Len(t, keys, 1)
+	require.Len(t, bansosPlans(t, db, ctx), 1)
+}
+
+// bansosPlans returns only the plans created for bansos (the DB seeds a default
+// plan for the tenant on migrate, so an unfiltered List is not meaningful).
+func bansosPlans(t *testing.T, db *store.DB, ctx context.Context) []store.Plan {
+	t.Helper()
+	plans, err := db.Plans().List(ctx, adminTenant)
+	require.NoError(t, err)
+	var out []store.Plan
+	for _, p := range plans {
+		if p.Name == "bansos" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func callBansosHandlerWithID(t *testing.T, s *Server, h func(http.ResponseWriter, *http.Request), method, target, id, body string) *httptest.ResponseRecorder {

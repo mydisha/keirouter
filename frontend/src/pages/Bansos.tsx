@@ -168,7 +168,23 @@ export function BansosPage() {
                 <select
                   className="w-full rounded-lg border border-[var(--line)] bg-[var(--paper)] px-3 py-2 text-sm"
                   value={data.mode}
-                  onChange={(e) => update.mutate({ mode: e.target.value as "credit" | "unlimited" })}
+                  onChange={(e) => {
+                    const next = e.target.value as "credit" | "unlimited";
+                    const patch: Parameters<typeof api.updateBansos>[0] = { mode: next };
+                    if (next === "credit" && !(data.credit && data.credit.limit_usd > 0)) {
+                      // Credit with no positive limit fails closed on the server,
+                      // so require an amount instead of sending a 400 patch.
+                      const input = window.prompt("Kredit awal (USD):");
+                      if (input === null) return;
+                      const amount = Number(input);
+                      if (!Number.isFinite(amount) || amount <= 0) {
+                        toast.error("Kredit harus lebih dari 0");
+                        return;
+                      }
+                      patch.credit_limit_usd = amount;
+                    }
+                    update.mutate(patch);
+                  }}
                 >
                   <option value="unlimited">Unlimited</option>
                   <option value="credit">Credit</option>
