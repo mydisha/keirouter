@@ -57,6 +57,18 @@ func (s *Service) AuthURL(state string) string {
 	return s.oauth.AuthCodeURL(state, oauth2.AccessTypeOnline)
 }
 
+// WithRedirect returns a Service whose redirect URL is overridden. Used when
+// redirect_url is unset in config so it can be derived per request from the
+// forwarded host without mutating the shared Service (avoids data races).
+func (s *Service) WithRedirect(redirectURL string) *Service {
+	if redirectURL == "" || redirectURL == s.cfg.RedirectURL {
+		return s
+	}
+	cfg := s.cfg
+	cfg.RedirectURL = redirectURL
+	return New(cfg)
+}
+
 // domainAllowed reports whether the email passes the allow-list.
 func (s *Service) domainAllowed(email string) bool {
 	if len(s.cfg.AllowedDomains) == 0 {

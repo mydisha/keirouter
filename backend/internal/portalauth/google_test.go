@@ -22,6 +22,20 @@ func TestAuthURLContainsGoogleAuthorizeAndState(t *testing.T) {
 	}
 }
 
+func TestWithRedirect(t *testing.T) {
+	s := New(Config{ClientID: "c"})
+	derived := s.WithRedirect("http://host/portal/auth/google/callback")
+	if derived == s {
+		t.Fatal("a non-empty override must return a distinct service")
+	}
+	if !strings.Contains(derived.AuthURL("x"), "redirect_uri=http%3A%2F%2Fhost%2Fportal%2Fauth%2Fgoogle%2Fcallback") {
+		t.Fatalf("override not applied: %s", derived.AuthURL("x"))
+	}
+	if s.WithRedirect("") != s {
+		t.Fatal("empty override must return the same service")
+	}
+}
+
 func TestAcceptPolicy(t *testing.T) {
 	s := New(Config{AllowedDomains: []string{"example.com"}})
 	if _, err := s.accept(Identity{Email: "a@example.com", EmailVerified: false}); err != ErrEmailNotVerified {
