@@ -12,6 +12,16 @@ type Tenant struct {
 	CreatedAt time.Time
 }
 
+// PortalUser binds one Google identity to exactly one API key for the public
+// usage portal. GoogleSub is Google's stable subject id.
+type PortalUser struct {
+	GoogleSub string
+	Email     string
+	KeyID     string
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // Project partitions usage and budgets within a tenant.
 type Project struct {
 	ID        string
