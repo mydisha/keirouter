@@ -15,7 +15,6 @@ import (
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
 
-	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/mydisha/keirouter/backend/internal/budget"
 	"github.com/mydisha/keirouter/backend/internal/config"
@@ -1052,29 +1051,12 @@ func (s *Server) handleKeyUsage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handlePortalKeyUsage(w http.ResponseWriter, r *http.Request) {
-	keyID := chi.URLParam(r, "id")
-	if keyID == "" {
-		writeError(w, http.StatusBadRequest, "missing key id")
-		return
-	}
-
-	ctx := r.Context()
-	key, err := s.identity.Keys().Get(ctx, keyID)
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "key not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to get key")
-		return
-	}
-
+// buildKeyUsageMap assembles the portal usage payload for one key.
+func (s *Server) buildKeyUsageMap(ctx context.Context, key store.APIKey, days int) (map[string]any, error) {
 	// Get budgets scoped to this key.
 	budgets, err := s.budgets.ListByScope(ctx, store.ScopeAPIKey, key.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list budgets")
-		return
+		return nil, err
 	}
 
 	type budgetOut struct {
@@ -1131,8 +1113,7 @@ func (s *Server) handlePortalKeyUsage(w http.ResponseWriter, r *http.Request) {
 
 	allowedModels, err := s.identity.Keys().GetAllowedModels(ctx, key.ID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to get model access")
-		return
+		return nil, err
 	}
 
 	// Get current period summary scoped to this specific key.
@@ -1141,22 +1122,6 @@ func (s *Server) handlePortalKeyUsage(w http.ResponseWriter, r *http.Request) {
 	summary, err := s.usage.SummarizeByKey(ctx, key.ID, periodStart)
 	if err != nil {
 		s.log.Error("key usage: summarize failed", "err", err)
-	}
-
-	// days lookback for charts, model breakdown, and recent requests.
-	// Default is 30 days. Valid values: 7, 14, 30, 90.
-	days := 30
-	if d := r.URL.Query().Get("days"); d != "" {
-		switch d {
-		case "7":
-			days = 7
-		case "14":
-			days = 14
-		case "30":
-			days = 30
-		case "90":
-			days = 90
-		}
 	}
 
 	// Daily usage series for the portal chart.
@@ -1233,7 +1198,7 @@ func (s *Server) handlePortalKeyUsage(w http.ResponseWriter, r *http.Request) {
 		recentOut = append(recentOut, entry)
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"key_id":         key.ID,
 		"key_name":       key.Name,
 		"budgets":        budgetOuts,
@@ -1248,7 +1213,7 @@ func (s *Server) handlePortalKeyUsage(w http.ResponseWriter, r *http.Request) {
 		"models": modelOut,
 		"recent": recentOut,
 		"days":   days,
-	})
+	}, nil
 }
 
 // detectClient identifies the calling tool from request headers, used for

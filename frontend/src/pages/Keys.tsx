@@ -174,7 +174,7 @@ function KeyRow({
   onRevoke: () => void;
   togglePending: boolean;
 }) {
-  const portalUrl = `${window.location.origin}/portal?id=${apiKey.id}`;
+  const portalUrl = `${window.location.origin}/portal`;
   const modelCount = apiKey.allowed_models?.length ?? 0;
 
   return (
@@ -1046,7 +1046,7 @@ function StepSuccess({
 }) {
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedAll, setCopiedAll] = useState(false);
-  const portalUrl = `${window.location.origin}/portal?id=${created.id}`;
+  const portalUrl = `${window.location.origin}/portal`;
 
   const shareText = [
     "Keirouter",

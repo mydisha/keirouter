@@ -374,7 +374,43 @@ Copy, paste into your tool's config, done.
 
 ## 🌐 Usage Portal
 
-A dedicated, no-admin-required view at `/portal` where teammates keep an eye on their own usage — quota and spend, token usage over time, compression savings, and plan limits. All it asks for is the API key. No keys to the kingdom required.
+A dedicated, no-admin-required view at `/portal` where teammates keep an eye on their own usage — quota and spend, token usage over time, compression savings, and plan limits.
+
+Sign-in is per user and Google-based:
+
+1. Open `/portal` and click **Sign in with Google**.
+2. On first sign-in, paste your full API key once to **claim** it. A key can be claimed by exactly one Google account.
+3. From then on, signing in shows only your own usage dashboard.
+
+No admin session is involved, and the portal session is isolated from the admin API — a portal cookie can never reach `/api/*`.
+
+### Enabling Google SSO
+
+Create an OAuth 2.0 **Web application** client in Google Cloud Console and register this authorized redirect URI:
+
+```text
+https://<your-host>/portal/auth/google/callback
+```
+
+Then enable it in `config.yaml`:
+
+```yaml
+portal_sso:
+  enabled: true
+  google_client_id: "<client-id>.apps.googleusercontent.com"
+  # optional: restrict sign-in to specific email domains
+  allowed_domains: []
+  # optional: defaults to <public-base-url>/portal/auth/google/callback
+  redirect_url: ""
+```
+
+The client **secret** is never stored in YAML. Provide it via environment:
+
+```bash
+export KEIROUTER_PORTAL_SSO__GOOGLE_CLIENT_SECRET="<client-secret>"
+```
+
+Enabling SSO without a client id and secret **fails closed** — the server refuses to start rather than exposing the portal.
 
 ---
 

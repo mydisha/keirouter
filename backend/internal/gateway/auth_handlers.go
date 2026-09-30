@@ -158,6 +158,9 @@ func (s *Server) sessionCookieSecure(r *http.Request) bool {
 // It runs after loopbackOnly, so local access still needs an authenticated
 // dashboard session — credentials and routing config are never exposed to an
 // unauthenticated caller, even on loopback.
+//
+// VerifySession enforces sub=="dashboard", so a portal session cookie (distinct
+// cookie name and "portal:<sub>" subject) can never authorize admin routes.
 func (s *Server) sessionMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)

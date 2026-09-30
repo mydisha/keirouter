@@ -169,3 +169,17 @@ log:
 data:
   # Root data directory. Empty => ~/.keirouter (or %APPDATA%/keirouter on Windows).
   dir: ""
+
+portal_sso:
+  # Google sign-in for the public usage portal at /portal.
+  enabled: false
+  # OAuth client id from Google Cloud Console. Not a secret; may live here.
+  google_client_id: ""
+  # OAuth client secret. Leave empty here and provide via environment:
+  #   KEIROUTER_PORTAL_SSO__GOOGLE_CLIENT_SECRET=...
+  google_client_secret: ""
+  # Optional: restrict sign-in to these email domains (empty = any Google account).
+  allowed_domains: []
+  # Optional: defaults to <public-base-url>/portal/auth/google/callback.
+  redirect_url: ""
+  session_ttl: 24h

@@ -1334,7 +1334,7 @@ actual, non-5xx behavior and record the observed codes.
 
 ```bash
 cd /home/emalution/keirouter/backend
-KEIROUTER_TEST_POSTGRES_DSN="postgres://keirouter:qB8FmFlOI0okQqQm7N09ScoLnV1qyJnJ@192.168.32.3:5432/keirouter?sslmode=disable" \
+KEIROUTER_TEST_POSTGRES_DSN="postgres://keirouter:<REDACTED>@192.168.32.3:5432/keirouter?sslmode=disable" \
   go test ./internal/gateway/ -run 'TestTopupRace' -race -count=5 -v
 ```
 
@@ -1380,7 +1380,7 @@ Run (DSN from the running container; value below is the local dev password):
 
 ```bash
 cd /home/emalution/keirouter/backend
-KEIROUTER_TEST_POSTGRES_DSN="postgres://keirouter:qB8FmFlOI0okQqQm7N09ScoLnV1qyJnJ@192.168.32.3:5432/keirouter?sslmode=disable" \
+KEIROUTER_TEST_POSTGRES_DSN="postgres://keirouter:<REDACTED>@192.168.32.3:5432/keirouter?sslmode=disable" \
   go test ./internal/store/ -run 'TestKeyTopup|TestBudgetRepo|TestPostgresCompatibility' -v
 ```
 
