@@ -145,3 +145,47 @@ func TestAdminCreateBansosRequiresAllowedModel(t *testing.T) {
 	w := callBansosHandler(t, s, s.adminCreateBansos, http.MethodPost, "/bansos", `{"mode":"unlimited"}`)
 	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }
+
+func TestAdminUpdateBansosToggleAndMode(t *testing.T) {
+	s, db := newBansosTestServer(t)
+	ctx := context.Background()
+
+	w := callBansosHandler(t, s, s.adminCreateBansos, http.MethodPost, "/bansos",
+		`{"mode":"credit","allowed_models":["claude-*"],"rpm":30,"credit_limit_usd":5}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+	cfg, _, err := s.loadBansos(ctx)
+	require.NoError(t, err)
+
+	// Activate.
+	w2 := callBansosHandler(t, s, s.adminUpdateBansos, http.MethodPatch, "/bansos", `{"active":true}`)
+	require.Equal(t, http.StatusOK, w2.Code, w2.Body.String())
+	key, err := s.identity.Get(ctx, cfg.KeyID)
+	require.NoError(t, err)
+	require.False(t, key.Disabled)
+
+	// Activating with an empty allowlist fails closed.
+	w3 := callBansosHandler(t, s, s.adminUpdateBansos, http.MethodPatch, "/bansos", `{"allowed_models":[]}`)
+	require.Equal(t, http.StatusBadRequest, w3.Code, w3.Body.String())
+
+	// Credit -> unlimited removes the budget row.
+	w4 := callBansosHandler(t, s, s.adminUpdateBansos, http.MethodPatch, "/bansos", `{"mode":"unlimited"}`)
+	require.Equal(t, http.StatusOK, w4.Code, w4.Body.String())
+	budgets, err := db.Budgets().ListByScope(ctx, store.ScopeAPIKey, cfg.KeyID)
+	require.NoError(t, err)
+	require.Empty(t, budgets)
+
+	// Unlimited -> credit recreates a budget row.
+	w5 := callBansosHandler(t, s, s.adminUpdateBansos, http.MethodPatch, "/bansos", `{"mode":"credit","credit_limit_usd":3}`)
+	require.Equal(t, http.StatusOK, w5.Code, w5.Body.String())
+	budgets, err = db.Budgets().ListByScope(ctx, store.ScopeAPIKey, cfg.KeyID)
+	require.NoError(t, err)
+	require.Len(t, budgets, 1)
+	require.EqualValues(t, 3_000_000, budgets[0].LimitMicros)
+
+	// Deactivate disables the key.
+	w6 := callBansosHandler(t, s, s.adminUpdateBansos, http.MethodPatch, "/bansos", `{"active":false}`)
+	require.Equal(t, http.StatusOK, w6.Code, w6.Body.String())
+	key, err = s.identity.Get(ctx, cfg.KeyID)
+	require.NoError(t, err)
+	require.True(t, key.Disabled)
+}
