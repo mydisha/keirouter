@@ -79,6 +79,20 @@ func (s *Server) handleGeminiGenerate(w http.ResponseWriter, r *http.Request) {
 		req.Metadata.Provider = resolved.Targets[0].Provider
 	}
 	req.Metadata.ChainID = resolved.PlanOpts.ChainID
+
+	if len(resolved.Targets) > 0 {
+		filtered, ferr := s.filterAllowedTargets(r.Context(), key.ID, req.Model, resolved.PlanOpts.ChainID != "", resolved.Targets)
+		if ferr != nil {
+			writeError(w, http.StatusInternalServerError, "model access check failed")
+			return
+		}
+		if len(filtered) == 0 {
+			writeError(w, http.StatusForbidden, "access denied: this API key is not permitted to use model "+req.Model)
+			return
+		}
+		resolved.Targets = filtered
+	}
+
 	affinityKey := requestAffinityKey(r, req)
 	req.Metadata.ContextAffinityKey = affinityKey
 
