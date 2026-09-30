@@ -1,15 +1,17 @@
 import { useState, useEffect, useMemo } from "react";
-import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AreaChart, Area, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, PieChart, Pie, Cell, ComposedChart, Line,
 } from "recharts";
-import { fetchKeyUsage, fetchKeyUsageById, APIError, type KeyUsageData, type PortalRecentRequest } from "../lib/api";
+import {
+  fetchPortalStatus, claimPortalKey, fetchPortalUsage, portalLogout,
+  APIError, type KeyUsageData, type PortalRecentRequest,
+} from "../lib/api";
 import { useBranding } from "../contexts/BrandingContext";
 import {
   AlertTriangle, CheckCircle2, Activity, ArrowDownRight, ArrowUpRight, DollarSign,
-  LogOut, Layers, Key, Zap, Send, ChevronDown, Radio, TrendingUp, Coins, Calendar,
+  LogOut, Layers, Key, Radio, TrendingUp, Coins, Calendar,
   Trophy, Infinity as InfinityIcon, Clock, ChevronLeft, ChevronRight,
 } from "lucide-react";
 import { Card, Button, Input, Spinner, ErrorCard, Badge, SegmentedControl } from "../components/ui";
@@ -30,48 +32,59 @@ const DATE_RANGES = [
 
 export function KeyPortalPage() {
   const { branding, logoSrc } = useBranding();
-  const [params, setParams] = useSearchParams();
-  const activeId = params.get("id") || "";
-  const activeKey = params.get("key") || "";
-  const [apiKeyInput, setApiKeyInput] = useState(activeKey || activeId);
-  const [selectedModel, setSelectedModel] = useState("");
-  const [testPrompt, setTestPrompt] = useState("Say hello in one sentence");
-  const [testResponse, setTestResponse] = useState<any>(null);
-  const [isTesting, setIsTesting] = useState(false);
+  const queryClient = useQueryClient();
+  const [claimInput, setClaimInput] = useState("");
+  const [claimError, setClaimError] = useState("");
+  const [claiming, setClaiming] = useState(false);
   const [days, setDays] = useState(30);
 
-  const authValue = activeId || activeKey;
-  const isIdMode = !!activeId;
+  const { data: status, isLoading: statusLoading } = useQuery({
+    queryKey: ["portal-status"],
+    queryFn: fetchPortalStatus,
+    retry: false,
+  });
 
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    const val = apiKeyInput.trim();
-    if (val) {
-      if (val.startsWith("sk-")) setParams({ key: val });
-      else setParams({ id: val });
-    }
-  };
-
-  const handleLogout = () => {
-    setParams({});
-    setApiKeyInput("");
-  };
+  const claimed = !!status?.authenticated && !!status?.claimed;
 
   const { data, isLoading, isError, error, dataUpdatedAt } = useQuery({
-    queryKey: ["key-usage", authValue, isIdMode, days],
-    queryFn: () => (isIdMode ? fetchKeyUsageById(authValue, days) : fetchKeyUsage(authValue, days)),
-    enabled: !!authValue,
+    queryKey: ["portal-usage", days],
+    queryFn: () => fetchPortalUsage(days),
+    enabled: claimed,
     retry: false,
     refetchInterval: 30000,
   });
 
-  useEffect(() => {
-    if (data?.allowed_models?.length && !selectedModel) {
-      setSelectedModel(data.allowed_models[0]);
+  const handleClaim = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const val = claimInput.trim();
+    if (!val) return;
+    setClaiming(true);
+    setClaimError("");
+    try {
+      await claimPortalKey(val);
+      setClaimInput("");
+      await queryClient.invalidateQueries({ queryKey: ["portal-status"] });
+    } catch (err) {
+      setClaimError(err instanceof Error ? err.message : "Failed to claim key");
+    } finally {
+      setClaiming(false);
     }
-  }, [data]);
+  };
 
-  if (!authValue) {
+  const handleLogout = async () => {
+    await portalLogout();
+    window.location.href = "/portal";
+  };
+
+  if (statusLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)]">
+        <Spinner />
+      </div>
+    );
+  }
+
+  if (!status?.authenticated) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-4 md:p-8">
         <div className="w-full max-w-md animate-[page-in_0.3s_ease-out]">
@@ -81,13 +94,39 @@ export function KeyPortalPage() {
             </div>
             <h1 className="mb-2 text-2xl font-display tracking-tight text-[var(--text)]">Portal Access</h1>
             <p className="mb-8 text-sm text-[var(--text-muted)]">
-              {branding.tagline || "Enter your Key or Portal ID to monitor your real-time usage and budgets."}
+              {branding.tagline || "Sign in with Google to monitor your real-time usage and budgets."}
+            </p>
+            <a href="/portal/auth/google/start" className="block">
+              <Button className="w-full h-11 text-base font-medium shadow-sm transition-all hover:-translate-y-px">
+                Sign in with Google
+              </Button>
+            </a>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  if (!claimed) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-4 md:p-8">
+        <div className="w-full max-w-md animate-[page-in_0.3s_ease-out]">
+          <Card className="p-8 md:p-10 text-center shadow-float border-0 ring-1 ring-[var(--border)]">
+            <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--bg-subtle)] ring-1 ring-inset ring-[var(--border)]">
+              <img src={logoSrc} alt={branding.name || "KeiRouter"} className="h-8 object-contain" />
+            </div>
+            <h1 className="mb-2 text-2xl font-display tracking-tight text-[var(--text)]">Claim your API key</h1>
+            <p className="mb-1 text-sm text-[var(--text-muted)]">
+              Signed in as <strong className="font-medium text-[var(--text)]">{status.email}</strong>
+            </p>
+            <p className="mb-8 text-sm text-[var(--text-muted)]">
+              Paste your full API key to link it to this account. It can only be claimed once.
             </p>
 
-            <form onSubmit={handleLogin} className="space-y-5 text-left">
+            <form onSubmit={handleClaim} className="space-y-5 text-left">
               <div className="space-y-1.5">
                 <label className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
-                  Identifier
+                  API Key
                 </label>
                 <div className="relative">
                   <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[var(--text-muted)]">
@@ -95,21 +134,29 @@ export function KeyPortalPage() {
                   </div>
                   <Input
                     type="password"
-                    value={apiKeyInput}
-                    onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder="sk-... or key_..."
+                    value={claimInput}
+                    onChange={(e) => setClaimInput(e.target.value)}
+                    placeholder="kr_..."
                     className="pl-10 h-11 bg-[var(--bg)]"
                     autoFocus
                   />
                 </div>
               </div>
+              {claimError && <p className="text-sm text-[var(--color-danger,#dc2626)]">{claimError}</p>}
               <Button
                 type="submit"
                 className="w-full h-11 text-base font-medium shadow-sm transition-all hover:-translate-y-px"
-                disabled={!apiKeyInput.trim()}
+                disabled={!claimInput.trim() || claiming}
               >
-                View Dashboard
+                {claiming ? "Claiming…" : "Claim Key"}
               </Button>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="w-full text-center text-sm text-[var(--text-muted)] hover:text-[var(--text)]"
+              >
+                Sign out
+              </button>
             </form>
           </Card>
         </div>
@@ -126,14 +173,15 @@ export function KeyPortalPage() {
   }
 
   if (isError) {
-    let msg = "Authentication failed or server error.";
+    let msg = "Failed to load usage.";
     if (error instanceof APIError) msg = error.message;
+    else if (error instanceof Error) msg = error.message;
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-4">
         <div className="w-full max-w-md space-y-4 text-center animate-[page-in_0.3s_ease-out]">
           <ErrorCard message={msg} />
           <Button variant="ghost" onClick={handleLogout} className="rounded-xl">
-            Return to Login
+            Sign out
           </Button>
         </div>
       </div>
@@ -201,21 +249,7 @@ export function KeyPortalPage() {
           </section>
         )}
 
-        {/* ── Playground (only when authed with a live key) ──────────── */}
-        {!isIdMode && activeKey && d.allowed_models && d.allowed_models.length > 0 && (
-          <PlaygroundSection
-            allowedModels={d.allowed_models}
-            activeKey={activeKey}
-            selectedModel={selectedModel}
-            setSelectedModel={setSelectedModel}
-            testPrompt={testPrompt}
-            setTestPrompt={setTestPrompt}
-            testResponse={testResponse}
-            setTestResponse={setTestResponse}
-            isTesting={isTesting}
-            setIsTesting={setIsTesting}
-          />
-        )}
+        {/* ── Playground was removed: SSO never exposes the raw API key ── */}
 
         {/* ── Recent Requests table ──────────────────────────────────── */}
         {d.recent && d.recent.length > 0 && <RecentRequestsSection recent={d.recent} days={days} />}
@@ -741,98 +775,6 @@ function ModelSection({ models }: { models: NonNullable<KeyUsageData["models"]> 
               </tfoot>
             )}
           </table>
-        </div>
-      </Card>
-    </section>
-  );
-}
-
-// ─── Playground ───────────────────────────────────────────────────────────
-function PlaygroundSection({
-  allowedModels, activeKey, selectedModel, setSelectedModel, testPrompt, setTestPrompt,
-  testResponse, setTestResponse, isTesting, setIsTesting,
-}: {
-  allowedModels: string[]; activeKey: string; selectedModel: string; setSelectedModel: (v: string) => void;
-  testPrompt: string; setTestPrompt: (v: string) => void; testResponse: any; setTestResponse: (v: any) => void;
-  isTesting: boolean; setIsTesting: (v: boolean) => void;
-}) {
-  return (
-    <section className="space-y-4">
-      <SectionTitle title="Playground" icon={<Zap size={17} />} />
-      <Card className="p-6 md:p-8">
-        <div className="space-y-6">
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">Model</label>
-            <div className="relative">
-              <select
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="w-full appearance-none rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 pr-10 text-sm font-medium text-[var(--text)] shadow-sm transition-colors hover:border-[var(--border-strong)] focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/20"
-              >
-                {allowedModels.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-              <ChevronDown size={18} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-muted)]" />
-            </div>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">Prompt</label>
-            <textarea
-              value={testPrompt}
-              onChange={(e) => setTestPrompt(e.target.value)}
-              rows={3}
-              className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3 text-sm text-[var(--text)] shadow-sm transition-colors placeholder:text-[var(--text-muted)] hover:border-[var(--border-strong)] focus:border-accent-500 focus:outline-none focus:ring-2 focus:ring-accent-500/20"
-              placeholder="Enter your message..."
-            />
-          </div>
-
-          <Button
-            onClick={() => {
-              setIsTesting(true);
-              setTestResponse(null);
-              fetch("/v1/chat/completions", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", Authorization: `Bearer ${activeKey}` },
-                body: JSON.stringify({ model: selectedModel, messages: [{ role: "user", content: testPrompt }], stream: false }),
-              })
-                .then((r) => r.json())
-                .then((json) => {
-                  if (json.error) setTestResponse({ error: json.error.message || "Request failed" });
-                  else setTestResponse(json);
-                })
-                .catch((err) => setTestResponse({ error: err.message }))
-                .finally(() => setIsTesting(false));
-            }}
-            disabled={!selectedModel || !testPrompt.trim() || isTesting}
-            className="w-full h-12 text-base font-medium shadow-sm transition-all hover:-translate-y-px"
-          >
-            {isTesting ? <><Spinner /> Testing...</> : <><Send size={16} /> Send Message</>}
-          </Button>
-
-          {testResponse && (
-            <div className="mt-2 space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">Response</h4>
-                {testResponse.error && <Badge tone="danger">Error</Badge>}
-              </div>
-              <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4 text-sm">
-                {testResponse.error ? (
-                  <p className="font-medium text-[color:var(--color-danger)]">{testResponse.error}</p>
-                ) : (
-                  <div className="space-y-2">
-                    <p className="whitespace-pre-wrap text-[var(--text)]">{testResponse.choices?.[0]?.message?.content || "No response content"}</p>
-                    {testResponse.usage && (
-                      <div className="mt-4 flex flex-wrap gap-4 border-t border-[var(--border)] pt-4 text-xs text-[var(--text-muted)]">
-                        <span>Prompt: {testResponse.usage.prompt_tokens?.toLocaleString()}</span>
-                        <span>Completion: {testResponse.usage.completion_tokens?.toLocaleString()}</span>
-                        <span>Total: {testResponse.usage.total_tokens?.toLocaleString()}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
         </div>
       </Card>
     </section>

@@ -1261,32 +1261,50 @@ export async function fetchPortalBranding(): Promise<BrandingSettings> {
   return resp.json();
 }
 
+export interface PortalStatus {
+  authenticated: boolean;
+  email?: string;
+  claimed?: boolean;
+  key_id?: string;
+}
+
 /**
- * Fetch usage stats for an API Key, authenticated via the key itself (public portal)
+ * Portal session status (cookie-authenticated).
  */
-export async function fetchKeyUsage(key: string, days?: number): Promise<KeyUsageData> {
-  const qs = days ? `?days=${days}` : "";
-  const resp = await fetch(`/v1/keys/me/usage${qs}`, {
-    headers: { Authorization: `Bearer ${key}` },
-  });
-  if (!resp.ok) {
-    const data = await resp.json().catch(() => ({}));
-    throw new Error(data.error || "Invalid key or server error");
-  }
+export async function fetchPortalStatus(): Promise<PortalStatus> {
+  const resp = await fetch("/portal/auth/status");
+  if (!resp.ok) return { authenticated: false };
   return resp.json();
 }
 
 /**
- * Fetch usage stats for an API Key using its database ID (public portal link sharing)
+ * Claim the signed-in user's API key. Requires the full key; the server
+ * verifies it and binds it to the Google identity.
  */
-export async function fetchKeyUsageById(id: string, days?: number): Promise<KeyUsageData> {
+export async function claimPortalKey(apiKey: string): Promise<{ ok: boolean; key_id: string }> {
+  const resp = await fetch("/portal/auth/claim", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ api_key: apiKey }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to claim key");
+  return data;
+}
+
+/**
+ * Usage for the signed-in portal user's claimed key (cookie-authenticated).
+ */
+export async function fetchPortalUsage(days?: number): Promise<KeyUsageData> {
   const qs = days ? `?days=${days}` : "";
-  const resp = await fetch(`/v1/portal/keys/${id}/usage${qs}`);
-  if (!resp.ok) {
-    const data = await resp.json().catch(() => ({}));
-    throw new Error(data.error || "Invalid key ID or server error");
-  }
-  return resp.json();
+  const resp = await fetch(`/portal/usage${qs}`);
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to load usage");
+  return data;
+}
+
+export async function portalLogout(): Promise<void> {
+  await fetch("/portal/auth/logout", { method: "POST" });
 }
 
 export const api = {
