@@ -32,6 +32,7 @@ const KeyPortalPage = lazy(routeLoaders["/portal"]);
 const KeyDetailPage = lazy(routeLoaders["/key-detail"]);
 const GuardrailsPage = lazy(routeLoaders["/guardrails"]);
 const ProviderHealthPage = lazy(routeLoaders["/provider-health"]);
+const BansosPage = lazy(routeLoaders["/bansos"]);
 const PublicLanding = lazy(() => import("./pages/PublicLanding"));
 const PublicBansos = lazy(() => import("./pages/PublicBansos"));
 
@@ -85,6 +86,7 @@ export function App() {
                 <Route path="guardrails" element={<GuardrailsPage />} />
                 <Route path="provider-health" element={<ProviderHealthPage />} />
                 <Route path="provider-health/:provider" element={<ProviderHealthPage />} />
+                <Route path="bansos" element={<BansosPage />} />
                 <Route path="plans" element={<PlansPage />} />
                 <Route path="budgets" element={<PlansPage />} />
                 <Route path="system" element={<SystemPage />} />
