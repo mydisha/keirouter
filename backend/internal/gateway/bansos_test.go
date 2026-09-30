@@ -2,6 +2,10 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -65,4 +69,79 @@ func TestBansosConfigRoundTrip(t *testing.T) {
 	require.Equal(t, []string{"claude-*"}, got.AllowedModels)
 	require.Equal(t, int64(60), got.RPM)
 	require.Equal(t, "key-1", s.bansosKeyID(ctx))
+}
+
+func callBansosHandler(t *testing.T, s *Server, h func(http.ResponseWriter, *http.Request), method, target, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	var r *http.Request
+	if body != "" {
+		r = httptest.NewRequest(method, target, strings.NewReader(body))
+	} else {
+		r = httptest.NewRequest(method, target, nil)
+	}
+	w := httptest.NewRecorder()
+	h(w, r)
+	return w
+}
+
+func TestAdminCreateAndGetBansos(t *testing.T) {
+	s, db := newBansosTestServer(t)
+	ctx := context.Background()
+
+	w := callBansosHandler(t, s, s.adminCreateBansos, http.MethodPost, "/bansos",
+		`{"mode":"credit","allowed_models":["claude-*"],"rpm":60,"tpm":200000,"credit_limit_usd":10}`)
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	var created struct {
+		KeyID string `json:"key_id"`
+		Key   string `json:"key"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	require.NotEmpty(t, created.KeyID)
+	require.True(t, strings.HasPrefix(created.Key, crypto.DefaultKeyPrefix), created.Key)
+
+	// The dedicated key exists and is disabled while inactive.
+	key, err := s.identity.Get(ctx, created.KeyID)
+	require.NoError(t, err)
+	require.True(t, key.Disabled, "new bansos must start inactive/disabled")
+
+	// Models + plan wired.
+	models, err := db.APIKeys().GetAllowedModels(ctx, created.KeyID)
+	require.NoError(t, err)
+	require.Equal(t, []string{"claude-*"}, models)
+
+	cfg, ok, err := s.loadBansos(ctx)
+	require.NoError(t, err)
+	require.True(t, ok)
+	plan, err := db.Plans().Get(ctx, cfg.PlanID)
+	require.NoError(t, err)
+	require.EqualValues(t, 60, plan.RPMLimit)
+	require.EqualValues(t, 200000, plan.TPMLimit)
+
+	// Credit budget created for the key.
+	budgets, err := db.Budgets().ListByScope(ctx, store.ScopeAPIKey, created.KeyID)
+	require.NoError(t, err)
+	require.Len(t, budgets, 1)
+	require.EqualValues(t, 10_000_000, budgets[0].LimitMicros)
+
+	// Duplicate create is a conflict.
+	w2 := callBansosHandler(t, s, s.adminCreateBansos, http.MethodPost, "/bansos",
+		`{"mode":"unlimited","allowed_models":["gpt-5"]}`)
+	require.Equal(t, http.StatusConflict, w2.Code, w2.Body.String())
+
+	// GET never returns plaintext, returns the masked display.
+	w3 := callBansosHandler(t, s, s.adminGetBansos, http.MethodGet, "/bansos", "")
+	require.Equal(t, http.StatusOK, w3.Code, w3.Body.String())
+	require.NotContains(t, w3.Body.String(), created.Key, "GET must not leak plaintext")
+	var state map[string]any
+	require.NoError(t, json.Unmarshal(w3.Body.Bytes(), &state))
+	require.Equal(t, created.KeyID, state["key_id"])
+	require.Equal(t, false, state["active"])
+	require.NotNil(t, state["credit"])
+}
+
+func TestAdminCreateBansosRequiresAllowedModel(t *testing.T) {
+	s, _ := newBansosTestServer(t)
+	w := callBansosHandler(t, s, s.adminCreateBansos, http.MethodPost, "/bansos", `{"mode":"unlimited"}`)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }

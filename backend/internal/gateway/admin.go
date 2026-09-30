@@ -46,6 +46,9 @@ func (s *Server) mountAdmin(r chi.Router) {
 	r.Post("/keys/{id}/limit", s.adminAdjustKeyLimit)
 	r.Get("/keys/{id}/limit-adjustments", s.adminListKeyLimitAdjustments)
 
+	r.Get("/bansos", s.adminGetBansos)
+	r.Post("/bansos", s.adminCreateBansos)
+
 	r.Get("/accounts", s.adminListAccounts)
 	r.Post("/accounts", s.adminCreateAccount)
 	r.Post("/accounts/bulk", s.adminBulkCreateAccounts)
