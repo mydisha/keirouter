@@ -4,7 +4,7 @@ import {
   CartesianGrid, PieChart, Pie, Cell, ComposedChart, Line,
 } from "recharts";
 import {
-  AlertTriangle, ArrowDownRight, ArrowUpRight, DollarSign, Layers, Key, Radio,
+  AlertTriangle, ArrowDownRight, ArrowUpRight, DollarSign, Layers, Radio,
   TrendingUp, Coins, Calendar, Trophy, Infinity as InfinityIcon, Clock,
   ChevronLeft, ChevronRight, Copy, Check, Activity,
 } from "lucide-react";
