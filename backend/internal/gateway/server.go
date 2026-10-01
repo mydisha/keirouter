@@ -337,10 +337,13 @@ func (s *Server) routes() chi.Router {
 	r.Group(func(r chi.Router) {
 		r.Use(s.portalSessionMiddleware)
 		r.Post("/portal/auth/claim", s.handlePortalClaim)
-		r.Post("/portal/key", s.handlePortalCreateKey)
-		r.Get("/portal/usage", s.handlePortalUsage)
-		r.Get("/portal/key", s.handlePortalKey)
-		r.Get("/portal/topups", s.handlePortalTopups)
+		// Portal-session data endpoints live under /portal/api/* so their
+		// paths never shadow the SPA routes /portal/key, /portal/usage and
+		// /portal/topup (a browser refresh must return the app, not JSON).
+		r.Post("/portal/api/key", s.handlePortalCreateKey)
+		r.Get("/portal/api/usage", s.handlePortalUsage)
+		r.Get("/portal/api/key", s.handlePortalKey)
+		r.Get("/portal/api/topups", s.handlePortalTopups)
 		r.Post("/portal/auth/logout", s.handlePortalLogout)
 	})
 

@@ -112,7 +112,7 @@ func TestPortalUsageRequiresClaim(t *testing.T) {
 	srv := newPortalTestServer(t)
 	tok, err := srv.auth.IssuePortalSession("portal:sub-1", "a@example.com")
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodGet, "/portal/usage", nil)
+	req := httptest.NewRequest(http.MethodGet, "/portal/api/usage", nil)
 	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
 	rec := httptest.NewRecorder()
 	srv.handlePortalUsage(rec, req)
@@ -152,7 +152,7 @@ func TestPortalCreateKeyDisabledWithoutDefaultPlan(t *testing.T) {
 	srv := newPortalTestServer(t)
 	tok, err := srv.auth.IssuePortalSession("portal:sub-1", "a@example.com")
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/portal/key", nil)
+	req := httptest.NewRequest(http.MethodPost, "/portal/api/key", nil)
 	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
 	rec := httptest.NewRecorder()
 	srv.handlePortalCreateKey(rec, req)
@@ -167,7 +167,7 @@ func TestPortalCreateKeyProvisionsWithPlanAndBudget(t *testing.T) {
 
 	tok, err := srv.auth.IssuePortalSession("portal:sub-1", "a@example.com")
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodPost, "/portal/key", nil)
+	req := httptest.NewRequest(http.MethodPost, "/portal/api/key", nil)
 	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
 	rec := httptest.NewRecorder()
 	srv.handlePortalCreateKey(rec, req)
@@ -191,7 +191,7 @@ func TestPortalCreateKeyProvisionsWithPlanAndBudget(t *testing.T) {
 
 	// Second call is rejected (idempotent).
 	rec2 := httptest.NewRecorder()
-	req2 := httptest.NewRequest(http.MethodPost, "/portal/key", nil)
+	req2 := httptest.NewRequest(http.MethodPost, "/portal/api/key", nil)
 	req2.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
 	srv.handlePortalCreateKey(rec2, req2)
 	require.Equal(t, http.StatusConflict, rec2.Code)
@@ -224,7 +224,7 @@ func TestAdminPortalListAndDeleteUser(t *testing.T) {
 	require.NoError(t, srv.settings.Set(ctx, portalDefaultPlanKey, "free"))
 
 	tok, _ := srv.auth.IssuePortalSession("portal:sub-1", "a@example.com")
-	req := httptest.NewRequest(http.MethodPost, "/portal/key", nil)
+	req := httptest.NewRequest(http.MethodPost, "/portal/api/key", nil)
 	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
 	rec := httptest.NewRecorder()
 	srv.handlePortalCreateKey(rec, req)
@@ -251,7 +251,7 @@ func TestAdminPortalListAndDeleteUser(t *testing.T) {
 func TestPortalKeyRequiresSession(t *testing.T) {
 	srv := newPortalTestServer(t)
 	rec := httptest.NewRecorder()
-	srv.handlePortalKey(rec, httptest.NewRequest(http.MethodGet, "/portal/key", nil))
+	srv.handlePortalKey(rec, httptest.NewRequest(http.MethodGet, "/portal/api/key", nil))
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
@@ -259,7 +259,7 @@ func TestPortalKeyNotFoundWithoutBinding(t *testing.T) {
 	srv := newPortalTestServer(t)
 	tok, err := srv.auth.IssuePortalSession("portal:sub-key-1", "k@example.com")
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodGet, "/portal/key", nil)
+	req := httptest.NewRequest(http.MethodGet, "/portal/api/key", nil)
 	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
 	rec := httptest.NewRecorder()
 	srv.handlePortalKey(rec, req)
@@ -277,7 +277,7 @@ func TestPortalKeyReturnsMaskedPreview(t *testing.T) {
 
 	tok, err := srv.auth.IssuePortalSession("portal:sub-key-2", "k2@example.com")
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodGet, "/portal/key", nil)
+	req := httptest.NewRequest(http.MethodGet, "/portal/api/key", nil)
 	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
 	rec := httptest.NewRecorder()
 	srv.handlePortalKey(rec, req)
@@ -293,7 +293,7 @@ func TestPortalKeyReturnsMaskedPreview(t *testing.T) {
 func TestPortalTopupsRequiresSession(t *testing.T) {
 	srv := newPortalTestServer(t)
 	rec := httptest.NewRecorder()
-	srv.handlePortalTopups(rec, httptest.NewRequest(http.MethodGet, "/portal/topups", nil))
+	srv.handlePortalTopups(rec, httptest.NewRequest(http.MethodGet, "/portal/api/topups", nil))
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
@@ -312,7 +312,7 @@ func TestPortalTopupsReturnsLedgerAndBalance(t *testing.T) {
 
 	tok, err := srv.auth.IssuePortalSession("portal:sub-top-1", "t@example.com")
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodGet, "/portal/topups", nil)
+	req := httptest.NewRequest(http.MethodGet, "/portal/api/topups", nil)
 	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
 	rec := httptest.NewRecorder()
 	srv.handlePortalTopups(rec, req)
@@ -347,7 +347,7 @@ func TestPortalTopupsIncludesBalance(t *testing.T) {
 
 	tok, err := srv.auth.IssuePortalSession("portal:sub-top-2", "t2@example.com")
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodGet, "/portal/topups", nil)
+	req := httptest.NewRequest(http.MethodGet, "/portal/api/topups", nil)
 	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
 	rec := httptest.NewRecorder()
 	srv.handlePortalTopups(rec, req)
@@ -376,7 +376,7 @@ func TestAdminSetPortalUserPlanResyncsBudget(t *testing.T) {
 	require.NoError(t, srv.settings.Set(ctx, portalDefaultPlanKey, "free"))
 
 	tok, _ := srv.auth.IssuePortalSession("portal:sub-1", "a@example.com")
-	req := httptest.NewRequest(http.MethodPost, "/portal/key", nil)
+	req := httptest.NewRequest(http.MethodPost, "/portal/api/key", nil)
 	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
 	srv.handlePortalCreateKey(httptest.NewRecorder(), req)
 

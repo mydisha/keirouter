@@ -64,7 +64,7 @@ export function PortalDashboardPage() {
   if (status?.has_key === false) return setup;
 
   // The status query normally guarantees a claimed key, but a 409 from
-  // /portal/usage (e.g. the claim raced away) falls back to the setup card.
+  // /portal/api/usage (e.g. the claim raced away) falls back to the setup card.
   const noKey =
     usage.error instanceof Error && /no api key claimed/i.test(usage.error.message);
   if (noKey) return setup;

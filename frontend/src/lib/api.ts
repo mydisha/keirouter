@@ -1327,7 +1327,7 @@ export async function claimPortalKey(apiKey: string): Promise<{ ok: boolean; key
  */
 export async function fetchPortalUsage(days?: number): Promise<KeyUsageData> {
   const qs = days ? `?days=${days}` : "";
-  const resp = await fetch(`/portal/usage${qs}`);
+  const resp = await fetch(`/portal/api/usage${qs}`);
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to load usage");
   return data;
@@ -1352,7 +1352,7 @@ export async function fetchPortalPlans(): Promise<PortalPlan[]> {
  * The plaintext key is returned once.
  */
 export async function createPortalKey(): Promise<{ key: string; key_id: string; plan_id: string; plan_name: string }> {
-  const resp = await fetch("/portal/key", { method: "POST" });
+  const resp = await fetch("/portal/api/key", { method: "POST" });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to create key");
   return data;
@@ -1383,7 +1383,7 @@ export interface PortalTopupData {
 
 /** Masked metadata for the signed-in portal user's key. */
 export async function fetchPortalKey(): Promise<PortalKeyInfo> {
-  const resp = await fetch("/portal/key");
+  const resp = await fetch("/portal/api/key");
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to load key");
   return data;
@@ -1391,7 +1391,7 @@ export async function fetchPortalKey(): Promise<PortalKeyInfo> {
 
 /** Read-only topup ledger + balance for the signed-in portal user. */
 export async function fetchPortalTopups(): Promise<PortalTopupData> {
-  const resp = await fetch("/portal/topups");
+  const resp = await fetch("/portal/api/topups");
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to load topups");
   return data;
