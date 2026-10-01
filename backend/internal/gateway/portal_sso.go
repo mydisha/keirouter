@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/mydisha/keirouter/backend/internal/budget"
 	"github.com/mydisha/keirouter/backend/internal/identity"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
@@ -651,6 +652,54 @@ func (s *Server) handlePortalKey(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handlePortalTopups returns the read-only topup ledger for the signed-in
+// user's key plus its current budget balance.
+func (s *Server) handlePortalTopups(w http.ResponseWriter, r *http.Request) {
+	sub, ok := s.portalSubject(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "portal session required")
+		return
+	}
+	u, err := s.db.PortalUsers().GetBySub(r.Context(), portalGoogleSub(sub))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "no api key claimed")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load portal user")
+		return
+	}
+
+	topups, err := s.db.Topups().ListByKey(r.Context(), u.KeyID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load topups")
+		return
+	}
+	out := make([]map[string]any, 0, len(topups))
+	for _, t := range topups {
+		out = append(out, map[string]any{
+			"id": t.ID, "amount_usd": float64(t.AmountMicros) / 1_000_000,
+			"reason": t.Reason, "created_at": t.CreatedAt,
+		})
+	}
+
+	resp := map[string]any{"topups": out}
+	if budgets, err := s.budgets.ListByScope(r.Context(), store.ScopeAPIKey, u.KeyID); err == nil && len(budgets) > 0 {
+		b := budgets[0]
+		spentMicros, _, _ := s.usage.SpendAndTokens(r.Context(), b.ScopeKind, b.ScopeID, budget.PeriodStart(b.Period, time.Now()))
+		limitUSD := float64(b.LimitMicros) / 1_000_000
+		spentUSD := float64(spentMicros) / 1_000_000
+		remaining := limitUSD - spentUSD
+		if remaining < 0 {
+			remaining = 0
+		}
+		resp["balance"] = map[string]any{
+			"limit_usd": limitUSD, "spent_usd": spentUSD, "usd_remaining": remaining,
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handlePortalLogout clears the portal session cookie.

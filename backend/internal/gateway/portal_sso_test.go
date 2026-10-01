@@ -290,6 +290,46 @@ func TestPortalKeyReturnsMaskedPreview(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), issued.Plaintext, "plaintext must never be returned")
 }
 
+func TestPortalTopupsRequiresSession(t *testing.T) {
+	srv := newPortalTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.handlePortalTopups(rec, httptest.NewRequest(http.MethodGet, "/portal/topups", nil))
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestPortalTopupsReturnsLedgerAndBalance(t *testing.T) {
+	srv := newPortalTestServer(t)
+	ctx := context.Background()
+	issued, err := srv.identity.Create(ctx, store.DefaultTenantID, "", "portal-key")
+	require.NoError(t, err)
+	require.NoError(t, srv.db.PortalUsers().Upsert(ctx, store.PortalUser{
+		GoogleSub: "sub-top-1", Email: "t@example.com", KeyID: issued.Record.ID,
+	}))
+	require.NoError(t, srv.db.Topups().Create(ctx, store.KeyTopup{
+		ID: "top-1", TenantID: store.DefaultTenantID, KeyID: issued.Record.ID,
+		AmountMicros: 5_000_000, Reason: "goodwill", CreatedAt: time.Now(),
+	}))
+
+	tok, err := srv.auth.IssuePortalSession("portal:sub-top-1", "t@example.com")
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodGet, "/portal/topups", nil)
+	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+	rec := httptest.NewRecorder()
+	srv.handlePortalTopups(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Topups []struct {
+			AmountUSD float64 `json:"amount_usd"`
+			Reason    string  `json:"reason"`
+		} `json:"topups"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Topups, 1)
+	require.Equal(t, 5.0, body.Topups[0].AmountUSD)
+	require.Equal(t, "goodwill", body.Topups[0].Reason)
+}
+
 func TestAdminSetPortalUserPlanResyncsBudget(t *testing.T) {
 	srv := newPortalTestServer(t)
 	ctx := context.Background()
