@@ -330,6 +330,44 @@ func TestPortalTopupsReturnsLedgerAndBalance(t *testing.T) {
 	require.Equal(t, "goodwill", body.Topups[0].Reason)
 }
 
+func TestPortalTopupsIncludesBalance(t *testing.T) {
+	srv := newPortalTestServer(t)
+	ctx := context.Background()
+	issued, err := srv.identity.Create(ctx, store.DefaultTenantID, "", "portal-key")
+	require.NoError(t, err)
+	require.NoError(t, srv.db.PortalUsers().Upsert(ctx, store.PortalUser{
+		GoogleSub: "sub-top-2", Email: "t2@example.com", KeyID: issued.Record.ID,
+	}))
+	require.NoError(t, srv.budgets.Create(ctx, store.Budget{
+		ID: "bud-top-2", TenantID: store.DefaultTenantID,
+		ScopeKind: store.ScopeAPIKey, ScopeID: issued.Record.ID,
+		LimitMicros: 2_000_000, Period: "monthly", AlertPct: 80, HardCutoff: true,
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	tok, err := srv.auth.IssuePortalSession("portal:sub-top-2", "t2@example.com")
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodGet, "/portal/topups", nil)
+	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+	rec := httptest.NewRecorder()
+	srv.handlePortalTopups(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body struct {
+		Balance *struct {
+			LimitUSD     float64 `json:"limit_usd"`
+			SpentUSD     float64 `json:"spent_usd"`
+			USDRemaining float64 `json:"usd_remaining"`
+		} `json:"balance"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.NotNil(t, body.Balance)
+	require.Equal(t, 2.0, body.Balance.LimitUSD)
+	require.Equal(t, 0.0, body.Balance.SpentUSD)
+	require.Equal(t, 2.0, body.Balance.USDRemaining)
+	require.GreaterOrEqual(t, body.Balance.USDRemaining, 0.0)
+}
+
 func TestAdminSetPortalUserPlanResyncsBudget(t *testing.T) {
 	srv := newPortalTestServer(t)
 	ctx := context.Background()

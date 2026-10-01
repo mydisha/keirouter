@@ -686,17 +686,24 @@ func (s *Server) handlePortalTopups(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := map[string]any{"topups": out}
-	if budgets, err := s.budgets.ListByScope(r.Context(), store.ScopeAPIKey, u.KeyID); err == nil && len(budgets) > 0 {
+	budgets, err := s.budgets.ListByScope(r.Context(), store.ScopeAPIKey, u.KeyID)
+	if err != nil {
+		s.log.Error("portal topups: list budgets failed", "err", err)
+	} else if len(budgets) > 0 {
 		b := budgets[0]
-		spentMicros, _, _ := s.usage.SpendAndTokens(r.Context(), b.ScopeKind, b.ScopeID, budget.PeriodStart(b.Period, time.Now()))
-		limitUSD := float64(b.LimitMicros) / 1_000_000
-		spentUSD := float64(spentMicros) / 1_000_000
-		remaining := limitUSD - spentUSD
-		if remaining < 0 {
-			remaining = 0
-		}
-		resp["balance"] = map[string]any{
-			"limit_usd": limitUSD, "spent_usd": spentUSD, "usd_remaining": remaining,
+		spentMicros, _, err := s.usage.SpendAndTokens(r.Context(), b.ScopeKind, b.ScopeID, budget.PeriodStart(b.Period, time.Now()))
+		if err != nil {
+			s.log.Error("portal topups: spend query failed", "err", err)
+		} else {
+			limitUSD := float64(b.LimitMicros) / 1_000_000
+			spentUSD := float64(spentMicros) / 1_000_000
+			remaining := limitUSD - spentUSD
+			if remaining < 0 {
+				remaining = 0
+			}
+			resp["balance"] = map[string]any{
+				"limit_usd": limitUSD, "spent_usd": spentUSD, "usd_remaining": remaining,
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
