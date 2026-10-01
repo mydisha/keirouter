@@ -13,8 +13,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/mydisha/keirouter/backend/internal/auth"
 	"github.com/mydisha/keirouter/backend/internal/config"
+	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/identity"
 	"github.com/mydisha/keirouter/backend/internal/store"
+	"github.com/mydisha/keirouter/backend/internal/vault"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,6 +35,11 @@ func newPortalTestServer(t *testing.T) *Server {
 	_, err = authSvc.EnsureDefaults(ctx)
 	require.NoError(t, err)
 
+	mk, err := crypto.GenerateMasterKey()
+	require.NoError(t, err)
+	sealer, err := crypto.NewSealer(mk)
+	require.NoError(t, err)
+
 	return &Server{
 		db:       db,
 		identity: identity.New(db.APIKeys()),
@@ -40,6 +47,7 @@ func newPortalTestServer(t *testing.T) *Server {
 		budgets:  db.Budgets(),
 		usage:    db.Usage(),
 		settings: db.Settings(),
+		vault:    vault.New(sealer),
 		log:      slog.Default(),
 		cfg:      config.Default(),
 	}
@@ -288,6 +296,119 @@ func TestPortalKeyReturnsMaskedPreview(t *testing.T) {
 	require.Equal(t, issued.Record.ID, body["key_id"])
 	require.Equal(t, issued.Record.Display, body["display"])
 	require.NotContains(t, rec.Body.String(), issued.Plaintext, "plaintext must never be returned")
+	// A manually claimed key has no sealed plaintext, so it is not revealable.
+	require.Nil(t, body["revealable"], "claimed key must not be marked revealable")
+}
+
+// TestPortalKeyRevealRoundTrip proves a provisioned key's plaintext can be
+// revealed repeatedly, matching the requested show/hide behavior.
+func TestPortalKeyRevealRoundTrip(t *testing.T) {
+	srv := newPortalTestServer(t)
+	ctx := context.Background()
+	seedPlan(t, srv, "free", 0, "")
+	require.NoError(t, srv.settings.Set(ctx, portalDefaultPlanKey, "free"))
+
+	tok, err := srv.auth.IssuePortalSession("portal:sub-reveal", "r@example.com")
+	require.NoError(t, err)
+	createReq := httptest.NewRequest(http.MethodPost, "/portal/api/key", nil)
+	createReq.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+	createRec := httptest.NewRecorder()
+	srv.handlePortalCreateKey(createRec, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
+	plaintext, _ := created["key"].(string)
+	require.NotEmpty(t, plaintext)
+
+	// Metadata reports the key is revealable.
+	keyRec := httptest.NewRecorder()
+	keyReq := httptest.NewRequest(http.MethodGet, "/portal/api/key", nil)
+	keyReq.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+	srv.handlePortalKey(keyRec, keyReq)
+	require.Equal(t, http.StatusOK, keyRec.Code)
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal(keyRec.Body.Bytes(), &meta))
+	require.Equal(t, true, meta["revealable"])
+	require.NotContains(t, keyRec.Body.String(), plaintext)
+
+	// Reveal returns the same plaintext, more than once.
+	for i := 0; i < 2; i++ {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/portal/api/key/reveal", nil)
+		req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+		srv.handlePortalKeyReveal(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var out map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+		require.Equal(t, plaintext, out["key"])
+	}
+}
+
+// TestPortalKeyRevealClaimedKeyIs404 proves a claimed key's plaintext stays
+// unrecoverable: the reveal endpoint must refuse it.
+func TestPortalKeyRevealClaimedKeyIs404(t *testing.T) {
+	srv := newPortalTestServer(t)
+	ctx := context.Background()
+	issued, err := srv.identity.Create(ctx, store.DefaultTenantID, "", "claimed-key")
+	require.NoError(t, err)
+	require.NoError(t, srv.db.PortalUsers().Upsert(ctx, store.PortalUser{
+		GoogleSub: "sub-claim-reveal", Email: "c@example.com", KeyID: issued.Record.ID,
+	}))
+
+	tok, err := srv.auth.IssuePortalSession("portal:sub-claim-reveal", "c@example.com")
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/portal/api/key/reveal", nil)
+	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+	srv.handlePortalKeyReveal(rec, req)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.NotContains(t, rec.Body.String(), issued.Plaintext)
+}
+
+func TestPortalKeyRevealRequiresSession(t *testing.T) {
+	srv := newPortalTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.handlePortalKeyReveal(rec, httptest.NewRequest(http.MethodGet, "/portal/api/key/reveal", nil))
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+// TestAdminRotateRefreshesSealedKey proves a reveal after an admin rotation
+// returns the new key, never the stale plaintext.
+func TestAdminRotateRefreshesSealedKey(t *testing.T) {
+	srv := newPortalTestServer(t)
+	ctx := context.Background()
+	seedPlan(t, srv, "free", 0, "")
+	require.NoError(t, srv.settings.Set(ctx, portalDefaultPlanKey, "free"))
+
+	tok, err := srv.auth.IssuePortalSession("portal:sub-rotate", "rot@example.com")
+	require.NoError(t, err)
+	createReq := httptest.NewRequest(http.MethodPost, "/portal/api/key", nil)
+	createReq.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+	createRec := httptest.NewRecorder()
+	srv.handlePortalCreateKey(createRec, createReq)
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	var created map[string]any
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
+	oldKey, _ := created["key"].(string)
+	require.NotEmpty(t, oldKey)
+
+	rotRec := httptest.NewRecorder()
+	srv.adminRotatePortalUserKey(rotRec, withChiParam(httptest.NewRequest(http.MethodPost, "/api/portal-users/sub-rotate/key/rotate", nil), "sub-rotate"))
+	require.Equal(t, http.StatusOK, rotRec.Code, rotRec.Body.String())
+	var rotated map[string]any
+	require.NoError(t, json.Unmarshal(rotRec.Body.Bytes(), &rotated))
+	newKey, _ := rotated["key"].(string)
+	require.NotEmpty(t, newKey)
+	require.NotEqual(t, oldKey, newKey)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/portal/api/key/reveal", nil)
+	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+	srv.handlePortalKeyReveal(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Equal(t, newKey, out["key"], "reveal must return the rotated key")
 }
 
 func TestPortalTopupsRequiresSession(t *testing.T) {

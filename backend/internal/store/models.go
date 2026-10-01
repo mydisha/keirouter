@@ -1,6 +1,10 @@
 package store
 
-import "time"
+import (
+	"time"
+
+	"github.com/mydisha/keirouter/backend/internal/crypto"
+)
 
 // DefaultTenantID is the implicit tenant used in local single-user mode.
 const DefaultTenantID = "default"
@@ -15,11 +19,16 @@ type Tenant struct {
 // PortalUser binds one Google identity to exactly one API key for the public
 // usage portal. GoogleSub is Google's stable subject id. PlanID records the
 // plan used at self-provisioning time (empty for manual claims).
+//
+// SealedKey optionally holds the envelope-encrypted plaintext for keys the
+// portal itself provisioned, so the owner can reveal them again later. It is
+// empty for manually claimed keys, whose plaintext is unrecoverable.
 type PortalUser struct {
 	GoogleSub string
 	Email     string
 	KeyID     string
 	PlanID    string
+	SealedKey crypto.Sealed
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

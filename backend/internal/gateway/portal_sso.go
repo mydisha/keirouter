@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/mydisha/keirouter/backend/internal/budget"
+	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/identity"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
@@ -312,9 +313,18 @@ func (s *Server) provisionPortalKey(ctx context.Context, plan store.Plan, sub, e
 		}
 	}
 
-	// Bind the new key to the user in the same transaction.
+	// Bind the new key to the user in the same transaction. The plaintext is
+	// sealed so the owner can reveal it again on /portal/key; a manually claimed
+	// key has no sealed copy and stays masked-only.
+	sealed := crypto.Sealed{}
+	if s.vault != nil {
+		var err error
+		if sealed, err = s.vault.Sealer().SealString(issued.Plaintext); err != nil {
+			return identity.Issued{}, err
+		}
+	}
 	if err := s.db.PortalUsers().UpsertOnTx(ctx, tx, store.PortalUser{
-		GoogleSub: sub, Email: email, KeyID: issued.Record.ID, PlanID: plan.ID,
+		GoogleSub: sub, Email: email, KeyID: issued.Record.ID, PlanID: plan.ID, SealedKey: sealed,
 	}); err != nil {
 		return identity.Issued{}, err
 	}
@@ -549,7 +559,8 @@ func (s *Server) adminTogglePortalUserKey(w http.ResponseWriter, r *http.Request
 }
 
 // adminRotatePortalUserKey regenerates the key material in place. The
-// plaintext is returned once.
+// plaintext is returned once. Any previously sealed plaintext is replaced with
+// the new one so a later reveal returns the current key, not the old one.
 func (s *Server) adminRotatePortalUserKey(w http.ResponseWriter, r *http.Request) {
 	sub := chi.URLParam(r, "sub")
 	u, err := s.db.PortalUsers().GetBySub(r.Context(), sub)
@@ -570,6 +581,19 @@ func (s *Server) adminRotatePortalUserKey(w http.ResponseWriter, r *http.Request
 	if err := s.identity.Keys().SetKeyMaterial(r.Context(), u.KeyID, issued.Record.KeyHash, issued.Record.LookupHash, issued.Record.Display); err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
+	}
+	// Refresh the sealed plaintext if this binding was revealable before, so the
+	// stored copy never goes stale relative to the rotated key material.
+	if u.SealedKey.WrappedDEK != "" && s.vault != nil {
+		sealed, err := s.vault.Sealer().SealString(issued.Plaintext)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+			return
+		}
+		if err := s.db.PortalUsers().SetSealedKey(r.Context(), sub, sealed); err != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+			return
+		}
 	}
 	s.identity.InvalidateAuthCacheForKey(u.KeyID)
 	writeJSON(w, http.StatusOK, map[string]any{"google_sub": sub, "key_id": u.KeyID, "key": issued.Plaintext, "display": issued.Record.Display})
@@ -643,6 +667,10 @@ func (s *Server) handlePortalKey(w http.ResponseWriter, r *http.Request) {
 		"created_at": key.CreatedAt,
 		"plan_id":    u.PlanID,
 	}
+	// A stored sealed plaintext means the portal can reveal the full key again.
+	if u.SealedKey.WrappedDEK != "" && u.SealedKey.Ciphertext != "" {
+		out["revealable"] = true
+	}
 	if key.LastUsedAt != nil {
 		out["last_used_at"] = key.LastUsedAt
 	}
@@ -652,6 +680,42 @@ func (s *Server) handlePortalKey(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handlePortalKeyReveal returns the full plaintext of the signed-in user's
+// portal-provisioned key. Only keys whose plaintext was sealed at creation can
+// be revealed; manually claimed keys were never stored and return 404.
+func (s *Server) handlePortalKeyReveal(w http.ResponseWriter, r *http.Request) {
+	sub, ok := s.portalSubject(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "portal session required")
+		return
+	}
+	u, err := s.db.PortalUsers().GetBySub(r.Context(), portalGoogleSub(sub))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "no api key claimed")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load portal user")
+		return
+	}
+	if u.SealedKey.WrappedDEK == "" || u.SealedKey.Ciphertext == "" {
+		writeError(w, http.StatusNotFound, "this key cannot be revealed")
+		return
+	}
+	if s.vault == nil {
+		writeError(w, http.StatusInternalServerError, "vault not configured")
+		return
+	}
+	plaintext, err := s.vault.Sealer().OpenString(u.SealedKey)
+	if err != nil {
+		s.log.Error("portal reveal key: open failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "failed to reveal key")
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"key": plaintext})
 }
 
 // handlePortalTopups returns the read-only topup ledger for the signed-in

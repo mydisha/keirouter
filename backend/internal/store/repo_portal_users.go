@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/mydisha/keirouter/backend/internal/crypto"
 )
 
 // PortalUserRepo persists portal_users bindings.
@@ -15,7 +17,16 @@ type PortalUserRepo struct{ db *DB }
 func (db *DB) PortalUsers() *PortalUserRepo { return &PortalUserRepo{db: db} }
 
 // portalUserCols is the shared projection for portal user scans.
-const portalUserCols = `google_sub, email, key_id, COALESCE(plan_id, ''), created_at, updated_at`
+const portalUserCols = `google_sub, email, key_id, COALESCE(plan_id, ''), COALESCE(sealed_wrapped_dek, ''), COALESCE(sealed_ciphertext, ''), created_at, updated_at`
+
+// sealedArgs returns the two sealed-column bind values, using NULL when the
+// binding has no stored plaintext (manual claims).
+func sealedArgs(u PortalUser) (any, any) {
+	if u.SealedKey.WrappedDEK == "" || u.SealedKey.Ciphertext == "" {
+		return nil, nil
+	}
+	return u.SealedKey.WrappedDEK, u.SealedKey.Ciphertext
+}
 
 // Upsert inserts or updates a portal user binding. It returns ErrAlreadyExists
 // when the target key is already bound to a different Google subject.
@@ -26,14 +37,15 @@ func (r *PortalUserRepo) Upsert(ctx context.Context, u PortalUser) error {
 		return err
 	}
 	now := time.Now()
-	q := r.db.rebind(`INSERT INTO portal_users (google_sub, email, key_id, plan_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (google_sub) DO UPDATE SET email = excluded.email, key_id = excluded.key_id, plan_id = excluded.plan_id, updated_at = excluded.updated_at`)
+	wrapped, ciphertext := sealedArgs(u)
+	q := r.db.rebind(`INSERT INTO portal_users (google_sub, email, key_id, plan_id, sealed_wrapped_dek, sealed_ciphertext, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (google_sub) DO UPDATE SET email = excluded.email, key_id = excluded.key_id, plan_id = excluded.plan_id, sealed_wrapped_dek = excluded.sealed_wrapped_dek, sealed_ciphertext = excluded.sealed_ciphertext, updated_at = excluded.updated_at`)
 	var planID any
 	if u.PlanID != "" {
 		planID = u.PlanID
 	}
-	_, err := r.db.sql.ExecContext(ctx, q, u.GoogleSub, u.Email, u.KeyID, planID, formatTime(now), formatTime(now))
+	_, err := r.db.sql.ExecContext(ctx, q, u.GoogleSub, u.Email, u.KeyID, planID, wrapped, ciphertext, formatTime(now), formatTime(now))
 	if err != nil {
 		return fmt.Errorf("store: upsert portal user: %w", err)
 	}
@@ -45,14 +57,15 @@ func (r *PortalUserRepo) Upsert(ctx context.Context, u PortalUser) error {
 // is enforced by the DB constraint; on violation it returns ErrAlreadyExists.
 func (r *PortalUserRepo) UpsertOnTx(ctx context.Context, tx *sql.Tx, u PortalUser) error {
 	now := time.Now()
-	q := r.db.rebind(`INSERT INTO portal_users (google_sub, email, key_id, plan_id, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (google_sub) DO UPDATE SET email = excluded.email, key_id = excluded.key_id, plan_id = excluded.plan_id, updated_at = excluded.updated_at`)
+	wrapped, ciphertext := sealedArgs(u)
+	q := r.db.rebind(`INSERT INTO portal_users (google_sub, email, key_id, plan_id, sealed_wrapped_dek, sealed_ciphertext, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (google_sub) DO UPDATE SET email = excluded.email, key_id = excluded.key_id, plan_id = excluded.plan_id, sealed_wrapped_dek = excluded.sealed_wrapped_dek, sealed_ciphertext = excluded.sealed_ciphertext, updated_at = excluded.updated_at`)
 	var planID any
 	if u.PlanID != "" {
 		planID = u.PlanID
 	}
-	if _, err := tx.ExecContext(ctx, q, u.GoogleSub, u.Email, u.KeyID, planID, formatTime(now), formatTime(now)); err != nil {
+	if _, err := tx.ExecContext(ctx, q, u.GoogleSub, u.Email, u.KeyID, planID, wrapped, ciphertext, formatTime(now), formatTime(now)); err != nil {
 		if isUniqueViolation(err) {
 			return ErrAlreadyExists
 		}
@@ -109,17 +122,37 @@ func (r *PortalUserRepo) SetPlanID(ctx context.Context, sub, planID string) erro
 	return nil
 }
 
-// SetKeyID rebinds a user to a different key (admin rotate/replace).
+// SetKeyID rebinds a user to a different key (admin rotate/replace). The
+// stored plaintext is cleared because it no longer matches the new key.
 func (r *PortalUserRepo) SetKeyID(ctx context.Context, sub, keyID string) error {
 	if existing, err := r.GetByKey(ctx, keyID); err == nil && existing.GoogleSub != sub {
 		return ErrAlreadyExists
 	} else if err != nil && !errors.Is(err, ErrNotFound) {
 		return err
 	}
-	q := r.db.rebind(`UPDATE portal_users SET key_id = ?, updated_at = ? WHERE google_sub = ?`)
+	q := r.db.rebind(`UPDATE portal_users SET key_id = ?, sealed_wrapped_dek = NULL, sealed_ciphertext = NULL, updated_at = ? WHERE google_sub = ?`)
 	res, err := r.db.sql.ExecContext(ctx, q, keyID, formatTime(time.Now()), sub)
 	if err != nil {
 		return fmt.Errorf("store: set portal user key: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetSealedKey replaces the stored encrypted plaintext for a binding. Used
+// after a key rotation so a reveal returns the current key. Passing an empty
+// Sealed clears it (the binding becomes masked-only).
+func (r *PortalUserRepo) SetSealedKey(ctx context.Context, sub string, sealed crypto.Sealed) error {
+	var wrapped, ciphertext any
+	if sealed.WrappedDEK != "" && sealed.Ciphertext != "" {
+		wrapped, ciphertext = sealed.WrappedDEK, sealed.Ciphertext
+	}
+	q := r.db.rebind(`UPDATE portal_users SET sealed_wrapped_dek = ?, sealed_ciphertext = ?, updated_at = ? WHERE google_sub = ?`)
+	res, err := r.db.sql.ExecContext(ctx, q, wrapped, ciphertext, formatTime(time.Now()), sub)
+	if err != nil {
+		return fmt.Errorf("store: set portal user sealed key: %w", err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
@@ -152,11 +185,13 @@ func (r *PortalUserRepo) scanRow(ctx context.Context, q, arg string) (PortalUser
 func scanPortalUser(scan func(...any) error) (PortalUser, error) {
 	var (
 		u                PortalUser
+		wrapped, cipher  string
 		created, updated string
 	)
-	if err := scan(&u.GoogleSub, &u.Email, &u.KeyID, &u.PlanID, &created, &updated); err != nil {
+	if err := scan(&u.GoogleSub, &u.Email, &u.KeyID, &u.PlanID, &wrapped, &cipher, &created, &updated); err != nil {
 		return PortalUser{}, err
 	}
+	u.SealedKey = crypto.Sealed{WrappedDEK: wrapped, Ciphertext: cipher}
 	u.CreatedAt, u.UpdatedAt = parseTime(created), parseTime(updated)
 	return u, nil
 }

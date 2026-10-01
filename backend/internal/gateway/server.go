@@ -343,6 +343,7 @@ func (s *Server) routes() chi.Router {
 		r.Post("/portal/api/key", s.handlePortalCreateKey)
 		r.Get("/portal/api/usage", s.handlePortalUsage)
 		r.Get("/portal/api/key", s.handlePortalKey)
+		r.Get("/portal/api/key/reveal", s.handlePortalKeyReveal)
 		r.Get("/portal/api/topups", s.handlePortalTopups)
 		r.Post("/portal/auth/logout", s.handlePortalLogout)
 	})

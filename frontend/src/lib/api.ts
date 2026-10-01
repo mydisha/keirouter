@@ -1367,6 +1367,8 @@ export interface PortalKeyInfo {
   last_used_at?: string | null;
   plan_id?: string;
   plan_name?: string;
+  /** True when the server stored a sealed plaintext and reveal is possible. */
+  revealable?: boolean;
 }
 
 export interface PortalTopup {
@@ -1387,6 +1389,17 @@ export async function fetchPortalKey(): Promise<PortalKeyInfo> {
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to load key");
   return data;
+}
+
+/**
+ * Reveal the full plaintext of a portal-provisioned key. Only works for keys
+ * the portal created; manually claimed keys return an error.
+ */
+export async function revealPortalKey(): Promise<string> {
+  const resp = await fetch("/portal/api/key/reveal");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to reveal key");
+  return data.key;
 }
 
 /** Read-only topup ledger + balance for the signed-in portal user. */
