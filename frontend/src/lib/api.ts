@@ -1358,6 +1358,45 @@ export async function createPortalKey(): Promise<{ key: string; key_id: string; 
   return data;
 }
 
+export interface PortalKeyInfo {
+  key_id: string;
+  name: string;
+  display: string;
+  disabled: boolean;
+  created_at: string;
+  last_used_at?: string | null;
+  plan_id?: string;
+  plan_name?: string;
+}
+
+export interface PortalTopup {
+  id: string;
+  amount_usd: number;
+  reason: string;
+  created_at: string;
+}
+
+export interface PortalTopupData {
+  topups: PortalTopup[];
+  balance?: { limit_usd: number; spent_usd: number; usd_remaining: number };
+}
+
+/** Masked metadata for the signed-in portal user's key. */
+export async function fetchPortalKey(): Promise<PortalKeyInfo> {
+  const resp = await fetch("/portal/key");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to load key");
+  return data;
+}
+
+/** Read-only topup ledger + balance for the signed-in portal user. */
+export async function fetchPortalTopups(): Promise<PortalTopupData> {
+  const resp = await fetch("/portal/topups");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to load topups");
+  return data;
+}
+
 export const api = {
   // Auth (no session required for status/login/logout).
   authStatus: () => request<AuthStatus>("GET", "/auth/status"),
