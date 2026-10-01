@@ -42,6 +42,12 @@ services:
       KEIROUTER_SECURITY__ALLOW_PRIVATE_BASE_URL: ${KEIROUTER_SECURITY__ALLOW_PRIVATE_BASE_URL:-false}
       KEIROUTER_SECURITY__TRUST_FORWARDED_HEADERS: ${KEIROUTER_TRUST_FORWARDED_HEADERS:-true}
       KEIROUTER_SECURITY__MASTER_KEY: ${KEIROUTER_MASTER_KEY:-}
+      # Google SSO untuk portal publik /portal. Set enabled=true HANYA setelah
+      # client id + secret diisi di .env; jika tidak, server menolak start
+      # (fail closed).
+      KEIROUTER_PORTAL_SSO__ENABLED: ${KEIROUTER_PORTAL_SSO__ENABLED:-false}
+      KEIROUTER_PORTAL_SSO__GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      KEIROUTER_PORTAL_SSO__GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       KEIROUTER_LOG__FORMAT: ${KEIROUTER_LOG_FORMAT:-json}
       KEIROUTER_DATABASE__DRIVER: postgres
       KEIROUTER_DATABASE__DSN: "postgres://keirouter:${POSTGRES_PASSWORD:-keirouter}@postgres:5432/keirouter?sslmode=disable"

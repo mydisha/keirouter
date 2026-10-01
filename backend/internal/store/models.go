@@ -13,11 +13,13 @@ type Tenant struct {
 }
 
 // PortalUser binds one Google identity to exactly one API key for the public
-// usage portal. GoogleSub is Google's stable subject id.
+// usage portal. GoogleSub is Google's stable subject id. PlanID records the
+// plan used at self-provisioning time (empty for manual claims).
 type PortalUser struct {
 	GoogleSub string
 	Email     string
 	KeyID     string
+	PlanID    string
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }

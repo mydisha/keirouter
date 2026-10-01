@@ -25,6 +25,7 @@ import {
   Shield,
   HeartPulse,
   Gift,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import { api } from "../lib/api";
@@ -84,6 +85,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/usage", label: "Usage", icon: BarChart3, preload: "/usage" },
       { to: "/plans", label: "Plans", icon: Wallet, preload: "/plans" },
+      { to: "/portal-users", label: "Portal Users", icon: Users, preload: "/portal-users" },
       { to: "/quota", label: "Quota Tracker", icon: Clock, preload: "/quota" },
       { to: "/system", label: "System", icon: Activity, preload: "/system" },
       { to: "/settings", label: "Settings", icon: Settings, preload: "/settings" },
@@ -109,6 +111,7 @@ const TITLE_BY_PATH: Record<string, string> = {
   "/usage": "Usage",
   "/plans": "Plans",
   "/budgets": "Plans",
+  "/portal-users": "Portal Users",
   "/quota": "Quota Tracker",
   "/settings": "Settings",
   "/keys": "API Keys",

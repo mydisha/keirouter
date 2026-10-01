@@ -31,6 +31,7 @@ export const routeLoaders = {
   "/guardrails": () => named(import("./pages/Guardrails"), "GuardrailsPage"),
   "/provider-health": () => named(import("./pages/ProviderHealth"), "ProviderHealthPage"),
   "/bansos": () => named(import("./pages/Bansos"), "BansosPage"),
+  "/portal-users": () => named(import("./pages/PortalUsers"), "PortalUsersPage"),
 } as const;
 
 export type RoutePreloadKey = keyof typeof routeLoaders;

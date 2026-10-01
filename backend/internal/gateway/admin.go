@@ -75,6 +75,14 @@ func (s *Server) mountAdmin(r chi.Router) {
 	r.Delete("/plans/{id}", s.adminDeletePlan)
 	r.Get("/plans/{id}/keys", s.adminListPlanKeys)
 
+	r.Get("/portal-users", s.adminListPortalUsers)
+	r.Delete("/portal-users/{sub}", s.adminDeletePortalUser)
+	r.Patch("/portal-users/{sub}/plan", s.adminSetPortalUserPlan)
+	r.Post("/portal-users/{sub}/key/toggle", s.adminTogglePortalUserKey)
+	r.Post("/portal-users/{sub}/key/rotate", s.adminRotatePortalUserKey)
+	r.Get("/portal-settings", s.adminGetPortalSettings)
+	r.Post("/portal-settings", s.adminUpdatePortalSettings)
+
 	r.Get("/budgets", s.adminListBudgets)
 	r.Get("/budgets/status", s.adminBudgetStatus)
 	r.Post("/budgets", s.adminCreateBudget)

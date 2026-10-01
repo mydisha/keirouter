@@ -5,14 +5,14 @@ import {
   CartesianGrid, PieChart, Pie, Cell, ComposedChart, Line,
 } from "recharts";
 import {
-  fetchPortalStatus, claimPortalKey, fetchPortalUsage, portalLogout,
+  fetchPortalStatus, claimPortalKey, createPortalKey, fetchPortalUsage, portalLogout,
   APIError, type KeyUsageData, type PortalRecentRequest,
 } from "../lib/api";
 import { useBranding } from "../contexts/BrandingContext";
 import {
   AlertTriangle, CheckCircle2, Activity, ArrowDownRight, ArrowUpRight, DollarSign,
   LogOut, Layers, Key, Radio, TrendingUp, Coins, Calendar,
-  Trophy, Infinity as InfinityIcon, Clock, ChevronLeft, ChevronRight,
+  Trophy, Infinity as InfinityIcon, Clock, ChevronLeft, ChevronRight, Copy, Check,
 } from "lucide-react";
 import { Card, Button, Input, Spinner, ErrorCard, Badge, SegmentedControl } from "../components/ui";
 
@@ -36,6 +36,9 @@ export function KeyPortalPage() {
   const [claimInput, setClaimInput] = useState("");
   const [claimError, setClaimError] = useState("");
   const [claiming, setClaiming] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [createdKey, setCreatedKey] = useState("");
   const [days, setDays] = useState(30);
 
   const { data: status, isLoading: statusLoading } = useQuery({
@@ -69,6 +72,26 @@ export function KeyPortalPage() {
     } finally {
       setClaiming(false);
     }
+  };
+
+  const handleCreate = async () => {
+    setCreating(true);
+    setCreateError("");
+    try {
+      const res = await createPortalKey();
+      setCreatedKey(res.key);
+      await queryClient.invalidateQueries({ queryKey: ["portal-status"] });
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "Failed to create key");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleFinish = () => {
+    setCreatedKey("");
+    setDays(30);
+    queryClient.invalidateQueries({ queryKey: ["portal-usage"] });
   };
 
   const handleLogout = async () => {
@@ -107,6 +130,34 @@ export function KeyPortalPage() {
     );
   }
 
+  if (createdKey) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-4 md:p-8">
+        <div className="w-full max-w-md animate-[page-in_0.3s_ease-out]">
+          <Card className="p-8 md:p-10 shadow-float border-0 ring-1 ring-[var(--border)]">
+            <div className="mb-6 flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-100 text-accent-700 dark:bg-accent-900/40 dark:text-accent-300">
+                <Key size={18} />
+              </div>
+              <h1 className="text-xl font-display font-semibold tracking-tight text-[var(--text)]">Your API key is ready</h1>
+            </div>
+            <p className="mb-4 text-sm text-[var(--text-muted)]">
+              Copy this key now and store it securely. For your protection it is shown
+              only once and cannot be retrieved later.
+            </p>
+            <div className="mb-6 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)]/60 p-3">
+              <code className="min-w-0 flex-1 break-all font-mono text-[13px] text-[var(--text)]">{createdKey}</code>
+              <CopyButton value={createdKey} />
+            </div>
+            <Button onClick={handleFinish} className="w-full h-11 text-base font-medium">
+              View my usage
+            </Button>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
   if (!claimed) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-4 md:p-8">
@@ -115,49 +166,89 @@ export function KeyPortalPage() {
             <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--bg-subtle)] ring-1 ring-inset ring-[var(--border)]">
               <img src={logoSrc} alt={branding.name || "KeiRouter"} className="h-8 object-contain" />
             </div>
-            <h1 className="mb-2 text-2xl font-display tracking-tight text-[var(--text)]">Claim your API key</h1>
-            <p className="mb-1 text-sm text-[var(--text-muted)]">
+            <h1 className="mb-2 text-2xl font-display tracking-tight text-[var(--text)]">Set up your API key</h1>
+            <p className="mb-8 text-sm text-[var(--text-muted)]">
               Signed in as <strong className="font-medium text-[var(--text)]">{status.email}</strong>
             </p>
-            <p className="mb-8 text-sm text-[var(--text-muted)]">
-              Paste your full API key to link it to this account. It can only be claimed once.
-            </p>
 
-            <form onSubmit={handleClaim} className="space-y-5 text-left">
-              <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
-                  API Key
-                </label>
-                <div className="relative">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[var(--text-muted)]">
-                    <Key size={16} />
-                  </div>
-                  <Input
-                    type="password"
-                    value={claimInput}
-                    onChange={(e) => setClaimInput(e.target.value)}
-                    placeholder="kr_..."
-                    className="pl-10 h-11 bg-[var(--bg)]"
-                    autoFocus
-                  />
-                </div>
+            {status.provisioning_enabled ? (
+              <div className="space-y-5">
+                <p className="text-sm text-[var(--text-muted)]">
+                  Generate an API key on your plan and start monitoring your usage.
+                </p>
+                {createError && <p className="text-sm text-[var(--color-danger,#dc2626)]">{createError}</p>}
+                <Button
+                  onClick={handleCreate}
+                  disabled={creating}
+                  className="w-full h-11 text-base font-medium shadow-sm transition-all hover:-translate-y-px"
+                >
+                  {creating ? "Creating…" : "Create API key"}
+                </Button>
+                <details className="text-left">
+                  <summary className="cursor-pointer text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
+                    I already have a key
+                  </summary>
+                  <form onSubmit={handleClaim} className="mt-4 space-y-5">
+                    <div className="relative">
+                      <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[var(--text-muted)]">
+                        <Key size={16} />
+                      </div>
+                      <Input
+                        type="password"
+                        value={claimInput}
+                        onChange={(e) => setClaimInput(e.target.value)}
+                        placeholder="kr_..."
+                        className="pl-10 h-11 bg-[var(--bg)]"
+                      />
+                    </div>
+                    {claimError && <p className="text-sm text-[var(--color-danger,#dc2626)]">{claimError}</p>}
+                    <Button type="submit" variant="secondary" className="w-full h-11" disabled={!claimInput.trim() || claiming}>
+                      {claiming ? "Claiming…" : "Claim existing key"}
+                    </Button>
+                  </form>
+                </details>
               </div>
-              {claimError && <p className="text-sm text-[var(--color-danger,#dc2626)]">{claimError}</p>}
-              <Button
-                type="submit"
-                className="w-full h-11 text-base font-medium shadow-sm transition-all hover:-translate-y-px"
-                disabled={!claimInput.trim() || claiming}
-              >
-                {claiming ? "Claiming…" : "Claim Key"}
-              </Button>
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="w-full text-center text-sm text-[var(--text-muted)] hover:text-[var(--text)]"
-              >
-                Sign out
-              </button>
-            </form>
+            ) : (
+              <form onSubmit={handleClaim} className="space-y-5 text-left">
+                <p className="text-center text-sm text-[var(--text-muted)]">
+                  Paste your full API key to link it to this account. It can only be claimed once.
+                </p>
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
+                    API Key
+                  </label>
+                  <div className="relative">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[var(--text-muted)]">
+                      <Key size={16} />
+                    </div>
+                    <Input
+                      type="password"
+                      value={claimInput}
+                      onChange={(e) => setClaimInput(e.target.value)}
+                      placeholder="kr_..."
+                      className="pl-10 h-11 bg-[var(--bg)]"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                {claimError && <p className="text-sm text-[var(--color-danger,#dc2626)]">{claimError}</p>}
+                <Button
+                  type="submit"
+                  className="w-full h-11 text-base font-medium shadow-sm transition-all hover:-translate-y-px"
+                  disabled={!claimInput.trim() || claiming}
+                >
+                  {claiming ? "Claiming…" : "Claim Key"}
+                </Button>
+              </form>
+            )}
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="mt-5 w-full text-center text-sm text-[var(--text-muted)] hover:text-[var(--text)]"
+            >
+              Sign out
+            </button>
           </Card>
         </div>
       </div>
@@ -782,6 +873,29 @@ function ModelSection({ models }: { models: NonNullable<KeyUsageData["models"]> 
 }
 
 // ─── Small presentational helpers ─────────────────────────────────────────
+
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      className="shrink-0 rounded-lg p-2 text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--text)]"
+      title="Copy"
+    >
+      {copied ? <Check size={16} /> : <Copy size={16} />}
+    </button>
+  );
+}
 
 function SectionTitle({ title, icon, count }: { title: string; icon?: React.ReactNode; count?: number }) {
   return (

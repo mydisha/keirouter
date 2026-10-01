@@ -1266,6 +1266,36 @@ export interface PortalStatus {
   email?: string;
   claimed?: boolean;
   key_id?: string;
+  has_key?: boolean;
+  provisioning_enabled?: boolean;
+}
+
+export interface PortalPlan {
+  id: string;
+  name: string;
+  description?: string;
+  limit_usd: number;
+  limit_tokens: number;
+  period: string;
+  allowed_models: string[] | null;
+}
+
+export interface PortalUserRecord {
+  google_sub: string;
+  email: string;
+  key_id: string;
+  plan_id?: string;
+  key_name?: string;
+  display?: string;
+  disabled?: boolean;
+  last_used_at?: string | null;
+  created_at: string;
+  budget?: {
+    limit_micros: number;
+    limit_tokens: number;
+    period: string;
+    hard_cutoff: boolean;
+  } | null;
 }
 
 /**
@@ -1305,6 +1335,27 @@ export async function fetchPortalUsage(days?: number): Promise<KeyUsageData> {
 
 export async function portalLogout(): Promise<void> {
   await fetch("/portal/auth/logout", { method: "POST" });
+}
+
+/**
+ * Plans the portal may self-provision from (public).
+ */
+export async function fetchPortalPlans(): Promise<PortalPlan[]> {
+  const resp = await fetch("/portal/plans");
+  if (!resp.ok) return [];
+  const data = await resp.json();
+  return data.plans ?? [];
+}
+
+/**
+ * Provision an API key for the signed-in portal user from the default plan.
+ * The plaintext key is returned once.
+ */
+export async function createPortalKey(): Promise<{ key: string; key_id: string; plan_id: string; plan_name: string }> {
+  const resp = await fetch("/portal/key", { method: "POST" });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to create key");
+  return data;
 }
 
 export const api = {
@@ -1388,6 +1439,20 @@ export const api = {
   }) => request<Plan>("PATCH", `/plans/${id}`, patch),
   deletePlan: (id: string) => request<void>("DELETE", `/plans/${id}`),
   listPlanKeys: (id: string) => request<{ keys: APIKey[] }>("GET", `/plans/${id}/keys`),
+
+  // Portal users (admin): self-provisioned Google SSO accounts.
+  listPortalUsers: () =>
+    request<{ users: PortalUserRecord[]; default_plan_id: string }>("GET", "/portal-users"),
+  deletePortalUser: (sub: string) => request<void>("DELETE", `/portal-users/${encodeURIComponent(sub)}`),
+  setPortalUserPlan: (sub: string, planId: string) =>
+    request<{ google_sub: string; plan_id: string }>("PATCH", `/portal-users/${encodeURIComponent(sub)}/plan`, { plan_id: planId }),
+  togglePortalUserKey: (sub: string, disabled: boolean) =>
+    request<{ disabled: boolean }>("POST", `/portal-users/${encodeURIComponent(sub)}/key/toggle`, { disabled }),
+  rotatePortalUserKey: (sub: string) =>
+    request<{ key: string; key_id: string; display: string }>("POST", `/portal-users/${encodeURIComponent(sub)}/key/rotate`),
+  getPortalSettings: () => request<{ default_plan_id: string }>("GET", "/portal-settings"),
+  updatePortalSettings: (defaultPlanId: string) =>
+    request<{ default_plan_id: string }>("POST", "/portal-settings", { default_plan_id: defaultPlanId }),
 
   listKeys: () => request<{ keys: APIKey[] }>("GET", "/keys"),
   createKey: (name: string, opts?: {

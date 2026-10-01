@@ -33,6 +33,7 @@ const KeyDetailPage = lazy(routeLoaders["/key-detail"]);
 const GuardrailsPage = lazy(routeLoaders["/guardrails"]);
 const ProviderHealthPage = lazy(routeLoaders["/provider-health"]);
 const BansosPage = lazy(routeLoaders["/bansos"]);
+const PortalUsersPage = lazy(routeLoaders["/portal-users"]);
 const PublicLanding = lazy(() => import("./pages/PublicLanding"));
 const PublicBansos = lazy(() => import("./pages/PublicBansos"));
 
@@ -89,6 +90,7 @@ export function App() {
                 <Route path="bansos" element={<BansosPage />} />
                 <Route path="plans" element={<PlansPage />} />
                 <Route path="budgets" element={<PlansPage />} />
+                <Route path="portal-users" element={<PortalUsersPage />} />
                 <Route path="system" element={<SystemPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>

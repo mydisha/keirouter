@@ -41,3 +41,32 @@ func TestPortalUserRepo_BindAndGet(t *testing.T) {
 	_, err = db.PortalUsers().GetBySub(ctx, "sub-1")
 	require.ErrorIs(t, err, ErrNotFound)
 }
+
+func TestPortalUserRepo_ListAndPlan(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+
+	key := APIKey{
+		ID: "key-9", TenantID: DefaultTenantID, Name: "k",
+		KeyHash: "h", LookupHash: "l", Display: "d", CreatedAt: time.Now(),
+	}
+	require.NoError(t, db.APIKeys().Create(ctx, key))
+	require.NoError(t, db.PortalUsers().Upsert(ctx, PortalUser{
+		GoogleSub: "sub-9", Email: "u@example.com", KeyID: "key-9", PlanID: "free",
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+
+	got, err := db.PortalUsers().GetBySub(ctx, "sub-9")
+	require.NoError(t, err)
+	require.Equal(t, "free", got.PlanID)
+
+	all, err := db.PortalUsers().List(ctx)
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+
+	require.NoError(t, db.PortalUsers().SetPlanID(ctx, "sub-9", "pro"))
+	got, _ = db.PortalUsers().GetBySub(ctx, "sub-9")
+	require.Equal(t, "pro", got.PlanID)
+
+	require.ErrorIs(t, db.PortalUsers().SetPlanID(ctx, "missing", "pro"), ErrNotFound)
+}

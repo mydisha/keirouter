@@ -333,9 +333,11 @@ func (s *Server) routes() chi.Router {
 	r.Get("/portal/auth/google/start", s.handlePortalLoginStart)
 	r.Get("/portal/auth/google/callback", s.handlePortalLoginCallback)
 	r.Get("/portal/auth/status", s.handlePortalStatus)
+	r.Get("/portal/plans", s.handlePortalPlans)
 	r.Group(func(r chi.Router) {
 		r.Use(s.portalSessionMiddleware)
 		r.Post("/portal/auth/claim", s.handlePortalClaim)
+		r.Post("/portal/key", s.handlePortalCreateKey)
 		r.Get("/portal/usage", s.handlePortalUsage)
 		r.Post("/portal/auth/logout", s.handlePortalLogout)
 	})
