@@ -248,6 +248,48 @@ func TestAdminPortalListAndDeleteUser(t *testing.T) {
 	require.ErrorIs(t, err, store.ErrNotFound)
 }
 
+func TestPortalKeyRequiresSession(t *testing.T) {
+	srv := newPortalTestServer(t)
+	rec := httptest.NewRecorder()
+	srv.handlePortalKey(rec, httptest.NewRequest(http.MethodGet, "/portal/key", nil))
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}
+
+func TestPortalKeyNotFoundWithoutBinding(t *testing.T) {
+	srv := newPortalTestServer(t)
+	tok, err := srv.auth.IssuePortalSession("portal:sub-key-1", "k@example.com")
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodGet, "/portal/key", nil)
+	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+	rec := httptest.NewRecorder()
+	srv.handlePortalKey(rec, req)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+func TestPortalKeyReturnsMaskedPreview(t *testing.T) {
+	srv := newPortalTestServer(t)
+	ctx := context.Background()
+	issued, err := srv.identity.Create(ctx, store.DefaultTenantID, "", "portal-key")
+	require.NoError(t, err)
+	require.NoError(t, srv.db.PortalUsers().Upsert(ctx, store.PortalUser{
+		GoogleSub: "sub-key-2", Email: "k2@example.com", KeyID: issued.Record.ID, PlanID: "free",
+	}))
+
+	tok, err := srv.auth.IssuePortalSession("portal:sub-key-2", "k2@example.com")
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodGet, "/portal/key", nil)
+	req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+	rec := httptest.NewRecorder()
+	srv.handlePortalKey(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, issued.Record.ID, body["key_id"])
+	require.Equal(t, issued.Record.Display, body["display"])
+	require.NotContains(t, rec.Body.String(), issued.Plaintext, "plaintext must never be returned")
+}
+
 func TestAdminSetPortalUserPlanResyncsBudget(t *testing.T) {
 	srv := newPortalTestServer(t)
 	ctx := context.Background()

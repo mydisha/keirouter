@@ -608,6 +608,51 @@ func (s *Server) handlePortalUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, payload)
 }
 
+// handlePortalKey returns a masked preview of the signed-in user's API key plus
+// its metadata. The plaintext and hashes are never returned.
+func (s *Server) handlePortalKey(w http.ResponseWriter, r *http.Request) {
+	sub, ok := s.portalSubject(r)
+	if !ok {
+		writeError(w, http.StatusUnauthorized, "portal session required")
+		return
+	}
+	u, err := s.db.PortalUsers().GetBySub(r.Context(), portalGoogleSub(sub))
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "no api key claimed")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load portal user")
+		return
+	}
+	key, err := s.identity.Get(r.Context(), u.KeyID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "key no longer exists")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load key")
+		return
+	}
+	out := map[string]any{
+		"key_id":     key.ID,
+		"name":       key.Name,
+		"display":    key.Display,
+		"disabled":   key.Disabled,
+		"created_at": key.CreatedAt,
+		"plan_id":    u.PlanID,
+	}
+	if key.LastUsedAt != nil {
+		out["last_used_at"] = key.LastUsedAt
+	}
+	if u.PlanID != "" {
+		if plan, err := s.db.Plans().Get(r.Context(), u.PlanID); err == nil {
+			out["plan_name"] = plan.Name
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // handlePortalLogout clears the portal session cookie.
 func (s *Server) handlePortalLogout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{
