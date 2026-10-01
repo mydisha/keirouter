@@ -28,7 +28,13 @@ const SkillsPage = lazy(routeLoaders["/skills"]);
 const ConsoleLogPage = lazy(routeLoaders["/console"]);
 const SystemPage = lazy(routeLoaders["/system"]);
 const OAuthCallbackPage = lazy(routeLoaders["/oauth-callback"]);
-const KeyPortalPage = lazy(routeLoaders["/portal"]);
+const PortalRoot = lazy(routeLoaders["/portal"]);
+const PortalLayout = lazy(routeLoaders["/portal-layout"]);
+const PortalDashboard = lazy(routeLoaders["/portal-dashboard"]);
+const PortalKeyPageRoute = lazy(routeLoaders["/portal-key"]);
+const PortalUsageRoute = lazy(routeLoaders["/portal-usage"]);
+const PortalModelsRoute = lazy(routeLoaders["/portal-models"]);
+const PortalTopupRoute = lazy(routeLoaders["/portal-topup"]);
 const KeyDetailPage = lazy(routeLoaders["/key-detail"]);
 const GuardrailsPage = lazy(routeLoaders["/guardrails"]);
 const ProviderHealthPage = lazy(routeLoaders["/provider-health"]);
@@ -54,9 +60,17 @@ export function App() {
         <Route path="/bansos" element={<PublicBansos />} />
         <Route path="portal" element={
           <PortalBrandingProvider>
-            <KeyPortalPage />
+            <PortalRoot />
           </PortalBrandingProvider>
-        } />
+        }>
+          <Route element={<PortalLayout />}>
+            <Route index element={<PortalDashboard />} />
+            <Route path="key" element={<PortalKeyPageRoute />} />
+            <Route path="usage" element={<PortalUsageRoute />} />
+            <Route path="models" element={<PortalModelsRoute />} />
+            <Route path="topup" element={<PortalTopupRoute />} />
+          </Route>
+        </Route>
         {/* Authenticated dashboard, scoped under DASHBOARD_PREFIX. */}
         <Route path={`${DASHBOARD_PREFIX}/*`} element={
           <AuthGate>
