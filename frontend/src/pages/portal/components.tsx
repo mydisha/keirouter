@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AreaChart, Area, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, PieChart, Pie, Cell, ComposedChart, Line,
@@ -6,10 +7,152 @@ import {
 import {
   AlertTriangle, ArrowDownRight, ArrowUpRight, DollarSign, Layers, Radio,
   TrendingUp, Coins, Calendar, Trophy, Infinity as InfinityIcon, Clock,
-  ChevronLeft, ChevronRight, Copy, Check, Activity,
+  ChevronLeft, ChevronRight, Copy, Check, Activity, KeyRound,
 } from "lucide-react";
-import { Card, Badge, SegmentedControl } from "../../components/ui";
-import type { KeyUsageData, PortalRecentRequest } from "../../lib/api";
+import { Button, Card, Badge, Input, SegmentedControl } from "../../components/ui";
+import { claimPortalKey, type KeyUsageData, type PortalRecentRequest } from "../../lib/api";
+
+// ─── Shared portal onboarding surfaces ────────────────────────────────────
+
+export function PageHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <header className="space-y-1">
+      <h1 className="text-2xl font-display font-semibold tracking-tight text-[var(--text)]">{title}</h1>
+      {subtitle && <p className="text-sm text-[var(--text-muted)]">{subtitle}</p>}
+    </header>
+  );
+}
+
+// RevealPanel shows a freshly created plaintext key exactly once. The Done
+// button clears it and refetches status/metadata at the call site.
+export function RevealPanel({
+  value,
+  onDone,
+  doneLabel = "Continue",
+}: {
+  value: string;
+  onDone: () => void;
+  doneLabel?: string;
+}) {
+  return (
+    <Card className="mx-auto w-full max-w-md p-8">
+      <div className="mb-6 flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-100 text-accent-700 dark:bg-accent-900/40 dark:text-accent-300">
+          <KeyRound size={18} />
+        </div>
+        <h1 className="text-xl font-display font-semibold tracking-tight text-[var(--text)]">Your API key is ready</h1>
+      </div>
+      <p className="mb-4 text-sm text-[var(--text-muted)]">
+        Copy this key now and store it securely. For your protection it is shown
+        only once and cannot be retrieved later.
+      </p>
+      <div className="mb-6 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)]/60 p-3">
+        <code className="min-w-0 flex-1 break-all font-mono text-[13px] text-[var(--text)]">{value}</code>
+        <CopyButton value={value} />
+      </div>
+      <Button onClick={onDone} className="w-full">{doneLabel}</Button>
+    </Card>
+  );
+}
+
+// ClaimForm binds an existing key to the signed-in account.
+export function ClaimForm({
+  label = "I already have a key",
+  submitLabel = "Claim existing key",
+}: {
+  label?: string;
+  submitLabel?: string;
+}) {
+  const queryClient = useQueryClient();
+  const [value, setValue] = useState("");
+  const claim = useMutation({
+    mutationFn: () => claimPortalKey(value.trim()),
+    onSuccess: () => {
+      setValue("");
+      queryClient.invalidateQueries({ queryKey: ["portal-status"] });
+      queryClient.invalidateQueries({ queryKey: ["portal-key"] });
+    },
+  });
+
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (value.trim()) claim.mutate();
+      }}
+      className="space-y-3"
+    >
+      <label htmlFor="portal-claim-key" className="block text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
+        {label}
+      </label>
+      <Input
+        id="portal-claim-key"
+        type="password"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="kr_..."
+      />
+      {claim.error instanceof Error && (
+        <p className="text-sm text-[color:var(--color-danger)]">{claim.error.message}</p>
+      )}
+      <Button type="submit" variant="ghost" className="w-full" disabled={!value.trim() || claim.isPending}>
+        {claim.isPending ? "Claiming…" : submitLabel}
+      </Button>
+    </form>
+  );
+}
+
+// SetupCard is the onboarding surface for a signed-in user without a binding.
+export function SetupCard({
+  email,
+  provisioning,
+  description = "Generate an API key on your plan and start monitoring your usage.",
+  claimLabel,
+  claimSubmitLabel,
+  onCreate,
+  creating,
+  createError,
+}: {
+  email?: string;
+  provisioning: boolean;
+  description?: string;
+  claimLabel?: string;
+  claimSubmitLabel?: string;
+  onCreate: () => void;
+  creating: boolean;
+  createError: string;
+}) {
+  return (
+    <Card className="mx-auto w-full max-w-md p-8">
+      <div className="mb-6 text-center">
+        <h2 className="text-xl font-display font-semibold tracking-tight text-[var(--text)]">Set up your API key</h2>
+        {email && (
+          <p className="mt-2 text-sm text-[var(--text-muted)]">
+            Signed in as <strong className="font-medium text-[var(--text)]">{email}</strong>
+          </p>
+        )}
+      </div>
+
+      {provisioning ? (
+        <div className="space-y-5">
+          <p className="text-center text-sm text-[var(--text-muted)]">{description}</p>
+          {createError && <p className="text-sm text-[color:var(--color-danger)]">{createError}</p>}
+          <Button onClick={onCreate} disabled={creating} className="w-full">
+            {creating ? "Creating…" : "Create API key"}
+          </Button>
+        </div>
+      ) : (
+        <p className="text-center text-sm text-[var(--text-muted)]">
+          Automatic key provisioning is disabled. Contact an administrator to set up your key.
+        </p>
+      )}
+
+      <div className="mt-5 border-t border-[var(--border)] pt-5">
+        <ClaimForm label={claimLabel} submitLabel={claimSubmitLabel} />
+      </div>
+    </Card>
+  );
+}
 
 // Chart palette pulled from the design-system CSS variables so the portal
 // matches the admin dashboard in both light and dark themes.

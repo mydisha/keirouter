@@ -2,130 +2,13 @@ import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 import {
-  fetchPortalKey, fetchPortalStatus, createPortalKey, claimPortalKey,
+  fetchPortalKey, fetchPortalStatus, createPortalKey,
   type PortalKeyInfo,
 } from "../../lib/api";
-import { Badge, Button, Card, ErrorCard, Input, Spinner } from "../../components/ui";
-import { CopyButton, SectionTitle, formatDateTime } from "./components";
-
-function PageHeader({ title, subtitle }: { title: string; subtitle?: string }) {
-  return (
-    <header className="space-y-1">
-      <h1 className="text-2xl font-display font-semibold tracking-tight text-[var(--text)]">{title}</h1>
-      {subtitle && <p className="text-sm text-[var(--text-muted)]">{subtitle}</p>}
-    </header>
-  );
-}
-
-// RevealPanel shows the freshly created plaintext key exactly once. Continue
-// clears it and refetches status/metadata.
-function RevealPanel({ value, onDone }: { value: string; onDone: () => void }) {
-  return (
-    <Card className="mx-auto w-full max-w-md p-8">
-      <div className="mb-6 flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-accent-100 text-accent-700 dark:bg-accent-900/40 dark:text-accent-300">
-          <KeyRound size={18} />
-        </div>
-        <h1 className="text-xl font-display font-semibold tracking-tight text-[var(--text)]">Your API key is ready</h1>
-      </div>
-      <p className="mb-4 text-sm text-[var(--text-muted)]">
-        Copy this key now and store it securely. For your protection it is shown
-        only once and cannot be retrieved later.
-      </p>
-      <div className="mb-6 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)]/60 p-3">
-        <code className="min-w-0 flex-1 break-all font-mono text-[13px] text-[var(--text)]">{value}</code>
-        <CopyButton value={value} />
-      </div>
-      <Button onClick={onDone} className="w-full">Done</Button>
-    </Card>
-  );
-}
-
-// ClaimForm binds an existing key to the signed-in account.
-function ClaimForm({ onClaimed }: { onClaimed?: () => void }) {
-  const queryClient = useQueryClient();
-  const [value, setValue] = useState("");
-  const claim = useMutation({
-    mutationFn: () => claimPortalKey(value.trim()),
-    onSuccess: () => {
-      setValue("");
-      queryClient.invalidateQueries({ queryKey: ["portal-status"] });
-      queryClient.invalidateQueries({ queryKey: ["portal-key"] });
-      onClaimed?.();
-    },
-  });
-
-  return (
-    <form
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (value.trim()) claim.mutate();
-      }}
-      className="space-y-3"
-    >
-      <label htmlFor="portal-claim-key" className="block text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
-        Claim an existing key
-      </label>
-      <Input
-        id="portal-claim-key"
-        type="password"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder="kr_..."
-      />
-      {claim.error instanceof Error && (
-        <p className="text-sm text-[color:var(--color-danger)]">{claim.error.message}</p>
-      )}
-      <Button type="submit" variant="ghost" className="w-full" disabled={!value.trim() || claim.isPending}>
-        {claim.isPending ? "Claiming…" : "Claim key"}
-      </Button>
-    </form>
-  );
-}
-
-// SetupCard is the onboarding surface for a signed-in user without a binding.
-function SetupCard({
-  provisioning, email, onCreate, creating, createError,
-}: {
-  provisioning: boolean;
-  email?: string;
-  onCreate: () => void;
-  creating: boolean;
-  createError: string;
-}) {
-  return (
-    <Card className="mx-auto w-full max-w-md p-8">
-      <div className="mb-6 text-center">
-        <h2 className="text-xl font-display font-semibold tracking-tight text-[var(--text)]">Set up your API key</h2>
-        {email && (
-          <p className="mt-2 text-sm text-[var(--text-muted)]">
-            Signed in as <strong className="font-medium text-[var(--text)]">{email}</strong>
-          </p>
-        )}
-      </div>
-
-      {provisioning ? (
-        <div className="space-y-5">
-          <p className="text-center text-sm text-[var(--text-muted)]">
-            Generate an API key on your plan and start using the endpoint.
-          </p>
-          {createError && <p className="text-sm text-[color:var(--color-danger)]">{createError}</p>}
-          <Button onClick={onCreate} disabled={creating} className="w-full">
-            {creating ? "Creating…" : "Create API key"}
-          </Button>
-        </div>
-      ) : (
-        <p className="text-center text-sm text-[var(--text-muted)]">
-          Automatic key provisioning is disabled. Contact an administrator to set up your key.
-        </p>
-      )}
-
-      <div className="mt-5 border-t border-[var(--border)] pt-5">
-        <ClaimForm />
-      </div>
-    </Card>
-  );
-}
+import { Badge, Button, Card, ErrorCard, Spinner } from "../../components/ui";
+import {
+  ClaimForm, CopyButton, PageHeader, RevealPanel, SectionTitle, SetupCard, formatDateTime,
+} from "./components";
 
 function MetaRow({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -179,7 +62,7 @@ function KeyDetails({
               {createError && <p className="text-sm text-[color:var(--color-danger)]">{createError}</p>}
             </div>
           )}
-          <ClaimForm />
+          <ClaimForm label="Claim an existing key" submitLabel="Claim key" />
         </div>
       </details>
     </Card>
@@ -199,6 +82,7 @@ export function PortalKeyPage() {
     queryKey: ["portal-key"],
     queryFn: fetchPortalKey,
     retry: false,
+    enabled: statusQuery.data?.has_key !== false,
   });
 
   const create = useMutation({
@@ -215,7 +99,7 @@ export function PortalKeyPage() {
     queryClient.invalidateQueries({ queryKey: ["portal-key"] });
   };
 
-  if (createdKey) return <RevealPanel value={createdKey} onDone={handleDone} />;
+  if (createdKey) return <RevealPanel value={createdKey} onDone={handleDone} doneLabel="Done" />;
 
   if (statusQuery.isLoading) return <Spinner />;
 
@@ -229,8 +113,11 @@ export function PortalKeyPage() {
       <div className="space-y-8">
         <PageHeader title="API Key" subtitle={statusQuery.data?.email ? `Signed in as ${statusQuery.data.email}` : undefined} />
         <SetupCard
-          provisioning={!!statusQuery.data?.provisioning_enabled}
           email={statusQuery.data?.email}
+          provisioning={!!statusQuery.data?.provisioning_enabled}
+          description="Generate an API key on your plan and start using the endpoint."
+          claimLabel="Claim an existing key"
+          claimSubmitLabel="Claim key"
           onCreate={() => create.mutate()}
           creating={create.isPending}
           createError={create.error instanceof Error ? create.error.message : ""}
