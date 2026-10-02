@@ -141,7 +141,9 @@ function TabLink({
 
 export function PublicLayout({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(storedTheme);
-  const [active, setActive] = useState("overview");
+  const [active, setActive] = useState(() =>
+    window.location.pathname.startsWith("/bansos") ? "bansos" : "overview",
+  );
   const [announcementOpen, setAnnouncementOpen] = useState(false);
 
   const toggleTheme = () => {
