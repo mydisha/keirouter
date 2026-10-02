@@ -5,8 +5,7 @@ import {
 } from "../../lib/api";
 import { ErrorCard, Spinner } from "../../components/ui";
 import {
-  DateFilter, OverviewSection, PageHeader, RecentRequestsSection, RevealPanel,
-  SetupCard, TrendSection,
+  DateFilter, OverviewSection, PageHeader, RevealPanel, SetupCard,
 } from "./components";
 
 export function PortalDashboardPage() {
@@ -83,9 +82,6 @@ export function PortalDashboardPage() {
   const data = usage.data;
   if (!data) return <Spinner />;
 
-  const daily = data.daily ?? [];
-  const recent = (data.recent ?? []).slice(0, 10);
-
   return (
     <div className="space-y-8">
       <PageHeader
@@ -96,10 +92,6 @@ export function PortalDashboardPage() {
       <DateFilter days={days} onChange={setDays} />
 
       <OverviewSection d={data} />
-
-      {daily.length > 0 && <TrendSection daily={daily} days={days} />}
-
-      {recent.length > 0 && <RecentRequestsSection recent={recent} days={days} />}
     </div>
   );
 }
