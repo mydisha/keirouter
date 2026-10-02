@@ -84,11 +84,6 @@ export function PortalDashboardPage() {
 
   return (
     <div className="space-y-8">
-      <PageHeader
-        title={data.key_name || "Your API key"}
-        subtitle={`Key ID: ${data.key_id}`}
-      />
-
       <DateFilter days={days} onChange={setDays} />
 
       <OverviewSection d={data} />
