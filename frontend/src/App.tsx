@@ -43,6 +43,7 @@ const BansosPage = lazy(routeLoaders["/bansos"]);
 const PortalUsersPage = lazy(routeLoaders["/portal-users"]);
 const PublicLanding = lazy(() => import("./pages/PublicLanding"));
 const PublicBansos = lazy(() => import("./pages/PublicBansos"));
+const PublicModels = lazy(() => import("./pages/PublicModels"));
 
 function PageFallback() {
   return (
@@ -59,6 +60,7 @@ export function App() {
         {/* Public landing — no auth. */}
         <Route path="/" element={<PublicLanding />} />
         <Route path="/bansos" element={<PublicBansos />} />
+        <Route path="/model" element={<PublicModels />} />
         <Route path="portal" element={
           <PortalBrandingProvider>
             <PortalRoot />
