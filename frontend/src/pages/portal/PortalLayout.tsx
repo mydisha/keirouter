@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3, Bell, Key, Layers, LayoutGrid, LogOut, Menu, Wallet, X } from "lucide-react";
+import { BarChart3, Bell, BookOpen, Key, Layers, LayoutGrid, LogOut, Menu, Wallet, X } from "lucide-react";
 import { portalLogout, type LandingNotification } from "../../lib/api";
 import { fetchPublicNotifications } from "../../lib/publicApi";
 import { useBranding } from "../../contexts/BrandingContext";
@@ -56,6 +56,7 @@ const NAV = [
   { to: portal("/usage"), label: "Usage", icon: BarChart3 },
   { to: portal("/models"), label: "Models", icon: Layers },
   { to: portal("/topup"), label: "Topup", icon: Wallet },
+  { to: portal("/docs"), label: "Docs", icon: BookOpen },
 ];
 
 const TITLES: Record<string, string> = {
@@ -64,6 +65,7 @@ const TITLES: Record<string, string> = {
   "/portal/usage": "Usage",
   "/portal/models": "Models",
   "/portal/topup": "Topup",
+  "/portal/docs": "Docs",
 };
 
 export function PortalLayoutPage() {

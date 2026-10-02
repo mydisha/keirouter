@@ -35,6 +35,7 @@ const PortalKeyPageRoute = lazy(routeLoaders["/portal-key"]);
 const PortalUsageRoute = lazy(routeLoaders["/portal-usage"]);
 const PortalModelsRoute = lazy(routeLoaders["/portal-models"]);
 const PortalTopupRoute = lazy(routeLoaders["/portal-topup"]);
+const PortalDocsRoute = lazy(routeLoaders["/portal-docs"]);
 const KeyDetailPage = lazy(routeLoaders["/key-detail"]);
 const GuardrailsPage = lazy(routeLoaders["/guardrails"]);
 const ProviderHealthPage = lazy(routeLoaders["/provider-health"]);
@@ -69,6 +70,7 @@ export function App() {
             <Route path="usage" element={<PortalUsageRoute />} />
             <Route path="models" element={<PortalModelsRoute />} />
             <Route path="topup" element={<PortalTopupRoute />} />
+            <Route path="docs" element={<PortalDocsRoute />} />
           </Route>
         </Route>
         {/* Authenticated dashboard, scoped under DASHBOARD_PREFIX. */}
