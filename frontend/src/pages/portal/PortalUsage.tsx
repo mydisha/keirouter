@@ -5,7 +5,7 @@ import { fetchPortalStatus, fetchPortalUsage } from "../../lib/api";
 import { EmptyState, ErrorCard, Spinner } from "../../components/ui";
 import { portal } from "../../lib/portalRoutes";
 import {
-  DateFilter, InsightsSection, OverviewSection, RecentRequestsSection, TrendSection,
+  DateFilter, InsightsSection, RecentRequestsSection, TrendSection,
 } from "./components";
 
 export function PortalUsagePage() {
@@ -60,8 +60,6 @@ export function PortalUsagePage() {
   return (
     <div className="space-y-8">
       <DateFilter days={days} onChange={setDays} />
-
-      <OverviewSection d={data} />
 
       {daily.length > 0 && <TrendSection daily={daily} days={days} />}
 
