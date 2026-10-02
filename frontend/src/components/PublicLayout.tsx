@@ -21,7 +21,6 @@ const TABS = [
   { id: "models", label: "Model", href: "#models", d: "M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7" },
   { id: "bansos", label: "Bansos", href: "/bansos", d: "M4 8h16a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7M7.5 8a2.5 2.5 0 0 1 0-5A4.8 8 0 0 1 12 8a4.8 8 0 0 1 4.5-5 2.5 2.5 0 0 1 0 5" },
   { id: "purchase", label: "Beli", href: "#purchase", d: "M3 7V5h16v3M3 8h18v12H3V8Zm18 4h-6v4h6" },
-  { id: "balance", label: "Saldo", href: "#balance", d: "M14 10a6 6 0 1 1-2-4M13 11l9-9m-4 4 3 3m-6 0 3 3" },
 ] as const;
 
 const BELL_D = "M6 17h12l-1.5-3V9a4.5 4.5 0 0 0-9 0v5L6 17Zm4 3h4";
@@ -178,7 +177,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
         </div>
       </header>
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-5 border-t border-[var(--line)] bg-[var(--nav-surface)] px-1 pb-[env(safe-area-inset-bottom)] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-[var(--line)] bg-[var(--nav-surface)] px-1 pb-[env(safe-area-inset-bottom)] md:hidden"
         role="tablist"
         aria-label="Navigasi utama"
       >
