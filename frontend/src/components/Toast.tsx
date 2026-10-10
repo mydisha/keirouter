@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
+import { IconTile, type TileTone } from "./ui";
 
 // Toast system: a lightweight, dependency-free notifier styled with the
 // KeiRouter design system. Wrap the app in <ToastProvider> and call useToast()
@@ -106,18 +107,18 @@ function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id:
   );
 }
 
-// Status is carried by a small icon plus sr-only tone text; the card stays neutral.
-const toneMeta: Record<ToastTone, { icon: typeof Info; iconClass: string; srLabel: string }> = {
-  success: { icon: CheckCircle2, iconClass: "text-ok", srLabel: "Success" },
-  error: { icon: AlertCircle, iconClass: "text-bad", srLabel: "Error" },
-  info: { icon: Info, iconClass: "text-fg-faint", srLabel: "Info" },
+// Status is carried by a small tinted icon tile plus sr-only tone text; the
+// card itself stays neutral.
+const toneMeta: Record<ToastTone, { icon: typeof Info; tile: TileTone; srLabel: string }> = {
+  success: { icon: CheckCircle2, tile: "ok", srLabel: "Success" },
+  error: { icon: AlertCircle, tile: "bad", srLabel: "Error" },
+  info: { icon: Info, tile: "blue", srLabel: "Info" },
 };
 
 // ToastCard owns its timer: it pauses while hovered or focused (WCAG 2.2.1)
 // and Escape dismisses it when focus is inside.
 function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
   const meta = toneMeta[toast.tone];
-  const Icon = meta.icon;
   const duration = toast.tone === "error" ? ERROR_DISMISS_MS : AUTO_DISMISS_MS;
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
@@ -155,9 +156,9 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
         }
       }}
     >
-      <div className="flex items-start gap-2.5 py-2.5 pl-3.5 pr-2">
-        <Icon className={`mt-px h-4 w-4 shrink-0 ${meta.iconClass}`} strokeWidth={1.75} aria-hidden="true" />
-        <div className="min-w-0 flex-1">
+      <div className="flex items-start gap-3 py-3 pl-3 pr-2">
+        <IconTile icon={meta.icon} size="sm" tone={meta.tile} />
+        <div className="min-w-0 flex-1 pt-[5px]">
           <p className="text-[13px] font-medium leading-snug text-fg">
             <span className="sr-only">{meta.srLabel}: </span>
             {toast.title}

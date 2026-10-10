@@ -11,19 +11,26 @@ import {
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueries, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ChevronDown,
   ChevronRight,
   Download,
   FileJson,
+  Fingerprint,
   KeyRound,
+  MessageSquareWarning,
   MoreHorizontal,
   Pencil,
   Plus,
+  Scale,
   Search,
+  ShieldAlert,
   Sparkles,
+  Tags,
   Trash2,
   Upload,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import {
   api,
@@ -40,8 +47,9 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
 import { GuardrailEditor } from "../components/GuardrailEditor";
-import { ScopeIDSelector, useScopeTargetLabels } from "../components/ScopeIDSelector";
-import { Button, Input, Select, Badge, Toggle, Modal, Skeleton, ErrorBanner } from "../components/ui";
+import { SCOPE_ICONS, ScopeIDSelector, useScopeTargetLabels } from "../components/ScopeIDSelector";
+import { Button, Input, Select, Badge, Toggle, Modal, Skeleton, ErrorBanner, IconTile, SectionTitle } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 
@@ -61,10 +69,29 @@ const SCOPE_LABEL: Record<GuardrailScope, string> = {
   apikey: "API key",
 };
 
-const TABS: [Tab, string][] = [
-  ["policies", "Policies"],
-  ["logs", "Audit log"],
+const TABS: [Tab, string, LucideIcon][] = [
+  ["policies", "Policies", ICONS.guardrails],
+  ["logs", "Audit log", ICONS.console],
 ];
+
+// Detector glyphs match the ones on the editor's detector rows.
+const DETECTORS: { id: string; label: string; icon: LucideIcon }[] = [
+  { id: "pii", label: "PII", icon: Fingerprint },
+  { id: "injection", label: "Injection", icon: ShieldAlert },
+  { id: "topics", label: "Topics", icon: Tags },
+  { id: "toxicity", label: "Toxicity", icon: MessageSquareWarning },
+  { id: "bias", label: "Bias", icon: Scale },
+];
+const DETECTOR_BY_LABEL = Object.fromEntries(DETECTORS.map((d) => [d.label, d]));
+const DETECTOR_BY_ID = Object.fromEntries(DETECTORS.map((d) => [d.id, d]));
+
+const ACTION_LABEL: Record<string, string> = {
+  block: "Block",
+  mask: "Mask",
+  warn: "Warn",
+  log_only: "Log only",
+  allow: "Allow",
+};
 
 // Legacy hash tabs (#providers, #logs …) map onto the new tab + scope filter so
 // old bookmarks still land somewhere sensible.
@@ -82,6 +109,27 @@ function isScope(v: string | null): v is GuardrailScope {
 }
 
 // ── Shared bits ──────────────────────────────────────────────────────────────
+
+// DialogTitle puts the section's icon in front of a modal title.
+function DialogTitle({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <Icon className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />
+      {children}
+    </span>
+  );
+}
+
+// ScopeLabel is a scope name with its glyph (badges, chips, segmented options).
+function ScopeLabel({ scope }: { scope: GuardrailScope }) {
+  const Icon = SCOPE_ICONS[scope];
+  return (
+    <>
+      <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+      {SCOPE_LABEL[scope] ?? scope}
+    </>
+  );
+}
 
 function DialogFooter({ children }: { children: ReactNode }) {
   return <div className="flex flex-wrap items-center justify-end gap-2 rounded-b-2xl border-t border-line bg-subtle px-5 py-3">{children}</div>;
@@ -117,7 +165,7 @@ function FormField({
 const chipClass = (active: boolean) =>
   cn(
     "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-    active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+    active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
   );
 
 const iconButton =
@@ -175,26 +223,18 @@ function strongestAction(cfg: GuardrailPolicyConfig): GuardrailAction | null {
   return actions.reduce((a, b) => (ACTION_RANK[b] > ACTION_RANK[a] ? b : a));
 }
 
-function EnforcementBadge({ action }: { action: GuardrailAction | null }) {
-  if (!action) return <span className="text-fg-faint">—</span>;
-  switch (action) {
-    case "block":
-      return <Badge tone="danger">Can block</Badge>;
-    case "warn":
-      return <Badge tone="warning">Warns</Badge>;
-    case "mask":
-      return <Badge tone="neutral">Masks</Badge>;
-    case "log_only":
-      return <Badge tone="neutral">Logs only</Badge>;
-    default:
-      return <Badge tone="neutral">Allows</Badge>;
-  }
-}
-
+// Block is danger; warn and mask change the request (warning); log only and
+// allow are neutral. Same mapping as the editor's detector rows.
 function actionBadgeTone(action: string): "danger" | "warning" | "neutral" {
   if (action === "block") return "danger";
-  if (action === "warn") return "warning";
+  if (action === "warn" || action === "mask") return "warning";
   return "neutral";
+}
+
+function EnforcementBadge({ action }: { action: GuardrailAction | null }) {
+  if (!action) return <span className="text-fg-faint">—</span>;
+  const label = { block: "Can block", warn: "Warns", mask: "Masks", log_only: "Logs only", allow: "Allows" }[action] ?? action;
+  return <Badge tone={actionBadgeTone(action)}>{label}</Badge>;
 }
 
 // ── Page ─────────────────────────────────────────────────────────────────────
@@ -257,8 +297,8 @@ export function GuardrailsPage() {
         }
       />
 
-      <div className="mb-5 flex gap-1 border-b border-line" role="tablist" aria-label="Guardrail sections" onKeyDown={rovingKeys('[role="tab"]')}>
-        {TABS.map(([value, label]) => {
+      <div className="mb-6 flex gap-1 border-b border-line" role="tablist" aria-label="Guardrail sections" onKeyDown={rovingKeys('[role="tab"]')}>
+        {TABS.map(([value, label, Icon]) => {
           const on = tab === value;
           return (
             <button
@@ -275,6 +315,7 @@ export function GuardrailsPage() {
                 on ? "text-fg" : "text-fg-muted hover:text-fg",
               )}
             >
+              <Icon className={cn("h-4 w-4 shrink-0", on ? "text-tone" : "text-fg-faint")} strokeWidth={1.75} aria-hidden="true" />
               {label}
               {on && <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
             </button>
@@ -477,132 +518,149 @@ function PoliciesTab({
 
   return (
     <>
-      {all.length === 0 ? (
-        <div className="mb-5 rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-          <h2 className="text-[14px] font-medium text-fg">No guardrail policies yet</h2>
-          <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">Requests pass through unchecked until a policy exists.</p>
-          <Button className="mt-4" onClick={onCreate}>
-            <Plus aria-hidden="true" />
-            Create global policy
-          </Button>
-        </div>
-      ) : (
-        <>
-          {!hasGlobal && (
-            <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[12.5px]">
-              <span className="text-warn">No global policy: traffic no override matches is unchecked.</span>
-              <button type="button" onClick={createGlobal} className="font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
-                Add global policy
-              </button>
-            </div>
-          )}
-
-          <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="relative lg:w-72">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search name, target or detector"
-                aria-label="Search policies"
-                className="h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
-              />
-              {search && (
-                <button
-                  type="button"
-                  onClick={() => setSearch("")}
-                  className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
-                  aria-label="Clear search"
-                >
-                  <X className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
-              )}
-            </div>
-            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Filter by scope" onKeyDown={rovingKeys('[role="radio"]')}>
-              {(["all", ...SCOPES] as ScopeFilter[]).map((s) => {
-                const active = scopeFilter === s;
-                return (
-                  <button
-                    key={s}
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
-                    tabIndex={active ? 0 : -1}
-                    onClick={() => onScopeFilter(s)}
-                    className={chipClass(active)}
-                  >
-                    {s === "all" ? "All" : SCOPE_LABEL[s]}
-                    <span className={cn("tabular-nums", !active && "text-fg-faint")}>{counts[s]}</span>
-                  </button>
-                );
-              })}
-            </div>
-            <p role="status" className="text-[12.5px] tabular-nums text-fg-muted lg:ml-auto">
-              {filtering ? `${visible.length} of ${all.length} policies` : `${all.length} polic${all.length === 1 ? "y" : "ies"}`}
-            </p>
+      <div className="space-y-6">
+        {all.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+            <IconTile icon={ICONS.guardrails} size="lg" className="mx-auto mb-3" />
+            <h2 className="text-[13px] font-semibold text-fg">No guardrail policies yet</h2>
+            <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">Requests pass through unchecked until a policy exists.</p>
+            <Button className="mt-4" onClick={onCreate}>
+              <Plus aria-hidden="true" />
+              Create global policy
+            </Button>
           </div>
-
-          <section aria-label="Policies" className="mb-5 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-            {visible.length === 0 ? (
-              <div className="px-6 py-10 text-center">
-                {search.trim() ? (
-                  <>
-                    <p className="text-[13px] font-medium text-fg">No policies match</p>
-                    <p className="mt-1 text-[12.5px] text-fg-muted">Try another search or scope.</p>
-                    <Button variant="ghost" className="mt-4" onClick={() => setSearch("")}>
-                      Clear search
-                    </Button>
-                  </>
-                ) : scopeFilter !== "all" ? (
-                  <>
-                    <p className="text-[13px] font-medium text-fg">No {SCOPE_LABEL[scopeFilter].toLowerCase()} policies yet</p>
-                    <p className="mx-auto mt-1 max-w-md text-[12.5px] text-fg-muted">
-                      {scopeFilter === "global" ? "A global policy applies to all traffic." : "Add one to override the global policy here."}
-                    </p>
-                    <Button className="mt-4" onClick={onCreate}>
-                      <Plus aria-hidden="true" />
-                      New {SCOPE_LABEL[scopeFilter].toLowerCase()} policy
-                    </Button>
-                  </>
-                ) : null}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[820px] text-[13px]">
-                  <thead>
-                    <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
-                      <th scope="col" className="px-4 py-2 font-medium">Policy</th>
-                      <th scope="col" className="px-4 py-2 font-medium">Scope</th>
-                      <th scope="col" className="px-4 py-2 font-medium">Detectors</th>
-                      <th scope="col" className="px-4 py-2 font-medium">Enforcement</th>
-                      <th scope="col" className="px-4 py-2 font-medium">Status</th>
-                      <th scope="col" className="px-4 py-2 font-medium">Updated</th>
-                      <th scope="col" className="w-10 px-2 py-2"><span className="sr-only">Actions</span></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line">
-                    {visible.map((p) => (
-                      <PolicyRow
-                        key={p.id}
-                        policy={p}
-                        target={targetLabel(p.scope, p.scope_id)}
-                        pending={toggling.has(p.id)}
-                        onEdit={() => setEditing(p)}
-                        onToggle={(enabled) => onToggle(p, enabled)}
-                        onDelete={() => onDelete(p)}
-                        onOpenKey={p.scope === "apikey" && p.scope_id ? () => navigate(`/keys/${p.scope_id}`) : undefined}
-                      />
-                    ))}
-                  </tbody>
-                </table>
+        ) : (
+          <div className="space-y-3">
+            {!hasGlobal && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[12.5px]">
+                <span className="inline-flex items-center gap-2 text-warn">
+                  <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                  No global policy: traffic no override matches is unchecked.
+                </span>
+                <button type="button" onClick={createGlobal} className="font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+                  Add global policy
+                </button>
               </div>
             )}
-          </section>
-        </>
-      )}
 
-      <TenantFlagsCard />
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+              <div className="relative lg:w-72">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search name, target or detector"
+                  aria-label="Search policies"
+                  className="h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                    aria-label="Clear search"
+                  >
+                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Filter by scope" onKeyDown={rovingKeys('[role="radio"]')}>
+                {(["all", ...SCOPES] as ScopeFilter[]).map((s) => {
+                  const active = scopeFilter === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      tabIndex={active ? 0 : -1}
+                      onClick={() => onScopeFilter(s)}
+                      className={chipClass(active)}
+                    >
+                      {s === "all" ? "All" : <ScopeLabel scope={s} />}
+                      <span className={cn("tabular-nums", !active && "text-fg-faint")}>{counts[s]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <section aria-labelledby="guardrail-policies-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+              <div className="border-b border-line px-4 py-3">
+                <SectionTitle
+                  id="guardrail-policies-title"
+                  icon={ICONS.guardrails}
+                  title="Policies"
+                  action={
+                    <p role="status" className="text-[12.5px] tabular-nums text-fg-muted">
+                      {filtering ? `${visible.length} of ${all.length} policies` : `${all.length} polic${all.length === 1 ? "y" : "ies"}`}
+                    </p>
+                  }
+                />
+              </div>
+              {visible.length === 0 ? (
+                <div className="px-6 py-10 text-center">
+                  {search.trim() ? (
+                    <>
+                      <IconTile icon={Search} size="lg" tone="slate" className="mx-auto mb-3" />
+                      <p className="text-[13px] font-semibold text-fg">No policies match</p>
+                      <p className="mt-1 text-[12.5px] text-fg-muted">Try another search or scope.</p>
+                      <Button variant="ghost" className="mt-4" onClick={() => setSearch("")}>
+                        Clear search
+                      </Button>
+                    </>
+                  ) : scopeFilter !== "all" ? (
+                    <>
+                      <IconTile icon={SCOPE_ICONS[scopeFilter]} size="lg" className="mx-auto mb-3" />
+                      <p className="text-[13px] font-semibold text-fg">No {SCOPE_LABEL[scopeFilter].toLowerCase()} policies yet</p>
+                      <p className="mx-auto mt-1 max-w-md text-[12.5px] text-fg-muted">
+                        {scopeFilter === "global" ? "A global policy applies to all traffic." : "Add one to override the global policy here."}
+                      </p>
+                      <Button className="mt-4" onClick={onCreate}>
+                        <Plus aria-hidden="true" />
+                        New {SCOPE_LABEL[scopeFilter].toLowerCase()} policy
+                      </Button>
+                    </>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[820px] text-[13px]">
+                    <thead>
+                      <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                        <th scope="col" className="px-4 py-2 font-medium">Policy</th>
+                        <th scope="col" className="px-4 py-2 font-medium">Scope</th>
+                        <th scope="col" className="px-4 py-2 font-medium">Detectors</th>
+                        <th scope="col" className="px-4 py-2 font-medium">Enforcement</th>
+                        <th scope="col" className="px-4 py-2 font-medium">Status</th>
+                        <th scope="col" className="px-4 py-2 font-medium">Updated</th>
+                        <th scope="col" className="w-10 px-2 py-2"><span className="sr-only">Actions</span></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-line">
+                      {visible.map((p) => (
+                        <PolicyRow
+                          key={p.id}
+                          policy={p}
+                          target={targetLabel(p.scope, p.scope_id)}
+                          pending={toggling.has(p.id)}
+                          onEdit={() => setEditing(p)}
+                          onToggle={(enabled) => onToggle(p, enabled)}
+                          onDelete={() => onDelete(p)}
+                          onOpenKey={p.scope === "apikey" && p.scope_id ? () => navigate(`/keys/${p.scope_id}`) : undefined}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          </div>
+        )}
+
+        <TenantFlagsCard />
+      </div>
       {modals}
     </>
   );
@@ -650,7 +708,9 @@ function PolicyRow({
       </td>
       <td className="max-w-[260px] px-4 py-2.5">
         <div className="flex min-w-0 items-center gap-2">
-          <Badge tone="neutral">{SCOPE_LABEL[policy.scope] ?? policy.scope}</Badge>
+          <Badge tone="secondary">
+            <ScopeLabel scope={policy.scope} />
+          </Badge>
           {policy.scope === "global" ? (
             <span className="truncate text-[12.5px] text-fg-muted">All traffic</span>
           ) : target ? (
@@ -668,9 +728,15 @@ function PolicyRow({
           <span className="text-[12.5px] text-fg-muted">None</span>
         ) : (
           <div className="flex flex-wrap gap-1">
-            {detectors.map((d) => (
-              <Badge key={d} tone="neutral">{d}</Badge>
-            ))}
+            {detectors.map((d) => {
+              const Icon = DETECTOR_BY_LABEL[d]?.icon;
+              return (
+                <Badge key={d} tone="neutral">
+                  {Icon && <Icon className="h-3 w-3 shrink-0" strokeWidth={1.75} aria-hidden="true" />}
+                  {d}
+                </Badge>
+              );
+            })}
           </div>
         )}
       </td>
@@ -680,7 +746,10 @@ function PolicyRow({
       <td className="px-4 py-2.5" onClick={stop}>
         <span className="inline-flex items-center gap-2">
           <Toggle checked={policy.enabled} onChange={onToggle} disabled={pending} label={`Enforce ${policy.name}`} />
-          <span className={cn("text-[12.5px]", policy.enabled ? "text-fg" : "text-fg-muted")}>{policy.enabled ? "Active" : "Paused"}</span>
+          <span className={cn("inline-flex items-center gap-1.5 text-[12.5px]", policy.enabled ? "text-fg" : "text-fg-muted")}>
+            <span className={cn("h-1.5 w-1.5 rounded-full", policy.enabled ? "bg-ok" : "bg-fg-faint")} aria-hidden="true" />
+            {policy.enabled ? "Active" : "Paused"}
+          </span>
         </span>
       </td>
       <td className="whitespace-nowrap px-4 py-2.5 tabular-nums text-fg-muted" title={policy.updated_at ? new Date(policy.updated_at).toLocaleString() : undefined}>
@@ -744,20 +813,23 @@ function TenantFlagsCard() {
   return (
     <section
       aria-labelledby={titleId}
-      className="flex flex-col gap-3 rounded-2xl border border-line bg-surface px-4 py-3 shadow-[var(--shadow-card)] sm:flex-row sm:items-center sm:justify-between sm:gap-8"
+      className="flex items-center justify-between gap-4 rounded-2xl border border-line bg-surface px-4 py-3 shadow-[var(--shadow-card)] sm:gap-8"
     >
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 id={titleId} className="text-[13px] font-semibold text-fg">
-            Allow external detector engines
-          </h2>
-          {!allow && <Badge tone="warning">Native only</Badge>}
+      <div className="flex min-w-0 items-start gap-3">
+        <IconTile icon={ICONS.network} size="sm" tone={allow ? "section" : "warn"} className="mt-0.5" />
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 id={titleId} className="text-[13px] font-semibold text-fg">
+              Allow external detector engines
+            </h2>
+            {!allow && <Badge tone="warning">Native only</Badge>}
+          </div>
+          <p id={descId} className="mt-0.5 text-[12px] text-fg-muted">
+            {allow
+              ? "Presidio, OpenAI Moderation and embeddings may receive prompt text"
+              : "Prompt text never leaves KeiRouter; policies use native engines"}
+          </p>
         </div>
-        <p id={descId} className="mt-0.5 text-[12px] text-fg-muted">
-          {allow
-            ? "Presidio, OpenAI Moderation and embeddings may receive prompt text"
-            : "Prompt text never leaves KeiRouter; policies use native engines"}
-        </p>
       </div>
       <Toggle
         checked={allow}
@@ -838,7 +910,7 @@ function ImportModal({ onClose }: { onClose: () => void }) {
     <Modal
       open
       onClose={onClose}
-      title="Import guardrails bundle"
+      title={<DialogTitle icon={Upload}>Import guardrails bundle</DialogTitle>}
       subtitle="Same name and scope overwrites the existing policy"
       maxWidth="max-w-2xl"
     >
@@ -882,7 +954,10 @@ function ImportModal({ onClose }: { onClose: () => void }) {
             <div className="overflow-hidden rounded-lg border border-line bg-subtle text-[12.5px]">
               {result.imported.length > 0 && (
                 <div className="px-3 py-2.5">
-                  <p className="font-medium text-fg">Imported <span className="tabular-nums text-fg-muted">{result.imported.length}</span></p>
+                  <p className="inline-flex items-center gap-1.5 font-medium text-fg">
+                    <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
+                    Imported <span className="tabular-nums text-fg-muted">{result.imported.length}</span>
+                  </p>
                   <ul className="mt-1 space-y-0.5 text-fg-muted">
                     {result.imported.map((p, i) => (
                       <li key={i}>
@@ -898,7 +973,10 @@ function ImportModal({ onClose }: { onClose: () => void }) {
               )}
               {result.skipped.length > 0 && (
                 <div className={cn("px-3 py-2.5", result.imported.length > 0 && "border-t border-line")}>
-                  <p className="font-medium text-warn">Skipped <span className="tabular-nums">{result.skipped.length}</span></p>
+                  <p className="inline-flex items-center gap-1.5 font-medium text-warn">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                    Skipped <span className="tabular-nums">{result.skipped.length}</span>
+                  </p>
                   <ul className="mt-1 space-y-0.5 text-fg-muted">
                     {result.skipped.map((p, i) => (
                       <li key={i}>
@@ -975,7 +1053,7 @@ function EditPolicyModal({
     <Modal
       open
       onClose={onClose}
-      title="Edit policy"
+      title={<DialogTitle icon={Pencil}>Edit policy</DialogTitle>}
       subtitle={policy.scope === "global" ? "Global · all traffic" : `${scopeLabel} · ${targetLabel ?? policy.scope_id}`}
       maxWidth="max-w-3xl"
     >
@@ -1058,7 +1136,7 @@ function CreatePolicyModal({
   const missingTarget = scope !== "global" && !scopeID.trim();
 
   return (
-    <Modal open onClose={onClose} title="New guardrail policy" subtitle="Enforced as soon as it is created" maxWidth="max-w-3xl">
+    <Modal open onClose={onClose} title={<DialogTitle icon={ICONS.guardrails}>New guardrail policy</DialogTitle>} subtitle="Enforced as soon as it is created" maxWidth="max-w-3xl">
       <div className="max-h-[70vh] space-y-5 overflow-y-auto px-5 py-4">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <FormField label="Policy name">
@@ -1088,11 +1166,11 @@ function CreatePolicyModal({
                     title={disabled ? "A global policy already exists. Edit it instead." : undefined}
                     onClick={() => changeScope(s)}
                     className={cn(
-                      "h-8 rounded-lg px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-40",
-                      active ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
+                      "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-40",
+                      active ? "bg-surface text-fg ring-1 ring-line-strong [&_svg]:text-tone" : "text-fg-muted hover:text-fg",
                     )}
                   >
-                    {SCOPE_LABEL[s]}
+                    <ScopeLabel scope={s} />
                   </button>
                 );
               })}
@@ -1112,7 +1190,7 @@ function CreatePolicyModal({
           <DetectorsHeading
             action={
               <Button variant="ghost" onClick={() => setPickingTemplate(true)}>
-                <Sparkles className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                <Sparkles className="text-tone" strokeWidth={1.75} aria-hidden="true" />
                 Start from template
               </Button>
             }
@@ -1161,7 +1239,7 @@ function TemplatePickerModal({
   });
   const list = templates.data?.templates ?? [];
   return (
-    <Modal open onClose={onClose} title="Start from a template" subtitle="Replaces the current detector settings" maxWidth="max-w-xl">
+    <Modal open onClose={onClose} title={<DialogTitle icon={Sparkles}>Start from a template</DialogTitle>} subtitle="Replaces the current detector settings" maxWidth="max-w-xl">
       <div className="max-h-[70vh] overflow-y-auto px-5 py-4" aria-busy={templates.isLoading}>
         {templates.isLoading ? (
           <div className="space-y-2">
@@ -1288,7 +1366,7 @@ function LogsTab() {
     <section aria-labelledby="guardrail-log-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
       <div className="flex flex-col gap-3 border-b border-line px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <h2 id="guardrail-log-title" className="text-[13px] font-semibold text-fg">Audit log</h2>
+          <SectionTitle id="guardrail-log-title" icon={ICONS.console} title="Audit log" />
           <div className="flex items-center gap-2">
             <Toggle checked={liveOn} onChange={setLiveOn} aria-labelledby={liveLabelId} aria-describedby={liveStatusId} />
             <span id={liveLabelId} className="text-[12.5px] font-medium text-fg">Live</span>
@@ -1296,7 +1374,7 @@ function LogsTab() {
               {liveOn && (
                 <span className={cn("h-1.5 w-1.5 rounded-full", connected ? "bg-ok" : "animate-pulse bg-fg-faint")} aria-hidden="true" />
               )}
-              {liveOn ? (connected ? "Connected" : "Connecting…") : "Refreshing every 5s"}
+              <span className={connected ? "text-ok" : undefined}>{liveOn ? (connected ? "Connected" : "Connecting…") : "Refreshing every 5s"}</span>
             </span>
           </div>
         </div>
@@ -1304,11 +1382,11 @@ function LogsTab() {
           <label className="sr-only" htmlFor="guardrail-log-detector">Detector</label>
           <Select id="guardrail-log-detector" className="w-full sm:w-36" value={detector} onChange={(e) => setDetector(e.target.value)}>
             <option value="">All detectors</option>
-            <option value="pii">PII</option>
-            <option value="injection">Injection</option>
-            <option value="topics">Topics</option>
-            <option value="toxicity">Toxicity</option>
-            <option value="bias">Bias</option>
+            {DETECTORS.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.label}
+              </option>
+            ))}
           </Select>
           <label className="sr-only" htmlFor="guardrail-log-action">Action</label>
           <Select id="guardrail-log-action" className="w-full sm:w-36" value={action} onChange={(e) => setAction(e.target.value)}>
@@ -1333,7 +1411,8 @@ function LogsTab() {
         </div>
       ) : rows.length === 0 ? (
         <div className="px-6 py-12 text-center">
-          <p className="text-[13px] font-medium text-fg">{filtered ? "No entries match" : "No audit entries yet"}</p>
+          <IconTile icon={filtered ? Search : ICONS.console} size="lg" tone={filtered ? "slate" : "section"} className="mx-auto mb-3" />
+          <p className="text-[13px] font-semibold text-fg">{filtered ? "No entries match" : "No audit entries yet"}</p>
           <p className="mx-auto mt-1 max-w-md text-[12.5px] text-fg-muted">
             {filtered ? "Try another detector or action." : "Decisions appear here as guardrails fire."}
           </p>
@@ -1372,6 +1451,7 @@ function LogsTab() {
                 const entityCounts = countEntities(findings);
                 const when = new Date(row.created_at).toLocaleString();
                 const detailsId = `guardrail-log-${row.id}`;
+                const DetectorIcon = DETECTOR_BY_ID[row.detector]?.icon;
                 return (
                   <Fragment key={row.id}>
                     <tr
@@ -1395,11 +1475,14 @@ function LogsTab() {
                       </td>
                       <td className="whitespace-nowrap px-3 py-2 tabular-nums text-fg-muted">{when}</td>
                       <td className="px-3 py-2">
-                        <span className="block font-mono text-[12px] text-fg">{row.detector}</span>
+                        <span className="flex items-center gap-1.5 font-mono text-[12px] text-fg">
+                          {DetectorIcon && <DetectorIcon className="h-3.5 w-3.5 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />}
+                          {row.detector}
+                        </span>
                         {row.severity && <span className="block text-[12px] text-fg-muted">{row.severity} severity</span>}
                       </td>
                       <td className="px-3 py-2">
-                        <Badge tone={actionBadgeTone(row.action)}>{row.action}</Badge>
+                        <Badge tone={actionBadgeTone(row.action)}>{ACTION_LABEL[row.action] ?? row.action}</Badge>
                       </td>
                       <td className="max-w-[220px] px-3 py-2">
                         {isTest ? (

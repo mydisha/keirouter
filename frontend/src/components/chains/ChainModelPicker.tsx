@@ -212,7 +212,7 @@ export function ChainModelPicker({ value, providers, onChange, autoFocus = false
                         onClick={() => select(model.providerId, model.id)}
                         className={cn(
                           "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500",
-                          isSelected && "bg-accent-500/5",
+                          isSelected && "bg-accent-500/10",
                         )}
                       >
                         <ProviderLogo icon={model.icon} name={model.providerName} size={20} />
@@ -225,7 +225,7 @@ export function ChainModelPicker({ value, providers, onChange, autoFocus = false
                             {model.providerName} · <span className="font-mono">{model.id}</span>
                           </span>
                         </span>
-                        {isSelected && <Check className="h-4 w-4 shrink-0 text-accent-500" strokeWidth={1.75} aria-hidden="true" />}
+                        {isSelected && <Check className="h-4 w-4 shrink-0 text-link" strokeWidth={1.75} aria-hidden="true" />}
                       </button>
                     );
                   })
@@ -240,7 +240,7 @@ export function ChainModelPicker({ value, providers, onChange, autoFocus = false
                   onClick={() => setCustom(true)}
                   className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
                 >
-                  <Plus className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                  <Plus className="h-3.5 w-3.5 text-tone" strokeWidth={1.75} aria-hidden="true" />
                   Use a custom model ID
                 </button>
               </div>

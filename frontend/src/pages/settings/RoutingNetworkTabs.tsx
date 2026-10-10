@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { CheckCircle2, XCircle } from "lucide-react";
+import { CheckCircle2, RefreshCw, XCircle } from "lucide-react";
+import { ICONS } from "../../lib/icons";
 import { api, type EndpointSettings } from "../../lib/api";
 import { Badge, Button } from "../../components/ui";
 import { Code, FormField, Note, SettingRow, SettingsCard, ToggleRow, UnitInput, inputClass, rowIds } from "./shared";
@@ -17,7 +18,7 @@ export function RoutingTab({ local, update }: TabProps) {
   const accountsRR = isRoundRobin(local.routing_strategy);
   const chainsRR = isRoundRobin(local.combo_strategy);
   return (
-    <SettingsCard title="Routing strategy" description="Providers can override this on their Routing tab">
+    <SettingsCard icon={ICONS.route} title="Routing strategy" description="Providers can override this on their Routing tab">
       <ToggleRow label="Provider group round robin"
         description="Rotate accounts in the same provider/model group. Off: use them in priority order (fill first)."
         checked={accountsRR}
@@ -65,8 +66,8 @@ export function RoutingTab({ local, update }: TabProps) {
 export function NetworkTab({ local, update }: TabProps) {
   return (
     <div className="space-y-4">
-      <SettingsCard title="Timeouts" description="Raise these for slow or reasoning models">
-        <SettingRow controlId="connect-timeout" label="Connect timeout" description="Wait for the provider to start responding. Default 60 s.">
+      <SettingsCard icon={ICONS.latency} title="Timeouts" description="Raise these for slow or reasoning models">
+        <SettingRow controlId="connect-timeout" label="Connect timeout" description="Wait for a streaming provider to send its first bytes. Non-streaming calls use the request timeout. Default 60 s.">
           <UnitInput
             id="connect-timeout"
             unit="sec"
@@ -115,7 +116,7 @@ export function NetworkTab({ local, update }: TabProps) {
 
       <ProxySettings local={local} update={update} />
 
-      <SettingsCard title="Limits and logging">
+      <SettingsCard icon={ICONS.quota} title="Limits and logging">
         <ToggleRow label="Enforce API key rate limits"
           description="Apply each key's plan RPM, TPM and concurrency limits."
           info="Changes apply immediately. Blank or 0 plan values stay unlimited."
@@ -158,10 +159,10 @@ function ProxySettings({ local, update }: TabProps) {
   const proxyEnabled = local.outbound_proxy_enabled;
   const hasURL = !!local.outbound_proxy_url;
   const status = !proxyEnabled
-    ? { label: "Inactive", tone: "neutral" as const }
+    ? { label: "Disabled", tone: "neutral" as const }
     : hasURL
       ? { label: "Active", tone: "success" as const }
-      : { label: "No URL", tone: "warning" as const };
+      : { label: "Not configured", tone: "warning" as const };
 
   const detectedScheme = (() => {
     if (!local.outbound_proxy_url) return null;
@@ -176,6 +177,7 @@ function ProxySettings({ local, update }: TabProps) {
 
   return (
     <SettingsCard
+      icon={ICONS.network}
       title="Outbound proxy"
       description="HTTP, HTTPS or SOCKS5 proxy for provider requests"
       action={<Badge tone={status.tone}>{status.label}</Badge>}
@@ -252,6 +254,7 @@ function ProxySettings({ local, update }: TabProps) {
             }
           >
             <Button variant="ghost" onClick={testProxy} disabled={testing || !hasURL}>
+              <RefreshCw className={testing ? "animate-spin" : undefined} aria-hidden="true" />
               {testing ? "Testing…" : "Test proxy"}
             </Button>
           </SettingRow>

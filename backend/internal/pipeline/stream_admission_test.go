@@ -122,3 +122,77 @@ func TestPipelineFallsBackWhenFirstStreamErrorsBeforeOutput(t *testing.T) {
 	}
 	require.Equal(t, "from fallback", text)
 }
+
+// truncatedConnector streams text and then closes the channel without a
+// finish event, like an upstream that hung up mid-generation.
+type truncatedConnector struct{ plannerConnector }
+
+func (truncatedConnector) Stream(context.Context, *core.ChatRequest, core.Credentials, core.StreamConfig) (<-chan core.StreamChunk, error) {
+	return streamOf(
+		core.StreamChunk{Type: core.ChunkText, Delta: "partial "},
+		core.StreamChunk{Type: core.ChunkText, Delta: "answer"},
+	), nil
+}
+
+func TestPipelineSynthesizesFinishForTruncatedStream(t *testing.T) {
+	d := newPlannerDispatcherWithConnector(t, truncatedConnector{}, "acc-1")
+	p := New(Deps{Dispatcher: d})
+	req := &core.ChatRequest{
+		Model:        "gpt-4o",
+		IncludeUsage: true,
+		Messages: []core.Message{{
+			Role: core.RoleUser, Content: []core.ContentPart{{Type: core.PartText, Text: "hello"}},
+		}},
+		Metadata: core.RequestMetadata{TenantID: store.DefaultTenantID, SourceDialect: core.DialectOpenAI},
+	}
+	result, err := p.Stream(context.Background(), req, Options{
+		Targets: []dispatch.Target{{Provider: "openai", Model: "gpt-4o"}},
+	})
+	require.NoError(t, err)
+
+	var types []core.ChunkType
+	var text string
+	for chunk := range result.Chunks {
+		types = append(types, chunk.Type)
+		if chunk.Type == core.ChunkText {
+			text += chunk.Delta
+		}
+	}
+	require.Equal(t, "partial answer", text)
+	require.Equal(t, []core.ChunkType{core.ChunkText, core.ChunkText, core.ChunkFinish, core.ChunkUsage}, types,
+		"a finish event is synthesized before the usage event so clients see a well-formed end")
+}
+
+// pingingConnector emits keep-alives then text; pings must reset the stall
+// timer without reaching the client.
+type pingingConnector struct{ plannerConnector }
+
+func (pingingConnector) Stream(context.Context, *core.ChatRequest, core.Credentials, core.StreamConfig) (<-chan core.StreamChunk, error) {
+	return streamOf(
+		core.StreamChunk{Type: core.ChunkPing},
+		core.StreamChunk{Type: core.ChunkText, Delta: "hi"},
+		core.StreamChunk{Type: core.ChunkPing},
+		core.StreamChunk{Type: core.ChunkFinish, FinishReason: core.FinishStop},
+	), nil
+}
+
+func TestPipelineDropsPingsFromClientStream(t *testing.T) {
+	d := newPlannerDispatcherWithConnector(t, pingingConnector{}, "acc-1")
+	p := New(Deps{Dispatcher: d})
+	req := &core.ChatRequest{
+		Model: "gpt-4o",
+		Messages: []core.Message{{
+			Role: core.RoleUser, Content: []core.ContentPart{{Type: core.PartText, Text: "hello"}},
+		}},
+		Metadata: core.RequestMetadata{TenantID: store.DefaultTenantID, SourceDialect: core.DialectOpenAI},
+	}
+	result, err := p.Stream(context.Background(), req, Options{
+		Targets: []dispatch.Target{{Provider: "openai", Model: "gpt-4o"}},
+	})
+	require.NoError(t, err)
+	var types []core.ChunkType
+	for chunk := range result.Chunks {
+		types = append(types, chunk.Type)
+	}
+	require.Equal(t, []core.ChunkType{core.ChunkText, core.ChunkFinish}, types)
+}

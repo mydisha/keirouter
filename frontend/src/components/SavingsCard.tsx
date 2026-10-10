@@ -507,7 +507,7 @@ export function SavingsCardShareButton({
       >
         {done ? (
           <>
-            <Check className="h-3.5 w-3.5 text-ok" aria-hidden="true" />
+            <Check className="h-4 w-4 text-ok" strokeWidth={1.75} aria-hidden="true" />
             <span className="hidden sm:inline">Downloaded</span>
           </>
         ) : generating ? (
@@ -517,7 +517,7 @@ export function SavingsCardShareButton({
           </>
         ) : (
           <>
-            <Download className="h-3.5 w-3.5 text-fg-faint" aria-hidden="true" />
+            <Download className="h-4 w-4 text-tone" strokeWidth={1.75} aria-hidden="true" />
             <span className="hidden sm:inline">Savings card</span>
           </>
         )}

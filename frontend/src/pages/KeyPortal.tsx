@@ -3,8 +3,9 @@ import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { fetchKeyUsage, fetchKeyUsageById, APIError, type KeyUsageData, type PortalRecentRequest } from "../lib/api";
 import { useBranding } from "../contexts/BrandingContext";
-import { AlertCircle, AlertTriangle, Key, Loader2, LogOut, RefreshCw, Send } from "lucide-react";
-import { Button, Input, Select, Badge, Skeleton, TablePagination, useClientPagination } from "../components/ui";
+import { AlertCircle, AlertTriangle, CalendarDays, Key, Loader2, LogOut, RefreshCw, Send, type LucideIcon } from "lucide-react";
+import { Button, Input, Select, Badge, IconTile, Kpi, KpiGrid, SectionTitle, Skeleton, TablePagination, useClientPagination } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { BrandMark } from "../components/BrandMark";
 import { ProviderLogo } from "../components/ProviderLogo";
 import { ChartCard, TimeBars, dayLabel, type TimeSeriesDef } from "../components/charts/TimeSeries";
@@ -13,6 +14,9 @@ import { cn } from "@/lib/utils";
 // Public key portal: a key holder opens /portal with their API key (or a
 // shared portal ID) and sees that key's usage, spend and budget limits.
 // No dashboard chrome; white-labelled through PortalBrandingProvider.
+// It renders outside Layout, so each root sets data-tone="orange" (the Access
+// section hue) itself for text-tone / IconTile / SectionTitle to resolve.
+const PORTAL_TONE = "orange";
 
 // Series colours: accent carries the data, a lighter accent shade separates
 // the second stacked series. Charts take CSS colour strings, hence the vars.
@@ -99,7 +103,7 @@ export function KeyPortalPage() {
     return (
       <CenteredScreen>
         <div className="flex flex-col items-center text-center" role="alert">
-          <AlertCircle className="h-6 w-6 text-bad" strokeWidth={1.75} aria-hidden="true" />
+          <IconTile icon={AlertCircle} size="lg" tone="bad" />
           <h1 className="mt-3 text-[15px] font-semibold tracking-[-0.01em] text-fg">Couldn't open this key</h1>
           <p className="mt-1 text-[13px] text-fg-muted">{msg}</p>
           <p className="mt-1 text-[13px] text-fg-muted">Check the key is still active, or ask for a new link.</p>
@@ -154,11 +158,11 @@ export function KeyPortalPage() {
         setIsTesting={setIsTesting}
       />
     ) : (
-      <div className="space-y-5">
+      <div className="space-y-6">
         <BudgetNotice budgets={d.budgets ?? []} />
         <KpiStrip d={d} />
 
-        <div className="grid gap-5 xl:grid-cols-3">
+        <div className="grid gap-4 xl:grid-cols-3">
           <TrendCard daily={d.daily ?? []} className="xl:col-span-2" />
           <LimitsCard budgets={d.budgets ?? []} allowedModels={d.allowed_models ?? []} />
         </div>
@@ -178,8 +182,11 @@ export function KeyPortalPage() {
         </>
       }
     >
-      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="min-w-0 truncate text-[22px] font-semibold tracking-[-0.02em] text-fg">{d.key_name}</h1>
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <IconTile icon={ICONS.keys} size="lg" />
+          <h1 className="min-w-0 truncate text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{d.key_name}</h1>
+        </div>
         {tab === "usage" && (
           <Segmented
             label="Time range"
@@ -237,7 +244,7 @@ export function KeyPortalPage() {
 
 function PortalShell({ identity, actions, children }: { identity?: ReactNode; actions?: ReactNode; children: ReactNode }) {
   return (
-    <div className="min-h-screen bg-canvas">
+    <div data-tone={PORTAL_TONE} className="min-h-screen bg-canvas">
       <header className="sticky top-0 z-10 border-b border-line bg-surface">
         <div className="mx-auto flex h-14 max-w-[1200px] items-center gap-3 px-4 sm:px-6">
           <BrandLockup />
@@ -319,7 +326,7 @@ function LiveIndicator({ updatedAt, refreshing }: { updatedAt?: number; refreshi
 
 function CenteredScreen({ children }: { children: ReactNode }) {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-canvas px-4">
+    <main data-tone={PORTAL_TONE} className="flex min-h-screen items-center justify-center bg-canvas px-4">
       <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-[var(--shadow-pop)] sm:p-8">{children}</div>
     </main>
   );
@@ -411,24 +418,31 @@ function Segmented<T extends string | number>({
 
 // ── Card chrome ──────────────────────────────────────────────────────────────
 
-function Panel({ title, count, className, children }: { title: string; count?: number; className?: string; children: ReactNode }) {
+function Panel({ icon, title, count, className, children }: { icon: LucideIcon; title: string; count?: number; className?: string; children: ReactNode }) {
   const headingId = useId();
   return (
     <section aria-labelledby={headingId} className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
-      <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-        <h2 id={headingId} className="flex items-center gap-2 text-[13px] font-semibold tracking-[-0.005em] text-fg">
-          {title}
-          {count != null && <span className="rounded-md bg-subtle px-1.5 text-[11.5px] font-medium tabular-nums text-fg-muted">{count}</span>}
-        </h2>
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle
+          icon={icon}
+          id={headingId}
+          title={
+            <span className="inline-flex items-center gap-2">
+              {title}
+              {count != null && <span className="rounded-md bg-subtle px-1.5 text-[11.5px] font-medium tabular-nums text-fg-muted">{count}</span>}
+            </span>
+          }
+        />
       </div>
       {children}
     </section>
   );
 }
 
-function PanelEmpty({ title, hint }: { title: string; hint?: string }) {
+function PanelEmpty({ icon, title, hint }: { icon: LucideIcon; title: string; hint?: string }) {
   return (
     <div className="flex flex-col items-center justify-center gap-1 px-6 py-10 text-center">
+      <IconTile icon={icon} size="lg" className="mb-2" />
       <p className="text-[13px] font-medium text-fg">{title}</p>
       {hint && <p className="max-w-sm text-[12.5px] text-fg-muted">{hint}</p>}
     </div>
@@ -461,25 +475,19 @@ function KpiStrip({ d }: { d: KeyUsageData }) {
   const t = useMemo(() => aggregate(daily), [daily]);
   const totalTokens = t.prompt + t.completion;
 
-  const items: { label: string; value: string; sub?: string }[] = [
-    { label: "Requests", value: fmtInt(t.requests) },
-    { label: "Spend", value: fmtUSD(t.cost) },
-    { label: "Tokens", value: fmtTokens(totalTokens), sub: `${fmtTokens(t.prompt)} in · ${fmtTokens(t.completion)} out` },
-    { label: "This month", value: fmtUSD(d.current_period.cost_usd), sub: `${fmtInt(d.current_period.total_requests)} requests` },
+  const items: { label: string; icon: LucideIcon; value: string; sub?: string }[] = [
+    { label: "Requests", icon: ICONS.requests, value: fmtInt(t.requests) },
+    { label: "Spend", icon: ICONS.spend, value: fmtUSD(t.cost) },
+    { label: "Tokens", icon: ICONS.tokens, value: fmtTokens(totalTokens), sub: `${fmtTokens(t.prompt)} in · ${fmtTokens(t.completion)} out` },
+    { label: "This month", icon: CalendarDays, value: fmtUSD(d.current_period.cost_usd), sub: `${fmtInt(d.current_period.total_requests)} requests` },
   ];
 
   return (
-    <section aria-label="Key metrics" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-      <dl className="grid grid-cols-2 gap-px bg-line lg:grid-cols-4">
-        {items.map((item) => (
-          <div key={item.label} className="flex min-w-0 flex-col gap-1 bg-surface px-4 py-3">
-            <dt className="text-[12px] font-medium text-fg-muted">{item.label}</dt>
-            <dd className="whitespace-nowrap text-[22px] font-semibold leading-tight tracking-[-0.02em] tabular-nums text-fg">{item.value}</dd>
-            {item.sub && <dd className="truncate text-[12px] tabular-nums text-fg-muted">{item.sub}</dd>}
-          </div>
-        ))}
-      </dl>
-    </section>
+    <KpiGrid cols={4} label="Key metrics">
+      {items.map((item) => (
+        <Kpi key={item.label} icon={item.icon} label={item.label} value={item.value} hint={item.sub} valueClassName="whitespace-nowrap" />
+      ))}
+    </KpiGrid>
   );
 }
 
@@ -510,6 +518,7 @@ function TrendCard({ daily, className }: { daily: DailyPoint[]; className?: stri
 
   return (
     <ChartCard
+      icon={ICONS.usage}
       title="Daily usage"
       legend={series.length > 1 ? series.map((s) => ({ label: s.label, color: s.color })) : undefined}
       action={
@@ -573,7 +582,7 @@ function LimitsCard({ budgets, allowedModels }: { budgets: Budget[]; allowedMode
   });
 
   return (
-    <Panel title="Limits" className="flex flex-col">
+    <Panel icon={ICONS.budget} title="Limits" className="flex flex-col">
       {rows.length === 0 ? (
         <p className="px-4 py-3 text-[13px] text-fg-muted">No spend or token limit.</p>
       ) : (
@@ -656,9 +665,9 @@ function ModelsCard({ models }: { models: ModelRow[] }) {
   );
 
   return (
-    <Panel title="Models" count={sorted.length}>
+    <Panel icon={ICONS.model} title="Models" count={sorted.length}>
       {sorted.length === 0 ? (
-        <PanelEmpty title="No model usage in this period" />
+        <PanelEmpty icon={ICONS.model} title="No model usage in this period" />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-[13px]">
@@ -735,9 +744,9 @@ function RecentRequestsCard({ recent }: { recent: PortalRecentRequest[] }) {
   const { paged, page, pages, setPage, total } = useClientPagination(recent, 15);
 
   return (
-    <Panel title="Recent requests" count={recent.length}>
+    <Panel icon={ICONS.console} title="Recent requests" count={recent.length}>
       {recent.length === 0 ? (
-        <PanelEmpty title="No requests in this period" />
+        <PanelEmpty icon={ICONS.console} title="No requests in this period" />
       ) : (
         <>
           <div className="overflow-x-auto">
@@ -842,7 +851,7 @@ function PlaygroundSection({
   };
 
   return (
-    <Panel title="Playground" className="max-w-3xl">
+    <Panel icon={ICONS.prompt} title="Playground" className="max-w-3xl">
       <form
         className="space-y-4 p-4"
         onSubmit={(e) => {
@@ -911,10 +920,10 @@ function PlaygroundSection({
 
 function PortalSkeleton() {
   return (
-    <div className="space-y-5" aria-busy="true" aria-label="Loading usage">
-      <Skeleton className="h-7 w-48" />
+    <div className="space-y-6" aria-busy="true" aria-label="Loading usage">
+      <Skeleton className="h-10 w-56" />
       <Skeleton className="h-[88px] w-full rounded-2xl" />
-      <div className="grid gap-5 xl:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-3">
         <Skeleton className="h-[310px] rounded-2xl xl:col-span-2" />
         <Skeleton className="h-[310px] rounded-2xl" />
       </div>

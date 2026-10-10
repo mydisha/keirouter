@@ -32,6 +32,13 @@ const (
 	PartToolCall   PartType = "tool_call"
 	PartToolResult PartType = "tool_result"
 	PartThinking   PartType = "thinking"
+	// PartDocument is a file attachment (PDF and similar) carried in Media.
+	// Anthropic: document block; OpenAI: file content part; Gemini: inlineData.
+	PartDocument PartType = "document"
+	// PartRedactedThinking is an Anthropic redacted_thinking block: opaque
+	// encrypted reasoning (carried in Text) that must be echoed back verbatim
+	// on the next turn. Other dialects drop it.
+	PartRedactedThinking PartType = "redacted_thinking"
 )
 
 // ContentPart is a single piece of multimodal message content. A message body
@@ -54,6 +61,11 @@ type ContentPart struct {
 	// Signature carries provider-specific opaque data for thinking/reasoning
 	// blocks that must be echoed back on follow-up turns (e.g. Anthropic).
 	Signature string `json:"signature,omitempty"`
+
+	// CacheControl is an Anthropic prompt-caching breakpoint attached to this
+	// block ({"type":"ephemeral"} optionally with "ttl"). It is forwarded
+	// verbatim to Anthropic-dialect upstreams and ignored elsewhere.
+	CacheControl json.RawMessage `json:"cache_control,omitempty"`
 }
 
 // MediaPayload represents binary or referenced media content.
@@ -71,6 +83,9 @@ type ToolCall struct {
 	ID        string          `json:"id"`
 	Name      string          `json:"name"`
 	Arguments json.RawMessage `json:"arguments"`
+	// Custom marks a Responses API custom (freeform) tool call whose input is
+	// plain text rather than JSON. Arguments then holds the raw text.
+	Custom bool `json:"custom,omitempty"`
 }
 
 // ToolResult is the output returned to the model after a tool executes. The
@@ -79,6 +94,9 @@ type ToolResult struct {
 	CallID  string `json:"call_id"`
 	Content string `json:"content"`
 	IsError bool   `json:"is_error,omitempty"`
+	// Parts carries non-text result content (screenshots, documents) that
+	// the text Content cannot represent. Text parts stay in Content.
+	Parts []ContentPart `json:"parts,omitempty"`
 }
 
 // Message is one turn in a conversation.

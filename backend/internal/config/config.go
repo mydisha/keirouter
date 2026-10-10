@@ -328,9 +328,14 @@ func Default() Config {
 			CleanupInterval: time.Minute,
 		},
 		Health: HealthConfig{
-			Enabled:              true,
-			Interval:             30 * time.Second,
-			Timeout:              5 * time.Second,
+			Enabled: true,
+			// Probes are real completions against every recently used model
+			// of every account; a two-minute cadence keeps the signal without
+			// spending a meaningful share of per-minute quotas on pings.
+			Interval: 2 * time.Minute,
+			// Reasoning models routinely need more than five seconds to answer
+			// even a one-word prompt; a short deadline flagged them unhealthy.
+			Timeout:              15 * time.Second,
 			MaxParallel:          8,
 			FailureThreshold:     2,
 			SuccessThreshold:     1,

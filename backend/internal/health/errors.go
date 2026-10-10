@@ -57,7 +57,7 @@ func ClassifyError(pe *core.ProviderError) ProviderErrorType {
 		return ProviderErrorProvider5xx
 	case core.ErrModelUnavailable, core.ErrCapability:
 		return ProviderErrorUnsupported
-	case core.ErrBadRequest:
+	case core.ErrBadRequest, core.ErrContextWindow, core.ErrContentFilter:
 		if isUnsupportedMessage(pe.Message) {
 			return ProviderErrorUnsupported
 		}

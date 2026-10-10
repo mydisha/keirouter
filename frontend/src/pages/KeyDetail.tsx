@@ -7,12 +7,14 @@ import {
   ChevronDown,
   Copy,
   ExternalLink,
+  History,
   Link2,
   MoreHorizontal,
   Plus,
   Search,
   Trash2,
   X,
+  type LucideIcon,
 } from "lucide-react";
 import {
   api,
@@ -31,12 +33,17 @@ import { ProviderLogo } from "../components/ProviderLogo";
 import {
   Badge,
   Button,
+  IconTile,
+  Kpi,
+  KpiGrid,
+  SectionTitle,
   Select,
   Skeleton,
   TablePagination,
   Toggle,
   useClientPagination,
 } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 
@@ -134,14 +141,12 @@ function SettingsRow({ label, labelId, description, children }: { label: string;
   );
 }
 
-function PanelCard({ title, action, children, footer, aside }: { title: ReactNode; action?: ReactNode; children: ReactNode; footer?: ReactNode; aside?: ReactNode }) {
+function PanelCard({ icon, title, action, children, footer }: { icon: LucideIcon; title: ReactNode; action?: ReactNode; children: ReactNode; footer?: ReactNode }) {
   const headingId = useId();
   return (
     <section aria-labelledby={headingId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
-        <h2 id={headingId} className="min-w-0 text-[13px] font-semibold text-fg">{title}</h2>
-        {aside && <span className="text-[12px] text-fg-muted">{aside}</span>}
-        {action && <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div>}
+      <div className="border-b border-line px-4 py-3 sm:px-5">
+        <SectionTitle icon={icon} title={title} id={headingId} action={action} />
       </div>
       {children}
       {footer}
@@ -241,6 +246,7 @@ export function KeyDetailPage() {
   if (!key) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+        <IconTile icon={ICONS.keys} size="lg" className="mx-auto mb-3" />
         <h1 className="text-[14px] font-semibold text-fg">API key not found</h1>
         <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">It may have been revoked.</p>
         <Button className="mt-4" onClick={() => navigate("/keys")}>Back to API keys</Button>
@@ -284,25 +290,28 @@ export function KeyDetailPage() {
         </ol>
       </nav>
 
-      <header className="mb-5 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{key.name}</h1>
-            {key.disabled ? <Badge tone="neutral">Disabled</Badge> : <Badge tone="success">Active</Badge>}
+      <header className="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <IconTile icon={ICONS.keys} size="lg" />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="truncate text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{key.name}</h1>
+              {key.disabled ? <Badge tone="neutral">Disabled</Badge> : <Badge tone="success">Active</Badge>}
+            </div>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
+              <button
+                type="button"
+                onClick={() => copy(key.display, "Masked key copied")}
+                aria-label={`Copy masked key ${key.display}`}
+                className={cn("group inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-md font-mono text-[12.5px] hover:text-fg", FOCUS_RING)}
+              >
+                <span className="truncate">{key.display}</span>
+                <Copy className="h-3 w-3 shrink-0 text-fg-faint" aria-hidden="true" />
+              </button>
+              <span aria-hidden="true" className="text-fg-faint">·</span>
+              <span title={new Date(key.created_at).toLocaleString()}>Created {new Date(key.created_at).toLocaleDateString()}</span>
+            </p>
           </div>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
-            <button
-              type="button"
-              onClick={() => copy(key.display, "Masked key copied")}
-              aria-label={`Copy masked key ${key.display}`}
-              className={cn("group inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-md font-mono text-[12.5px] hover:text-fg", FOCUS_RING)}
-            >
-              <span className="truncate">{key.display}</span>
-              <Copy className="h-3 w-3 shrink-0 text-fg-faint" aria-hidden="true" />
-            </button>
-            <span aria-hidden="true" className="text-fg-faint">·</span>
-            <span title={new Date(key.created_at).toLocaleString()}>Created {new Date(key.created_at).toLocaleDateString()}</span>
-          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={() => copy(portalUrl, "Portal link copied", "Share it with the key owner.")}>
@@ -403,6 +412,7 @@ function GeneralTab({
   togglePending: boolean;
 }) {
   const acceptId = useId();
+  const usageId = useId();
   const lastUsed = usedAt(apiKey.last_used_at);
   // Same query (and cache entry) the owner portal uses for a shared portal ID.
   const usage = useQuery({
@@ -427,49 +437,58 @@ function GeneralTab({
   const rows = limitRows(usage.data?.budgets ?? []);
   const dash = usage.isLoading ? "…" : usage.isError ? "—" : null;
 
-  const kpis: { label: string; value: string; hint?: string; title?: string }[] = [
-    { label: "Requests", value: dash ?? totals.requests.toLocaleString() },
-    { label: "Spend", value: dash ?? fmtUSD(totals.cost) },
+  const kpis: { label: string; icon: LucideIcon; value: string; hint?: string; title?: string }[] = [
+    { label: "Requests", icon: ICONS.requests, value: dash ?? totals.requests.toLocaleString() },
+    { label: "Spend", icon: ICONS.spend, value: dash ?? fmtUSD(totals.cost) },
     {
       label: "Tokens",
+      icon: ICONS.tokens,
       value: dash ?? formatTokens(totals.prompt + totals.completion),
       hint: dash ? undefined : `${formatTokens(totals.prompt)} in · ${formatTokens(totals.completion)} out`,
     },
     {
       label: "Last used",
+      icon: History,
       value: relativeTime(apiKey.last_used_at),
       title: lastUsed ? new Date(lastUsed).toLocaleString() : undefined,
     },
   ];
 
   return (
-    <div className="space-y-4">
-      <PanelCard
-        title="Usage"
-        aside={`Last ${USAGE_DAYS} days`}
-        action={
-          <a href={portalUrl} target="_blank" rel="noopener noreferrer" className={cn("inline-flex items-center gap-1 rounded-md text-[12.5px] font-medium text-link hover:underline", FOCUS_RING)}>
-            Owner portal
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-            <span className="sr-only">(opens in a new tab)</span>
-          </a>
-        }
-      >
-        <div className="grid grid-cols-2 gap-px bg-line lg:grid-cols-4" aria-busy={usage.isLoading}>
-          {kpis.map((k) => (
-            <div key={k.label} className="bg-surface px-4 py-3 sm:px-5">
-              <p className="text-[12px] font-medium text-fg-muted">{k.label}</p>
-              <p className="mt-1 text-[20px] font-semibold leading-tight tracking-[-0.01em] tabular-nums text-fg" title={k.title}>{k.value}</p>
-              {k.hint && <p className="mt-0.5 truncate text-[12px] tabular-nums text-fg-muted">{k.hint}</p>}
-            </div>
-          ))}
+    <div className="space-y-6">
+      <section aria-labelledby={usageId} className="space-y-3">
+        <SectionTitle
+          icon={ICONS.usage}
+          title="Usage"
+          subtitle={`Last ${USAGE_DAYS} days`}
+          id={usageId}
+          action={
+            <a href={portalUrl} target="_blank" rel="noopener noreferrer" className={cn("inline-flex min-h-6 items-center gap-1 rounded-md text-[12.5px] font-medium text-link hover:underline", FOCUS_RING)}>
+              Owner portal
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+          }
+        />
+        <div aria-busy={usage.isLoading}>
+          <KpiGrid cols={4} label={`Usage, last ${USAGE_DAYS} days`}>
+            {kpis.map((k) => (
+              <Kpi
+                key={k.label}
+                icon={k.icon}
+                label={k.label}
+                value={<span title={k.title}>{k.value}</span>}
+                hint={k.hint}
+              />
+            ))}
+          </KpiGrid>
         </div>
         {usage.isError && (
-          <p className="border-t border-line px-4 py-2.5 text-[12.5px] text-fg-muted sm:px-5">Usage couldn't be loaded. Try again later.</p>
+          <p role="status" className="text-[12.5px] text-fg-muted">Usage couldn't be loaded. Try again later.</p>
         )}
-      </PanelCard>
+      </section>
 
-      <PanelCard title="Limits">
+      <PanelCard icon={ICONS.budget} title="Limits">
         <div className="divide-y divide-line">
           <SettingsRow
             label="Plan"
@@ -526,7 +545,7 @@ function GeneralTab({
         </div>
       </PanelCard>
 
-      <PanelCard title="Settings">
+      <PanelCard icon={ICONS.settings} title="Settings">
         <div className="divide-y divide-line">
           <SettingsRow label="Accept requests" labelId={acceptId} description="Off rejects every request with this key.">
             <Toggle checked={!apiKey.disabled} onChange={onToggle} disabled={togglePending} aria-labelledby={acceptId} />
@@ -665,6 +684,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
 
   return (
     <PanelCard
+      icon={ICONS.model}
       title={
         <span className="inline-flex flex-wrap items-center gap-2">
           {editing ? "Edit allowed models" : source === "all" ? "All models allowed" : `${effectiveModels.length} model${effectiveModels.length === 1 ? "" : "s"} allowed`}
@@ -700,6 +720,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
     >
       {!editing && source === "all" ? (
         <div className="px-6 py-10 text-center">
+          <IconTile icon={ICONS.model} size="lg" className="mx-auto mb-3" />
           <h3 className="text-[13px] font-semibold text-fg">No model restriction</h3>
           <p className="mx-auto mt-1 max-w-md text-[12.5px] text-fg-muted">Every routable model works with this key.</p>
         </div>
@@ -737,7 +758,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                     className={cn(
                       "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium",
                       FOCUS_RING,
-                      show === f ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:text-fg",
+                      show === f ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
                     )}
                   >
                     {f === "all" ? "All" : `Selected · ${models.length}`}
@@ -962,6 +983,7 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
   if (policies.isError) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+        <IconTile icon={ICONS.errors} size="lg" tone="bad" className="mx-auto mb-3" />
         <h2 className="text-[14px] font-semibold text-fg">Couldn't load key guardrails</h2>
         <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">Retry before making changes.</p>
         <Button variant="secondary" className="mt-4" onClick={() => policies.refetch()}>Retry</Button>
@@ -987,6 +1009,7 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
   return (
     <div className="space-y-4">
       <PanelCard
+        icon={ICONS.guardrails}
         title="Per-key override"
         action={!editing ? (
           <Button variant="secondary" onClick={() => setEditing(true)}>{existing ? "Edit override" : "Create override"}</Button>
@@ -1008,10 +1031,7 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
       >
         <div className="divide-y divide-line">
           <SettingsRow label="Status" description={statusHint}>
-            <span className="inline-flex items-center gap-2 text-[13px] text-fg">
-              <span className={cn("h-2 w-2 rounded-full", existing && enabled ? "bg-ok" : "bg-fg-faint")} aria-hidden="true" />
-              {statusTitle}
-            </span>
+            <Badge tone={existing && enabled ? "success" : existing ? "warning" : "neutral"}>{statusTitle}</Badge>
           </SettingsRow>
           {editing && (
             <SettingsRow label="Apply this override" labelId={applyId} description="Paused overrides are kept but not enforced.">
@@ -1023,7 +1043,7 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
 
       {editing && <GuardrailEditor value={config} onChange={setConfig} compact />}
 
-      <PanelCard title="Effective protection">
+      <PanelCard icon={ICONS.checklist} title="Effective protection">
         <div className="px-4 py-3 sm:px-5">
           {effective.isLoading ? (
             <Skeleton className="h-6 w-64" />

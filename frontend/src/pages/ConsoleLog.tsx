@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState, useMemo, useCallback, memo, type ReactNode } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { ScrollText, Trash2, Search, X, Copy, Check, ChevronRight, ArrowDown, Download } from "lucide-react";
+import { Trash2, Search, X, Copy, Check, ChevronRight, ArrowDown, Download } from "lucide-react";
 import { PageHeader } from "../components/Layout";
-import { Card, Button, Skeleton, Toggle } from "../components/ui";
+import { Card, Button, IconTile, Skeleton, Toggle } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { useToast } from "../components/Toast";
 import { cn } from "@/lib/utils";
@@ -31,6 +32,15 @@ const LEVEL_DOT: Record<LogLevel, string> = {
   WARN: "bg-warn",
   ERROR: "bg-bad",
   LOG: "bg-fg-faint",
+};
+
+// Pressed level filter: a soft tint in the level's own colour (info = accent).
+const LEVEL_PRESSED: Record<LogLevel, string> = {
+  DEBUG: "border-line-strong bg-subtle text-fg",
+  INFO: "border-accent-500/30 bg-accent-500/10 text-link",
+  WARN: "border-warn/30 bg-warn/12 text-warn",
+  ERROR: "border-bad/25 bg-bad/10 text-bad",
+  LOG: "border-line-strong bg-subtle text-fg",
 };
 
 const LEVEL_LABEL: Record<LogLevel, string> = {
@@ -338,7 +348,7 @@ function IconButton({
 function BodyMessage({ title, hint, action }: { title: string; hint: string; action?: ReactNode }) {
   return (
     <div className="flex h-full min-h-[240px] flex-col items-center justify-center px-6 py-12 text-center font-sans">
-      <ScrollText className="mb-3 h-5 w-5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+      <IconTile icon={ICONS.console} size="lg" className="mb-3" />
       <p className="text-[13px] font-medium text-fg">{title}</p>
       <p className="mx-auto mt-1 max-w-sm text-[12.5px] leading-5 text-fg-muted">{hint}</p>
       {action && <div className="mt-4">{action}</div>}
@@ -693,13 +703,13 @@ export function ConsoleLogPage() {
                   className={cn(
                     "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
                     active
-                      ? "border-transparent bg-primary text-primary-fg"
+                      ? LEVEL_PRESSED[level]
                       : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
                   )}
                 >
                   <span className={cn("h-1.5 w-1.5 rounded-full", LEVEL_DOT[level])} aria-hidden="true" />
                   {LEVEL_LABEL[level]}
-                  <span className={cn("tabular-nums font-normal", active ? "text-primary-fg" : "text-fg-faint")}>{count.toLocaleString()}</span>
+                  <span className={cn("tabular-nums font-normal", !active && "text-fg-faint")}>{count.toLocaleString()}</span>
                 </button>
               );
             })}
@@ -829,7 +839,7 @@ export function ConsoleLogPage() {
               <button
                 type="button"
                 onClick={scrollToBottom}
-                className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-full border border-transparent bg-primary px-3 text-[12.5px] font-medium text-primary-fg shadow-[var(--shadow-pop)] transition-opacity hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+                className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-full border border-transparent bg-action px-3 text-[12.5px] font-medium text-action-fg shadow-[var(--shadow-pop)] transition-colors hover:bg-action-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
               >
                 <ArrowDown className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
                 Jump to latest

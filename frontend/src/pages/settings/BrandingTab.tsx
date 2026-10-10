@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Upload } from "lucide-react";
+import { Check, Palette, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type BrandingSettings } from "../../lib/api";
 import { PALETTES, getPaletteScales } from "../../lib/palettes";
@@ -88,6 +88,7 @@ export function BrandingTab() {
 
   return (
     <SettingsCard
+      icon={Palette}
       title="White-label branding"
       description="Applies to this dashboard and the Usage Dashboard"
       footer={
@@ -239,7 +240,7 @@ function PalettePicker({ value, onChange }: { value: string; onChange: (id: stri
             onClick={() => onChange(palette.id)}
             className={cn(
               "relative flex flex-col gap-2 rounded-lg border p-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-              selected ? "border-fg bg-surface" : "border-line bg-surface hover:border-line-strong hover:bg-hover",
+              selected ? "border-accent-500/30 bg-accent-500/10" : "border-line bg-surface hover:border-line-strong hover:bg-hover",
             )}
           >
             <span className="flex h-7 overflow-hidden rounded-md" aria-hidden="true">
@@ -249,10 +250,10 @@ function PalettePicker({ value, onChange }: { value: string; onChange: (id: stri
               <span className="w-5 border-l-2 border-surface" style={{ backgroundColor: secondary[500] }} />
             </span>
             <span className="flex items-center justify-between gap-2 px-0.5">
-              <span className={cn("truncate text-[12.5px] font-medium", selected ? "text-fg" : "text-fg-muted")}>
+              <span className={cn("truncate text-[12.5px] font-medium", selected ? "text-link" : "text-fg-muted")}>
                 {palette.name}
               </span>
-              {selected && <Check className="h-3.5 w-3.5 shrink-0 text-fg" strokeWidth={2} aria-hidden="true" />}
+              {selected && <Check className="h-3.5 w-3.5 shrink-0 text-link" strokeWidth={2} aria-hidden="true" />}
             </span>
           </button>
         );

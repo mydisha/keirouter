@@ -8,7 +8,8 @@ import { api } from "../lib/api";
 import { useToast } from "../components/Toast";
 import { ProviderLogo } from "../components/ProviderLogo";
 import { useConfirm } from "../components/ui/confirm-dialog";
-import { Button, Input, Select, Skeleton } from "../components/ui";
+import { Badge, Button, IconTile, Input, Select, Skeleton } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { cn } from "@/lib/utils";
 
 // Tool metadata — descriptions, logos, install commands.
@@ -114,7 +115,8 @@ export function CLIToolDetailPage() {
   if (!tool) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-        <h1 className="text-[14px] font-medium text-fg">This CLI tool doesn&apos;t exist</h1>
+        <IconTile icon={ICONS.cliTools} size="lg" className="mx-auto mb-3" />
+        <h1 className="text-[13px] font-semibold text-fg">This CLI tool doesn&apos;t exist</h1>
         <Link to="/cli-tools" className="mt-2 inline-block text-[13px] font-medium text-link hover:underline">
           Back to CLI tools
         </Link>
@@ -150,10 +152,10 @@ export function CLIToolDetailPage() {
   };
 
   const status = tool.configured
-    ? { dot: "bg-ok", label: "Connected" }
+    ? { tone: "success" as const, label: "Connected" }
     : tool.installed
-      ? { dot: "bg-warn", label: "Not configured" }
-      : { dot: "bg-fg-faint", label: "Not installed" };
+      ? { tone: "warning" as const, label: "Not configured" }
+      : { tone: "neutral" as const, label: "Not installed" };
 
   const keyList = keys.data?.keys ?? [];
 
@@ -184,10 +186,7 @@ export function CLIToolDetailPage() {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{tool.name}</h1>
-            <span className="inline-flex items-center gap-1.5 text-[12.5px] text-fg-muted">
-              <span className={cn("h-1.5 w-1.5 rounded-full", status.dot)} aria-hidden="true" />
-              {status.label}
-            </span>
+            <Badge tone={status.tone}>{status.label}</Badge>
           </div>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
             <span>{meta?.description ?? tool.dialect}</span>
@@ -205,7 +204,7 @@ export function CLIToolDetailPage() {
 
       <ol className="max-w-3xl divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
         {/* 1. Install */}
-        <Step n={1} title={`Install ${tool.name}`}>
+        <Step n={1} done={tool.installed} title={`Install ${tool.name}`}>
           {tool.installed ? (
             <p className="flex items-center gap-1.5 text-[13px] text-fg-muted">
               <Check className="h-3.5 w-3.5 text-ok" aria-hidden="true" />
@@ -297,6 +296,7 @@ export function CLIToolDetailPage() {
         {/* 3. Apply */}
         <Step
           n={3}
+          done={tool.configured}
           title="Write the config"
           description={
             tool.config_path ? (
@@ -346,7 +346,7 @@ export function CLIToolDetailPage() {
         {/* 4. Manual */}
         <li className="px-4 py-4 sm:px-5">
           <details className="group" open={!tool.installed}>
-            <summary className="flex cursor-pointer list-none items-start gap-3 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [&::-webkit-details-marker]:hidden">
+            <summary className="flex cursor-pointer list-none items-center gap-3 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [&::-webkit-details-marker]:hidden">
               <StepNumber n={4} />
               <h2 className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] font-semibold leading-5 text-fg">
                 <span className="sr-only">Step 4: </span>
@@ -358,7 +358,7 @@ export function CLIToolDetailPage() {
                 />
               </h2>
             </summary>
-            <div className="mt-3 space-y-4 pl-8">
+            <div className="mt-3 space-y-4 sm:pl-10">
               {tool.instructions && <p className="text-[12.5px] leading-5 text-fg-muted">{tool.instructions}</p>}
               <SnippetWell files={files} fullText={snippetWithVars} />
               {envVars.length > 0 && <EnvTable vars={envVars} />}
@@ -372,10 +372,15 @@ export function CLIToolDetailPage() {
 
 // ── Layout pieces ────────────────────────────────────────────────────────────
 
-function StepNumber({ n }: { n: number }) {
+// StepNumber is a 28px tone tile with the step number; a finished step
+// (tool installed / config written) turns into an "ok" tile.
+function StepNumber({ n, done }: { n: number; done?: boolean }) {
   return (
     <span
-      className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-strong font-mono text-[11px] text-fg-muted"
+      className={cn(
+        "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[12px] font-semibold tabular-nums ring-1 ring-inset",
+        done ? "bg-ok/10 text-ok ring-ok/20" : "bg-tone-soft text-tone ring-tone-ring",
+      )}
       aria-hidden="true"
     >
       {n}
@@ -383,13 +388,28 @@ function StepNumber({ n }: { n: number }) {
   );
 }
 
-function Step({ n, title, description, children }: { n: number; title: string; description?: ReactNode; children: ReactNode }) {
+function Step({
+  n,
+  title,
+  description,
+  done,
+  children,
+}: {
+  n: number;
+  title: string;
+  description?: ReactNode;
+  done?: boolean;
+  children: ReactNode;
+}) {
   return (
     <li className="flex gap-3 px-4 py-4 sm:px-5">
-      <StepNumber n={n} />
+      <StepNumber n={n} done={done} />
       <div className="min-w-0 flex-1">
-        <h2 className="text-[13px] font-semibold leading-5 text-fg">
-          <span className="sr-only">Step {n}: </span>
+        <h2 className="mt-1 text-[13px] font-semibold leading-5 text-fg">
+          <span className="sr-only">
+            Step {n}
+            {done ? " (done)" : ""}:{" "}
+          </span>
           {title}
         </h2>
         {description && <p className="mt-0.5 text-[12.5px] leading-5 text-fg-muted">{description}</p>}

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, RefreshCw } from "lucide-react";
+import { CircleArrowUp, ExternalLink, RefreshCw } from "lucide-react";
 import { api } from "../../lib/api";
 import { ChangelogMarkdown } from "../../components/ChangelogMarkdown";
 import { useUpdateInfo } from "../../components/UpdateNotification";
@@ -53,6 +53,7 @@ function UpdatesSettings() {
 
   return (
     <SettingsCard
+      icon={CircleArrowUp}
       title="Updates"
       busy={isLoading}
       action={

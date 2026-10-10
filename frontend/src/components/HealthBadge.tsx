@@ -33,11 +33,12 @@ export function fmtIssue(issue?: string): string {
 }
 
 const STATUS_TONE: Record<HealthStatus, string> = {
-  healthy: "bg-ok/10 text-ok",
-  degraded: "bg-warn/12 text-warn",
-  unhealthy: "bg-bad/10 text-bad",
-  unknown: "bg-subtle text-fg-muted",
-  disabled: "bg-subtle text-fg-muted",
+  // Mirrors ui Badge tones (success / warning / danger / neutral).
+  healthy: "border-ok/20 bg-ok/10 text-ok",
+  degraded: "border-warn/25 bg-warn/12 text-warn",
+  unhealthy: "border-bad/20 bg-bad/10 text-bad",
+  unknown: "border-line bg-subtle text-fg-muted",
+  disabled: "border-line bg-subtle text-fg-muted",
 };
 
 const STATUS_DOT: Record<HealthStatus, string> = {
@@ -51,7 +52,7 @@ const STATUS_DOT: Record<HealthStatus, string> = {
 export function HealthStatusBadge({ status, issue }: { status: HealthStatus; issue?: string }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_TONE[status]}`}
+      className={`inline-flex h-5 items-center gap-1.5 whitespace-nowrap rounded-md border px-1.5 text-[11.5px] font-medium ${STATUS_TONE[status]}`}
       title={issue || STATUS_LABEL[status]}
     >
       <span className={`inline-block h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`} aria-hidden="true" />

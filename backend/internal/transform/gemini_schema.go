@@ -1,7 +1,9 @@
 package transform
 
 import (
+	"hash/fnv"
 	"strings"
+	"sync"
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
 )
@@ -51,11 +53,76 @@ func cleanGeminiToolSchema(raw json.RawMessage) json.RawMessage {
 		out, _ := json.Marshal(emptyObjectSchema())
 		return out
 	}
+	// Agentic clients resend the same 20–60 tool schemas on every turn; the
+	// cleaner costs ~85 µs and ~110 allocations per schema, so the result is
+	// cached by content hash.
+	key := hashSchema(raw)
+	if cached, ok := geminiSchemaCache.get(key); ok {
+		return cached
+	}
+	out := cleanGeminiToolSchemaUncached(raw)
+	geminiSchemaCache.put(key, out)
+	return out
+}
+
+// geminiSchemaCache bounds memory to a few hundred cleaned schemas.
+var geminiSchemaCache = newSchemaCache(512)
+
+func hashSchema(raw []byte) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write(raw)
+	return h.Sum64()
+}
+
+// schemaCache is a tiny clock-sweep cache: a map plus a bounded ring of
+// keys; when full, the oldest insertion is evicted. Entries are immutable
+// byte slices shared with callers, which must not mutate them.
+type schemaCache struct {
+	mu    sync.Mutex
+	max   int
+	items map[uint64]json.RawMessage
+	ring  []uint64
+	next  int
+}
+
+func newSchemaCache(max int) *schemaCache {
+	return &schemaCache{max: max, items: make(map[uint64]json.RawMessage, max), ring: make([]uint64, 0, max)}
+}
+
+func (c *schemaCache) get(key uint64) (json.RawMessage, bool) {
+	c.mu.Lock()
+	v, ok := c.items[key]
+	c.mu.Unlock()
+	return v, ok
+}
+
+func (c *schemaCache) put(key uint64, v json.RawMessage) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, exists := c.items[key]; exists {
+		return
+	}
+	if len(c.ring) < c.max {
+		c.ring = append(c.ring, key)
+	} else {
+		delete(c.items, c.ring[c.next])
+		c.ring[c.next] = key
+		c.next = (c.next + 1) % c.max
+	}
+	c.items[key] = v
+}
+
+func cleanGeminiToolSchemaUncached(raw json.RawMessage) json.RawMessage {
 	var schema any
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		out, _ := json.Marshal(emptyObjectSchema())
 		return out
 	}
+
+	// Phase 0: inline $ref targets so nested Pydantic/Zod definitions survive
+	// the later strip of $defs/definitions/$ref (otherwise they collapse to a
+	// typeless {}).
+	schema = inlineSchemaRefs(schema)
 
 	// Phase 1: convert and prepare.
 	convertConstToEnum(schema)
@@ -75,6 +142,7 @@ func cleanGeminiToolSchema(raw json.RawMessage) json.RawMessage {
 	// object schema with no properties).
 	cleanupRequired(schema)
 	addSchemaPlaceholders(schema)
+	ensureArrayItems(schema)
 
 	out, err := json.Marshal(schema)
 	if err != nil {
@@ -436,4 +504,116 @@ func sanitizeGeminiName(name string) string {
 		sanitized = sanitized[:64]
 	}
 	return sanitized
+}
+
+// inlineSchemaRefs replaces {"$ref": "#/$defs/Name"} (and #/definitions/Name)
+// nodes with the referenced definition. Cycles are cut by replacing the
+// recursive occurrence with an empty object schema. Only local refs are
+// resolved; external refs are left for the strip phase.
+func inlineSchemaRefs(schema any) any {
+	root, ok := schema.(map[string]any)
+	if !ok {
+		return schema
+	}
+	defs := map[string]any{}
+	for _, key := range []string{"$defs", "definitions"} {
+		if d, ok := root[key].(map[string]any); ok {
+			for name, def := range d {
+				defs[name] = def
+			}
+		}
+	}
+	if len(defs) == 0 {
+		return schema
+	}
+	var resolve func(node any, active map[string]bool) any
+	resolve = func(node any, active map[string]bool) any {
+		switch v := node.(type) {
+		case map[string]any:
+			if ref, ok := v["$ref"].(string); ok {
+				name := ref
+				for _, prefix := range []string{"#/$defs/", "#/definitions/"} {
+					name = strings.TrimPrefix(name, prefix)
+				}
+				def, found := defs[name]
+				if !found || active[name] {
+					return map[string]any{"type": "object"}
+				}
+				active[name] = true
+				cloned := resolve(deepCopySchema(def), active)
+				delete(active, name)
+				// Keep sibling annotations (description) from the ref site.
+				if out, ok := cloned.(map[string]any); ok {
+					if desc, ok := v["description"]; ok {
+						if _, has := out["description"]; !has {
+							out["description"] = desc
+						}
+					}
+				}
+				return cloned
+			}
+			for k, child := range v {
+				v[k] = resolve(child, active)
+			}
+			return v
+		case []any:
+			for i, child := range v {
+				v[i] = resolve(child, active)
+			}
+			return v
+		}
+		return node
+	}
+	return resolve(root, map[string]bool{})
+}
+
+func deepCopySchema(node any) any {
+	switch v := node.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, child := range v {
+			out[k] = deepCopySchema(child)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, child := range v {
+			out[i] = deepCopySchema(child)
+		}
+		return out
+	}
+	return node
+}
+
+// ensureArrayItems gives every array schema an items definition; Gemini
+// rejects {"type":"array"} without one. Untyped arrays (common in MCP tools)
+// become arrays of free-form objects, matching LiteLLM.
+func ensureArrayItems(node any) {
+	switch v := node.(type) {
+	case map[string]any:
+		if t, _ := v["type"].(string); t == "array" {
+			items, ok := v["items"].(map[string]any)
+			if !ok || len(items) == 0 {
+				v["items"] = map[string]any{"type": "object"}
+			}
+		}
+		for _, child := range v {
+			ensureArrayItems(child)
+		}
+	case []any:
+		for _, child := range v {
+			ensureArrayItems(child)
+		}
+	}
+}
+
+// ToolNameAliases returns the names a tool may come back under after a
+// provider rewrote it (currently Gemini's character/length sanitation). The
+// pipeline uses it to restore the client's original tool names.
+func ToolNameAliases(name string) []string {
+	sanitized := sanitizeGeminiName(name)
+	if sanitized == name {
+		return nil
+	}
+	return []string{sanitized}
 }

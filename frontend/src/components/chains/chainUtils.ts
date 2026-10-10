@@ -1,4 +1,6 @@
+import { ListOrdered, Repeat2, type LucideIcon } from "lucide-react";
 import type { Chain, Provider } from "../../lib/api";
+import { ICONS } from "../../lib/icons";
 
 export const CHAIN_MODEL_KIND = "llm";
 
@@ -25,6 +27,17 @@ export const strategyLabel = (strategy: string) => {
     case "latency": return "Latency";
     case "cost": return "Cost";
     default: return "Priority";
+  }
+};
+
+// strategyIcon gives each strategy one glyph, used by the editor picker and
+// the strategy badge in the chain list.
+export const strategyIcon = (strategy: string): LucideIcon => {
+  switch (normalizeChainStrategy(strategy)) {
+    case "round_robin": return Repeat2;
+    case "latency": return ICONS.latency;
+    case "cost": return ICONS.spend;
+    default: return ListOrdered;
   }
 };
 

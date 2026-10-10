@@ -12,9 +12,9 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { AlertTriangle, ChevronRight, Info, Loader2 } from "lucide-react";
+import { AlertTriangle, ChevronRight, Info, Loader2, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button, Toggle } from "../../components/ui";
+import { Button, IconTile, Toggle } from "../../components/ui";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../components/ui/tooltip";
 
 // Shared focus ring for local interactive elements.
@@ -35,6 +35,7 @@ export function describedBy(id: string, { desc = true, error }: { desc?: boolean
 }
 
 export function SettingsCard({
+  icon: Icon,
   title,
   description,
   action,
@@ -44,6 +45,8 @@ export function SettingsCard({
   tone = "default",
   busy,
 }: {
+  /** Header icon, tinted with the page tone (a "bad" tile on danger cards). */
+  icon?: LucideIcon;
   title?: ReactNode;
   description?: ReactNode;
   action?: ReactNode;
@@ -66,12 +69,20 @@ export function SettingsCard({
       )}
     >
       {title && (
-        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
-          <div className="min-w-0 max-w-3xl">
-            <h2 id={headingId} className={cn("text-[13px] font-semibold", tone === "danger" ? "text-bad" : "text-fg")}>
-              {title}
-            </h2>
-            {description && <p className="mt-0.5 text-[12px] leading-5 text-fg-muted">{description}</p>}
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <div className="flex min-w-0 max-w-3xl items-center gap-2.5">
+            {Icon &&
+              (tone === "danger" ? (
+                <IconTile icon={Icon} size="sm" tone="bad" />
+              ) : (
+                <Icon className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />
+              ))}
+            <div className="min-w-0">
+              <h2 id={headingId} className={cn("text-[13px] font-semibold", tone === "danger" ? "text-bad" : "text-fg")}>
+                {title}
+              </h2>
+              {description && <p className="mt-0.5 text-[12px] leading-5 text-fg-muted">{description}</p>}
+            </div>
           </div>
           {action && <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div>}
         </header>

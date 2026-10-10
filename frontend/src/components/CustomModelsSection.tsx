@@ -3,7 +3,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, Check, Search, Copy, X, MoreHorizontal } from "lucide-react";
 
 import { api, type CustomModel, type CustomModelInput, type Provider } from "../lib/api";
-import { Card, CardHeader, Button, Field, Input, Select, Modal, TablePagination } from "./ui";
+import { Card, Button, Field, IconTile, Input, Select, Modal, SectionTitle, TablePagination } from "./ui";
+import { ICONS } from "../lib/icons";
 import { useConfirm } from "./ui/confirm-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { useToast } from "./Toast";
@@ -110,19 +111,23 @@ export function CustomModelsSection({ provider }: { provider: Provider }) {
 
   return (
     <Card>
-      <CardHeader
-        title="Custom models"
-        description="Models not in the provider catalog"
-        action={
-          <Button variant="secondary" onClick={openAdd}>
-            <Plus strokeWidth={1.75} />
-            Add custom model
-          </Button>
-        }
-      />
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle
+          icon={ICONS.model}
+          title="Custom models"
+          subtitle="Models not in the provider catalog"
+          action={
+            <Button variant="secondary" onClick={openAdd}>
+              <Plus strokeWidth={1.75} />
+              Add custom model
+            </Button>
+          }
+        />
+      </div>
 
       {models.length === 0 ? (
         <div className="px-6 py-10 text-center">
+          <IconTile icon={ICONS.model} size="lg" className="mx-auto mb-3" />
           <p className="text-[13px] font-medium text-fg">No custom models</p>
           <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
             Route any upstream model ID as{" "}

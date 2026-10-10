@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
@@ -20,20 +21,120 @@ func (OpenAICodec) Dialect() core.Dialect { return core.DialectOpenAI }
 // ---- wire types -------------------------------------------------------------
 
 type oaiRequest struct {
-	Model           string          `json:"model"`
-	Messages        []oaiMessage    `json:"messages"`
-	Tools           []oaiTool       `json:"tools,omitempty"`
-	ToolChoice      any             `json:"tool_choice,omitempty"`
-	Temperature     *float64        `json:"temperature,omitempty"`
-	TopP            *float64        `json:"top_p,omitempty"`
-	MaxTokens       *int            `json:"max_tokens,omitempty"`
-	Stop            []string        `json:"stop,omitempty"`
-	Stream          bool            `json:"stream,omitempty"`
-	StreamOpts      *oaiStreamOpt   `json:"stream_options,omitempty"`
-	ResponseFormat  json.RawMessage `json:"response_format,omitempty"`
-	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
-	Thinking        *oaiThinking    `json:"thinking,omitempty"`
-	ExtraBody       map[string]any  `json:"extra_body,omitempty"`
+	Model       string       `json:"model"`
+	Messages    []oaiMessage `json:"messages"`
+	Tools       []oaiTool    `json:"tools,omitempty"`
+	ToolChoice  any          `json:"tool_choice,omitempty"`
+	Temperature *float64     `json:"temperature,omitempty"`
+	TopP        *float64     `json:"top_p,omitempty"`
+	MaxTokens   *int         `json:"max_tokens,omitempty"`
+	// MaxCompletionTokens is the field OpenAI reasoning models (gpt-5,
+	// o-series) require instead of max_tokens.
+	MaxCompletionTokens *int `json:"max_completion_tokens,omitempty"`
+	// Stop accepts either a string or an array of strings on input.
+	Stop              json.RawMessage `json:"stop,omitempty"`
+	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
+	Stream            bool            `json:"stream,omitempty"`
+	StreamOpts        *oaiStreamOpt   `json:"stream_options,omitempty"`
+	ResponseFormat    json.RawMessage `json:"response_format,omitempty"`
+	ReasoningEffort   string          `json:"reasoning_effort,omitempty"`
+	Thinking          *oaiThinking    `json:"thinking,omitempty"`
+	ExtraBody         map[string]any  `json:"extra_body,omitempty"`
+	// Extra carries passthrough parameters (seed, penalties, logprobs, user,
+	// service_tier, ...) that the canonical model does not represent. They
+	// are spliced into the rendered JSON by MarshalJSON.
+	Extra map[string]json.RawMessage `json:"-"`
+}
+
+// MarshalJSON renders the request and splices passthrough parameters in at
+// the top level. Named fields always win over Extra.
+func (r oaiRequest) MarshalJSON() ([]byte, error) {
+	type plain oaiRequest
+	base, err := json.Marshal(plain(r))
+	if err != nil || len(r.Extra) == 0 {
+		return base, err
+	}
+	return spliceExtra(base, r.Extra)
+}
+
+// spliceExtra appends extra top-level members to an already-encoded JSON
+// object, skipping keys the object already has.
+func spliceExtra(obj []byte, extra map[string]json.RawMessage) ([]byte, error) {
+	var present map[string]json.RawMessage
+	if err := json.Unmarshal(obj, &present); err != nil {
+		return obj, nil
+	}
+	keys := make([]string, 0, len(extra))
+	for k := range extra {
+		if _, dup := present[k]; !dup {
+			keys = append(keys, k)
+		}
+	}
+	if len(keys) == 0 {
+		return obj, nil
+	}
+	sort.Strings(keys)
+	buf := make([]byte, 0, len(obj)+64*len(keys))
+	buf = append(buf, obj[:len(obj)-1]...) // drop closing brace
+	for _, k := range keys {
+		if len(buf) > 1 {
+			buf = append(buf, ',')
+		}
+		kb, _ := json.Marshal(k)
+		buf = append(buf, kb...)
+		buf = append(buf, ':')
+		buf = append(buf, extra[k]...)
+	}
+	return append(buf, '}'), nil
+}
+
+// oaiPassthroughParams are OpenAI chat parameters the canonical request does
+// not model. They are kept verbatim and rendered back to OpenAI-dialect
+// upstreams. Tier "any" is understood by essentially every OpenAI-compatible
+// server; tier "first-party" only by api.openai.com / Azure and is dropped
+// elsewhere to avoid "unsupported parameter" 400s (LiteLLM's drop_params).
+var oaiPassthroughParams = map[string]string{
+	"seed": "any", "frequency_penalty": "any", "presence_penalty": "any",
+	"logit_bias": "any", "logprobs": "any", "top_logprobs": "any", "n": "any",
+	"user":         "any",
+	"service_tier": "first-party", "store": "first-party", "metadata": "first-party",
+	"prediction": "first-party", "modalities": "first-party", "audio": "first-party",
+	"web_search_options": "first-party", "prompt_cache_key": "first-party",
+	"safety_identifier": "first-party", "verbosity": "first-party",
+}
+
+// parseOAIExtraParams collects passthrough parameters from the raw body.
+func parseOAIExtraParams(body []byte) map[string]json.RawMessage {
+	var all map[string]json.RawMessage
+	if json.Unmarshal(body, &all) != nil {
+		return nil
+	}
+	var extra map[string]json.RawMessage
+	for k, raw := range all {
+		if _, ok := oaiPassthroughParams[k]; !ok || string(raw) == "null" {
+			continue
+		}
+		if extra == nil {
+			extra = make(map[string]json.RawMessage, 4)
+		}
+		extra[k] = raw
+	}
+	return extra
+}
+
+// filterExtraForProvider drops first-party-only passthrough params for
+// third-party OpenAI-compatible upstreams.
+func filterExtraForProvider(extra map[string]json.RawMessage, providerID string) map[string]json.RawMessage {
+	if len(extra) == 0 || isOpenAIFirstParty(providerID) {
+		return extra
+	}
+	out := make(map[string]json.RawMessage, len(extra))
+	for k, v := range extra {
+		if oaiPassthroughParams[k] == "any" {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 type oaiThinking struct {
@@ -78,19 +179,24 @@ type oaiTool struct {
 
 func (OpenAICodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	var raw oaiRequest
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := json.UnmarshalNoCopy(body, &raw); err != nil {
 		return nil, fmt.Errorf("openai: parse request: %w", err)
 	}
 
 	req := &core.ChatRequest{
-		Model:       raw.Model,
-		Temperature: raw.Temperature,
-		TopP:        raw.TopP,
-		MaxTokens:   raw.MaxTokens,
-		Stop:        raw.Stop,
-		Stream:      raw.Stream,
-		ToolChoice:  raw.ToolChoice,
+		Model:             raw.Model,
+		Temperature:       raw.Temperature,
+		TopP:              raw.TopP,
+		MaxTokens:         raw.MaxTokens,
+		Stop:              decodeOAIStop(raw.Stop),
+		Stream:            raw.Stream,
+		ToolChoice:        raw.ToolChoice,
+		ParallelToolCalls: raw.ParallelToolCalls,
 	}
+	if req.MaxTokens == nil && raw.MaxCompletionTokens != nil {
+		req.MaxTokens = raw.MaxCompletionTokens
+	}
+	req.Extra = parseOAIExtraParams(body)
 	// stream_options.include_usage: the client opts in to a usage event on the
 	// streaming response. We don't forward this upstream (many OpenAI-compatible
 	// providers 400 on it — see renderOAIRequest), but the pipeline honors it by
@@ -136,6 +242,24 @@ func (OpenAICodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	return req, nil
 }
 
+// decodeOAIStop accepts OpenAI's stop parameter as either a single string or
+// an array of strings.
+func decodeOAIStop(raw json.RawMessage) []string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+		return nil
+	}
+	var list []string
+	if json.Unmarshal(raw, &list) == nil {
+		return list
+	}
+	var one string
+	if json.Unmarshal(raw, &one) == nil && one != "" {
+		return []string{one}
+	}
+	return nil
+}
+
 // parseOAIMessage converts one OpenAI message to canonical form. System and
 // developer roles are reported separately so the caller can hoist them.
 func parseOAIMessage(m oaiMessage) (msg core.Message, isSystem bool, sysText string) {
@@ -169,15 +293,20 @@ func parseOAIMessage(m oaiMessage) (msg core.Message, isSystem bool, sysText str
 		})
 	}
 
-	// Tool result message.
+	// Tool result message. Text becomes Content; images/files (screenshot
+	// tools) are kept as Parts so Anthropic/Gemini upstreams still see them.
 	if role == "tool" {
-		msg.Content = append(msg.Content, core.ContentPart{
-			Type: core.PartToolResult,
-			ToolResult: &core.ToolResult{
-				CallID:  m.ToolCallID,
-				Content: decodeOAIContentText(m.Content),
-			},
-		})
+		result := &core.ToolResult{CallID: m.ToolCallID}
+		var text strings.Builder
+		for _, p := range decodeOAIContentParts(m.Content) {
+			if p.Type == core.PartText {
+				text.WriteString(p.Text)
+				continue
+			}
+			result.Parts = append(result.Parts, p)
+		}
+		result.Content = text.String()
+		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartToolResult, ToolResult: result})
 		return msg, false, ""
 	}
 
@@ -238,6 +367,11 @@ func decodeOAIContentParts(raw json.RawMessage) []core.ContentPart {
 		ImageURL struct {
 			URL string `json:"url"`
 		} `json:"image_url"`
+		File struct {
+			FileData string `json:"file_data"`
+			Filename string `json:"filename"`
+			FileID   string `json:"file_id"`
+		} `json:"file"`
 	}
 	if err := json.Unmarshal(raw, &arr); err != nil {
 		return nil
@@ -251,6 +385,15 @@ func decodeOAIContentParts(raw json.RawMessage) []core.ContentPart {
 		case "image_url":
 			media := parseOAIImageURL(p.ImageURL.URL)
 			parts = append(parts, core.ContentPart{Type: core.PartImage, Media: media})
+		case "file":
+			// {"type":"file","file":{"filename":"x.pdf","file_data":"data:application/pdf;base64,..."}}
+			if p.File.FileData != "" {
+				media := parseOAIImageURL(p.File.FileData)
+				if media.MIMEType == "" {
+					media.MIMEType = "application/pdf"
+				}
+				parts = append(parts, core.ContentPart{Type: core.PartDocument, Media: media})
+			}
 		}
 	}
 	return parts
@@ -442,8 +585,11 @@ func renderOAIRequestForProvider(req *core.ChatRequest, providerID string, scope
 	if err != nil {
 		return nil, err
 	}
+	out.Extra = filterExtraForProvider(req.Extra, providerID)
 	if isDeepSeekTarget(providerID, req.Model) {
 		applyDeepSeekRequestFixes(out, req, providerID)
+	} else if isOpenAIFirstParty(providerID) {
+		applyOpenAIFirstPartyFixes(out, req)
 	} else if scope != reasoningNone {
 		// Non-DeepSeek reasoning providers (GLM, Kimi, MiniMax, etc.) still
 		// need thinking type + reasoning_effort forwarded. DeepSeek has its
@@ -457,7 +603,58 @@ func renderOAIRequestForProvider(req *core.ChatRequest, providerID string, scope
 	if stripReasoningFor(providerID) {
 		stripReasoningContent(out)
 	}
+	if !isOpenAIFirstParty(providerID) {
+		// "developer" is an OpenAI-only role; strict OpenAI-compatible
+		// servers reject it. It is a system message everywhere else.
+		for i := range out.Messages {
+			if out.Messages[i].Role == string(core.RoleDeveloper) {
+				out.Messages[i].Role = string(core.RoleSystem)
+			}
+		}
+	}
 	return json.Marshal(out)
+}
+
+// isOpenAIFirstParty reports whether the provider is api.openai.com or Azure
+// OpenAI, where the full parameter surface (max_completion_tokens,
+// reasoning_effort, stream_options) is supported.
+func isOpenAIFirstParty(providerID string) bool {
+	return providerID == "openai" || providerID == "azure" || providerID == "azure_openai"
+}
+
+// isOpenAIReasoningModel reports whether the model is one of OpenAI's
+// reasoning families, which reject max_tokens and accept reasoning_effort.
+func isOpenAIReasoningModel(model string) bool {
+	m := strings.ToLower(model)
+	return strings.HasPrefix(m, "gpt-5") || strings.HasPrefix(m, "o1") ||
+		strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4") || strings.HasPrefix(m, "codex")
+}
+
+// applyOpenAIFirstPartyFixes adapts a request for api.openai.com / Azure:
+// reasoning models take max_completion_tokens and reasoning_effort (never
+// the vendor-specific "thinking" object), and streams ask for the final usage
+// chunk so metering never has to estimate.
+func applyOpenAIFirstPartyFixes(out *oaiRequest, req *core.ChatRequest) {
+	if isOpenAIReasoningModel(req.Model) {
+		if out.MaxTokens != nil {
+			out.MaxCompletionTokens = out.MaxTokens
+			out.MaxTokens = nil
+		}
+		if req.Reasoning != nil {
+			switch effort := strings.ToLower(strings.TrimSpace(req.Reasoning.Effort)); effort {
+			case "minimal", "low", "medium", "high", "xhigh":
+				out.ReasoningEffort = effort
+			case "max":
+				out.ReasoningEffort = "xhigh"
+			}
+		}
+		// Reasoning models only accept the default sampling values.
+		out.Temperature = nil
+		out.TopP = nil
+	}
+	if out.Stream {
+		out.StreamOpts = &oaiStreamOpt{IncludeUsage: true}
+	}
 }
 
 // renderOAIRequest renders a canonical request to the OpenAI wire format. When
@@ -479,14 +676,18 @@ func buildOAIRequest(req *core.ChatRequest, scope reasoningScope) (*oaiRequest, 
 		Temperature:    req.Temperature,
 		TopP:           req.TopP,
 		MaxTokens:      req.MaxTokens,
-		Stop:           req.Stop,
 		Stream:         req.Stream,
 		ResponseFormat: req.ResponseFormat,
 	}
+	if len(req.Stop) > 0 {
+		out.Stop, _ = json.Marshal(req.Stop)
+	}
+	out.Extra = req.Extra
 	// Only carry tool_choice when tools are present; providers such as Qwen
 	// reject a tool_choice paired with an empty/absent tools array.
 	if len(req.Tools) > 0 {
 		out.ToolChoice = req.ToolChoice
+		out.ParallelToolCalls = req.ParallelToolCalls
 	}
 	// Note: stream_options with include_usage is intentionally omitted. Many
 	// OpenAI-compatible providers (MiMo, Volcengine, etc.) reject this field
@@ -817,6 +1018,14 @@ func renderOAIMessage(m core.Message) oaiMessage {
 					"image_url": map[string]any{"url": url},
 				})
 			}
+		case core.PartDocument:
+			hasMedia = true
+			if p.Media != nil {
+				contentParts = append(contentParts, map[string]any{
+					"type": "file",
+					"file": map[string]any{"filename": "document.pdf", "file_data": mediaToDataURL(p.Media)},
+				})
+			}
 		case core.PartToolCall:
 			var tc oaiToolCall
 			tc.ID = p.ToolCall.ID
@@ -896,7 +1105,7 @@ type oaiUsage struct {
 
 func (c OpenAICodec) ParseResponse(body []byte, model string) (*core.ChatResponse, error) {
 	var raw oaiResponse
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := json.UnmarshalNoCopy(body, &raw); err != nil {
 		return nil, fmt.Errorf("openai: parse response: %w", err)
 	}
 	return c.buildResponse(raw, model)
@@ -984,13 +1193,26 @@ func (OpenAICodec) RenderResponse(resp *core.ChatResponse) ([]byte, error) {
 		"object":  "chat.completion",
 		"model":   resp.Model,
 		"choices": []map[string]any{renderOAIChoice(resp)},
-		"usage": map[string]int{
-			"prompt_tokens":     resp.Usage.PromptTokens,
-			"completion_tokens": resp.Usage.CompletionTokens,
-			"total_tokens":      resp.Usage.TotalTokens,
-		},
+		"usage":   renderOAIUsage(resp.Usage),
 	}
 	return json.Marshal(out)
+}
+
+// renderOAIUsage renders usage in OpenAI's shape including the cached and
+// reasoning token details clients use for cost display and context tracking.
+func renderOAIUsage(u core.Usage) map[string]any {
+	out := map[string]any{
+		"prompt_tokens":     u.PromptTokens,
+		"completion_tokens": u.CompletionTokens,
+		"total_tokens":      u.TotalTokens,
+	}
+	if u.CachedTokens > 0 {
+		out["prompt_tokens_details"] = map[string]int{"cached_tokens": u.CachedTokens}
+	}
+	if u.ReasoningTokens > 0 {
+		out["completion_tokens_details"] = map[string]int{"reasoning_tokens": u.ReasoningTokens}
+	}
+	return out
 }
 
 func renderOAIChoice(resp *core.ChatResponse) map[string]any {

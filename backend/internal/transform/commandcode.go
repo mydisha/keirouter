@@ -237,7 +237,7 @@ func (CommandCodeCodec) ParseStreamLine(line []byte, _ string) ([]core.StreamChu
 	}
 
 	var ev ccStreamEvent
-	if err := json.Unmarshal(line, &ev); err != nil {
+	if err := json.UnmarshalNoCopy(line, &ev); err != nil {
 		return nil, fmt.Errorf("commandcode: parse stream event: %w", err)
 	}
 

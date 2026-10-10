@@ -156,7 +156,7 @@ export function CardHeader({
         <h2 className="text-[14px] font-semibold tracking-[-0.005em]">{title}</h2>
         {description && <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-fg-muted">{description}</p>}
       </div>
-      {action && <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div>}
+      {action && <div className="flex min-w-0 flex-wrap items-center gap-2">{action}</div>}
     </div>
   );
 }
@@ -195,10 +195,10 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 export function Button({ variant = "primary", className = "", ...props }: ButtonProps) {
   const base =
     "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-[background-color,border-color,color,opacity] duration-150 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas [&_svg]:size-4 [&_svg]:shrink-0";
-  // Primary is monochrome (ink / paper). Colour is reserved for data and
-  // meaning, so "secondary" and "ghost" are both neutral surfaces.
+  // Primary is the brand blue action colour; secondary and ghost stay neutral
+  // so there is one obvious next step per view.
   const variants = {
-    primary: "border border-transparent bg-primary text-primary-fg hover:opacity-85",
+    primary: "border border-transparent bg-action text-action-fg shadow-[var(--shadow-card)] hover:bg-action-hover",
     secondary:
       "border border-line-strong bg-surface text-fg hover:bg-hover",
     ghost:
@@ -364,11 +364,11 @@ export function Badge({
 }) {
   const tones = {
     neutral: "border-line bg-subtle text-fg-muted",
-    accent: "border-transparent bg-accent-500/10 text-link",
-    secondary: "border-line bg-surface text-fg-muted",
-    danger: "border-transparent bg-bad/10 text-bad",
-    warning: "border-transparent bg-warn/12 text-warn",
-    success: "border-transparent bg-ok/10 text-ok",
+    accent: "border-accent-500/20 bg-accent-500/10 text-link",
+    secondary: "border-tone-ring bg-tone-soft text-tone",
+    danger: "border-bad/20 bg-bad/10 text-bad",
+    warning: "border-warn/25 bg-warn/12 text-warn",
+    success: "border-ok/20 bg-ok/10 text-ok",
   };
   return (
     <span
@@ -432,9 +432,7 @@ export function EmptyState({
 }) {
   return (
     <div className="px-6 py-14 text-center">
-      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full border border-line bg-subtle" aria-hidden="true">
-        <Icon className="h-4 w-4 text-fg-faint" strokeWidth={1.75} />
-      </div>
+      <IconTile icon={Icon} size="lg" className="mx-auto mb-3" />
       <p className="text-[13px] font-semibold text-fg">{title}</p>
       {hint && <p className="mx-auto mt-1 max-w-md text-[13px] leading-5 text-fg-muted">{hint}</p>}
       {action && <div className="mt-4 flex justify-center">{action}</div>}
@@ -946,4 +944,123 @@ export function useClientPagination<T>(items: T[], pageSize = 10) {
     [items, clampedPage, pageSize],
   );
   return { page: clampedPage, pages, paged, setPage, total: items.length };
+}
+
+// ── Icon tiles & section titles ──────────────────────────────────────────────
+// The tone comes from the nearest [data-tone] ancestor (Layout sets the page's
+// section tone on <main>); pass `tone` to override for one tile, e.g. a status.
+
+export type TileTone = "section" | "blue" | "violet" | "teal" | "orange" | "slate" | "ok" | "warn" | "bad";
+
+const statusTile: Partial<Record<TileTone, string>> = {
+  ok: "bg-ok/10 text-ok ring-ok/20",
+  warn: "bg-warn/12 text-warn ring-warn/25",
+  bad: "bg-bad/10 text-bad ring-bad/20",
+};
+
+export function IconTile({
+  icon: Icon,
+  size = "md",
+  tone = "section",
+  className = "",
+}: {
+  icon: LucideIcon;
+  /** sm 28px (card headers, rows) · md 32px (KPI cells) · lg 40px (page header, empty states). */
+  size?: "sm" | "md" | "lg";
+  tone?: TileTone;
+  className?: string;
+}) {
+  const box = size === "sm" ? "h-7 w-7 rounded-lg" : size === "md" ? "h-8 w-8 rounded-lg" : "h-10 w-10 rounded-xl";
+  const glyph = size === "lg" ? "h-5 w-5" : "h-4 w-4";
+  const colours = statusTile[tone] ?? "bg-tone-soft text-tone ring-tone-ring";
+  const dataTone = tone !== "section" && !statusTile[tone] ? tone : undefined;
+  return (
+    <span
+      data-tone={dataTone}
+      aria-hidden="true"
+      className={`inline-flex shrink-0 items-center justify-center ring-1 ring-inset ${box} ${colours} ${className}`}
+    >
+      <Icon className={glyph} strokeWidth={1.75} />
+    </span>
+  );
+}
+
+/**
+ * SectionTitle is the standard card/section header: an optional tone-coloured
+ * icon, a 13px title, an optional one-line subtitle and right-aligned actions.
+ * Use it inside a card's header row (`border-b border-line px-4 py-3`).
+ */
+export function SectionTitle({
+  icon: Icon,
+  title,
+  subtitle,
+  action,
+  id,
+  as: Heading = "h2",
+}: {
+  icon?: LucideIcon;
+  title: ReactNode;
+  subtitle?: ReactNode;
+  action?: ReactNode;
+  id?: string;
+  as?: "h2" | "h3";
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex min-w-0 items-center gap-2.5">
+        {Icon && <Icon className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />}
+        <div className="min-w-0">
+          <Heading id={id} className="text-[13px] font-semibold text-fg">
+            {title}
+          </Heading>
+          {subtitle && <p className="mt-0.5 text-[12px] text-fg-muted">{subtitle}</p>}
+        </div>
+      </div>
+      {action && <div className="flex min-w-0 flex-wrap items-center gap-2">{action}</div>}
+    </div>
+  );
+}
+
+/**
+ * KpiGrid + Kpi: the standard metric strip. One bordered card split by
+ * hairlines; each cell has a tone-coloured icon tile, a 12px label, the value
+ * and an optional hint (delta / "of N"). Pass `tone="ok" | "warn" | "bad"` only
+ * when the value itself is a status.
+ */
+export function KpiGrid({ children, cols = 4, label }: { children: ReactNode; cols?: 2 | 3 | 4 | 5 | 6; label?: string }) {
+  const grid = { 2: "sm:grid-cols-2", 3: "sm:grid-cols-3", 4: "sm:grid-cols-2 xl:grid-cols-4", 5: "sm:grid-cols-3 xl:grid-cols-5", 6: "sm:grid-cols-3 xl:grid-cols-6" }[cols];
+  return (
+    <dl aria-label={label} className={`grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-line bg-line shadow-[var(--shadow-card)] ${grid}`}>
+      {children}
+    </dl>
+  );
+}
+
+export function Kpi({
+  icon,
+  label,
+  value,
+  hint,
+  tone = "section",
+  valueClassName = "",
+}: {
+  icon?: LucideIcon;
+  label: ReactNode;
+  value: ReactNode;
+  hint?: ReactNode;
+  tone?: TileTone;
+  valueClassName?: string;
+}) {
+  // dl > div > (dt, dd…) is the only valid nesting, so the tile lives inside
+  // the <dt> and is positioned into the cell's left gutter.
+  return (
+    <div className={`relative bg-surface py-3.5 pr-4 ${icon ? "pl-[3.75rem]" : "pl-4"}`}>
+      <dt className="text-[12px] font-medium text-fg-muted">
+        {icon && <IconTile icon={icon} size="md" tone={tone} className="absolute left-4 top-4" />}
+        {label}
+      </dt>
+      <dd className={`mt-0.5 text-[20px] font-semibold leading-tight tracking-[-0.01em] tabular-nums text-fg ${valueClassName}`}>{value}</dd>
+      {hint && <dd className="mt-0.5 truncate text-[12px] text-fg-muted">{hint}</dd>}
+    </div>
+  );
 }

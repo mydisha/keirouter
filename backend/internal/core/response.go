@@ -61,6 +61,9 @@ const (
 	ChunkFinish   ChunkType = "finish"    // terminal event with finish reason
 	ChunkError    ChunkType = "error"     // mid-stream error
 	ChunkPing     ChunkType = "ping"      // keep-alive / no-op
+	// ChunkRedactedThinking carries an Anthropic redacted_thinking block
+	// (opaque data in Delta). Only the Anthropic renderer emits it.
+	ChunkRedactedThinking ChunkType = "redacted_thinking"
 )
 
 // StreamChunk is one provider-agnostic streaming event. The transform layer

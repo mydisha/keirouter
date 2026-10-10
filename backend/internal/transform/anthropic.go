@@ -7,6 +7,7 @@ import (
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
 
+	"github.com/mydisha/keirouter/backend/internal/capability"
 	"github.com/mydisha/keirouter/backend/internal/core"
 )
 
@@ -18,21 +19,25 @@ func (AnthropicCodec) Dialect() core.Dialect { return core.DialectAnthropic }
 // ---- wire types -------------------------------------------------------------
 
 type antRequest struct {
-	Model      string          `json:"model"`
-	System     json.RawMessage `json:"system,omitempty"`
-	Messages   []antMessage    `json:"messages"`
-	Tools      []antTool       `json:"tools,omitempty"`
-	ToolChoice json.RawMessage `json:"tool_choice,omitempty"`
-	MaxTokens  int             `json:"max_tokens"`
-	Stream     bool            `json:"stream,omitempty"`
-	Temp       *float64        `json:"temperature,omitempty"`
-	TopP       *float64        `json:"top_p,omitempty"`
-	Stop       []string        `json:"stop_sequences,omitempty"`
+	Model      string            `json:"model"`
+	System     json.RawMessage   `json:"system,omitempty"`
+	Messages   []antMessage      `json:"messages"`
+	Tools      []json.RawMessage `json:"tools,omitempty"`
+	ToolChoice json.RawMessage   `json:"tool_choice,omitempty"`
+	MaxTokens  int               `json:"max_tokens"`
+	Stream     bool              `json:"stream,omitempty"`
+	Temp       *float64          `json:"temperature,omitempty"`
+	TopP       *float64          `json:"top_p,omitempty"`
+	Stop       []string          `json:"stop_sequences,omitempty"`
 	// Thinking carries the extended-thinking configuration that clients like
 	// Claude Code send. It must be forwarded to Anthropic-compatible upstreams
 	// (e.g. GLM, Zhipu) or the model will not emit reasoning blocks, confusing
 	// clients that expect them.
 	Thinking json.RawMessage `json:"thinking,omitempty"`
+	// OutputConfig carries effort for adaptive-thinking models.
+	OutputConfig json.RawMessage `json:"output_config,omitempty"`
+	// Metadata carries user_id for abuse tracking.
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
 type antMessage struct {
@@ -57,6 +62,10 @@ type antBlock struct {
 	// echoed back to the upstream on the next turn. Only the originating provider's
 	// signatures are valid; foreign ones (from combo-mixed models) are rejected.
 	Signature string `json:"signature,omitempty"`
+	// Data is the opaque payload of a redacted_thinking block.
+	Data string `json:"data,omitempty"`
+	// CacheControl is the prompt-caching breakpoint on this block.
+	CacheControl json.RawMessage `json:"cache_control,omitempty"`
 }
 
 type antImageSource struct {
@@ -67,40 +76,75 @@ type antImageSource struct {
 }
 
 type antTool struct {
-	Name        string          `json:"name"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+	Type         string          `json:"type,omitempty"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description,omitempty"`
+	InputSchema  json.RawMessage `json:"input_schema,omitempty"`
+	CacheControl json.RawMessage `json:"cache_control,omitempty"`
+}
+
+// antEmptyInputSchema is the schema Anthropic requires for a parameter-less
+// tool; omitting input_schema entirely is a 400.
+var antEmptyInputSchema = json.RawMessage(`{"type":"object","properties":{}}`)
+
+// isAntServerTool reports whether a tool definition is a provider-native
+// (server) tool rather than a custom function: web_search_*, bash_*,
+// text_editor_*, computer_*, code_execution_*, web_fetch_*, memory_*.
+func isAntServerTool(typ string) bool {
+	return typ != "" && typ != "custom"
 }
 
 // ---- request parsing --------------------------------------------------------
 
 func (AnthropicCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	var raw antRequest
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := json.UnmarshalNoCopy(body, &raw); err != nil {
 		return nil, fmt.Errorf("anthropic: parse request: %w", err)
 	}
 
 	maxTokens := raw.MaxTokens
+	systemText, systemCache := decodeAntSystemBlocks(raw.System)
 	req := &core.ChatRequest{
-		Model:       raw.Model,
-		System:      decodeAntSystem(raw.System),
-		Temperature: raw.Temp,
-		TopP:        raw.TopP,
-		Stop:        raw.Stop,
-		Stream:      raw.Stream,
+		Model:              raw.Model,
+		System:             systemText,
+		SystemCacheControl: systemCache,
+		Temperature:        raw.Temp,
+		TopP:               raw.TopP,
+		Stop:               raw.Stop,
+		Stream:             raw.Stream,
 	}
 	if maxTokens > 0 {
 		req.MaxTokens = &maxTokens
 	}
 
-	for _, t := range raw.Tools {
+	for _, rawTool := range raw.Tools {
+		var t antTool
+		if err := json.Unmarshal(rawTool, &t); err != nil {
+			continue
+		}
+		if isAntServerTool(t.Type) {
+			// Server tools have no function schema; keep the definition
+			// verbatim for same-dialect upstreams.
+			req.Tools = append(req.Tools, core.Tool{Name: t.Name, Raw: rawTool})
+			continue
+		}
 		req.Tools = append(req.Tools, core.Tool{
-			Name:        t.Name,
-			Description: t.Description,
-			Parameters:  t.InputSchema,
+			Name:         t.Name,
+			Description:  t.Description,
+			Parameters:   t.InputSchema,
+			CacheControl: t.CacheControl,
 		})
 	}
 	req.ToolChoice = claudeToolChoiceToOpenAI(raw.ToolChoice)
+	if len(raw.ToolChoice) > 0 {
+		var tc struct {
+			DisableParallel *bool `json:"disable_parallel_tool_use"`
+		}
+		if json.Unmarshal(raw.ToolChoice, &tc) == nil && tc.DisableParallel != nil {
+			parallel := !*tc.DisableParallel
+			req.ParallelToolCalls = &parallel
+		}
+	}
 
 	for _, m := range raw.Messages {
 		req.Messages = append(req.Messages, parseAntMessage(m))
@@ -139,24 +183,37 @@ func parseAntThinkingFromBytes(body []byte) *core.ReasoningConfig {
 }
 
 func decodeAntSystem(raw json.RawMessage) string {
+	text, _ := decodeAntSystemBlocks(raw)
+	return text
+}
+
+// decodeAntSystemBlocks flattens the system prompt (string or block array)
+// to text and returns the cache_control of the last block that had one. A
+// breakpoint on any system block caches the prefix up to that block; after
+// flattening, one breakpoint on the whole system text preserves that.
+func decodeAntSystemBlocks(raw json.RawMessage) (string, json.RawMessage) {
 	if len(raw) == 0 {
-		return ""
+		return "", nil
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
+		return s, nil
 	}
 	var blocks []antBlock
 	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return ""
+		return "", nil
 	}
-	var out string
+	var out strings.Builder
+	var cache json.RawMessage
 	for _, b := range blocks {
 		if b.Type == "text" {
-			out += b.Text
+			out.WriteString(b.Text)
+		}
+		if len(b.CacheControl) > 0 {
+			cache = b.CacheControl
 		}
 	}
-	return out
+	return out.String(), cache
 }
 
 func parseAntMessage(m antMessage) core.Message {
@@ -176,7 +233,15 @@ func parseAntMessage(m antMessage) core.Message {
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
-			msg.Content = append(msg.Content, core.ContentPart{Type: core.PartText, Text: b.Text})
+			msg.Content = append(msg.Content, core.ContentPart{Type: core.PartText, Text: b.Text, CacheControl: b.CacheControl})
+		case "document":
+			if b.Source != nil {
+				msg.Content = append(msg.Content, core.ContentPart{
+					Type:         core.PartDocument,
+					Media:        &core.MediaPayload{MIMEType: b.Source.MediaType, Data: b.Source.Data, URL: b.Source.URL},
+					CacheControl: b.CacheControl,
+				})
+			}
 		case "thinking":
 			// Anthropic thinking blocks carry content in the "thinking" field
 			// (not "text"). Signature must be preserved for echoing back on
@@ -186,58 +251,76 @@ func parseAntMessage(m antMessage) core.Message {
 				Text:      b.Thinking,
 				Signature: b.Signature,
 			})
+		case "redacted_thinking":
+			msg.Content = append(msg.Content, core.ContentPart{Type: core.PartRedactedThinking, Text: b.Data})
 		case "tool_use":
 			msg.Content = append(msg.Content, core.ContentPart{
-				Type:     core.PartToolCall,
-				ToolCall: &core.ToolCall{ID: b.ID, Name: b.Name, Arguments: b.Input},
+				Type:         core.PartToolCall,
+				ToolCall:     &core.ToolCall{ID: b.ID, Name: b.Name, Arguments: b.Input},
+				CacheControl: b.CacheControl,
 			})
 		case "tool_result":
+			text, parts := decodeAntToolResultContent(b.Content)
 			msg.Content = append(msg.Content, core.ContentPart{
 				Type: core.PartToolResult,
 				ToolResult: &core.ToolResult{
 					CallID:  b.ToolUseID,
-					Content: decodeAntToolResultContent(b.Content),
+					Content: text,
 					IsError: b.IsError,
+					Parts:   parts,
 				},
+				CacheControl: b.CacheControl,
 			})
 		case "image":
 			if b.Source != nil {
+				part := core.ContentPart{Type: core.PartImage, CacheControl: b.CacheControl}
 				if b.Source.Type == "url" && b.Source.URL != "" {
-					msg.Content = append(msg.Content, core.ContentPart{
-						Type:  core.PartImage,
-						Media: &core.MediaPayload{URL: b.Source.URL},
-					})
+					part.Media = &core.MediaPayload{URL: b.Source.URL}
 				} else {
-					msg.Content = append(msg.Content, core.ContentPart{
-						Type:  core.PartImage,
-						Media: &core.MediaPayload{MIMEType: b.Source.MediaType, Data: b.Source.Data},
-					})
+					part.Media = &core.MediaPayload{MIMEType: b.Source.MediaType, Data: b.Source.Data}
 				}
+				msg.Content = append(msg.Content, part)
 			}
 		}
 	}
 	return msg
 }
 
-func decodeAntToolResultContent(raw json.RawMessage) string {
+// decodeAntToolResultContent splits tool_result content into its text and any
+// media blocks (screenshots, documents) so neither is lost in translation.
+func decodeAntToolResultContent(raw json.RawMessage) (string, []core.ContentPart) {
 	if len(raw) == 0 {
-		return ""
+		return "", nil
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
+		return s, nil
 	}
 	var blocks []antBlock
 	if err := json.Unmarshal(raw, &blocks); err != nil {
-		return string(raw)
+		return string(raw), nil
 	}
-	var out string
+	var out strings.Builder
+	var parts []core.ContentPart
 	for _, b := range blocks {
-		if b.Type == "text" {
-			out += b.Text
+		switch b.Type {
+		case "text":
+			out.WriteString(b.Text)
+		case "image", "document":
+			if b.Source == nil {
+				continue
+			}
+			typ := core.PartImage
+			if b.Type == "document" {
+				typ = core.PartDocument
+			}
+			parts = append(parts, core.ContentPart{
+				Type:  typ,
+				Media: &core.MediaPayload{MIMEType: b.Source.MediaType, Data: b.Source.Data, URL: b.Source.URL},
+			})
 		}
 	}
-	return out
+	return out.String(), parts
 }
 
 func mapAntRole(role string) core.Role {
@@ -267,8 +350,22 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 	// meets/exceeds the ceiling, cap output and shrink the budget so some tokens
 	// remain for the answer.
 	ceiling := antDefaultMaxOutput
+	adaptive := anthropicUsesAdaptiveThinking(req.Model)
+	explicitMaxTokens := req.MaxTokens != nil && *req.MaxTokens > 0
 	if req.Reasoning != nil && req.Reasoning.MaxTokens > 0 {
 		thinkingBudget = req.Reasoning.MaxTokens
+	} else if req.Reasoning != nil && !adaptive {
+		// OpenAI-style reasoning_effort carries no budget; Anthropic's
+		// budget-style thinking needs one or it answers 400. Map effort to
+		// LiteLLM's budgets and give the answer room above the budget.
+		if budget := anthropicEffortBudget(req.Reasoning.Effort); budget > 0 {
+			thinkingBudget = budget
+			if !explicitMaxTokens {
+				maxTokens = min(budget+antThinkingAnswerReserve, ceiling)
+			}
+		}
+	}
+	if thinkingBudget > 0 {
 		if thinkingBudget >= maxTokens {
 			// Raise max_tokens to preserve thinking depth (up to ceiling)
 			maxTokens = min(thinkingBudget+1024, ceiling)
@@ -298,6 +395,7 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 	// reasoning blocks in the response. Dropping this field causes the upstream
 	// (GLM, Zhipu, etc.) to skip reasoning, which confuses clients and may
 	// trigger retries.
+	thinkingEnabled := false
 	if req.Reasoning != nil {
 		effort := strings.ToLower(strings.TrimSpace(req.Reasoning.Effort))
 		var thinking map[string]any
@@ -309,35 +407,101 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 				thinking = map[string]any{"type": "enabled"}
 			}
 		default:
-			thinking = map[string]any{"type": "enabled"}
+			if adaptive && thinkingBudget == 0 {
+				// Claude 4.6+ picks its own budget; effort steers it via
+				// output_config instead of a fixed token budget.
+				thinking = map[string]any{"type": "adaptive"}
+				if level := anthropicOutputEffort(effort); level != "" {
+					out.OutputConfig, _ = json.Marshal(map[string]any{"effort": level})
+				}
+			} else {
+				thinking = map[string]any{"type": "enabled"}
+			}
 		}
-		if thinking != nil && thinking["type"] == "enabled" && thinkingBudget > 0 {
+		if thinking != nil && thinking["type"] == "enabled" {
+			if thinkingBudget <= 0 {
+				thinkingBudget = antMinThinkingBudget
+				if thinkingBudget >= maxTokens {
+					maxTokens = min(thinkingBudget+antThinkingAnswerReserve, ceiling)
+				}
+				out.MaxTokens = maxTokens
+			}
 			thinking["budget_tokens"] = thinkingBudget
 		}
 		if thinking != nil {
+			thinkingEnabled = true
 			if raw, err := json.Marshal(thinking); err == nil {
 				out.Thinking = raw
 			}
 		}
 	}
+	if thinkingEnabled {
+		// Anthropic rejects sampling overrides while thinking is enabled
+		// (only the default of 1 is accepted). Drop them rather than fail.
+		if out.Temp != nil && *out.Temp != 1 {
+			out.Temp = nil
+		}
+		if out.TopP != nil && *out.TopP != 1 {
+			out.TopP = nil
+		}
+	}
 
 	if req.System != "" {
-		sys, _ := json.Marshal(req.System)
-		out.System = sys
+		if len(req.SystemCacheControl) > 0 {
+			out.System, _ = json.Marshal([]antBlock{{Type: "text", Text: req.System, CacheControl: req.SystemCacheControl}})
+		} else {
+			out.System, _ = json.Marshal(req.System)
+		}
+	}
+	if user := extraString(req, "user"); user != "" {
+		// OpenAI's user id maps to Anthropic's abuse-tracking metadata.
+		out.Metadata, _ = json.Marshal(map[string]string{"user_id": user})
 	}
 
 	for _, t := range req.Tools {
-		out.Tools = append(out.Tools, antTool{
-			Name:        t.Name,
-			Description: t.Description,
-			InputSchema: t.Parameters,
+		if len(t.Raw) > 0 {
+			out.Tools = append(out.Tools, t.Raw)
+			continue
+		}
+		schema := t.Parameters
+		if len(bytes.TrimSpace(schema)) == 0 || bytes.Equal(bytes.TrimSpace(schema), []byte("null")) {
+			schema = antEmptyInputSchema
+		}
+		encoded, err := json.Marshal(antTool{
+			Name:         t.Name,
+			Description:  t.Description,
+			InputSchema:  schema,
+			CacheControl: t.CacheControl,
 		})
+		if err != nil {
+			continue
+		}
+		out.Tools = append(out.Tools, encoded)
 	}
 
 	// Render tool_choice only when tools are declared; Anthropic rejects a
 	// tool_choice with an empty tools array.
 	if len(out.Tools) > 0 {
-		if tc := openAIToolChoiceToClaude(req.ToolChoice); tc != nil {
+		tc := openAIToolChoiceToClaude(req.ToolChoice)
+		tcMap, _ := tc.(map[string]any)
+		if thinkingEnabled && tcMap != nil {
+			// Forced tool use is incompatible with extended thinking (400);
+			// LiteLLM downgrades it to auto, so do we.
+			if typ, _ := tcMap["type"].(string); typ == "any" || typ == "tool" {
+				tcMap = map[string]any{"type": "auto"}
+				tc = tcMap
+			}
+		}
+		if req.ParallelToolCalls != nil && !*req.ParallelToolCalls {
+			if tcMap == nil {
+				tcMap = map[string]any{"type": "auto"}
+				tc = tcMap
+			}
+			if typ, _ := tcMap["type"].(string); typ != "none" {
+				tcMap["disable_parallel_tool_use"] = true
+			}
+		}
+		if tc != nil {
 			if raw, err := json.Marshal(tc); err == nil {
 				out.ToolChoice = raw
 			}
@@ -347,14 +511,32 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 	// Anthropic requires alternating user/assistant roles and groups tool
 	// results into user messages. We render each canonical message to a block
 	// array; consecutive same-role messages are merged.
+	type pending struct {
+		role   string
+		blocks []antBlock
+	}
+	var merged []pending
 	for _, m := range req.Messages {
 		blocks := renderAntBlocks(m)
-		raw, _ := json.Marshal(blocks)
 		role := "user"
 		if m.Role == core.RoleAssistant {
 			role = "assistant"
 		}
-		out.Messages = appendAntMessage(out.Messages, role, raw, blocks)
+		// Anthropic forbids consecutive messages with the same role: merge
+		// their blocks before encoding so each message is marshalled once.
+		if n := len(merged); n > 0 && merged[n-1].role == role {
+			merged[n-1].blocks = append(merged[n-1].blocks, blocks...)
+			continue
+		}
+		merged = append(merged, pending{role: role, blocks: blocks})
+	}
+	out.Messages = make([]antMessage, 0, len(merged))
+	for _, pm := range merged {
+		raw, err := json.Marshal(pm.blocks)
+		if err != nil {
+			return nil, fmt.Errorf("anthropic: encode message: %w", err)
+		}
+		out.Messages = append(out.Messages, antMessage{Role: pm.role, Content: raw})
 	}
 
 	return json.Marshal(out)
@@ -368,45 +550,45 @@ func renderAntBlocks(m core.Message) []antBlock {
 			if p.Text == "" {
 				continue
 			}
-			blocks = append(blocks, antBlock{Type: "text", Text: p.Text})
+			blocks = append(blocks, antBlock{Type: "text", Text: p.Text, CacheControl: p.CacheControl})
+		case core.PartDocument:
+			if src := antMediaSource(p.Media); src != nil {
+				blocks = append(blocks, antBlock{Type: "document", Source: src, CacheControl: p.CacheControl})
+			}
 		case core.PartThinking:
 			// Render thinking with the correct "thinking" JSON key and echo back
-			// the signature when present (required by upstream for validation).
-			// When no signature exists (e.g. thinking synthesized by a non-Anthropic
-			// upstream), omit it — some providers reject a null/empty signature.
-			block := antBlock{Type: "thinking", Thinking: p.Text}
-			if p.Signature != "" {
-				block.Signature = p.Signature
+			// the signature. A thinking block without a signature (reasoning
+			// synthesized by a non-Anthropic upstream, or a fallback across
+			// providers) is rejected by Anthropic with 400, so it is dropped —
+			// the assistant turn's text and tool calls carry the state that
+			// matters.
+			if p.Signature == "" || p.Text == "" {
+				continue
 			}
-			blocks = append(blocks, block)
+			blocks = append(blocks, antBlock{Type: "thinking", Thinking: p.Text, Signature: p.Signature})
+		case core.PartRedactedThinking:
+			if p.Text != "" {
+				blocks = append(blocks, antBlock{Type: "redacted_thinking", Data: p.Text})
+			}
 		case core.PartToolCall:
 			blocks = append(blocks, antBlock{
-				Type:  "tool_use",
-				ID:    p.ToolCall.ID,
-				Name:  p.ToolCall.Name,
-				Input: normalizeAntToolInputRaw(p.ToolCall.Arguments),
+				Type:         "tool_use",
+				ID:           p.ToolCall.ID,
+				Name:         p.ToolCall.Name,
+				Input:        normalizeAntToolInputRaw(p.ToolCall.Arguments),
+				CacheControl: p.CacheControl,
 			})
 		case core.PartToolResult:
-			content, _ := json.Marshal(p.ToolResult.Content)
 			blocks = append(blocks, antBlock{
-				Type:      "tool_result",
-				ToolUseID: p.ToolResult.CallID,
-				Content:   content,
-				IsError:   p.ToolResult.IsError,
+				Type:         "tool_result",
+				ToolUseID:    p.ToolResult.CallID,
+				Content:      renderAntToolResultContent(p.ToolResult),
+				IsError:      p.ToolResult.IsError,
+				CacheControl: p.CacheControl,
 			})
 		case core.PartImage:
-			if p.Media != nil {
-				if p.Media.Data != "" {
-					blocks = append(blocks, antBlock{
-						Type:   "image",
-						Source: &antImageSource{Type: "base64", MediaType: p.Media.MIMEType, Data: p.Media.Data},
-					})
-				} else if p.Media.URL != "" {
-					blocks = append(blocks, antBlock{
-						Type:   "image",
-						Source: &antImageSource{Type: "url", URL: p.Media.URL},
-					})
-				}
+			if src := antMediaSource(p.Media); src != nil {
+				blocks = append(blocks, antBlock{Type: "image", Source: src, CacheControl: p.CacheControl})
 			}
 		}
 	}
@@ -416,18 +598,60 @@ func renderAntBlocks(m core.Message) []antBlock {
 	return blocks
 }
 
-// appendAntMessage merges blocks into the previous message when roles match, as
-// Anthropic forbids consecutive messages with the same role.
-func appendAntMessage(msgs []antMessage, role string, raw json.RawMessage, blocks []antBlock) []antMessage {
-	if n := len(msgs); n > 0 && msgs[n-1].Role == role {
-		var prev []antBlock
-		_ = json.Unmarshal(msgs[n-1].Content, &prev)
-		prev = append(prev, blocks...)
-		merged, _ := json.Marshal(prev)
-		msgs[n-1].Content = merged
-		return msgs
+// antMediaSource renders a media payload as an Anthropic source object.
+func antMediaSource(m *core.MediaPayload) *antImageSource {
+	if m == nil {
+		return nil
 	}
-	return append(msgs, antMessage{Role: role, Content: raw})
+	if m.Data != "" {
+		return &antImageSource{Type: "base64", MediaType: m.MIMEType, Data: m.Data}
+	}
+	if m.URL != "" {
+		return &antImageSource{Type: "url", URL: m.URL}
+	}
+	return nil
+}
+
+// renderAntToolResultContent renders a tool result as a plain string when it
+// is text-only, or as a block array when it carries screenshots/documents.
+func renderAntToolResultContent(r *core.ToolResult) json.RawMessage {
+	if len(r.Parts) == 0 {
+		content, _ := json.Marshal(r.Content)
+		return content
+	}
+	var blocks []antBlock
+	if r.Content != "" {
+		blocks = append(blocks, antBlock{Type: "text", Text: r.Content})
+	}
+	for _, p := range r.Parts {
+		src := antMediaSource(p.Media)
+		if src == nil {
+			continue
+		}
+		typ := "image"
+		if p.Type == core.PartDocument {
+			typ = "document"
+		}
+		blocks = append(blocks, antBlock{Type: typ, Source: src})
+	}
+	if len(blocks) == 0 {
+		return json.RawMessage(`""`)
+	}
+	content, _ := json.Marshal(blocks)
+	return content
+}
+
+// extraString returns a string-valued passthrough parameter from req.Extra.
+func extraString(req *core.ChatRequest, key string) string {
+	raw, ok := req.Extra[key]
+	if !ok {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return ""
+	}
+	return s
 }
 
 func normalizeAntToolInputRaw(raw json.RawMessage) json.RawMessage {
@@ -471,7 +695,7 @@ type antResponse struct {
 
 func (AnthropicCodec) ParseResponse(body []byte, model string) (*core.ChatResponse, error) {
 	var raw antResponse
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := json.UnmarshalNoCopy(body, &raw); err != nil {
 		return nil, fmt.Errorf("anthropic: parse response: %w", err)
 	}
 
@@ -481,7 +705,11 @@ func (AnthropicCodec) ParseResponse(body []byte, model string) (*core.ChatRespon
 		case "text":
 			msg.Content = append(msg.Content, core.ContentPart{Type: core.PartText, Text: b.Text})
 		case "thinking":
-			msg.Content = append(msg.Content, core.ContentPart{Type: core.PartThinking, Text: b.Text})
+			msg.Content = append(msg.Content, core.ContentPart{
+				Type: core.PartThinking, Text: firstNonEmpty(b.Thinking, b.Text), Signature: b.Signature,
+			})
+		case "redacted_thinking":
+			msg.Content = append(msg.Content, core.ContentPart{Type: core.PartRedactedThinking, Text: b.Data})
 		case "tool_use":
 			msg.Content = append(msg.Content, core.ContentPart{
 				Type:     core.PartToolCall,
@@ -514,7 +742,13 @@ func (AnthropicCodec) RenderResponse(resp *core.ChatResponse) ([]byte, error) {
 		case core.PartText:
 			content = append(content, map[string]any{"type": "text", "text": p.Text})
 		case core.PartThinking:
-			content = append(content, map[string]any{"type": "thinking", "thinking": p.Text})
+			block := map[string]any{"type": "thinking", "thinking": p.Text}
+			if p.Signature != "" {
+				block["signature"] = p.Signature
+			}
+			content = append(content, block)
+		case core.PartRedactedThinking:
+			content = append(content, map[string]any{"type": "redacted_thinking", "data": p.Text})
 		case core.PartToolCall:
 			content = append(content, map[string]any{
 				"type": "tool_use", "id": p.ToolCall.ID, "name": p.ToolCall.Name, "input": normalizeAntToolInputValue(p.ToolCall.Arguments),
@@ -528,22 +762,93 @@ func (AnthropicCodec) RenderResponse(resp *core.ChatResponse) ([]byte, error) {
 		"model":       resp.Model,
 		"content":     content,
 		"stop_reason": renderAntStop(resp.FinishReason),
-		"usage": map[string]int{
-			"input_tokens":  resp.Usage.PromptTokens,
-			"output_tokens": resp.Usage.CompletionTokens,
-		},
+		"usage":       renderAntUsage(resp.Usage),
 	}
 	return json.Marshal(out)
 }
 
+// renderAntUsage renders canonical usage in Anthropic's shape, where
+// input_tokens excludes cache reads/writes and the cache counts are reported
+// separately. Canonical PromptTokens is the all-inclusive figure.
+func renderAntUsage(u core.Usage) map[string]int {
+	input := u.PromptTokens - u.CachedTokens - u.CacheWriteTokens
+	if input < 0 {
+		input = u.PromptTokens
+	}
+	out := map[string]int{
+		"input_tokens":  input,
+		"output_tokens": u.CompletionTokens,
+	}
+	if u.CachedTokens > 0 {
+		out["cache_read_input_tokens"] = u.CachedTokens
+	}
+	if u.CacheWriteTokens > 0 {
+		out["cache_creation_input_tokens"] = u.CacheWriteTokens
+	}
+	return out
+}
+
+// Anthropic thinking helpers.
+const (
+	// antMinThinkingBudget is the smallest budget Anthropic accepts.
+	antMinThinkingBudget = 1024
+	// antThinkingAnswerReserve is added above the thinking budget when the
+	// client did not pin max_tokens (LiteLLM: budget + 4096).
+	antThinkingAnswerReserve = 4096
+)
+
+// anthropicEffortBudget maps an OpenAI-style reasoning_effort to Anthropic's
+// budget_tokens (LiteLLM's table). Zero means "no mapping" (none/off/auto).
+func anthropicEffortBudget(effort string) int {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "minimal", "low":
+		return 1024
+	case "medium":
+		return 2048
+	case "high":
+		return 4096
+	case "xhigh":
+		return 8192
+	case "max":
+		return 16384
+	}
+	return 0
+}
+
+// anthropicOutputEffort maps reasoning_effort to output_config.effort for
+// adaptive-thinking models.
+func anthropicOutputEffort(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "minimal", "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "high":
+		return "high"
+	case "xhigh":
+		return "xhigh"
+	case "max":
+		return "max"
+	}
+	return ""
+}
+
+// anthropicUsesAdaptiveThinking reports whether the model (Claude 4.6+) uses
+// adaptive thinking, where a fixed budget is unnecessary.
+func anthropicUsesAdaptiveThinking(model string) bool {
+	return capability.ResolveProfile("anthropic", model).ThinkingFormat == "claude-adaptive"
+}
+
 func mapAntStop(r string) core.FinishReason {
 	switch r {
-	case "end_turn", "stop_sequence":
+	case "end_turn", "stop_sequence", "pause_turn":
 		return core.FinishStop
-	case "max_tokens":
+	case "max_tokens", "model_context_window_exceeded", "compaction":
 		return core.FinishLength
 	case "tool_use":
 		return core.FinishToolCalls
+	case "refusal":
+		return core.FinishFilter
 	default:
 		return core.FinishStop
 	}
@@ -555,6 +860,8 @@ func renderAntStop(r core.FinishReason) string {
 		return "max_tokens"
 	case core.FinishToolCalls:
 		return "tool_use"
+	case core.FinishFilter:
+		return "refusal"
 	default:
 		return "end_turn"
 	}

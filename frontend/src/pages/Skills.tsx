@@ -1,10 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Copy, Check, ChevronRight, MoreHorizontal, ExternalLink, AlertCircle } from "lucide-react";
+import { Plus, Trash2, Copy, Check, ChevronRight, MoreHorizontal, ExternalLink, AlertCircle, BookOpen, Binary, AudioLines, Mic, Search, type LucideIcon } from "lucide-react";
+import { ICONS } from "../lib/icons";
 import { api, type Skill } from "../lib/api";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
-import { Button, Input, Modal, Skeleton, Toggle, ErrorBanner } from "../components/ui";
+import { Button, EmptyState, IconTile, Input, Modal, SectionTitle, Skeleton, Toggle, ErrorBanner } from "../components/ui";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import {
   DropdownMenu,
@@ -30,6 +31,18 @@ const REFERENCE_SKILLS = [
 ];
 
 type ReferenceSkill = (typeof REFERENCE_SKILLS)[number];
+
+// One glyph per reference skill, matching what the endpoint does.
+const REFERENCE_ICONS: Record<string, LucideIcon> = {
+  keirouter: ICONS.skills,
+  "keirouter-chat": ICONS.prompt,
+  "keirouter-embeddings": Binary,
+  "keirouter-image": ICONS.media,
+  "keirouter-tts": AudioLines,
+  "keirouter-stt": Mic,
+  "keirouter-web-search": Search,
+  "keirouter-web-fetch": ICONS.tunnel,
+};
 
 const ENTRY_SKILL = REFERENCE_SKILLS.find((skill) => skill.group === "entry")!;
 const ENDPOINT_SKILLS = REFERENCE_SKILLS.filter((skill) => skill.group !== "entry");
@@ -125,20 +138,29 @@ export function SkillsPage() {
         }
       />
 
-      <div className="space-y-8">
+      <div className="space-y-6">
         {/* Custom skills */}
-        <section aria-labelledby="custom-skills-heading">
-          <h2 id="custom-skills-heading" className="mb-2.5 flex items-baseline gap-2 text-[14px] font-semibold text-fg">
-            Custom skills
-            {custom.length > 0 && <span className="text-[12px] font-normal tabular-nums text-fg-muted">{custom.length}</span>}
-          </h2>
+        <section aria-labelledby="custom-skills-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+          <div className="border-b border-line px-4 py-3">
+            <SectionTitle
+              id="custom-skills-heading"
+              icon={ICONS.skills}
+              title={(
+                <>
+                  Custom skills
+                  {custom.length > 0 && <span className="ml-2 text-[12px] font-normal tabular-nums text-fg-muted">{custom.length}</span>}
+                </>
+              )}
+            />
+          </div>
 
           {skills.isLoading ? (
-            <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]" aria-busy="true" aria-label="Loading skills">
+            <div aria-busy="true" aria-label="Loading skills">
               <div className="h-9 border-b border-line bg-subtle" />
               <div className="divide-y divide-line">
                 {Array.from({ length: 3 }).map((_, i) => (
                   <div key={i} className="flex items-center gap-4 px-4 py-3">
+                    <Skeleton className="h-7 w-7 rounded-lg" />
                     <div className="flex-1 space-y-1.5">
                       <Skeleton className="h-3.5 w-40" />
                       <Skeleton className="h-3 w-64" />
@@ -149,25 +171,28 @@ export function SkillsPage() {
               </div>
             </div>
           ) : skills.isError ? (
-            <div role="alert" className="flex items-start gap-2.5 rounded-2xl border border-bad/30 bg-bad/5 px-4 py-3">
-              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-bad" strokeWidth={1.75} aria-hidden="true" />
-              <p className="text-[13px] text-bad">
-                Couldn't load skills. {skills.error instanceof Error ? `${skills.error.message}. ` : ""}Refresh the page to try again.
-              </p>
+            <div className="p-4">
+              <div role="alert" className="flex items-start gap-2.5 rounded-lg border border-bad/30 bg-bad/5 px-3.5 py-2.5">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-bad" strokeWidth={1.75} aria-hidden="true" />
+                <p className="text-[13px] text-bad">
+                  Couldn't load skills. {skills.error instanceof Error ? `${skills.error.message}. ` : ""}Refresh the page to try again.
+                </p>
+              </div>
             </div>
           ) : custom.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-10 text-center">
-              <h3 className="text-[14px] font-medium text-fg">No custom skills yet</h3>
-              <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
-                A skill gives every tool the same instructions without changing its config.
-              </p>
-              <Button className="mt-4" onClick={openCreate}>
-                <Plus aria-hidden="true" />
-                Create skill
-              </Button>
-            </div>
+            <EmptyState
+              icon={ICONS.skills}
+              title="No custom skills yet"
+              hint="A skill gives every tool the same instructions without changing its config."
+              action={(
+                <Button onClick={openCreate}>
+                  <Plus aria-hidden="true" />
+                  Create skill
+                </Button>
+              )}
+            />
           ) : (
-            <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+            <div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[640px] text-[13px]">
                   <thead>
@@ -271,15 +296,21 @@ function FormField({ id, label, hint, optional, required, children }: { id: stri
 function ReferenceSkills() {
   const [expanded, setExpanded] = useState(false);
   return (
-    <section aria-labelledby="reference-skills-heading">
-      <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
-        <h2 id="reference-skills-heading" className="flex items-baseline gap-2 text-[14px] font-semibold text-fg">
-          Reference skills
-          <span className="text-[12px] font-normal tabular-nums text-fg-muted">{REFERENCE_SKILLS.length}</span>
-        </h2>
-        <p className="text-[12.5px] text-fg-muted">Give an agent a skill URL to teach it an endpoint</p>
+    <section aria-labelledby="reference-skills-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle
+          id="reference-skills-heading"
+          icon={BookOpen}
+          title={(
+            <>
+              Reference skills
+              <span className="ml-2 text-[12px] font-normal tabular-nums text-fg-muted">{REFERENCE_SKILLS.length}</span>
+            </>
+          )}
+          subtitle="Teach an agent an endpoint by URL"
+        />
       </div>
-      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div>
         <ul aria-label="Entry skill">
           <ReferenceSkillRow skill={ENTRY_SKILL} />
         </ul>
@@ -332,7 +363,8 @@ function ReferenceSkillRow({ skill }: { skill: ReferenceSkill }) {
   };
 
   return (
-    <li className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2.5 transition-colors hover:bg-hover">
+    <li className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 transition-colors hover:bg-hover">
+      <IconTile icon={REFERENCE_ICONS[skill.id] ?? ICONS.skills} size="sm" />
       <span className="min-w-0 flex-1 basis-56">
         <span className="block text-[13px] font-medium text-fg">{skill.name}</span>
         <span className="block text-[12px] text-fg-muted">{skill.description}</span>
@@ -390,13 +422,18 @@ function SkillRow({
 
   return (
     <tr className="transition-colors hover:bg-hover">
-      <td className="max-w-[280px] px-4 py-2.5 align-top">
-        <span className="block truncate font-medium text-fg">{skill.name}</span>
-        {skill.description ? (
-          <span className="block truncate text-[12px] text-fg-muted">{skill.description}</span>
-        ) : (
-          <span className="block truncate font-mono text-[12px] text-fg-muted">{skill.id}</span>
-        )}
+      <td className="max-w-[300px] px-4 py-2.5 align-top">
+        <span className="flex min-w-0 items-start gap-2.5">
+          <IconTile icon={ICONS.prompt} size="sm" tone={skill.enabled ? "section" : "slate"} className="mt-0.5" />
+          <span className="min-w-0">
+            <span className="block truncate font-medium text-fg">{skill.name}</span>
+            {skill.description ? (
+              <span className="block truncate text-[12px] text-fg-muted">{skill.description}</span>
+            ) : (
+              <span className="block truncate font-mono text-[12px] text-fg-muted">{skill.id}</span>
+            )}
+          </span>
+        </span>
       </td>
       <td className="max-w-[360px] px-4 py-2.5 align-top">
         {skill.prompt ? (

@@ -1064,57 +1064,24 @@ func (c *Qoder) Stream(ctx context.Context, req *core.ChatRequest, creds core.Cr
 	}
 
 	out := make(chan core.StreamChunk, 16)
-	go func() {
-		defer close(out)
-		defer resp.Body.Close()
-
-		ttft := newTTFTTracker(cfg)
-
-		scanner := sseScanner(resp.Body)
-		for scanner.Scan() {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			line := scanner.Text()
-			inner, ok, qerr := unwrapQoderSSELineWithError(line, c.id, req.Model)
-			if qerr != nil {
-				out <- core.StreamChunk{Type: core.ChunkError, Err: qerr}
-				return
-			}
-			if !ok {
-				continue
-			}
-			if inner == "[DONE]" {
-				return
-			}
-
-			// Sanitize embedded newlines so the SSE frame is a single event.
-			inner = strings.ReplaceAll(inner, "\n", "")
-			inner = strings.ReplaceAll(inner, "\r", "")
-
-			chunks, perr := c.codec.ParseStreamLine([]byte(inner), req.Model)
-			if perr != nil {
-				continue // skip malformed chunk
-			}
-			for _, ch := range chunks {
-				ttft.maybeReport(ch)
-				select {
-				case out <- ch:
-				case <-ctx.Done():
-					return
-				}
-			}
+	// Raw lines: Qoder wraps its payload in a provider envelope that the
+	// unwrapper parses (including the "data:" prefix and in-band errors).
+	go streamSSE(ctx, c.id, req.Model, resp.Body, out, cfg, ndjsonLines, func(line []byte) ([]core.StreamChunk, error) {
+		inner, ok, qerr := unwrapQoderSSELineWithError(string(line), c.id, req.Model)
+		if qerr != nil {
+			return []core.StreamChunk{{Type: core.ChunkError, Err: qerr}}, errStopStream
 		}
-		if err := scanner.Err(); err != nil {
-			out <- core.StreamChunk{
-				Type: core.ChunkError,
-				Err:  &core.ProviderError{Kind: core.ErrTimeout, Provider: c.id, Model: req.Model, Message: err.Error(), Cause: err},
-			}
+		if !ok {
+			return nil, nil
 		}
-	}()
+		if inner == "[DONE]" {
+			return nil, errStopStream
+		}
+		// Sanitize embedded newlines so the SSE frame is a single event.
+		inner = strings.ReplaceAll(inner, "\n", "")
+		inner = strings.ReplaceAll(inner, "\r", "")
+		return c.codec.ParseStreamLine([]byte(inner), req.Model)
+	})
 	return out, nil
 }
 

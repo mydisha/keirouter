@@ -57,8 +57,12 @@ interface NavItem {
   indicator?: "live" | "health";
 }
 
+export type SectionTone = "blue" | "violet" | "teal" | "orange" | "slate";
+
 interface NavGroup {
   heading?: string;
+  /** One hue per group; drives the page header tile and section accents. */
+  tone: SectionTone;
   items: NavItem[];
 }
 
@@ -66,6 +70,7 @@ interface NavGroup {
 // traffic, shape routing, manage upstreams, control access, run the instance.
 const navGroups: NavGroup[] = [
   {
+    tone: "blue",
     items: [
       { to: "/", label: "Overview", icon: LayoutGrid, end: true, preload: "/" },
       { to: "/usage", label: "Usage", icon: BarChart3, preload: "/usage" },
@@ -74,6 +79,7 @@ const navGroups: NavGroup[] = [
   },
   {
     heading: "Routing",
+    tone: "violet",
     items: [
       { to: "/endpoints", label: "Endpoints", icon: Plug, preload: "/endpoints" },
       { to: "/chains", label: "Chains", icon: Layers, preload: "/chains" },
@@ -82,6 +88,7 @@ const navGroups: NavGroup[] = [
   },
   {
     heading: "Providers",
+    tone: "teal",
     items: [
       { to: "/providers", label: "Providers", icon: Boxes, preload: "/providers" },
       { to: "/media", label: "Media", icon: Image, preload: "/media" },
@@ -92,6 +99,7 @@ const navGroups: NavGroup[] = [
   },
   {
     heading: "Access",
+    tone: "orange",
     items: [
       { to: "/keys", label: "API keys", icon: Key, preload: "/keys" },
       { to: "/plans", label: "Plans & budgets", icon: ReceiptText, preload: "/plans" },
@@ -100,6 +108,7 @@ const navGroups: NavGroup[] = [
   },
   {
     heading: "Workspace",
+    tone: "slate",
     items: [
       { to: "/cli-tools", label: "CLI tools", icon: TerminalSquare, preload: "/cli-tools" },
       { to: "/system", label: "System", icon: Cpu, preload: "/system" },
@@ -107,6 +116,19 @@ const navGroups: NavGroup[] = [
     ],
   },
 ];
+
+// activeSection finds the nav item (and its group tone) that owns a path, so
+// detail pages such as /providers/:id inherit their list page's icon and hue.
+export function activeSection(pathname: string): { item: NavItem; tone: SectionTone } | null {
+  let best: { item: NavItem; tone: SectionTone } | null = null;
+  for (const group of navGroups) {
+    for (const item of group.items) {
+      const matches = item.to === "/" ? pathname === "/" : pathname === item.to || pathname.startsWith(item.to + "/");
+      if (matches && (!best || item.to.length > best.item.to.length)) best = { item, tone: group.tone };
+    }
+  }
+  return best;
+}
 
 const TITLE_BY_PATH: Record<string, string> = {
   "/": "Overview",
@@ -149,6 +171,14 @@ function titleForPath(pathname: string): string {
 
 export function Layout() {
   const location = useLocation();
+  const section = activeSection(location.pathname);
+  const pageTone = section?.tone ?? "blue";
+
+  // Dialogs, sheets and menus render in portals outside <main>; putting the
+  // page tone on <html> lets them inherit the section hue too.
+  useEffect(() => {
+    document.documentElement.dataset.tone = pageTone;
+  }, [pageTone]);
   const { branding } = useBranding();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -197,7 +227,11 @@ export function Layout() {
   }, []);
 
   return (
-    <div className="flex h-full bg-canvas">
+    // The shell is locked to the viewport: only <main> (and the sidebar nav)
+    // scroll. `relative` + `overflow-hidden` keep absolutely positioned
+    // descendants such as sr-only text from extending the document, which
+    // otherwise lets the whole layout scroll away past the end of a page.
+    <div className="relative flex h-full overflow-hidden bg-canvas">
       <SkipLink />
       {/* Desktop sidebar — hidden below lg. */}
       <div className="hidden lg:flex">
@@ -212,11 +246,11 @@ export function Layout() {
         </SheetContent>
       </Sheet>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <RouteProgress />
         <TopBar menuOpen={sidebarOpen} onMenuToggle={() => setSidebarOpen(true)} onSearchOpen={() => setPaletteOpen(true)} />
         {/* tabIndex -1: the skip link moves focus here; no ring on a landmark. */}
-        <main id="main" tabIndex={-1} className="flex-1 overflow-y-auto" style={{ outline: "none" }}>
+        <main id="main" tabIndex={-1} data-tone={pageTone} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain" style={{ outline: "none" }}>
           <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
             <Suspense fallback={<PageOutletFallback />}>
               <Outlet />
@@ -243,7 +277,7 @@ function SkipLink() {
         e.preventDefault();
         const main = document.getElementById("main");
         main?.focus();
-        main?.scrollIntoView({ block: "start" });
+        main?.scrollTo({ top: 0 });
       }}
       className="fixed left-3 top-3 z-[120] -translate-y-[200%] rounded-lg bg-primary px-3 py-2 text-[13px] font-medium text-primary-fg shadow-[var(--shadow-pop)] focus:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
     >
@@ -292,12 +326,12 @@ function Sidebar() {
   const navId = useId();
 
   return (
-    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-line bg-surface">
+    <aside className="relative flex h-full w-60 shrink-0 flex-col border-r border-line bg-surface">
       <SidebarBrand />
 
-      <nav aria-label="Primary" className="flex-1 overflow-y-auto px-2.5 pb-4 pt-2">
+      <nav aria-label="Primary" className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 pb-4 pt-2">
         {navGroups.map((group, gi) => (
-          <div key={gi} className={gi > 0 ? "mt-5" : undefined}>
+          <div key={gi} data-tone={group.tone} className={gi > 0 ? "mt-5" : undefined}>
             {group.heading && (
               <h2 id={`${navId}-group-${gi}`} className="px-2.5 pb-1.5 text-[11.5px] font-medium text-fg-faint">
                 {group.heading}
@@ -316,14 +350,14 @@ function Sidebar() {
                     className={({ isActive }) =>
                       cn(
                         "group flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                        isActive ? "bg-hover text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+                        isActive ? "bg-tone-soft text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
                       )
                     }
                   >
                     {({ isActive }) => (
                       <>
                         <item.icon
-                          className={cn("h-4 w-4 shrink-0", isActive ? "text-fg" : "text-fg-faint group-hover:text-fg-muted")}
+                          className={cn("h-4 w-4 shrink-0 transition-colors", isActive ? "text-tone" : "text-fg-faint group-hover:text-tone")}
                           strokeWidth={1.75}
                           aria-hidden="true"
                         />
@@ -507,15 +541,28 @@ function AccountMenu() {
 export function PageHeader(props: {
   title: string;
   description?: string;
+  /** Overrides the icon of the nav item that owns the current route. */
   icon?: LucideIcon;
   action?: ReactNode;
 }) {
   const { title, description, action } = props;
+  const { pathname } = useLocation();
+  const Icon = props.icon ?? activeSection(pathname)?.item.icon;
   return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-      <div className="min-w-[min(100%,280px)] flex-1">
-        <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{title}</h1>
-        {description && <p className="mt-1 max-w-3xl text-[13.5px] leading-5 text-fg-muted">{description}</p>}
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      <div className="flex min-w-[min(100%,280px)] flex-1 items-center gap-3.5">
+        {Icon && (
+          <span
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-tone-soft text-tone ring-1 ring-inset ring-tone-ring"
+            aria-hidden="true"
+          >
+            <Icon className="h-5 w-5" strokeWidth={1.75} />
+          </span>
+        )}
+        <div className="min-w-0">
+          <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{title}</h1>
+          {description && <p className="mt-0.5 max-w-3xl text-[13.5px] leading-5 text-fg-muted">{description}</p>}
+        </div>
       </div>
       {action && <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div>}
     </div>

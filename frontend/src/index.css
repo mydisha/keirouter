@@ -77,9 +77,9 @@
   --color-ink-950: #0d0d0f;
 
   /* ── Semantic status. */
-  --color-success: #187a43;
-  --color-warning: #a85b06;
-  --color-danger: #c2362b;
+  --color-success: #146d3b;
+  --color-warning: #8c4b05;
+  --color-danger: #b02e24;
   --color-info: #0a72ef;
 
   /* ── Chart palette: accent first, then a lightness-separated orange so
@@ -131,6 +131,12 @@
   --color-line-strong: var(--border-strong);
   --color-input: var(--border-input);
   --color-link: var(--link);
+  --color-action: var(--action);
+  --color-action-hover: var(--action-hover);
+  --color-action-fg: var(--action-fg);
+  --color-tone: var(--tone-fg);
+  --color-tone-soft: var(--tone-soft);
+  --color-tone-ring: var(--tone-ring);
   --color-fg: var(--text);
   --color-fg-muted: var(--text-muted);
   --color-fg-faint: var(--text-faint);
@@ -157,13 +163,17 @@
   --primary: #17171a;
   --primary-fg: #ffffff;
   --track: #ececef;
-  --status-ok: #187a43;
-  --status-warn: #a85b06;
-  --status-bad: #c2362b;
+  --status-ok: #146d3b;
+  --status-warn: #8c4b05;
+  --status-bad: #b02e24;
   --series-alt: #ea7a3a;
   /* WCAG: form-control borders ≥ 3:1 against surface; link text ≥ 4.5:1. */
   --border-input: #8a8a94;
   --link: var(--color-accent-600);
+  /* Primary actions: brand blue (white text ≥ 6.5:1). */
+  --action: var(--color-accent-600);
+  --action-hover: var(--color-accent-700);
+  --action-fg: #ffffff;
 
   --shadow-card: 0 1px 2px rgba(16, 16, 20, 0.04);
   --shadow-pop: 0 0 0 1px rgba(16, 16, 20, 0.04), 0 6px 16px -4px rgba(16, 16, 20, 0.1);
@@ -195,6 +205,9 @@
   --series-alt: #f08a4b;
   --border-input: #6b6b75;
   --link: var(--color-accent-400);
+  --action: var(--color-accent-600);
+  --action-hover: var(--color-accent-500);
+  --action-fg: #ffffff;
 
   --color-success: #3fb872;
   --color-warning: #e3a347;
@@ -462,4 +475,59 @@ select:disabled,
 ::placeholder {
   color: var(--text-faint);
   opacity: 1;
+}
+
+/*
+  Section tones. Each sidebar group has one hue; Layout sets data-tone on the
+  group and on <main>, so page header tiles, section icons and empty states
+  pick it up through text-tone / bg-tone-soft / ring-tone-ring without any
+  page knowing its colour. Icon colours are ≥ 4.4:1 on their soft tile.
+*/
+:root,
+[data-tone="blue"] {
+  --tone-fg: var(--color-accent-600);
+}
+[data-tone="violet"] {
+  --tone-fg: #6941c6;
+}
+[data-tone="teal"] {
+  --tone-fg: #0d7268;
+}
+[data-tone="orange"] {
+  --tone-fg: #b54a17;
+}
+[data-tone="slate"] {
+  --tone-fg: #52525b;
+}
+.dark,
+.dark[data-tone="blue"],
+.dark [data-tone="blue"] {
+  --tone-fg: var(--color-accent-400);
+}
+.dark[data-tone="violet"],
+.dark [data-tone="violet"] {
+  --tone-fg: #a78bfa;
+}
+.dark[data-tone="teal"],
+.dark [data-tone="teal"] {
+  --tone-fg: #2fc4b2;
+}
+.dark[data-tone="orange"],
+.dark [data-tone="orange"] {
+  --tone-fg: #f2925b;
+}
+.dark[data-tone="slate"],
+.dark [data-tone="slate"] {
+  --tone-fg: #a1a1aa;
+}
+:root,
+[data-tone] {
+  --tone-soft: color-mix(in srgb, var(--tone-fg) 10%, var(--bg-elevated));
+  --tone-ring: color-mix(in srgb, var(--tone-fg) 22%, transparent);
+}
+.dark,
+.dark[data-tone],
+.dark [data-tone] {
+  --tone-soft: color-mix(in srgb, var(--tone-fg) 15%, var(--bg-elevated));
+  --tone-ring: color-mix(in srgb, var(--tone-fg) 28%, transparent);
 }

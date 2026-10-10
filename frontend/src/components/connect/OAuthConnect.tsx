@@ -206,7 +206,7 @@ function OAuthCodeConnect({ provider, logo, onClose }: { provider: OAuthProvider
       {phase === "waiting" && (
         <div className="space-y-4">
           <div className="flex items-center gap-2.5 rounded-xl border border-line px-3.5 py-3">
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-fg-muted" aria-hidden="true" />
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-tone" aria-hidden="true" />
             <div className="min-w-0" role="status" aria-live="polite">
               <p className="text-[13px] font-medium text-fg">Waiting for sign-in</p>
               <p className="text-[12px] text-fg-muted">Finish in the {provider.display_name} window.</p>

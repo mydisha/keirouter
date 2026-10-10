@@ -73,7 +73,9 @@ type EndpointSettings struct {
 	// Increase for reasoning models (Deepseek, GLM) that think before streaming.
 	StreamStallTimeoutMs int `json:"stream_stall_timeout_ms"`
 	// ResponseHeaderTimeoutMs is the max time waiting for upstream response
-	// headers. Accommodates slow providers (ollama on modest hardware).
+	// headers on streaming calls (time to first byte). Non-streaming calls
+	// are bounded by RequestTimeoutMs instead, because their headers only
+	// arrive once generation has finished.
 	ResponseHeaderTimeoutMs int `json:"response_header_timeout_ms"`
 	// RequestTimeoutMs bounds non-streaming upstream calls.
 	RequestTimeoutMs int `json:"request_timeout_ms"`

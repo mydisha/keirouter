@@ -23,6 +23,22 @@ func requiresParsedStreamAdmission(provider string) bool {
 // inside the pipeline lets the attempt planner fall back before the gateway has
 // written response headers or bytes to the client.
 func admitStream(ctx context.Context, in <-chan core.StreamChunk, timeout time.Duration, provider, model string) (<-chan core.StreamChunk, error) {
+	return admitStreamNotify(ctx, in, timeout, provider, model, nil, 0)
+}
+
+// streamPendingNotifyAfter is how long an admitted-but-silent attempt may go
+// before the gateway is told to commit the response and start heartbeats.
+// Reasoning models (o-series, DeepSeek-R1 via some gateways) legitimately
+// emit nothing for a minute or more; without any bytes on the wire the
+// client, or a proxy in front of it (nginx 60s, Cloudflare 100s), gives up.
+const streamPendingNotifyAfter = 20 * time.Second
+
+// admitStreamNotify is admitStream with a pending callback: when no output
+// has arrived after pendingAfter, onPending is invoked exactly once so the
+// caller can commit headers and keep the client connection alive while the
+// upstream is still thinking. A nil onPending disables the notification.
+func admitStreamNotify(ctx context.Context, in <-chan core.StreamChunk, timeout time.Duration, provider, model string,
+	onPending func(), pendingAfter time.Duration) (<-chan core.StreamChunk, error) {
 	if timeout <= 0 {
 		timeout = defaultStreamAdmissionTimeout
 	}
@@ -30,11 +46,21 @@ func admitStream(ctx context.Context, in <-chan core.StreamChunk, timeout time.D
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
+	var pendingC <-chan time.Time
+	if onPending != nil && pendingAfter > 0 && pendingAfter < timeout {
+		pendingTimer := time.NewTimer(pendingAfter)
+		defer pendingTimer.Stop()
+		pendingC = pendingTimer.C
+	}
+
 	prefix := make([]core.StreamChunk, 0, 4)
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-pendingC:
+			pendingC = nil
+			onPending()
 		case <-timer.C:
 			return nil, &core.ProviderError{
 				Kind:     core.ErrTimeout,

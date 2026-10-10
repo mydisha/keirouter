@@ -1,12 +1,13 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Plug, Plus, Search, X } from "lucide-react";
+import { AlertTriangle, FileSearch, Gift, LogIn, Plug, Plus, Search, SearchX, X, type LucideIcon } from "lucide-react";
 import { api, type Account, type HealthTimelineProvider, type Provider } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { ProviderLogo } from "../components/ProviderLogo";
-import { Badge, Button, ErrorBanner, Select, Skeleton } from "../components/ui";
+import { Badge, Button, ErrorBanner, IconTile, SectionTitle, Select, Skeleton } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { useToast } from "../components/Toast";
 import { ConnectDialog, FormError, PrimaryAction, SecondaryAction, SelectField, TextField } from "../components/connect/ConnectKit";
 
@@ -119,13 +120,13 @@ type CatalogGroup = "custom" | "subscription" | "api" | "free" | "media" | "retr
 // Catalog groups follow how people actually connect: their own endpoint, a
 // subscription they sign in to, a paid API key, something free/local, or a
 // non-chat capability.
-const GROUPS: { id: CatalogGroup; title: string }[] = [
-  { id: "custom", title: "Custom endpoints" },
-  { id: "subscription", title: "Sign in with a plan" },
-  { id: "api", title: "Model APIs" },
-  { id: "free", title: "Free and local" },
-  { id: "media", title: "Media and speech" },
-  { id: "retrieval", title: "Search, fetch and embeddings" },
+const GROUPS: { id: CatalogGroup; title: string; icon: LucideIcon }[] = [
+  { id: "custom", title: "Custom endpoints", icon: ICONS.server },
+  { id: "subscription", title: "Sign in with a plan", icon: LogIn },
+  { id: "api", title: "Model APIs", icon: ICONS.model },
+  { id: "free", title: "Free and local", icon: Gift },
+  { id: "media", title: "Media and speech", icon: ICONS.media },
+  { id: "retrieval", title: "Search, fetch and embeddings", icon: FileSearch },
 ];
 
 function groupOf(p: Provider): CatalogGroup {
@@ -231,6 +232,7 @@ export function ProvidersPage() {
         <ErrorBanner message="Couldn't load providers. Check that the gateway is running, then reload." />
       ) : noneConnected ? (
         <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+          <IconTile icon={ICONS.providers} size="lg" className="mx-auto mb-3" />
           <h2 className="text-[14px] font-semibold text-fg">No providers connected</h2>
           <p className="mx-auto mt-1 max-w-sm text-[13px] text-fg-muted">Connect one to start routing requests.</p>
           <Button className="mt-4" onClick={() => setPickerOpen(true)}>
@@ -241,9 +243,9 @@ export function ProvidersPage() {
       ) : (
         <section aria-labelledby="connected-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
           <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
-            <h2 id="connected-heading" className="mr-auto text-[13px] font-semibold text-fg">
-              Connected
-            </h2>
+            <div className="mr-auto">
+              <SectionTitle id="connected-heading" icon={ICONS.providers} title="Connected" />
+            </div>
             <div className="relative w-full sm:w-64">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
               <input
@@ -284,6 +286,7 @@ export function ProvidersPage() {
           </p>
           {connected.length === 0 ? (
             <div className="px-6 py-10 text-center">
+              <IconTile icon={SearchX} size="md" className="mx-auto mb-2.5" />
               <p className="text-[13px] font-medium text-fg">No connected provider matches</p>
               <button
                 type="button"
@@ -320,8 +323,7 @@ export function ProvidersPage() {
 // ── Connected providers ─────────────────────────────────────────────────────
 
 type Tone = "ok" | "warn" | "bad" | "neutral";
-const DOT: Record<Tone, string> = { ok: "bg-ok", warn: "bg-warn", bad: "bg-bad", neutral: "bg-fg-faint" };
-const TONE_TEXT: Record<Tone, string> = { ok: "text-fg", warn: "text-warn", bad: "text-bad", neutral: "text-fg-muted" };
+const BADGE_TONE = { ok: "success", warn: "warning", bad: "danger", neutral: "neutral" } as const;
 
 // providerStatus answers "is it OK?" in one word: account problems first,
 // then the last 24 hours of traffic.
@@ -391,10 +393,10 @@ function ConnectedTable({
                   </Link>
                 </td>
                 <td className="whitespace-nowrap px-4 py-2">
-                  <span className="inline-flex items-center gap-1.5 text-[12.5px]">
-                    <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", DOT[status.tone])} />
-                    <span className={TONE_TEXT[status.tone]}>{status.label}</span>
-                  </span>
+                  <Badge tone={BADGE_TONE[status.tone]}>
+                    <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+                    {status.label}
+                  </Badge>
                 </td>
                 <td className="whitespace-nowrap px-4 py-2 text-right">
                   <span className="tabular-nums text-fg">{accs.length}</span>
@@ -477,7 +479,7 @@ function ProviderPicker({ providers, onClose, onCustom }: { providers: Provider[
                   onClick={() => setFilter(k.id)}
                   className={cn(
                     "h-7 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                    active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+                    active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
                   )}
                 >
                   {k.label}
@@ -501,15 +503,27 @@ function ProviderPicker({ providers, onClose, onCustom }: { providers: Provider[
         {visible.length} provider{visible.length === 1 ? "" : "s"} shown
       </p>
       {grouped.length === 0 ? (
-        <p className="py-8 text-center text-[13px] text-fg-muted">No providers match{q ? ` “${query.trim()}”` : " this capability"}.</p>
+        <div className="py-8 text-center">
+          <IconTile icon={SearchX} size="md" className="mx-auto mb-2.5" />
+          <p className="text-[13px] text-fg-muted">No providers match{q ? ` “${query.trim()}”` : " this capability"}.</p>
+        </div>
       ) : (
         <div className="space-y-5">
           {grouped.map((g) => (
             <section key={g.id} aria-labelledby={`group-${g.id}`}>
-              <h3 id={`group-${g.id}`} className="mb-1.5 flex items-baseline gap-2 text-[12.5px] font-semibold text-fg">
-                {g.title}
-                <span className="text-[12px] font-normal tabular-nums text-fg-faint">{g.items.length}</span>
-              </h3>
+              <div className="mb-1.5 px-2">
+                <SectionTitle
+                  as="h3"
+                  id={`group-${g.id}`}
+                  icon={g.icon}
+                  title={
+                    <>
+                      {g.title}
+                      <span className="ml-2 text-[12px] font-normal tabular-nums text-fg-faint">{g.items.length}</span>
+                    </>
+                  }
+                />
+              </div>
               <ul className="grid grid-cols-1 gap-x-2 sm:grid-cols-2">
                 {g.items.map((p) => (
                   <li key={p.id}>

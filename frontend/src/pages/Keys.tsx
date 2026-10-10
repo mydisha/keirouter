@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useId, useMemo, type ReactNode } from
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle,
   Check,
   ChevronDown,
   Copy,
@@ -21,8 +20,11 @@ import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
 import { formatTokenLimit, ModelMultiSelect } from "../components/ModelSelect";
 import {
+  Badge,
   Button,
+  IconTile,
   Input,
+  SectionTitle,
   Select,
   Skeleton,
   Toggle,
@@ -31,6 +33,7 @@ import {
   TablePagination,
   useClientPagination,
 } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 
@@ -613,6 +616,7 @@ export function KeysPage() {
         </div>
       ) : allKeys.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+          <IconTile icon={ICONS.keys} size="lg" className="mx-auto mb-3" />
           <h2 className="text-[14px] font-semibold text-fg">No API keys yet</h2>
           <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">Create a key for each tool, app or teammate that calls KeiRouter.</p>
           <Button className="mt-4" onClick={openModal}>
@@ -622,10 +626,30 @@ export function KeysPage() {
         </div>
       ) : (
         <section aria-labelledby={`${fid}-list`} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-          <h2 id={`${fid}-list`} className="sr-only">Keys</h2>
+          <div className="border-b border-line px-4 py-3">
+            <SectionTitle
+              icon={ICONS.keys}
+              title="Keys"
+              id={`${fid}-list`}
+              action={
+                <>
+                  <span role="status" className="text-[12.5px] tabular-nums text-fg-muted">
+                    {filtering ? `${visibleKeys.length} of ${allKeys.length}` : ""}
+                  </span>
+                  <label className="sr-only" htmlFor={`${fid}-sort`}>Sort keys</label>
+                  <Select id={`${fid}-sort`} className="h-9 w-40" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
+                    <option value="created_desc">Newest first</option>
+                    <option value="created_asc">Oldest first</option>
+                    <option value="name_asc">Name A–Z</option>
+                    <option value="name_desc">Name Z–A</option>
+                  </Select>
+                </>
+              }
+            />
+          </div>
 
-          <div className="flex flex-col gap-2 border-b border-line px-4 py-3 lg:flex-row lg:items-center">
-            <div className="relative lg:w-72">
+          <div className="flex flex-col gap-2 border-b border-line px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="relative sm:w-72">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
               <input
                 type="search"
@@ -662,26 +686,14 @@ export function KeysPage() {
                     className={cn(
                       "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors",
                       FOCUS_RING,
-                      active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+                      active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
                     )}
                   >
                     {f.label}
-                    <span className={cn("font-normal tabular-nums", !active && "text-fg-faint")}>{statusCounts[f.value]}</span>
+                    <span className={cn("font-normal tabular-nums", active ? "text-link" : "text-fg-faint")}>{statusCounts[f.value]}</span>
                   </button>
                 );
               })}
-            </div>
-            <div className="flex items-center gap-3 lg:ml-auto">
-              <span role="status" className="text-[12.5px] tabular-nums text-fg-muted">
-                {filtering ? `${visibleKeys.length} of ${allKeys.length}` : ""}
-              </span>
-              <label className="sr-only" htmlFor={`${fid}-sort`}>Sort keys</label>
-              <Select id={`${fid}-sort`} className="h-9 w-full sm:w-40" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
-                <option value="created_desc">Newest first</option>
-                <option value="created_asc">Oldest first</option>
-                <option value="name_asc">Name A–Z</option>
-                <option value="name_desc">Name Z–A</option>
-              </Select>
             </div>
           </div>
 
@@ -831,8 +843,8 @@ function KeyRow({
       <td className="px-4 py-2.5" onClick={stop}>
         <span className="inline-flex items-center gap-2">
           <Toggle checked={!k.disabled} onChange={onToggle} disabled={togglePending} label={`${k.name} active`} />
-          <span className={cn("text-[12.5px]", k.disabled ? "text-fg-muted" : "text-fg")} aria-hidden="true">
-            {k.disabled ? "Disabled" : "Active"}
+          <span aria-hidden="true">
+            {k.disabled ? <Badge tone="neutral">Disabled</Badge> : <Badge tone="success">Active</Badge>}
           </span>
         </span>
       </td>
@@ -923,11 +935,12 @@ function StepSuccess({
   return (
     <>
       <div className="space-y-4 px-5 py-4">
-        <div className="space-y-2">
-          <div className="flex items-start gap-2 text-[13px] text-fg" id={warnId}>
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
-            <p>
-              <span className="font-medium">Copy this key now.</span> <span className="text-fg-muted">It won't be shown again.</span>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3" id={warnId}>
+            <IconTile icon={Check} size="md" tone="ok" />
+            <p className="min-w-0 text-[13px] leading-5">
+              <span className="block font-medium text-fg">Copy this key now</span>
+              <span className="block text-fg-muted">It won't be shown again.</span>
             </p>
           </div>
 
@@ -940,6 +953,7 @@ function StepSuccess({
               {created.key}
             </code>
             <Button
+              variant="primary"
               className="shrink-0 sm:self-start"
               aria-describedby={warnId}
               onClick={() => {

@@ -4,7 +4,8 @@ import { Link } from "react-router-dom";
 import { api, type CLITool } from "../lib/api";
 import { PageHeader } from "../components/Layout";
 import { ProviderLogo } from "../components/ProviderLogo";
-import { ErrorBanner, Skeleton } from "../components/ui";
+import { Badge, ErrorBanner, IconTile, SectionTitle, Skeleton } from "../components/ui";
+import { ICONS } from "../lib/icons";
 
 // Tool metadata — descriptions and logos (bundled /providers/*.png assets).
 const toolMeta: Record<string, { description: string; image: string }> = {
@@ -43,7 +44,7 @@ export function CLIToolsPage() {
       {tools.isLoading ? (
         <div className="space-y-3" aria-busy="true" aria-label="Loading CLI tools">
           <Skeleton className="h-4 w-56" />
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 6 }).map((_, i) => (
               <Skeleton key={i} className="h-[68px] rounded-2xl" />
             ))}
@@ -55,22 +56,27 @@ export function CLIToolsPage() {
         />
       ) : list.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-          <h2 className="text-[14px] font-medium text-fg">No CLI tools available</h2>
+          <IconTile icon={ICONS.cliTools} size="lg" className="mx-auto mb-3" />
+          <h2 className="text-[13px] font-semibold text-fg">No CLI tools available</h2>
           <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
             This KeiRouter build doesn&apos;t ship any CLI tool integrations.
           </p>
         </div>
       ) : (
         <section aria-labelledby="cli-tools-heading">
-          <div className="mb-2.5 flex items-baseline gap-2.5">
-            <h2 id="cli-tools-heading" className="text-[14px] font-semibold text-fg">
-              Tools
-            </h2>
-            <span className="text-[12.5px] tabular-nums text-fg-muted">
-              {connected} of {list.length} connected
-            </span>
+          <div className="mb-3">
+            <SectionTitle
+              id="cli-tools-heading"
+              icon={ICONS.cliTools}
+              title="Tools"
+              subtitle={
+                <span className="tabular-nums">
+                  {connected} of {list.length} connected
+                </span>
+              }
+            />
           </div>
-          <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {list.map((t) => (
               <li key={t.id}>
                 <ToolCard tool={t} />
@@ -105,14 +111,9 @@ function ToolCard({ tool: t }: { tool: CLITool }) {
 
 function ToolStatus({ installed, configured }: { installed: boolean; configured: boolean }) {
   const s = configured
-    ? { dot: "bg-ok", label: "Connected" }
+    ? { tone: "success" as const, label: "Connected" }
     : installed
-      ? { dot: "bg-warn", label: "Not configured" }
-      : { dot: "bg-fg-faint", label: "Not installed" };
-  return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 text-[12px] text-fg-muted">
-      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} aria-hidden="true" />
-      {s.label}
-    </span>
-  );
+      ? { tone: "warning" as const, label: "Not configured" }
+      : { tone: "neutral" as const, label: "Not installed" };
+  return <Badge tone={s.tone}>{s.label}</Badge>;
 }

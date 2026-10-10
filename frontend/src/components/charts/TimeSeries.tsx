@@ -1,4 +1,5 @@
 import { useId, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Dependency-free time-series charts shared by Provider Health, System and
@@ -290,6 +291,7 @@ export function TimeLines<T>({ data, x, series, format = compact, xFormat = cloc
 /** Card chrome shared by the chart pages. */
 export function ChartCard({
   title,
+  icon: Icon,
   subtitle,
   legend,
   action,
@@ -297,6 +299,8 @@ export function ChartCard({
   children,
 }: {
   title: string;
+  /** Optional header glyph, drawn in the section tone (like SectionTitle). */
+  icon?: LucideIcon;
   subtitle?: ReactNode;
   legend?: { label: string; color: string }[];
   action?: ReactNode;
@@ -307,9 +311,12 @@ export function ChartCard({
   return (
     <section aria-labelledby={titleId} className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
-        <div className="min-w-0">
-          <h2 id={titleId} className="text-[13px] font-semibold text-fg">{title}</h2>
-          {subtitle && <p className="mt-0.5 text-[12px] text-fg-muted">{subtitle}</p>}
+        <div className="flex min-w-0 items-start gap-2.5">
+          {Icon && <Icon className="mt-px h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />}
+          <div className="min-w-0">
+            <h2 id={titleId} className="text-[13px] font-semibold text-fg">{title}</h2>
+            {subtitle && <p className="mt-0.5 text-[12px] text-fg-muted">{subtitle}</p>}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           {legend && (

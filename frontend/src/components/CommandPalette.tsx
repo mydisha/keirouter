@@ -3,37 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { Dialog } from "radix-ui";
-import {
-  Activity,
-  BarChart3,
-  Boxes,
-  Copy,
-  Cpu,
-  CornerDownLeft,
-  Gauge,
-  History,
-  Image,
-  Key,
-  KeyRound,
-  LayoutGrid,
-  Layers,
-  Monitor,
-  Moon,
-  Plug,
-  Plus,
-  ReceiptText,
-  ScrollText,
-  Search,
-  Settings,
-  Shield,
-  Sparkles,
-  Sun,
-  TerminalSquare,
-  Waypoints,
-  type LucideIcon,
-} from "lucide-react";
+import { Copy, CornerDownLeft, History, Monitor, Moon, Plus, Search, Sun, type LucideIcon } from "lucide-react";
 import { api } from "../lib/api";
+import { ICONS } from "../lib/icons";
 import { cn } from "@/lib/utils";
+import { IconTile } from "./ui";
 import { useTheme } from "./ThemeProvider";
 import { useToast } from "./Toast";
 import { ProviderLogo } from "./ProviderLogo";
@@ -50,12 +24,18 @@ interface CommandItem {
   /** Short right-aligned tag shown while searching ("Provider", "Disabled"). */
   badge?: string;
   icon?: LucideIcon;
+  /** Sidebar group hue of the page this item leads to (icon tile colour). */
+  tone: PaletteTone;
   /** Provider logo, used instead of `icon` for provider and account rows. */
   logo?: { icon?: string; name: string };
   section: string;
   run: () => void;
   keywords?: string[];
 }
+
+// Same hue per sidebar group as Layout: Monitor blue, Routing violet,
+// Providers teal, Access orange, Workspace slate.
+type PaletteTone = "blue" | "violet" | "teal" | "orange" | "slate";
 
 const RECENT_KEY = "kei-cmdk-recent";
 const RECENT_MAX = 6;
@@ -199,32 +179,33 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   // Pages and actions, grouped to mirror the sidebar.
   const staticItems: CommandItem[] = useMemo(
     () => [
-      { id: "nav-overview", label: "Overview", icon: LayoutGrid, section: "Go to", run: go("/"), keywords: ["home", "dashboard"] },
-      { id: "nav-usage", label: "Usage", icon: BarChart3, section: "Go to", run: go("/usage"), keywords: ["analytics", "tokens", "spend", "cost"] },
-      { id: "nav-console", label: "Console", icon: ScrollText, section: "Go to", run: go("/console"), keywords: ["logs", "debug", "stream"] },
-      { id: "nav-endpoints", label: "Endpoints", icon: Plug, section: "Go to", run: go("/endpoints"), keywords: ["base url", "tunnel", "tailscale", "cloudflare"] },
-      { id: "nav-chains", label: "Chains", icon: Layers, section: "Go to", run: go("/chains"), keywords: ["routing", "fallback", "failover"] },
-      { id: "nav-skills", label: "Skills", icon: Sparkles, section: "Go to", run: go("/skills"), keywords: ["prompt", "system prompt"] },
-      { id: "nav-providers", label: "Providers", icon: Boxes, section: "Go to", run: go("/providers"), keywords: ["accounts", "upstream", "credentials"] },
-      { id: "nav-media", label: "Media", icon: Image, section: "Go to", run: go("/media"), keywords: ["image", "video", "tts", "stt"] },
-      { id: "nav-health", label: "Provider health", icon: Activity, section: "Go to", run: go("/provider-health"), keywords: ["uptime", "errors", "latency", "status"] },
-      { id: "nav-quota", label: "Quota", icon: Gauge, section: "Go to", run: go("/quota"), keywords: ["limits", "remaining", "upstream"] },
-      { id: "nav-proxy-pools", label: "Proxy pools", icon: Waypoints, section: "Go to", run: go("/proxy-pools"), keywords: ["proxy", "egress"] },
-      { id: "nav-keys", label: "API keys", icon: Key, section: "Go to", run: go("/keys"), keywords: ["auth", "token", "bearer"] },
-      { id: "nav-plans", label: "Plans & budgets", icon: ReceiptText, section: "Go to", run: go("/plans"), keywords: ["budget", "limit", "rate limit"] },
-      { id: "nav-guardrails", label: "Guardrails", icon: Shield, section: "Go to", run: go("/guardrails"), keywords: ["pii", "injection", "moderation"] },
-      { id: "nav-cli-tools", label: "CLI tools", icon: TerminalSquare, section: "Go to", run: go("/cli-tools"), keywords: ["claude code", "codex", "cursor", "configure"] },
-      { id: "nav-system", label: "System", icon: Cpu, section: "Go to", run: go("/system"), keywords: ["cpu", "memory", "monitor"] },
-      { id: "nav-settings", label: "Settings", icon: Settings, section: "Go to", run: go("/settings"), keywords: ["token saving", "rtk", "caveman", "branding", "backup"] },
+      { id: "nav-overview", label: "Overview", icon: ICONS.overview, tone: "blue", section: "Go to", run: go("/"), keywords: ["home", "dashboard"] },
+      { id: "nav-usage", label: "Usage", icon: ICONS.usage, tone: "blue", section: "Go to", run: go("/usage"), keywords: ["analytics", "tokens", "spend", "cost"] },
+      { id: "nav-console", label: "Console", icon: ICONS.console, tone: "blue", section: "Go to", run: go("/console"), keywords: ["logs", "debug", "stream"] },
+      { id: "nav-endpoints", label: "Endpoints", icon: ICONS.endpoints, tone: "violet", section: "Go to", run: go("/endpoints"), keywords: ["base url", "tunnel", "tailscale", "cloudflare"] },
+      { id: "nav-chains", label: "Chains", icon: ICONS.chains, tone: "violet", section: "Go to", run: go("/chains"), keywords: ["routing", "fallback", "failover"] },
+      { id: "nav-skills", label: "Skills", icon: ICONS.skills, tone: "violet", section: "Go to", run: go("/skills"), keywords: ["prompt", "system prompt"] },
+      { id: "nav-providers", label: "Providers", icon: ICONS.providers, tone: "teal", section: "Go to", run: go("/providers"), keywords: ["accounts", "upstream", "credentials"] },
+      { id: "nav-media", label: "Media", icon: ICONS.media, tone: "teal", section: "Go to", run: go("/media"), keywords: ["image", "video", "tts", "stt"] },
+      { id: "nav-health", label: "Provider health", icon: ICONS.health, tone: "teal", section: "Go to", run: go("/provider-health"), keywords: ["uptime", "errors", "latency", "status"] },
+      { id: "nav-quota", label: "Quota", icon: ICONS.quota, tone: "teal", section: "Go to", run: go("/quota"), keywords: ["limits", "remaining", "upstream"] },
+      { id: "nav-proxy-pools", label: "Proxy pools", icon: ICONS.proxyPools, tone: "teal", section: "Go to", run: go("/proxy-pools"), keywords: ["proxy", "egress"] },
+      { id: "nav-keys", label: "API keys", icon: ICONS.keys, tone: "orange", section: "Go to", run: go("/keys"), keywords: ["auth", "token", "bearer"] },
+      { id: "nav-plans", label: "Plans & budgets", icon: ICONS.plans, tone: "orange", section: "Go to", run: go("/plans"), keywords: ["budget", "limit", "rate limit"] },
+      { id: "nav-guardrails", label: "Guardrails", icon: ICONS.guardrails, tone: "orange", section: "Go to", run: go("/guardrails"), keywords: ["pii", "injection", "moderation"] },
+      { id: "nav-cli-tools", label: "CLI tools", icon: ICONS.cliTools, tone: "slate", section: "Go to", run: go("/cli-tools"), keywords: ["claude code", "codex", "cursor", "configure"] },
+      { id: "nav-system", label: "System", icon: ICONS.system, tone: "slate", section: "Go to", run: go("/system"), keywords: ["cpu", "memory", "monitor"] },
+      { id: "nav-settings", label: "Settings", icon: ICONS.settings, tone: "slate", section: "Go to", run: go("/settings"), keywords: ["token saving", "rtk", "caveman", "branding", "backup"] },
 
-      { id: "action-connect", label: "Connect a provider", icon: Plus, section: "Actions", run: go("/providers"), keywords: ["add account", "oauth", "api key"] },
-      { id: "action-new-key", label: "Create API key", icon: Plus, section: "Actions", run: go("/keys"), keywords: ["new key", "generate"] },
-      { id: "action-new-chain", label: "Create chain", icon: Plus, section: "Actions", run: go("/chains/new"), keywords: ["new chain", "fallback"] },
-      { id: "action-new-plan", label: "Create plan", icon: Plus, section: "Actions", run: go("/plans"), keywords: ["budget", "limit"] },
+      { id: "action-connect", label: "Connect a provider", icon: Plus, tone: "teal", section: "Actions", run: go("/providers"), keywords: ["add account", "oauth", "api key"] },
+      { id: "action-new-key", label: "Create API key", icon: Plus, tone: "orange", section: "Actions", run: go("/keys"), keywords: ["new key", "generate"] },
+      { id: "action-new-chain", label: "Create chain", icon: Plus, tone: "violet", section: "Actions", run: go("/chains/new"), keywords: ["new chain", "fallback"] },
+      { id: "action-new-plan", label: "Create plan", icon: Plus, tone: "orange", section: "Actions", run: go("/plans"), keywords: ["budget", "limit"] },
       {
         id: "action-copy-base-url",
         label: "Copy base URL",
         icon: Copy,
+        tone: "violet",
         section: "Actions",
         description: `${window.location.origin}/v1`,
         keywords: ["endpoint", "openai", "anthropic"],
@@ -235,9 +216,9 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             .catch(() => toast.error("Couldn't copy", "Your browser blocked clipboard access."));
         },
       },
-      { id: "theme-light", label: "Use light theme", icon: Sun, section: "Theme", run: () => setTheme("light"), keywords: ["appearance"] },
-      { id: "theme-dark", label: "Use dark theme", icon: Moon, section: "Theme", run: () => setTheme("dark"), keywords: ["appearance", "night"] },
-      { id: "theme-system", label: "Match system theme", icon: Monitor, section: "Theme", run: () => setTheme("system"), keywords: ["appearance", "auto"] },
+      { id: "theme-light", label: "Use light theme", icon: Sun, tone: "slate", section: "Theme", run: () => setTheme("light"), keywords: ["appearance"] },
+      { id: "theme-dark", label: "Use dark theme", icon: Moon, tone: "slate", section: "Theme", run: () => setTheme("dark"), keywords: ["appearance", "night"] },
+      { id: "theme-system", label: "Match system theme", icon: Monitor, tone: "slate", section: "Theme", run: () => setTheme("system"), keywords: ["appearance", "auto"] },
     ],
     [go, setTheme, toast],
   );
@@ -254,6 +235,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         label: p.display_name,
         description: p.id,
         badge: p.custom ? "Custom" : "Provider",
+        icon: ICONS.providers,
+        tone: "teal",
         logo: { icon: p.icon, name: p.display_name },
         section: "Providers",
         run: go(`/providers/${p.id}`),
@@ -267,7 +250,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         label: a.label || p?.display_name || a.provider,
         description: `${p?.display_name ?? a.provider} account`,
         badge: a.disabled ? "Paused" : a.needs_reconnect ? "Reconnect" : "Account",
-        icon: KeyRound,
+        icon: ICONS.account,
+        tone: "teal",
         logo: p ? { icon: p.icon, name: p.display_name } : undefined,
         section: "Accounts",
         run: go(`/providers/${a.provider}`),
@@ -280,7 +264,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         label: c.name,
         description: `${c.steps?.length ?? 0} step${(c.steps?.length ?? 0) === 1 ? "" : "s"} · ${c.strategy}`,
         badge: "Chain",
-        icon: Layers,
+        icon: ICONS.chains,
+        tone: "violet",
         section: "Chains",
         run: go(`/chains/${c.id}/edit`),
         keywords: [c.strategy, c.fallback_model, ...(c.steps?.map((s) => s.model) ?? [])].filter(Boolean) as string[],
@@ -292,7 +277,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         label: k.name,
         description: k.display,
         badge: k.disabled ? "Disabled" : k.plan_name || "API key",
-        icon: Key,
+        icon: ICONS.keys,
+        tone: "orange",
         section: "API keys",
         run: go(`/keys/${k.id}`),
         keywords: [k.plan_name, k.display].filter(Boolean) as string[],
@@ -304,7 +290,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         label: pl.name,
         description: pl.description || `${pl.key_count} key${pl.key_count === 1 ? "" : "s"}`,
         badge: "Plan",
-        icon: ReceiptText,
+        icon: ICONS.plans,
+        tone: "orange",
         section: "Plans",
         run: go("/plans"),
       });
@@ -315,7 +302,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         label: s.name,
         description: s.description || undefined,
         badge: s.enabled ? "Skill" : "Disabled",
-        icon: Sparkles,
+        icon: ICONS.skills,
+        tone: "violet",
         section: "Skills",
         run: go("/skills"),
       });
@@ -326,7 +314,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         label: pool.name,
         description: `${pool.type} · ${pool.is_active ? "active" : "inactive"}`,
         badge: "Proxy pool",
-        icon: Waypoints,
+        icon: ICONS.proxyPools,
+        tone: "teal",
         section: "Proxy pools",
         run: go("/proxy-pools"),
         keywords: [pool.type],
@@ -415,12 +404,15 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                   key={`${group.heading}-${item.id}`}
                   value={`${group.heading}-${item.id}`}
                   onSelect={() => select(item)}
-                  className="group flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] text-fg outline-none data-[selected=true]:bg-hover"
+                  data-tone={item.tone}
+                  className="group flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-[13px] text-fg outline-none data-[selected=true]:bg-hover"
                 >
                   {item.logo ? (
-                    <ProviderLogo icon={item.logo.icon} name={item.logo.name} size={18} />
+                    <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-subtle ring-1 ring-inset ring-line" aria-hidden="true">
+                      <ProviderLogo icon={item.logo.icon} name={item.logo.name} size={16} />
+                    </span>
                   ) : item.icon ? (
-                    <item.icon className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                    <IconTile icon={item.icon} size="sm" />
                   ) : null}
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate">

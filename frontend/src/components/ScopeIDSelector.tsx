@@ -1,8 +1,20 @@
 import { useCallback, useId, useMemo, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useQueries } from "@tanstack/react-query";
+import { Globe, Info, type LucideIcon } from "lucide-react";
 import { api, type GuardrailScope } from "../lib/api";
+import { ICONS } from "../lib/icons";
 import { Select, Skeleton } from "./ui";
+
+// SCOPE_ICONS gives each guardrail scope one glyph, matching the sidebar icon
+// of the thing it targets, so scope chips, badges and pickers read the same.
+export const SCOPE_ICONS: Record<GuardrailScope, LucideIcon> = {
+  global: Globe,
+  provider: ICONS.providers,
+  model: ICONS.model,
+  chain: ICONS.chains,
+  apikey: ICONS.keys,
+};
 
 interface Props {
   scope: GuardrailScope;
@@ -106,7 +118,8 @@ function ScopeField({
 
 function EmptyNotice({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-9 items-center rounded-lg border border-dashed border-line-strong bg-subtle px-3 py-2 text-[12.5px] text-fg-muted">
+    <div className="flex min-h-9 items-center gap-2 rounded-lg border border-dashed border-line-strong bg-subtle px-3 py-2 text-[12.5px] text-fg-muted">
+      <Info className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
       <span>{children}</span>
     </div>
   );

@@ -3,14 +3,15 @@ import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Trash2, Play, Upload, Pencil, X, Check, Loader2, RefreshCw, AlertCircle,
-  FileText, ExternalLink, Cloud, MoreHorizontal, Power, PowerOff,
+  FileText, ExternalLink, Cloud, MoreHorizontal, Power, PowerOff, Lock, type LucideIcon,
 } from "lucide-react";
 import { api, type Account, type ProxyPool } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
 import { parseProxies, runPool } from "../lib/bulk";
-import { Button, Input, Badge, Modal, Skeleton, Toggle, ErrorBanner } from "../components/ui";
+import { Button, Input, Badge, Modal, Skeleton, Toggle, ErrorBanner, IconTile, SectionTitle } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
@@ -53,6 +54,16 @@ function FormField({
         </p>
       )}
     </div>
+  );
+}
+
+// DialogTitle puts the section's icon in front of a modal title.
+function DialogTitle({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <Icon className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />
+      {children}
+    </span>
   );
 }
 
@@ -254,7 +265,8 @@ export function ProxyPoolsPage() {
         <ErrorBanner message={`Couldn't load proxy pools. ${pools.error instanceof Error ? pools.error.message : ""} Reload the page to try again.`.replace(/\s+/g, " ").trim()} />
       ) : list.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-          <h2 className="text-[14px] font-medium text-fg">No proxy pools yet</h2>
+          <IconTile icon={ICONS.proxyPools} size="lg" className="mx-auto mb-3" />
+          <h2 className="text-[13px] font-semibold text-fg">No proxy pools yet</h2>
           <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
             Without a pool, every account connects to its provider directly.
           </p>
@@ -264,8 +276,9 @@ export function ProxyPoolsPage() {
           </Button>
         </div>
       ) : (
-        <section aria-label="Proxy pools" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-          <div className="flex min-h-12 flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-2">
+        <section aria-labelledby="proxy-pools-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+          <div className="flex min-h-14 flex-wrap items-center gap-x-5 gap-y-2 border-b border-line px-4 py-3">
+            <SectionTitle id="proxy-pools-title" icon={ICONS.proxyPools} title="Pools" />
             <p role="status" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px]">
               {selected.size > 0 ? (
                 <span className="text-[13px] font-medium text-fg">{selected.size} selected</span>
@@ -372,6 +385,11 @@ const RELAY_LABELS: Record<string, string> = {
   deno: "Deno relay",
 };
 
+// Relays deploy to an edge platform; everything else is a plain proxy.
+function poolKindIcon(pool: ProxyPool): LucideIcon {
+  return RELAY_LABELS[pool.type] ? Cloud : ICONS.network;
+}
+
 function poolKind(pool: ProxyPool): string {
   if (RELAY_LABELS[pool.type]) return RELAY_LABELS[pool.type];
   const scheme = /^([a-z0-9+.-]+):\/\//i.exec(pool.proxy_url)?.[1];
@@ -392,6 +410,7 @@ function PoolRow({ pool, accounts, selected, onSelect, onEdit, onDelete, onTest,
 }) {
   const deploying = pool.test_status === "testing";
   const providers = [...new Set(accounts.map((a) => a.provider))];
+  const KindIcon = poolKindIcon(pool);
 
   return (
     <tr className={cn("transition-colors", selected ? "bg-accent-500/5" : "hover:bg-hover", !pool.is_active && !selected && "text-fg-muted")}>
@@ -419,8 +438,16 @@ function PoolRow({ pool, accounts, selected, onSelect, onEdit, onDelete, onTest,
           {pool.name}
         </button>
         <div className="mt-1 flex flex-wrap items-center gap-1">
-          <Badge>{poolKind(pool)}</Badge>
-          {pool.strict && <Badge title="Requests fail instead of connecting directly when the proxy is unreachable">Strict</Badge>}
+          <Badge>
+            <KindIcon className="h-3 w-3 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+            {poolKind(pool)}
+          </Badge>
+          {pool.strict && (
+            <Badge tone="secondary" title="Requests fail instead of connecting directly when the proxy is unreachable">
+              <Lock className="h-3 w-3 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+              Strict
+            </Badge>
+          )}
         </div>
       </td>
       <td className="max-w-[280px] px-4 py-2.5 align-top">
@@ -432,11 +459,11 @@ function PoolRow({ pool, accounts, selected, onSelect, onEdit, onDelete, onTest,
         )}
       </td>
       <td className="max-w-[240px] px-4 py-2.5 align-top">
-        <span className="flex flex-wrap items-center gap-x-1.5">
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <PoolStatus status={testingThis ? "checking" : pool.test_status} />
           {!testingThis && pool.last_tested && (
             <span className="whitespace-nowrap text-[12px] tabular-nums text-fg-muted" title={new Date(pool.last_tested).toLocaleString()}>
-              · {relTime(pool.last_tested)}
+              {relTime(pool.last_tested)}
             </span>
           )}
         </span>
@@ -507,13 +534,16 @@ function PoolRow({ pool, accounts, selected, onSelect, onEdit, onDelete, onTest,
 
 // ─── Pool Form (Create / Edit) ───────────────────────────────────────────────
 
-function SwitchRow({ title, description, checked, onChange }: { title: string; description: string; checked: boolean; onChange: (v: boolean) => void }) {
+function SwitchRow({ icon: Icon, title, description, checked, onChange }: { icon: LucideIcon; title: string; description: string; checked: boolean; onChange: (v: boolean) => void }) {
   const id = useId();
   return (
     <div className="flex items-center justify-between gap-4 px-3 py-2.5">
-      <div className="min-w-0">
-        <p id={`${id}-title`} className="text-[13px] font-medium text-fg">{title}</p>
-        <p id={`${id}-desc`} className="mt-0.5 text-[12px] text-fg-muted">{description}</p>
+      <div className="flex min-w-0 items-start gap-2.5">
+        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+        <div className="min-w-0">
+          <p id={`${id}-title`} className="text-[13px] font-medium text-fg">{title}</p>
+          <p id={`${id}-desc`} className="mt-0.5 text-[12px] text-fg-muted">{description}</p>
+        </div>
       </div>
       <Toggle checked={checked} onChange={onChange} aria-labelledby={`${id}-title`} aria-describedby={`${id}-desc`} />
     </div>
@@ -558,7 +588,7 @@ function PoolForm({ pool, onClose }: { pool?: ProxyPool; onClose: () => void }) 
     <Modal
       open
       onClose={onClose}
-      title={isEdit ? "Edit proxy pool" : "Add proxy pool"}
+      title={<DialogTitle icon={isEdit ? Pencil : ICONS.proxyPools}>{isEdit ? "Edit proxy pool" : "Add proxy pool"}</DialogTitle>}
       subtitle={isEdit ? "Changes apply to every bound account" : undefined}
     >
       <form
@@ -585,12 +615,14 @@ function PoolForm({ pool, onClose }: { pool?: ProxyPool; onClose: () => void }) 
           </FormField>
           <div className="divide-y divide-line rounded-lg border border-line">
             <SwitchRow
+              icon={Power}
               title="Enabled"
               description="When off, bound accounts connect directly"
               checked={isActive}
               onChange={setIsActive}
             />
             <SwitchRow
+              icon={Lock}
               title="Strict mode"
               description="Fail requests instead of connecting directly"
               checked={strict}
@@ -614,13 +646,14 @@ function PoolForm({ pool, onClose }: { pool?: ProxyPool; onClose: () => void }) 
 function Step({ n, title, children }: { n: number; title: ReactNode; children?: ReactNode }) {
   return (
     <li className="flex gap-3">
+      {/* The <ol> already numbers the steps for assistive tech. */}
       <span
         aria-hidden="true"
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-line-strong text-[12px] font-medium tabular-nums text-fg-muted"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-tone-soft text-[12.5px] font-semibold tabular-nums text-tone ring-1 ring-inset ring-tone-ring"
       >
         {n}
       </span>
-      <div className="min-w-0 flex-1 space-y-2 pt-0.5">
+      <div className="min-w-0 flex-1 space-y-2 pt-1">
         <p className="text-[13px] text-fg">{title}</p>
         {children}
       </div>
@@ -658,7 +691,7 @@ function CloudflareDeployModal({ open, onClose }: { open: boolean; onClose: () =
     <Modal
       open={open}
       onClose={() => !deploy.isPending && onClose()}
-      title="Deploy Cloudflare relay"
+      title={<DialogTitle icon={Cloud}>Deploy Cloudflare relay</DialogTitle>}
       subtitle="Deploys a Worker and adds it as a pool"
     >
       <form
@@ -802,7 +835,7 @@ function BatchImport({ onClose }: { onClose: () => void }) {
     <Modal
       open
       onClose={() => !importing && onClose()}
-      title="Import proxies"
+      title={<DialogTitle icon={Upload}>Import proxies</DialogTitle>}
       subtitle="Each line becomes its own pool"
       maxWidth="max-w-2xl"
     >
@@ -826,12 +859,14 @@ function BatchImport({ onClose }: { onClose: () => void }) {
                     <tr key={r.index}>
                       <td className="max-w-[260px] truncate px-3 py-2 font-mono text-[12.5px] text-fg" title={r.label}>{r.label}</td>
                       <td className="max-w-[320px] px-3 py-2">
-                        <span className="inline-flex max-w-full items-center gap-1.5">
-                          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", r.status === "created" ? "bg-ok" : "bg-bad")} aria-hidden="true" />
+                        <span className="inline-flex max-w-full items-center gap-2">
                           {r.status === "created" ? (
-                            <span className="text-fg">Created</span>
+                            <Badge tone="success">Created</Badge>
                           ) : (
-                            <span className="truncate text-bad" title={r.error}>{r.error || "Failed"}</span>
+                            <>
+                              <Badge tone="danger">Failed</Badge>
+                              {r.error && <span className="truncate text-[12.5px] text-fg-muted" title={r.error}>{r.error}</span>}
+                            </>
                           )}
                         </span>
                       </td>
@@ -917,25 +952,27 @@ function BatchImport({ onClose }: { onClose: () => void }) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const STATUS_META: Record<string, { dot: string; label: string }> = {
-  checking: { dot: "bg-fg-faint", label: "Testing…" },
-  testing: { dot: "bg-warn", label: "Deploying" },
-  active: { dot: "bg-ok", label: "Reachable" },
-  error: { dot: "bg-bad", label: "Failed" },
+const STATUS_META: Record<string, { tone: "success" | "warning" | "danger" | "neutral"; label: string }> = {
+  checking: { tone: "neutral", label: "Testing…" },
+  testing: { tone: "warning", label: "Deploying" },
+  active: { tone: "success", label: "Reachable" },
+  error: { tone: "danger", label: "Failed" },
 };
 
+// PoolStatus is a tinted badge; the word carries the meaning, the tint and
+// the dot / spinner only reinforce it.
 function PoolStatus({ status }: { status: string }) {
-  const meta = STATUS_META[status] ?? { dot: "bg-fg-faint", label: "Untested" };
+  const meta = STATUS_META[status] ?? { tone: "neutral" as const, label: "Untested" };
   const busy = status === "checking" || status === "testing";
   return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
+    <Badge tone={meta.tone}>
       {busy ? (
-        <Loader2 className={cn("h-3 w-3 animate-spin", status === "testing" ? "text-warn" : "text-fg-faint")} aria-hidden="true" />
+        <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
       ) : (
-        <span className={cn("h-1.5 w-1.5 rounded-full", meta.dot)} aria-hidden="true" />
+        <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
       )}
-      <span className={cn("text-[13px]", status === "error" ? "text-bad" : status === "active" ? "text-fg" : "text-fg-muted")}>{meta.label}</span>
-    </span>
+      {meta.label}
+    </Badge>
   );
 }
 

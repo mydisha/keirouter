@@ -53,6 +53,8 @@ type Meter struct {
 	pricingMu   sync.RWMutex
 	pricing     map[string]Price // provider-level fallback
 	modelPrices map[string]Price // provider/model-level
+	// modelFingerprints indexes modelPrices keys by model fingerprint.
+	modelFingerprints map[string][]string
 
 	hub   *usagehub.Hub
 	async *AsyncWriter
@@ -71,7 +73,7 @@ func New(usage UsageStore, pricing map[string]Price, modelPrices map[string]Pric
 	if modelPrices == nil {
 		modelPrices = map[string]Price{}
 	}
-	return &Meter{usage: usage, pricing: pricing, modelPrices: modelPrices}
+	return &Meter{usage: usage, pricing: pricing, modelPrices: modelPrices, modelFingerprints: indexModelFingerprints(modelPrices)}
 }
 
 // AsyncConfig configures the buffered usage writer.

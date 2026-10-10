@@ -1,6 +1,18 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, ChevronRight, Info, Play } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  FlaskConical,
+  Fingerprint,
+  Info,
+  MessageSquareWarning,
+  Play,
+  Scale,
+  ShieldAlert,
+  Tags,
+  type LucideIcon,
+} from "lucide-react";
 import {
   api,
   type GuardrailPolicyConfig,
@@ -10,7 +22,7 @@ import {
   type GuardrailTestResult,
 } from "../lib/api";
 import { cn } from "@/lib/utils";
-import { Button, Input, Select, Badge, Toggle, Skeleton } from "./ui";
+import { Button, Input, Select, Badge, Toggle, Skeleton, IconTile, SectionTitle } from "./ui";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 const ACTIONS: { value: GuardrailAction; label: string }[] = [
@@ -21,6 +33,28 @@ const ACTIONS: { value: GuardrailAction; label: string }[] = [
 ];
 
 const ACTION_NAME: Record<string, string> = Object.fromEntries(ACTIONS.map((a) => [a.value, a.label]));
+
+// One glyph per detector type, used on the detector rows and in test results.
+const DETECTOR_ICONS: Record<string, LucideIcon> = {
+  pii: Fingerprint,
+  injection: ShieldAlert,
+  topics: Tags,
+  toxicity: MessageSquareWarning,
+  bias: Scale,
+};
+
+// Severity of a detector's response: block is danger, warn and mask change
+// the request (warning), log only and allow are neutral.
+function actionTone(action: string): "danger" | "warning" | "success" | "neutral" {
+  if (action === "block") return "danger";
+  if (action === "warn" || action === "mask") return "warning";
+  if (action === "allow") return "success";
+  return "neutral";
+}
+
+function ActionBadge({ action }: { action: string }) {
+  return <Badge tone={actionTone(action)}>{ACTION_NAME[action] ?? action}</Badge>;
+}
 
 const SEVERITIES: { value: GuardrailSeverity; label: string }[] = [
   { value: "low", label: "Low" },
@@ -89,18 +123,23 @@ export function GuardrailEditor({ value, onChange, showStubs = true, compact = f
 // (name + one-line summary) and its enable switch. Settings open below it.
 // Switching a detector on opens its settings so the user sees what it does.
 function DetectorRow({
+  icon,
   title,
   summary,
   offSummary,
   badge,
+  action,
   enabled,
   onToggle,
   children,
 }: {
+  icon: LucideIcon;
   title: string;
   summary: string;
   offSummary: string;
   badge?: ReactNode;
+  /** Response the detector takes on a match; shown as a tinted badge while enabled. */
+  action?: string;
   enabled: boolean;
   onToggle: (v: boolean) => void;
   children: ReactNode;
@@ -115,18 +154,29 @@ function DetectorRow({
           aria-expanded={open}
           aria-controls={panelId}
           onClick={() => setOpen((v) => !v)}
-          className="flex min-h-11 min-w-0 flex-1 items-center gap-2 py-2 pl-3 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+          className="flex min-h-12 min-w-0 flex-1 items-center gap-2.5 py-2 pl-3 pr-2 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
         >
           <ChevronRight
             className={cn("h-4 w-4 shrink-0 text-fg-faint transition-transform", open && "rotate-90")}
             strokeWidth={1.75}
             aria-hidden="true"
           />
-          <span className="shrink-0 text-[13px] font-medium text-fg">{title}</span>
-          {badge}
-          <span className={cn("min-w-0 truncate text-[12px]", enabled ? "text-fg-muted" : "text-fg-faint")}>
-            {enabled ? summary : offSummary}
+          {/* Section tone while on, grey while off: the tile alone shows which detectors run. */}
+          <IconTile icon={icon} size="sm" tone={enabled ? "section" : "slate"} />
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-center sm:gap-2">
+            <span className="flex shrink-0 items-center gap-2">
+              <span className="text-[13px] font-medium text-fg">{title}</span>
+              {badge}
+            </span>
+            <span className={cn("min-w-0 truncate text-[12px]", enabled ? "text-fg-muted" : "text-fg-faint")}>
+              {enabled ? summary : offSummary}
+            </span>
           </span>
+          {enabled && action && (
+            <span className="shrink-0">
+              <ActionBadge action={action} />
+            </span>
+          )}
         </button>
         <Toggle
           checked={enabled}
@@ -274,11 +324,11 @@ function ChipGroup({
                   "inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
                   mono && "font-mono text-[11.5px]",
                   on
-                    ? "border-accent-500 bg-accent-500/10 text-fg"
+                    ? "border-accent-500/30 bg-accent-500/10 text-link"
                     : "border-input bg-surface text-fg-muted hover:border-fg-faint hover:text-fg",
                 )}
               >
-                {on && <Check className="h-3 w-3 text-link" strokeWidth={2} aria-hidden="true" />}
+                {on && <Check className="h-3 w-3" strokeWidth={2} aria-hidden="true" />}
                 {format(t)}
               </button>
             );
@@ -314,7 +364,7 @@ function PIISection({
   const strategy = STRATEGIES.find((s) => s.value === (c.strategy ?? "redact"));
   const summary = [
     selected.size === 0 ? "All entities" : `${selected.size} ${selected.size === 1 ? "entity" : "entities"}`,
-    strategy?.label ?? c.strategy,
+    c.strategy === "block" ? null : strategy?.label ?? c.strategy,
     c.engine === "presidio" ? "Presidio" : null,
     c.scan_output ? "Scans output" : null,
   ]
@@ -323,7 +373,9 @@ function PIISection({
 
   return (
     <DetectorRow
+      icon={DETECTOR_ICONS.pii}
       title="PII"
+      action={c.strategy === "block" ? "block" : "mask"}
       summary={summary}
       offSummary="Emails, phone numbers, NIK, NPWP…"
       enabled={c.enabled}
@@ -401,8 +453,10 @@ function InjectionSection({
   const severity = SEVERITIES.find((s) => s.value === (c.severity_threshold ?? "medium"))?.label ?? c.severity_threshold;
   return (
     <DetectorRow
+      icon={DETECTOR_ICONS.injection}
       title="Prompt injection"
-      summary={`${severity} severity and up · ${ACTION_NAME[c.action ?? "block"] ?? c.action}`}
+      action={c.action ?? "block"}
+      summary={`${severity} severity and up`}
       offSummary="Jailbreaks, role overrides, prompt leaks"
       enabled={c.enabled}
       onToggle={(v) => onChange({ ...c, enabled: v })}
@@ -450,13 +504,14 @@ function TopicsSection({
     (c.mode ?? "block") === "allow" ? "Allow list" : "Block list",
     plural(topics.length, "topic"),
     c.engine === "embedding" ? "Embedding" : null,
-    ACTION_NAME[c.action ?? "warn"] ?? c.action,
   ]
     .filter(Boolean)
     .join(" · ");
   return (
     <DetectorRow
+      icon={DETECTOR_ICONS.topics}
       title="Topics"
+      action={c.action ?? "warn"}
       summary={summary}
       offSummary="Keep chats on or off listed topics"
       enabled={c.enabled}
@@ -543,13 +598,14 @@ function ToxicitySection({
     `${selected.size} of ${TOXICITY_CATEGORIES.length} categories`,
     `score ≥ ${c.threshold ?? 60}`,
     c.engine === "openai" ? "OpenAI" : null,
-    ACTION_NAME[c.action ?? "warn"] ?? c.action,
   ]
     .filter(Boolean)
     .join(" · ");
   return (
     <DetectorRow
+      icon={DETECTOR_ICONS.toxicity}
       title="Toxicity"
+      action={c.action ?? "warn"}
       summary={summary}
       offSummary="Profanity, hate, harassment, violence"
       enabled={c.enabled}
@@ -613,11 +669,12 @@ function BiasSection({
   const summary = [
     `${selected.size} of ${BIAS_CATEGORIES.length} categories`,
     `score ≥ ${c.threshold ?? 60}`,
-    ACTION_NAME[c.action ?? "log_only"] ?? c.action,
   ].join(" · ");
   return (
     <DetectorRow
+      icon={DETECTOR_ICONS.bias}
       title="Bias"
+      action={c.action ?? "log_only"}
       badge={<Badge tone="neutral">Experimental</Badge>}
       summary={summary}
       offSummary="Political, gender, ethnic, religious"
@@ -668,13 +725,6 @@ const ACTION_LABEL: Record<string, string> = {
   block: "Blocked",
 };
 
-function actionTone(action: string): "danger" | "warning" | "success" | "neutral" {
-  if (action === "block") return "danger";
-  if (action === "warn") return "warning";
-  if (action === "allow") return "success";
-  return "neutral";
-}
-
 function TestPanel({ config }: { config: GuardrailPolicyConfig }) {
   const [text, setText] = useState("");
   const [result, setResult] = useState<GuardrailTestResult | null>(null);
@@ -710,9 +760,7 @@ function TestPanel({ config }: { config: GuardrailPolicyConfig }) {
   return (
     <section aria-labelledby={headingId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
       <div className="border-b border-line px-4 py-3">
-        <h3 id={headingId} className="text-[13px] font-semibold text-fg">
-          Test policy
-        </h3>
+        <SectionTitle as="h3" id={headingId} icon={FlaskConical} title="Test policy" />
       </div>
       <div className="space-y-3 px-4 py-4">
         <label htmlFor={textId} className="sr-only">
@@ -762,8 +810,8 @@ function TestPanel({ config }: { config: GuardrailPolicyConfig }) {
                   {decisions.map((d, i) => (
                     <li key={i} className="px-3 py-2.5 text-[12px]">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-fg">{d.detector}</span>
-                        <Badge tone={actionTone(d.action)}>{d.action}</Badge>
+                        <DetectorName detector={d.detector} />
+                        <ActionBadge action={d.action} />
                         {d.severity && <span className="text-fg-muted">{d.severity} severity</span>}
                         {d.reason && <span className="min-w-0 text-fg-muted">· {d.reason}</span>}
                       </div>
@@ -787,5 +835,16 @@ function TestPanel({ config }: { config: GuardrailPolicyConfig }) {
         </div>
       </div>
     </section>
+  );
+}
+
+// DetectorName is a detector id with its glyph, e.g. in test results.
+function DetectorName({ detector }: { detector: string }) {
+  const Icon = DETECTOR_ICONS[detector];
+  return (
+    <span className="inline-flex items-center gap-1.5 font-mono text-fg">
+      {Icon && <Icon className="h-3.5 w-3.5 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />}
+      {detector}
+    </span>
   );
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/caveman"
 	"github.com/mydisha/keirouter/backend/internal/core"
 	"github.com/mydisha/keirouter/backend/internal/dispatch"
+	"github.com/mydisha/keirouter/backend/internal/fastjson"
 	"github.com/mydisha/keirouter/backend/internal/guardrails"
 	"github.com/mydisha/keirouter/backend/internal/headroom"
 	"github.com/mydisha/keirouter/backend/internal/health"
@@ -35,6 +36,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/ponytail"
 	"github.com/mydisha/keirouter/backend/internal/slimmer"
 	"github.com/mydisha/keirouter/backend/internal/terse"
+	"github.com/mydisha/keirouter/backend/internal/transform"
 )
 
 // TimeoutReader provides dynamic timeout values that can be updated at runtime.
@@ -131,6 +133,30 @@ func (p *Pipeline) resolvedRequestTimeout() time.Duration {
 	return p.requestTimeout
 }
 
+// defaultResponseHeaderTimeout bounds time-to-first-byte on streaming calls
+// when no dashboard value is configured.
+const defaultResponseHeaderTimeout = 60 * time.Second
+
+// resolvedHeaderTimeout returns the time-to-headers budget for streaming
+// calls, preferring the dynamic dashboard value when available. Unary calls
+// are bounded by the request timeout instead (their headers only arrive once
+// generation finishes).
+func (p *Pipeline) resolvedHeaderTimeout() time.Duration {
+	if p.timeoutReader != nil {
+		if t := p.timeoutReader.ResponseHeaderTimeout(); t > 0 {
+			return t
+		}
+	}
+	return defaultResponseHeaderTimeout
+}
+
+// streamCallContext derives the context a streaming connector call runs under:
+// proxy credentials plus the time-to-headers budget. The returned cancel is
+// owned by whichever party finishes the stream.
+func (p *Pipeline) streamCallContext(ctx context.Context, creds core.Credentials) (context.Context, context.CancelFunc) {
+	return context.WithCancel(core.WithResponseHeaderTimeout(core.WithProxy(ctx, creds), p.resolvedHeaderTimeout()))
+}
+
 // resolvedStallTimeout returns the effective stream stall timeout, preferring
 // the dynamic dashboard value when available.
 func (p *Pipeline) resolvedStallTimeout() time.Duration {
@@ -162,6 +188,12 @@ type Options struct {
 	Ponytail ponytail.Config
 	// Limits carries already-resolved per-key rate limits. Zero values mean unlimited.
 	Limits limits.EffectiveLimits
+	// OnStreamPending, when set, is invoked once if a streaming attempt is
+	// connected but has produced no output for streamPendingNotifyAfter. The
+	// gateway uses it to commit response headers and start heartbeats so the
+	// client connection survives long silent generations. After it fires,
+	// any terminal error must be delivered in-band on the stream.
+	OnStreamPending func()
 }
 
 // Result reports the outcome of a unary request for metering and audit.
@@ -260,7 +292,37 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 	var priorAttemptUsage core.Usage
 	planner := newAttemptPlanner(p.dispatcher, req.Metadata.TenantID, opts.Targets, required, opts.PlanOpts, attempts)
 	attempt, hasAttempt := planner.Current()
-	for i := 0; hasAttempt; i++ {
+	rlRetries := 0
+	waitBudget := CooldownRetryMax
+	for i := 0; ; i++ {
+		if !hasAttempt {
+			// Every candidate was tried. When all of them were throttled with
+			// a short reset window, wait once and re-plan instead of handing
+			// the client a 429 (parity with the streaming path).
+			wait, shouldRetry := streamRateLimitWait(core.AsProviderError(lastErr), rlRetries, waitBudget)
+			if !shouldRetry {
+				break
+			}
+			rlRetries++
+			p.log.Warn("all chat attempts hit rate-limit, waiting to retry",
+				"wait", wait, "retry", rlRetries, "of", maxRateLimitRetries)
+			waitedAt := time.Now()
+			if !sleepCtx(ctx, wait) {
+				break
+			}
+			waitBudget -= time.Since(waitedAt)
+			attempts, err = p.planWithCooldownRetry(ctx, req.Metadata.TenantID, opts.Targets, required, opts.PlanOpts)
+			if err != nil {
+				lastErr = err
+				break
+			}
+			planner = newAttemptPlanner(p.dispatcher, req.Metadata.TenantID, opts.Targets, required, opts.PlanOpts, attempts)
+			if attempt, hasAttempt = planner.Current(); !hasAttempt {
+				break
+			}
+			fellBack = true
+			req.Metadata.FallbackCount++
+		}
 		lastAttempt = attempt
 		started := time.Now()
 		p.log.Debug("attempt start", "i", i, "provider", attempt.Target.Provider,
@@ -379,7 +441,8 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 			}
 			p.recordFailureTelemetry(req.Metadata, attempt, pe, latency, canFallback)
 			if !canFallback {
-				break
+				hasAttempt = false
+				continue
 			}
 			if p.metrics != nil {
 				p.metrics.RecordFallback(string(pe.Kind))
@@ -396,9 +459,16 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 			priorAttemptUsage.TotalTokens != 0 {
 			resp.Usage = addAttemptUsage(priorAttemptUsage, resp.Usage)
 		}
+		if restorer := newToolNameRestorer(req.Tools); restorer != nil {
+			for i := range resp.Message.Content {
+				if resp.Message.Content[i].Type == core.PartToolCall {
+					restorer.restore(resp.Message.Content[i].ToolCall)
+				}
+			}
+		}
 
 		// Reset backoff and clear model cooldown on success.
-		p.dispatcher.NoteSuccess(ctx, attempt.Target.Provider, attempt.Account.ID, attempt.Target.Model)
+		p.dispatcher.NoteSuccessAt(ctx, attempt.Target.Provider, attempt.Account.ID, attempt.Target.Model, started)
 
 		// Guardrails outbound: PII scan / response masking. Runs after the
 		// upstream succeeds but before we record usage so a Block decision
@@ -590,7 +660,7 @@ func (p *Pipeline) Stream(ctx context.Context, req *core.ChatRequest, opts Optio
 			}
 		}
 		waitBudget -= time.Since(waitedAt)
-		attempts, err = p.dispatcher.PlanWith(ctx, req.Metadata.TenantID, opts.Targets, required, opts.PlanOpts)
+		attempts, err = p.planWithCooldownRetry(ctx, req.Metadata.TenantID, opts.Targets, required, opts.PlanOpts)
 		if err != nil {
 			p.log.Debug("stream re-plan after rate-limit failed", "err", err)
 			p.budgetRelease(scope)
@@ -651,7 +721,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 		// The successful stream owns this cancellation function. pumpStream or
 		// the direct response body cancels it on completion, client disconnect,
 		// policy block, or stall so connector goroutines cannot leak.
-		callCtx, cancelUpstream := context.WithCancel(core.WithProxy(ctx, attempt.Creds))
+		callCtx, cancelUpstream := p.streamCallContext(ctx, attempt.Creds)
 
 		// Zero-copy fast path: when the client dialect matches the upstream
 		// dialect, no tools are present (so no argument sanitization needed),
@@ -679,7 +749,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 					cancelUpstream()
 					retryReq := cloneForAttempt(req, attempt.Target.Model)
 					capability.StripImages(retryReq)
-					callCtx, cancelUpstream = context.WithCancel(core.WithProxy(ctx, attempt.Creds))
+					callCtx, cancelUpstream = p.streamCallContext(ctx, attempt.Creds)
 					body, _, rawErr = ds.StreamRaw(callCtx, retryReq, attempt.Creds, streamCfg)
 				}
 				if rawErr != nil {
@@ -760,7 +830,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 						}
 
 						totalLatency := time.Since(started)
-						p.dispatcher.NoteSuccess(recordCtx, acc.Target.Provider, acc.Account.ID, acc.Target.Model)
+						p.dispatcher.NoteSuccessAt(recordCtx, acc.Target.Provider, acc.Account.ID, acc.Target.Model, started)
 						cost := p.recordWithTTFT(recordCtx, meta, acc, usage, false,
 							totalLatency, time.Since(requestStarted), ttft, saveCopy, fellBack)
 						p.budgetConfirm(budgetScope, cost)
@@ -783,7 +853,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 			cancelUpstream()
 			retryReq := cloneForAttempt(req, attempt.Target.Model)
 			capability.StripImages(retryReq)
-			callCtx, cancelUpstream = context.WithCancel(core.WithProxy(ctx, attempt.Creds))
+			callCtx, cancelUpstream = p.streamCallContext(ctx, attempt.Creds)
 			upstream, callErr = attempt.Conn.Stream(callCtx, retryReq, attempt.Creds, streamCfg)
 		}
 		if callErr != nil {
@@ -819,7 +889,8 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 			continue
 		}
 
-		upstream, callErr = admitStream(callCtx, upstream, p.resolvedStallTimeout(), attempt.Target.Provider, attempt.Target.Model)
+		upstream, callErr = admitStreamNotify(callCtx, upstream, p.resolvedStallTimeout(), attempt.Target.Provider, attempt.Target.Model,
+			opts.OnStreamPending, streamPendingNotifyAfter)
 		if callErr != nil {
 			cancelUpstream()
 			pe := providerErrorForAttempt(callErr, attempt)
@@ -937,6 +1008,11 @@ func (p *Pipeline) pumpStream(ctx context.Context, req *core.ChatRequest, in <-c
 	var usage core.Usage
 	var sawUsage bool
 	var completionChars int
+	// sawFinish/sawToolCall detect a stream that was cut off: an EOF without
+	// a terminal event. LiteLLM synthesizes finish_reason=stop in that case;
+	// we do the same once output exists, and report an error when none does.
+	var sawFinish, sawToolCall bool
+	nameRestorer := newToolNameRestorer(req.Tools)
 
 	settleClientCancellation := func() {
 		cancelUpstream()
@@ -987,6 +1063,39 @@ func (p *Pipeline) pumpStream(ctx context.Context, req *core.ChatRequest, in <-c
 					return
 				}
 				stopStall()
+				if !sawFinish {
+					if completionChars == 0 && !sawToolCall {
+						// The upstream closed the connection before producing
+						// anything: a failure, not an empty answer.
+						truncErr := &core.ProviderError{
+							Kind: core.ErrUpstream, Scope: core.FailureScopeProvider,
+							Provider: attempt.Target.Provider, Model: attempt.Target.Model,
+							Message: "upstream closed the stream before producing output",
+						}
+						pe := p.recordTerminalStreamFailure(ctx, req, meta, attempt, truncErr,
+							attemptStarted, requestStarted, usage, completionChars, *ttft, save, fellBack, scope)
+						select {
+						case out <- core.StreamChunk{Type: core.ChunkError, Err: pe}:
+						case <-ctx.Done():
+						}
+						return
+					}
+					// Output arrived but no terminal event did (the upstream
+					// hung up cleanly mid-generation, or the dialect never
+					// sends one). Close the client's stream properly.
+					finish := core.FinishStop
+					if sawToolCall {
+						finish = core.FinishToolCalls
+					}
+					p.log.Debug("stream ended without finish event; synthesizing",
+						"provider", attempt.Target.Provider, "model", attempt.Target.Model, "finish", finish)
+					select {
+					case out <- core.StreamChunk{Type: core.ChunkFinish, FinishReason: finish}:
+					case <-ctx.Done():
+						settleClientCancellation()
+						return
+					}
+				}
 				// Always synthesize an auditable estimate when the provider omits
 				// usage. Only emit it to the client when include_usage was requested.
 				if !sawUsage {
@@ -1002,13 +1111,18 @@ func (p *Pipeline) pumpStream(ctx context.Context, req *core.ChatRequest, in <-c
 					}
 				}
 				upstreamLatency := time.Since(attemptStarted)
-				p.dispatcher.NoteSuccess(context.WithoutCancel(ctx), attempt.Target.Provider, attempt.Account.ID, attempt.Target.Model)
+				p.dispatcher.NoteSuccessAt(context.WithoutCancel(ctx), attempt.Target.Provider, attempt.Account.ID, attempt.Target.Model, attemptStarted)
 				cost := p.recordWithTTFT(ctx, meta, attempt, usage, false, upstreamLatency,
 					time.Since(requestStarted), *ttft, save, fellBack)
 				p.budgetConfirm(scope, cost)
 				return
 			}
 			resetStall()
+			if chunk.Type == core.ChunkPing {
+				// Keep-alive from the upstream: proves liveness for the stall
+				// detector but carries nothing for the client.
+				continue
+			}
 			if chunk.Type == core.ChunkError {
 				if ctx.Err() != nil {
 					settleClientCancellation()
@@ -1037,6 +1151,11 @@ func (p *Pipeline) pumpStream(ctx context.Context, req *core.ChatRequest, in <-c
 				}
 			case core.ChunkText, core.ChunkThinking:
 				completionChars += len(chunk.Delta)
+			case core.ChunkToolCall:
+				sawToolCall = true
+				nameRestorer.restore(chunk.ToolCall)
+			case core.ChunkFinish:
+				sawFinish = true
 			}
 
 			// Outbound guardrail scan for streamed text. We accumulate every
@@ -1276,6 +1395,10 @@ func (p *Pipeline) budgetRelease(scope budget.Scope) {
 // dispatcher. Long quota/auth windows are returned immediately; only cooldowns
 // that fit the request's bounded wait budget are retried.
 func (p *Pipeline) planWithCooldownRetry(ctx context.Context, tenantID string, targets []dispatch.Target, required core.CapabilitySet, opts dispatch.PlanOptions) ([]dispatch.Attempt, error) {
+	// The attempt planner consumes one candidate per plan and re-plans after
+	// each failure, so resolving (and OAuth-refreshing) more than one account
+	// here is wasted work on every request.
+	opts.Limit = 1
 	attempts, err := p.dispatcher.PlanWith(ctx, tenantID, targets, required, opts)
 	if err == nil && len(attempts) > 0 {
 		return attempts, nil
@@ -1770,6 +1893,40 @@ func (p *Pipeline) cacheStore(ctx context.Context, vec []float32, resp *core.Cha
 // cloneForAttempt produces a shallow copy of the request with the candidate's
 // model id, so each fallback attempt targets the right model without mutating
 // the shared request.
+// toolNameRestorer maps provider-sanitized tool names (Gemini rewrites
+// characters and truncates at 64) back to the names the client declared, so
+// the client never receives a tool call for a tool it does not know.
+type toolNameRestorer map[string]string
+
+func newToolNameRestorer(tools []core.Tool) toolNameRestorer {
+	if len(tools) == 0 {
+		return nil
+	}
+	var m toolNameRestorer
+	for _, t := range tools {
+		for _, alias := range transform.ToolNameAliases(t.Name) {
+			if alias == t.Name {
+				continue
+			}
+			if m == nil {
+				m = make(toolNameRestorer, len(tools))
+			}
+			m[alias] = t.Name
+		}
+	}
+	return m
+}
+
+// restore rewrites a tool call name in place when it is a known alias.
+func (r toolNameRestorer) restore(tc *core.ToolCall) {
+	if r == nil || tc == nil || tc.Name == "" {
+		return
+	}
+	if orig, ok := r[tc.Name]; ok {
+		tc.Name = orig
+	}
+}
+
 func cloneForAttempt(req *core.ChatRequest, model string) *core.ChatRequest {
 	clone := *req
 	clone.Messages = make([]core.Message, len(req.Messages))
@@ -2217,16 +2374,63 @@ func extractUsageFromSSEData(data []byte) *core.Usage {
 func extractUsageFromStream(raw []byte) core.Usage {
 	var usage core.Usage
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	scanner.Buffer(make([]byte, 0, 64*1024), len(raw)+1)
 	for scanner.Scan() {
-		payload, ok := streamJSONPayload(scanner.Text())
-		if !ok {
+		payload, ok := streamJSONPayloadBytes(scanner.Bytes())
+		if !ok || !mayCarryUsage(payload) {
 			continue
 		}
-		if u := extractUsageFromSSEData([]byte(payload)); u != nil {
+		if u := extractUsageFromSSEData(payload); u != nil {
 			usage = mergeUsage(usage, *u)
 		}
 	}
 	return usage
+}
+
+var (
+	usageMarker     = []byte("usage")      // OpenAI, Anthropic, Gemini ("usageMetadata")
+	evalCountMarker = []byte("eval_count") // Ollama prompt_eval_count / eval_count
+)
+
+// mayCarryUsage is the pre-filter that lets frames without any token counts
+// skip the JSON decode entirely.
+func mayCarryUsage(payload []byte) bool {
+	return bytes.Contains(payload, usageMarker) || bytes.Contains(payload, evalCountMarker)
+}
+
+// streamJSONPayloadBytes is streamJSONPayload without the string copies.
+func streamJSONPayloadBytes(line []byte) ([]byte, bool) {
+	line = bytes.TrimSpace(bytes.TrimRight(line, "\r"))
+	if bytes.HasPrefix(line, []byte("data:")) {
+		line = bytes.TrimSpace(line[5:])
+	}
+	if len(line) == 0 || line[0] != '{' {
+		return nil, false
+	}
+	return line, true
+}
+
+// streamTextEnvelope is the minimal shape needed to count streamed output
+// characters across dialects. It is reused across frames.
+type streamTextEnvelope struct {
+	Delta   json.RawMessage `json:"delta"`
+	Message struct {
+		Content  json.RawMessage `json:"content"`
+		Thinking json.RawMessage `json:"thinking"`
+	} `json:"message"`
+	Choices []struct {
+		Delta struct {
+			Content          string `json:"content"`
+			ReasoningContent string `json:"reasoning_content"`
+		} `json:"delta"`
+	} `json:"choices"`
+	Candidates []struct {
+		Content struct {
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"content"`
+	} `json:"candidates"`
 }
 
 func capturedStreamUsage(req *core.ChatRequest, raw []byte) core.Usage {
@@ -2239,32 +2443,15 @@ func capturedStreamUsage(req *core.ChatRequest, raw []byte) core.Usage {
 func completionCharsFromStream(raw []byte) int {
 	var chars int
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
+	scanner.Buffer(make([]byte, 0, 64*1024), len(raw)+1)
+	var envelope streamTextEnvelope
 	for scanner.Scan() {
-		payload, ok := streamJSONPayload(scanner.Text())
+		payload, ok := streamJSONPayloadBytes(scanner.Bytes())
 		if !ok {
 			continue
 		}
-		var envelope struct {
-			Delta   json.RawMessage `json:"delta"`
-			Message struct {
-				Content  json.RawMessage `json:"content"`
-				Thinking json.RawMessage `json:"thinking"`
-			} `json:"message"`
-			Choices []struct {
-				Delta struct {
-					Content          string `json:"content"`
-					ReasoningContent string `json:"reasoning_content"`
-				} `json:"delta"`
-			} `json:"choices"`
-			Candidates []struct {
-				Content struct {
-					Parts []struct {
-						Text string `json:"text"`
-					} `json:"parts"`
-				} `json:"content"`
-			} `json:"candidates"`
-		}
-		if json.Unmarshal([]byte(payload), &envelope) != nil {
+		envelope = streamTextEnvelope{}
+		if fastjson.Unmarshal(payload, &envelope) != nil {
 			continue
 		}
 		for _, choice := range envelope.Choices {
@@ -2276,16 +2463,21 @@ func completionCharsFromStream(raw []byte) int {
 			}
 		}
 		chars += rawJSONStringLen(envelope.Message.Content) + rawJSONStringLen(envelope.Message.Thinking)
-		if len(envelope.Delta) > 0 {
-			var delta string
-			if json.Unmarshal(envelope.Delta, &delta) == nil {
-				chars += len(delta)
-			} else {
+		if delta := bytes.TrimSpace(envelope.Delta); len(delta) > 0 {
+			// Branch on the first byte instead of a failing decode: Anthropic
+			// deltas are objects, Responses deltas are strings.
+			switch delta[0] {
+			case '"':
+				var text string
+				if fastjson.Unmarshal(delta, &text) == nil {
+					chars += len(text)
+				}
+			case '{':
 				var antDelta struct {
 					Text     string `json:"text"`
 					Thinking string `json:"thinking"`
 				}
-				if json.Unmarshal(envelope.Delta, &antDelta) == nil {
+				if fastjson.Unmarshal(delta, &antDelta) == nil {
 					chars += len(antDelta.Text) + len(antDelta.Thinking)
 				}
 			}
@@ -2303,15 +2495,4 @@ func rawJSONStringLen(raw json.RawMessage) int {
 		return 0
 	}
 	return len(value)
-}
-
-func streamJSONPayload(line string) (string, bool) {
-	line = strings.TrimSpace(strings.TrimRight(line, "\r"))
-	if strings.HasPrefix(line, "data:") {
-		line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-	}
-	if line == "" || line == "[DONE]" || !strings.HasPrefix(line, "{") {
-		return "", false
-	}
-	return line, true
 }

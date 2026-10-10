@@ -1,5 +1,7 @@
 import { useId, useMemo, useState, type KeyboardEvent } from "react";
+import type { LucideIcon } from "lucide-react";
 import type { SeriesPoint, UsageInsights } from "../../lib/api";
+import { ICONS } from "../../lib/icons";
 import { cn } from "@/lib/utils";
 
 // TrafficCard is the shared requests / tokens / cost / latency bar chart used
@@ -12,6 +14,7 @@ type MetricKey = "requests" | "tokens" | "cost" | "latency";
 
 interface MetricDef {
   label: string;
+  icon: LucideIcon;
   legendA: string;
   legendB?: string;
   /** Secondary series colour: "alt" = orange (failures), "soft" = light accent. */
@@ -25,6 +28,7 @@ interface MetricDef {
 const METRICS: Record<MetricKey, MetricDef> = {
   requests: {
     label: "Requests",
+    icon: ICONS.requests,
     legendA: "Succeeded",
     legendB: "Failed",
     bTone: "alt",
@@ -35,6 +39,7 @@ const METRICS: Record<MetricKey, MetricDef> = {
   },
   tokens: {
     label: "Tokens",
+    icon: ICONS.tokens,
     legendA: "Input",
     legendB: "Output",
     bTone: "soft",
@@ -45,6 +50,7 @@ const METRICS: Record<MetricKey, MetricDef> = {
   },
   cost: {
     label: "Cost",
+    icon: ICONS.spend,
     legendA: "Billed",
     legendB: "Saved",
     bTone: "soft",
@@ -55,6 +61,7 @@ const METRICS: Record<MetricKey, MetricDef> = {
   },
   latency: {
     label: "Latency",
+    icon: ICONS.latency,
     legendA: "Avg latency",
     a: (p) => p.avg_latency_ms ?? 0,
     fmt: (v) => fmtMs(v),
@@ -131,6 +138,7 @@ export function TrafficCard({ data, className }: { data: UsageInsights; classNam
         <div className="flex flex-wrap items-stretch" role="tablist" aria-label="Chart metric" onKeyDown={onTabKeyDown}>
           {METRIC_KEYS.map((key) => {
             const active = key === metric;
+            const MetricIcon = METRICS[key].icon;
             return (
               <button
                 key={key}
@@ -146,7 +154,10 @@ export function TrafficCard({ data, className }: { data: UsageInsights; classNam
                   active ? "bg-surface" : "bg-subtle hover:bg-hover",
                 )}
               >
-                <span className="text-[12px] font-medium text-fg-muted">{METRICS[key].label}</span>
+                <span className="inline-flex items-center gap-1.5 text-[12px] font-medium text-fg-muted">
+                  <MetricIcon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-tone" : "text-fg-faint")} strokeWidth={1.75} aria-hidden="true" />
+                  {METRICS[key].label}
+                </span>
                 <span className={cn("text-[16px] font-semibold tracking-[-0.01em] tabular-nums", active ? "text-fg" : "text-fg-muted")}>
                   {METRICS[key].total(data)}
                 </span>

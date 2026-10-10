@@ -506,11 +506,13 @@ func toStrings(b [][]byte) []string {
 // with an error in the SSE body) are scoped correctly: request problems must
 // not cool down accounts or trip the provider circuit breaker.
 func TestClassifyRespStreamError(t *testing.T) {
-	// The reported failure: Codex context overflow arrives in-stream.
+	// The reported failure: Codex context overflow arrives in-stream. It is
+	// model-scoped (a larger-context target in the chain may still serve it)
+	// and must never cool down the account or trip the provider circuit.
 	pe := classifyRespStreamError("Your input exceeds the context window of this model. Please adjust your input and try again.")
-	require.Equal(t, core.ErrBadRequest, pe.Kind)
-	require.Equal(t, core.FailureScopeRequest, pe.EffectiveScope())
-	require.False(t, pe.Fallbackable())
+	require.Equal(t, core.ErrContextWindow, pe.Kind)
+	require.Equal(t, core.FailureScopeModel, pe.EffectiveScope())
+	require.True(t, pe.Fallbackable())
 
 	pe = classifyRespStreamError("The 'gpt-5-6' model is not supported when using Codex with a ChatGPT account.")
 	require.Equal(t, core.ErrModelUnavailable, pe.Kind)

@@ -23,9 +23,11 @@ import {
   FileAudio,
   Globe,
   Image,
+  Inbox,
   Loader2,
   Mic,
   MoreHorizontal,
+  Pause,
   Play,
   Plug,
   Search,
@@ -40,8 +42,12 @@ import {
   Badge,
   Button,
   ErrorBanner,
+  IconTile,
   Input,
+  Kpi,
+  KpiGrid,
   Modal,
+  SectionTitle,
   Select,
   Skeleton,
   TablePagination,
@@ -50,6 +56,7 @@ import {
 } from "../components/ui";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Segmented } from "./settings/shared";
+import { ICONS } from "../lib/icons";
 
 type Tab = "accounts" | "models" | "playground";
 type Capability = "embedding" | "image" | "tts" | "stt" | "search" | "fetch";
@@ -130,7 +137,8 @@ export function MediaProviderDetailPage() {
   if (!provider) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-        <h1 className="text-[14px] font-medium text-fg">This provider doesn&apos;t exist</h1>
+        <IconTile icon={ICONS.media} size="lg" className="mx-auto mb-3" />
+        <h1 className="text-[13px] font-semibold text-fg">This provider doesn&apos;t exist</h1>
         <Link to={`/media/${kind}`} className="mt-2 inline-block text-[13px] font-medium text-link hover:underline">
           Back to {meta.label.toLowerCase()}
         </Link>
@@ -201,11 +209,11 @@ export function MediaProviderDetailPage() {
               {!provider.drivable && <Badge tone="neutral">Coming soon</Badge>}
               {isNoAuth && <Badge tone="neutral">No credentials</Badge>}
             </div>
-            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-fg-muted">
               <span className="font-mono text-[12.5px]">{provider.id}</span>
               <Dot />
-              <span>{meta.label}</span>
-            </p>
+              <CapabilityChips provider={provider} current={metaKind} />
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -279,7 +287,8 @@ export function MediaProviderDetailPage() {
           <Playground provider={provider} initial={metaKind} models={modelList} />
         ) : (
           <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-            <h2 className="text-[14px] font-medium text-fg">
+            <IconTile icon={Play} size="lg" className="mx-auto mb-3" />
+            <h2 className="text-[13px] font-semibold text-fg">
               {provider.drivable ? "Connect an account to use the playground" : "The playground isn't available yet"}
             </h2>
             <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
@@ -299,6 +308,29 @@ export function MediaProviderDetailPage() {
 
       {provider.drivable && <AddAccountDialog provider={provider} open={addOpen} onClose={() => setAddOpen(false)} />}
     </>
+  );
+}
+
+// CapabilityChips lists the media capabilities this provider serves; the one
+// this page is opened for gets the section tint.
+function CapabilityChips({ provider, current }: { provider: Provider; current: Capability }) {
+  const caps = CAPABILITIES.filter((c) => c === current || provider.service_kinds.includes(c));
+  return (
+    <ul className="flex flex-wrap items-center gap-1" aria-label="Capabilities">
+      {caps.map((c) => {
+        const Icon = kindMeta[c].icon;
+        const on = c === current;
+        return (
+          <li key={c}>
+            <Badge tone={on ? "secondary" : "neutral"}>
+              <Icon className={cn("h-3 w-3", on ? "text-tone" : "text-fg-faint")} strokeWidth={1.75} aria-hidden="true" />
+              {kindMeta[c].short}
+              {on && <span className="sr-only"> (this page)</span>}
+            </Badge>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 
@@ -539,7 +571,8 @@ function AccountsPanel({
   if (accounts.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-        <h2 className="text-[14px] font-medium text-fg">No {provider.display_name} accounts yet</h2>
+        <IconTile icon={ICONS.account} size="lg" className="mx-auto mb-3" />
+        <h2 className="text-[13px] font-semibold text-fg">No {provider.display_name} accounts yet</h2>
         <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
           {provider.drivable
             ? "Add an account to start routing requests here."
@@ -555,45 +588,62 @@ function AccountsPanel({
     );
   }
 
+  const active = accounts.filter((a) => !a.disabled && !a.needs_reconnect).length;
+  const paused = accounts.filter((a) => a.disabled).length;
+  const reconnect = accounts.filter((a) => a.needs_reconnect).length;
+
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-      <ul className="divide-y divide-line" aria-label={`${provider.display_name} accounts`}>
-        {accounts.map((a) => {
-          const name = a.label || a.provider;
-          return (
-            <li key={a.id} className={cn("flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-hover/60", a.disabled && "bg-subtle/60")}>
-              <span
-                className={cn("h-2 w-2 shrink-0 rounded-full", a.needs_reconnect ? "bg-warn" : a.disabled ? "bg-fg-faint" : "bg-ok")}
-                aria-hidden="true"
-              />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-medium text-fg">{name}</p>
-                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] text-fg-muted">
-                  <span>{a.auth_kind === "oauth" ? "Signed in" : a.auth_kind === "none" ? "No credentials" : "API key"}</span>
-                  {a.disabled && <Badge tone="neutral">Paused · no traffic</Badge>}
-                  {a.needs_reconnect && <Badge tone="warning">Reconnect needed</Badge>}
-                  {!a.disabled && !a.needs_reconnect && <span className="sr-only">Active</span>}
+    <div className="space-y-6">
+      <KpiGrid cols={3} label={`${provider.display_name} account status`}>
+        <Kpi icon={ICONS.successRate} label="Active" value={active} hint={`of ${accounts.length}`} tone={active > 0 ? "ok" : "section"} />
+        <Kpi icon={Pause} label="Paused" value={paused} />
+        <Kpi icon={ICONS.errors} label="Reconnect needed" value={reconnect} tone={reconnect > 0 ? "warn" : "section"} />
+      </KpiGrid>
+      <section
+        aria-labelledby="media-accounts-heading"
+        className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
+      >
+        <div className="border-b border-line px-4 py-3">
+          <SectionTitle id="media-accounts-heading" icon={ICONS.account} title="Accounts" />
+        </div>
+        <ul className="divide-y divide-line" aria-label={`${provider.display_name} accounts`}>
+          {accounts.map((a) => {
+            const name = a.label || a.provider;
+            return (
+              <li key={a.id} className={cn("flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-hover/60", a.disabled && "bg-subtle/60")}>
+                <span
+                  className={cn("h-2 w-2 shrink-0 rounded-full", a.needs_reconnect ? "bg-warn" : a.disabled ? "bg-fg-faint" : "bg-ok")}
+                  aria-hidden="true"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium text-fg">{name}</p>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] text-fg-muted">
+                    <span>{a.auth_kind === "oauth" ? "Signed in" : a.auth_kind === "none" ? "No credentials" : "API key"}</span>
+                    {a.disabled && <Badge tone="neutral">Paused · no traffic</Badge>}
+                    {a.needs_reconnect && <Badge tone="warning">Reconnect needed</Badge>}
+                    {!a.disabled && !a.needs_reconnect && <span className="sr-only">Active</span>}
+                  </div>
                 </div>
-              </div>
-              <Toggle checked={!a.disabled} onChange={() => onToggle(a)} label={`Route traffic to ${name}`} />
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  aria-label={`Actions for ${name}`}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
-                >
-                  <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem tone="danger" onSelect={() => onRemove(a)}>
-                    <Trash2 aria-hidden="true" />
-                    Remove account
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </li>
-          );
-        })}
-      </ul>
+                <Toggle checked={!a.disabled} onChange={() => onToggle(a)} label={`Route traffic to ${name}`} />
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    aria-label={`Actions for ${name}`}
+                    className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  >
+                    <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem tone="danger" onSelect={() => onRemove(a)}>
+                      <Trash2 aria-hidden="true" />
+                      Remove account
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
     </div>
   );
 }
@@ -622,7 +672,8 @@ function ModelsPanel({ provider, models, loading, label }: { provider: Provider;
   if (models.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-        <h2 className="text-[13px] font-medium text-fg">No models listed</h2>
+        <IconTile icon={ICONS.model} size="lg" className="mx-auto mb-3" />
+        <h2 className="text-[13px] font-semibold text-fg">No models listed</h2>
         <p className="mt-1 text-[12.5px] text-fg-muted">
           {provider.display_name} has no {label.toLowerCase()} model catalog. You can still route by model id.
         </p>
@@ -631,9 +682,22 @@ function ModelsPanel({ provider, models, loading, label }: { provider: Provider;
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-      <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
-        <div className="relative w-full sm:w-72">
+    <section
+      aria-labelledby="media-models-heading"
+      className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-3">
+        <SectionTitle
+          id="media-models-heading"
+          icon={ICONS.model}
+          title="Models"
+          subtitle={
+            <span className="tabular-nums" role="status">
+              {filteredModels.length === models.length ? `${models.length} models` : `${filteredModels.length} of ${models.length} shown`}
+            </span>
+          }
+        />
+        <div className="relative w-full sm:ml-auto sm:w-72">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
           <input
             type="search"
@@ -644,9 +708,6 @@ function ModelsPanel({ provider, models, loading, label }: { provider: Provider;
             className="h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
           />
         </div>
-        <span className="ml-auto text-[12.5px] tabular-nums text-fg-muted" role="status">
-          {filteredModels.length === models.length ? `${models.length} models` : `${filteredModels.length} of ${models.length} shown`}
-        </span>
       </div>
       {filteredModels.length === 0 ? (
         <p className="px-6 py-10 text-center text-[13px] text-fg-muted">No models match “{modelSearchQuery}”.</p>
@@ -670,7 +731,7 @@ function ModelsPanel({ provider, models, loading, label }: { provider: Provider;
         </div>
       )}
       <TablePagination page={page} pages={pages} total={total} onPage={setPage} />
-    </div>
+    </section>
   );
 }
 
@@ -802,7 +863,7 @@ function PlaygroundLayout({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
       <section aria-labelledby={`${baseId}-request`} className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
         <div className="border-b border-line px-4 py-3">
-          <h2 id={`${baseId}-request`} className="text-[13px] font-semibold text-fg">{title}</h2>
+          <SectionTitle id={`${baseId}-request`} icon={Icon} title={title} />
         </div>
         <div className="flex-1 space-y-3.5 px-4 py-4">{form}</div>
         <div className="flex items-center gap-2 border-t border-line bg-subtle px-4 py-3">{action}</div>
@@ -814,7 +875,7 @@ function PlaygroundLayout({
         className="flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
       >
         <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-          <h2 id={`${baseId}-response`} className="text-[13px] font-semibold text-fg">Response</h2>
+          <SectionTitle id={`${baseId}-response`} icon={Inbox} title="Response" />
           <div className="flex items-center gap-2 text-[12px] text-fg-muted" role="status">
             {state.loading && (
               <span className="inline-flex items-center gap-1.5">
@@ -845,7 +906,7 @@ function PlaygroundLayout({
             children
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center">
-              <Icon className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <IconTile icon={Icon} size="md" />
               <p className="max-w-xs text-[12.5px] text-fg-muted">{idleHint}</p>
             </div>
           )}

@@ -44,9 +44,12 @@ type respRequest struct {
 	Model        string          `json:"model"`
 	Input        json.RawMessage `json:"input"`
 	Instructions string          `json:"instructions,omitempty"`
-	Tools        []respTool      `json:"tools,omitempty"`
-	Stream       bool            `json:"stream"`
-	Store        bool            `json:"store"`
+	Tools        []respTool      `json:"-"`
+	// RawTools keeps each tool definition verbatim so custom tools can be
+	// forwarded untouched; Tools is decoded from it in UnmarshalJSON.
+	RawTools []json.RawMessage `json:"tools,omitempty"`
+	Stream   bool              `json:"stream"`
+	Store    bool              `json:"store"`
 	// Chat Completions parameters accepted on inbound parse for graceful
 	// passthrough through the canonical model, but never rendered outbound —
 	// the Responses API rejects these with 400 "Unsupported parameter".
@@ -58,6 +61,10 @@ type respRequest struct {
 	Reasoning *struct {
 		Effort string `json:"effort,omitempty"`
 	} `json:"reasoning,omitempty"`
+	// PreviousResponseID chains to server-side state of an earlier response.
+	PreviousResponseID string `json:"previous_response_id,omitempty"`
+	// MaxOutputTokens is the Responses-native output cap.
+	MaxOutputTokens *int `json:"max_output_tokens,omitempty"`
 }
 
 // responsesAPIAllowlist enumerates the fields that the Responses API (/v1/responses)
@@ -66,19 +73,40 @@ type respRequest struct {
 // guards against Chat Completions fields (max_tokens, temperature, top_p,
 // frequency_penalty, stream_options, user, metadata, etc.) leaking through.
 var responsesAPIAllowlist = map[string]bool{
-	"model":             true,
-	"input":             true,
-	"instructions":      true,
-	"tools":             true,
-	"tool_choice":       true,
-	"stream":            true,
-	"store":             true,
-	"reasoning":         true,
-	"service_tier":      true,
-	"include":           true,
-	"prompt_cache_key":  true,
-	"max_output_tokens": true,
-	"client_metadata":   true,
+	"model":                true,
+	"input":                true,
+	"instructions":         true,
+	"tools":                true,
+	"tool_choice":          true,
+	"stream":               true,
+	"store":                true,
+	"reasoning":            true,
+	"service_tier":         true,
+	"include":              true,
+	"prompt_cache_key":     true,
+	"max_output_tokens":    true,
+	"client_metadata":      true,
+	"previous_response_id": true,
+	"parallel_tool_calls":  true,
+}
+
+// UnmarshalJSON decodes the request and the typed view of its tools.
+func (r *respRequest) UnmarshalJSON(b []byte) error {
+	type plain respRequest
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*r = respRequest(p)
+	r.Tools = make([]respTool, 0, len(r.RawTools))
+	for _, raw := range r.RawTools {
+		var t respTool
+		if err := json.Unmarshal(raw, &t); err != nil {
+			return err
+		}
+		r.Tools = append(r.Tools, t)
+	}
+	return nil
 }
 
 type respTool struct {
@@ -100,6 +128,7 @@ type respInputItem struct {
 	CallID           string            `json:"call_id,omitempty"`
 	Name             string            `json:"name,omitempty"`
 	Arguments        string            `json:"arguments,omitempty"`
+	Input            string            `json:"input,omitempty"`
 	Output           json.RawMessage   `json:"output,omitempty"`
 	Summary          []respSummaryPart `json:"summary,omitempty"`
 	EncryptedContent string            `json:"encrypted_content,omitempty"`
@@ -121,19 +150,23 @@ type respContentPart struct {
 
 func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	var raw respRequest
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := json.UnmarshalNoCopy(body, &raw); err != nil {
 		return nil, fmt.Errorf("openai-responses: parse request: %w", err)
 	}
 
 	req := &core.ChatRequest{Model: raw.Model, Stream: raw.Stream, System: raw.Instructions}
 	req.Temperature = raw.Temperature
 	req.MaxTokens = raw.MaxTokens
+	if req.MaxTokens == nil {
+		req.MaxTokens = raw.MaxOutputTokens
+	}
 	req.TopP = raw.TopP
+	req.PreviousResponseID = raw.PreviousResponseID
 	if raw.Reasoning != nil && raw.Reasoning.Effort != "" {
 		req.Reasoning = &core.ReasoningConfig{Effort: raw.Reasoning.Effort}
 	}
 
-	for _, t := range raw.Tools {
+	for i, t := range raw.Tools {
 		name := t.Name
 		desc := t.Description
 		params := t.Parameters
@@ -144,6 +177,13 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 		}
 		if strings.TrimSpace(name) == "" {
 			continue // hosted tools without a name can't be functions
+		}
+		if t.Type == "custom" {
+			// Freeform (grammar/text) tools such as Codex's apply_patch have
+			// no JSON schema; keep the definition verbatim for a Responses
+			// upstream and expose a schema-less function elsewhere.
+			req.Tools = append(req.Tools, core.Tool{Name: name, Description: desc, Raw: raw.RawTools[i]})
+			continue
 		}
 		req.Tools = append(req.Tools, core.Tool{Name: name, Description: desc, Parameters: params})
 	}
@@ -191,12 +231,15 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 			msg.Content = append(msg.Content, parseRespContent(item.Content)...)
 			req.Messages = append(req.Messages, msg)
 
-		case "function_call":
+		case "function_call", "custom_tool_call":
 			if strings.TrimSpace(item.Name) == "" {
 				continue
 			}
+			custom := itemType == "custom_tool_call"
 			args := json.RawMessage(item.Arguments)
-			if len(args) == 0 {
+			if custom {
+				args = json.RawMessage(item.Input)
+			} else if len(args) == 0 {
 				args = json.RawMessage("{}")
 			}
 			msg := core.Message{Role: core.RoleAssistant}
@@ -211,11 +254,20 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 			}
 			msg.Content = append(msg.Content, core.ContentPart{
 				Type:     core.PartToolCall,
-				ToolCall: &core.ToolCall{ID: item.CallID, Name: item.Name, Arguments: args},
+				ToolCall: &core.ToolCall{ID: item.CallID, Name: item.Name, Arguments: args, Custom: custom},
 			})
+			// Parallel calls arrive as consecutive function_call items; they
+			// must form ONE assistant message (OpenAI chat rejects an assistant
+			// turn followed by another assistant turn before its tool results,
+			// Gemini requires call/response part counts to match).
+			if n := len(req.Messages); n > 0 && len(msg.Content) == 1 &&
+				req.Messages[n-1].Role == core.RoleAssistant && endsWithToolCall(req.Messages[n-1]) {
+				req.Messages[n-1].Content = append(req.Messages[n-1].Content, msg.Content...)
+				continue
+			}
 			req.Messages = append(req.Messages, msg)
 
-		case "function_call_output":
+		case "function_call_output", "custom_tool_call_output":
 			req.Messages = append(req.Messages, core.Message{
 				Role: core.RoleTool,
 				Content: []core.ContentPart{{
@@ -386,6 +438,7 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 	// Codex and other Responses-native backends.
 
 	var input []map[string]any
+	customCalls := customToolCallIDs(req.Messages)
 	for _, m := range req.Messages {
 		switch m.Role {
 		case core.RoleUser, core.RoleAssistant:
@@ -441,6 +494,15 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 					if name == "" {
 						name = "_unknown"
 					}
+					if p.ToolCall.Custom {
+						input = append(input, map[string]any{
+							"type":    "custom_tool_call",
+							"call_id": clampCallID(p.ToolCall.ID),
+							"name":    name,
+							"input":   string(p.ToolCall.Arguments),
+						})
+						continue
+					}
 					input = append(input, map[string]any{
 						"type":      "function_call",
 						"call_id":   clampCallID(p.ToolCall.ID),
@@ -455,7 +517,7 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 			for _, p := range m.Content {
 				if p.Type == core.PartToolResult && p.ToolResult != nil {
 					input = append(input, map[string]any{
-						"type":    "function_call_output",
+						"type":    toolOutputItemType(customCalls, p.ToolResult.CallID),
 						"call_id": clampCallID(p.ToolResult.CallID),
 						"output":  p.ToolResult.Content,
 					})
@@ -466,7 +528,7 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 			for _, p := range m.Content {
 				if p.Type == core.PartToolResult && p.ToolResult != nil {
 					input = append(input, map[string]any{
-						"type":    "function_call_output",
+						"type":    toolOutputItemType(customCalls, p.ToolResult.CallID),
 						"call_id": clampCallID(p.ToolResult.CallID),
 						"output":  p.ToolResult.Content,
 					})
@@ -480,8 +542,12 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 	out["input"] = input
 
 	if len(req.Tools) > 0 {
-		var tools []map[string]any
+		var tools []any
 		for _, t := range req.Tools {
+			if len(t.Raw) > 0 {
+				tools = append(tools, t.Raw)
+				continue
+			}
 			params := t.Parameters
 			if len(params) == 0 {
 				params = json.RawMessage(`{"type":"object","properties":{}}`)
@@ -494,6 +560,12 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 			})
 		}
 		out["tools"] = tools
+	}
+	if req.PreviousResponseID != "" {
+		out["previous_response_id"] = req.PreviousResponseID
+	}
+	if req.ParallelToolCalls != nil && len(req.Tools) > 0 {
+		out["parallel_tool_calls"] = *req.ParallelToolCalls
 	}
 
 	// Allowlist filter: strip any field not recognized by the Responses API.
@@ -540,6 +612,7 @@ type respUnary struct {
 		CallID           string            `json:"call_id"`
 		Name             string            `json:"name"`
 		Arguments        string            `json:"arguments"`
+		Input            string            `json:"input"`
 		Summary          []respSummaryPart `json:"summary"`
 		EncryptedContent string            `json:"encrypted_content"`
 	} `json:"output"`
@@ -557,7 +630,7 @@ type respUnary struct {
 
 func (OpenAIResponsesCodec) ParseResponse(body []byte, model string) (*core.ChatResponse, error) {
 	var raw respUnary
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := json.UnmarshalNoCopy(body, &raw); err != nil {
 		return nil, fmt.Errorf("openai-responses: parse response: %w", err)
 	}
 
@@ -584,13 +657,16 @@ func (OpenAIResponsesCodec) ParseResponse(body []byte, model string) (*core.Chat
 				}
 			}
 		case "function_call", "custom_tool_call":
+			custom := item.Type == "custom_tool_call"
 			args := json.RawMessage(item.Arguments)
-			if len(args) == 0 {
+			if custom {
+				args = json.RawMessage(item.Input)
+			} else if len(args) == 0 {
 				args = json.RawMessage("{}")
 			}
 			msg.Content = append(msg.Content, core.ContentPart{
 				Type:     core.PartToolCall,
-				ToolCall: &core.ToolCall{ID: item.CallID, Name: item.Name, Arguments: args},
+				ToolCall: &core.ToolCall{ID: item.CallID, Name: item.Name, Arguments: args, Custom: custom},
 			})
 			finish = core.FinishToolCalls
 		}
@@ -667,4 +743,37 @@ func (OpenAIResponsesCodec) RenderResponse(resp *core.ChatResponse) ([]byte, err
 		},
 	}
 	return json.Marshal(out)
+}
+
+// endsWithToolCall reports whether the message's last part is a tool call,
+// i.e. it is the assistant turn that parallel tool calls should join.
+func endsWithToolCall(m core.Message) bool {
+	if len(m.Content) == 0 {
+		return false
+	}
+	return m.Content[len(m.Content)-1].Type == core.PartToolCall
+}
+
+// customToolCallIDs collects the ids of custom (freeform) tool calls so their
+// results can be rendered as custom_tool_call_output items.
+func customToolCallIDs(messages []core.Message) map[string]struct{} {
+	var ids map[string]struct{}
+	for _, m := range messages {
+		for _, p := range m.Content {
+			if p.Type == core.PartToolCall && p.ToolCall != nil && p.ToolCall.Custom {
+				if ids == nil {
+					ids = map[string]struct{}{}
+				}
+				ids[p.ToolCall.ID] = struct{}{}
+			}
+		}
+	}
+	return ids
+}
+
+func toolOutputItemType(customCalls map[string]struct{}, callID string) string {
+	if _, ok := customCalls[callID]; ok {
+		return "custom_tool_call_output"
+	}
+	return "function_call_output"
 }

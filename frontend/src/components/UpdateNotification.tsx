@@ -4,6 +4,7 @@ import { X, ExternalLink, ArrowUpCircle, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { ChangelogMarkdown } from "./ChangelogMarkdown";
+import { IconTile } from "./ui";
 
 // useUpdateInfo is a shared hook so the TopBar badge and the Settings page
 // read from the same cached query. The check hits GitHub at most every few
@@ -98,7 +99,9 @@ export function UpdateNotification() {
           style={{ outline: "none" }}
         >
           <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-4 py-3">
-            <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-3">
+              <IconTile icon={ArrowUpCircle} size="md" tone="blue" />
+              <div className="min-w-0">
               <h2 id={titleId} className="text-[13px] font-semibold text-fg">Update available</h2>
               <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-fg-muted">
                 <span className="truncate font-mono">{data.current}</span>
@@ -106,6 +109,7 @@ export function UpdateNotification() {
                 <span className="sr-only">to</span>
                 <span className="truncate font-mono font-medium text-fg">{data.latest}</span>
               </p>
+              </div>
             </div>
             <button
               type="button"
@@ -127,7 +131,7 @@ export function UpdateNotification() {
             <Link
               to="/settings#system"
               onClick={() => setOpen(false)}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent bg-primary px-3 text-[13px] font-medium text-primary-fg transition-opacity hover:opacity-85 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent bg-action px-3 text-[13px] font-medium text-action-fg shadow-[var(--shadow-card)] transition-colors hover:bg-action-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-subtle"
             >
               <FileText className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
               Full changelog

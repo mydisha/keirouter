@@ -68,6 +68,15 @@ const (
 	// computed cooldowns so accounts that failed together do not all become
 	// eligible again at the same instant.
 	BackoffJitterFraction = 0.25
+	// TransientFailureThreshold is the number of transient upstream failures
+	// (5xx, timeouts, network faults) an account must accumulate within
+	// TransientFailureWindow before it is cooled down. A single blip on the
+	// only configured account used to lock the whole router out for
+	// TransientCooldown; LiteLLM likewise never cools a deployment down on a
+	// lone 5xx and requires a failure-rate threshold first.
+	TransientFailureThreshold = 3
+	// TransientFailureWindow bounds how long transient strikes are remembered.
+	TransientFailureWindow = time.Minute
 	// CreditsExhaustedCooldown parks an account whose paid balance is
 	// depleted. A dry balance only recovers when the user tops up or the plan
 	// renews, so probing every half hour just burns requests — one automatic
@@ -169,26 +178,52 @@ type Dispatcher struct {
 	// account+model) so a burst of parallel failures counts once.
 	failureMu      sync.Mutex
 	recentFailures map[string]time.Time
+	// transientStrikes counts recent transient failures per account so a
+	// cooldown is only applied after repeated faults.
+	transientStrikes map[string]strikeWindow
+	// dirty records accounts (and account\x00model keys) whose cooldown or
+	// backoff state this process has written. NoteSuccess only issues the
+	// clearing DB writes for dirty keys, keeping the success hot path free of
+	// database round-trips.
+	dirty map[string]time.Time
 	// defaultCooldown is applied to an account when an error carries no
 	// upstream-specified Retry-After.
 	defaultCooldown time.Duration
+	// clock is the time source for circuit bookkeeping (swapped in tests).
+	clock func() time.Time
+}
+
+type strikeWindow struct {
+	Count int
+	Start time.Time
 }
 
 type providerCircuit struct {
 	Failures    int
 	LastFailure time.Time
 	OpenUntil   time.Time
+	// ProbeStarted is set while the circuit is half-open: one request has
+	// been let through to test the provider and the rest keep waiting.
+	ProbeStarted time.Time
 }
+
+// ProviderCircuitProbeTimeout bounds a half-open probe. If the trial request
+// neither succeeds nor fails within this window (client disconnected, very
+// long generation) another request is allowed to probe.
+const ProviderCircuitProbeTimeout = 30 * time.Second
 
 // New builds a Dispatcher.
 func New(conns ConnectorSource, accounts *store.AccountRepo, v *vault.Vault) *Dispatcher {
 	return &Dispatcher{
-		conns:           conns,
-		accounts:        accounts,
-		vault:           v,
-		defaultCooldown: 60 * time.Second,
-		circuits:        make(map[string]providerCircuit),
-		recentFailures:  make(map[string]time.Time),
+		conns:            conns,
+		accounts:         accounts,
+		vault:            v,
+		defaultCooldown:  60 * time.Second,
+		circuits:         make(map[string]providerCircuit),
+		recentFailures:   make(map[string]time.Time),
+		transientStrikes: make(map[string]strikeWindow),
+		dirty:            make(map[string]time.Time),
+		clock:            time.Now,
 	}
 }
 
@@ -244,6 +279,11 @@ type PlanOptions struct {
 	// AllowedAccountIDs pins account-bound operations to a known credential.
 	// Empty means every otherwise eligible account is allowed.
 	AllowedAccountIDs map[string]struct{}
+	// Limit stops planning once this many healthy attempts are resolved.
+	// Zero resolves every candidate. The pipeline plans one attempt at a time
+	// and re-plans after each failure, so Limit=1 avoids refreshing OAuth
+	// tokens and decrypting credentials for accounts that are never used.
+	Limit int
 }
 
 // AttemptKey uniquely identifies one routed provider/model/account candidate.
@@ -476,6 +516,9 @@ func (d *Dispatcher) PlanWith(ctx context.Context, tenantID string, targets []Ta
 				unhealthyAttempts = append(unhealthyAttempts, attempt)
 			} else {
 				attempts = append(attempts, attempt)
+				if opts.Limit > 0 && len(attempts) >= opts.Limit {
+					return attempts, nil
+				}
 			}
 		}
 	}
@@ -543,6 +586,12 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 	if err.Kind == core.ErrClientCanceled || scope == core.FailureScopeRequest {
 		return
 	}
+	// The request did not fit this model (or tripped its safety filter). The
+	// account and model are healthy for every other request: never cool
+	// them down, just let the chain advance.
+	if err.Kind == core.ErrContextWindow || err.Kind == core.ErrContentFilter {
+		return
+	}
 
 	if (scope == core.FailureScopeProvider || scope == core.FailureScopeNetwork) &&
 		(err.Kind == core.ErrUpstream || err.Kind == core.ErrTimeout) {
@@ -567,6 +616,7 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 				return
 			}
 			_ = d.routing.SetModelCooldown(ctx, accountID, err.Model, time.Now().Add(cooldown))
+			d.markDirty(accountID + "\x00" + err.Model)
 		}
 		return
 	}
@@ -588,6 +638,11 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 		// cooldown to avoid penalizing a working account.
 		if err.Kind == core.ErrTimeout && err.StatusCode == 0 &&
 			errors.Is(err.Cause, context.DeadlineExceeded) {
+			return
+		}
+		// Transient faults need repeated strikes before an account is
+		// benched; one 502 must not take the only account offline.
+		if !d.recordTransientStrike(accountID, time.Now()) {
 			return
 		}
 	default:
@@ -643,6 +698,7 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 	err.RetryAfter = cooldown
 
 	_ = d.accounts.SetCooldown(ctx, accountID, time.Now().Add(cooldown))
+	d.markDirty(accountID)
 
 	// A depleted balance is terminal until the user tops up: flag the account
 	// so the dashboard can surface it and a manual reset can clear it. The
@@ -656,28 +712,106 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 	if d.routing != nil && err.Model != "" {
 		modelCooldown := time.Duration(int64(cooldown) * ModelCooldownMultiplier)
 		_ = d.routing.SetModelCooldown(ctx, accountID, err.Model, time.Now().Add(modelCooldown))
+		d.markDirty(accountID + "\x00" + err.Model)
 	}
 }
 
 // NoteSuccess resets the backoff level for an account and clears any model
 // cooldown. Called by the pipeline after a successful upstream response.
 func (d *Dispatcher) NoteSuccess(ctx context.Context, provider, accountID, model string) {
-	_ = d.accounts.ResetBackoffLevel(ctx, accountID)
+	d.NoteSuccessAt(ctx, provider, accountID, model, time.Time{})
+}
+
+// NoteSuccessAt is NoteSuccess for an attempt that started at startedAt.
+//
+// The success hot path performs no database writes unless this process
+// previously recorded a failure for the account (or account+model): clearing
+// state that was never set is wasted I/O on every request. A cooldown set by
+// a failure that happened *after* this attempt started is left alone — the
+// in-flight request predates the incident and proves nothing about it.
+func (d *Dispatcher) NoteSuccessAt(ctx context.Context, provider, accountID, model string, startedAt time.Time) {
+	modelKey := accountID + "\x00" + model
+
+	d.failureMu.Lock()
 	// A success proves the account recovered, so a later failure is a fresh
 	// incident rather than part of the burst that set the dedup marker.
-	d.failureMu.Lock()
 	delete(d.recentFailures, accountID)
+	delete(d.transientStrikes, accountID)
 	if model != "" {
-		delete(d.recentFailures, accountID+"\x00"+model)
+		delete(d.recentFailures, modelKey)
+	}
+	accountDirty := d.dirtySince(accountID, startedAt)
+	modelDirty := d.dirtySince(modelKey, startedAt)
+	if accountDirty {
+		delete(d.dirty, accountID)
+	}
+	if modelDirty {
+		delete(d.dirty, modelKey)
 	}
 	d.failureMu.Unlock()
-	if d.routing != nil && model != "" {
+
+	if accountDirty {
+		_ = d.accounts.ResetBackoffLevel(ctx, accountID)
+	}
+	if modelDirty && d.routing != nil && model != "" {
 		_ = d.routing.ClearModelCooldown(ctx, accountID, model)
 	}
 	if d.health != nil && model != "" {
 		_ = d.health.MarkHealthy(ctx, accountID, model)
 	}
 	d.recordProviderSuccess(provider)
+}
+
+// dirtySince reports whether key carries state written by this process that
+// a success starting at startedAt is entitled to clear. Caller holds failureMu.
+func (d *Dispatcher) dirtySince(key string, startedAt time.Time) bool {
+	at, ok := d.dirty[key]
+	if !ok {
+		return false
+	}
+	// Failure recorded after this attempt began: keep the cooldown.
+	return startedAt.IsZero() || !at.After(startedAt)
+}
+
+// markDirty remembers that cooldown/backoff state was written for key.
+func (d *Dispatcher) markDirty(key string) {
+	d.failureMu.Lock()
+	if len(d.dirty) >= maxRecentFailureEntries {
+		cutoff := time.Now().Add(-24 * time.Hour)
+		for k, at := range d.dirty {
+			if at.Before(cutoff) {
+				delete(d.dirty, k)
+			}
+		}
+	}
+	d.dirty[key] = time.Now()
+	d.failureMu.Unlock()
+}
+
+// recordTransientStrike counts a transient failure for accountID and reports
+// whether the account has crossed TransientFailureThreshold within
+// TransientFailureWindow (and should therefore be cooled down).
+func (d *Dispatcher) recordTransientStrike(accountID string, now time.Time) bool {
+	d.failureMu.Lock()
+	defer d.failureMu.Unlock()
+	w := d.transientStrikes[accountID]
+	if w.Count == 0 || now.Sub(w.Start) > TransientFailureWindow {
+		w = strikeWindow{Count: 0, Start: now}
+	}
+	w.Count++
+	if len(d.transientStrikes) >= maxRecentFailureEntries {
+		for k, sw := range d.transientStrikes {
+			if now.Sub(sw.Start) > TransientFailureWindow {
+				delete(d.transientStrikes, k)
+			}
+		}
+	}
+	d.transientStrikes[accountID] = w
+	if w.Count >= TransientFailureThreshold {
+		d.transientStrikes[accountID] = strikeWindow{Count: 0, Start: now}
+		return true
+	}
+	return false
 }
 
 // shouldEscalateFailure reports whether this failure should escalate cooldown
@@ -948,16 +1082,23 @@ func (d *Dispatcher) recordProviderFailure(provider string) {
 	if provider == "" {
 		return
 	}
-	now := time.Now()
+	now := d.clock()
 	d.circuitMu.Lock()
 	defer d.circuitMu.Unlock()
 	state := d.circuits[provider]
-	if !state.LastFailure.IsZero() && now.Sub(state.LastFailure) > ProviderCircuitResetWindow {
+	probing := !state.ProbeStarted.IsZero()
+	state.ProbeStarted = time.Time{}
+	if !probing && !state.LastFailure.IsZero() && now.Sub(state.LastFailure) > ProviderCircuitResetWindow {
 		state.Failures = 0
 		state.OpenUntil = time.Time{}
 	}
 	state.Failures++
 	state.LastFailure = now
+	// A failed half-open probe re-opens the circuit immediately with the
+	// next (longer) interval; it never needs to accumulate fresh strikes.
+	if probing && state.Failures < ProviderCircuitFailureThreshold {
+		state.Failures = ProviderCircuitFailureThreshold
+	}
 	if state.Failures >= ProviderCircuitFailureThreshold {
 		exponent := state.Failures - ProviderCircuitFailureThreshold
 		if exponent > 10 {
@@ -981,6 +1122,11 @@ func (d *Dispatcher) recordProviderSuccess(provider string) {
 	d.circuitMu.Unlock()
 }
 
+// providerCircuitRemaining reports how long the provider's circuit stays
+// open for this caller. Once the open interval has elapsed the circuit goes
+// half-open: exactly one request is admitted as a probe while the others
+// keep seeing a short remaining time, so a provider that is still down is
+// hit by one request instead of the whole backlog at once.
 func (d *Dispatcher) providerCircuitRemaining(provider string, now time.Time) time.Duration {
 	if provider == "" {
 		return 0
@@ -988,10 +1134,19 @@ func (d *Dispatcher) providerCircuitRemaining(provider string, now time.Time) ti
 	d.circuitMu.Lock()
 	defer d.circuitMu.Unlock()
 	state, ok := d.circuits[provider]
-	if !ok || !state.OpenUntil.After(now) {
+	if !ok || state.OpenUntil.IsZero() {
 		return 0
 	}
-	return state.OpenUntil.Sub(now)
+	if state.OpenUntil.After(now) {
+		return state.OpenUntil.Sub(now)
+	}
+	// Half-open: admit one probe at a time.
+	if state.ProbeStarted.IsZero() || now.Sub(state.ProbeStarted) > ProviderCircuitProbeTimeout {
+		state.ProbeStarted = now
+		d.circuits[provider] = state
+		return 0
+	}
+	return ProviderCircuitProbeTimeout - now.Sub(state.ProbeStarted)
 }
 
 // advanceRotationState returns the cursor to use for this request, plus the

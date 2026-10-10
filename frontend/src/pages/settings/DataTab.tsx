@@ -1,6 +1,6 @@
 import { useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, Eye, EyeOff, KeyRound, ShieldCheck, Upload } from "lucide-react";
+import { ArchiveRestore, DatabaseBackup, Download, Eye, EyeOff, Import, KeyRound, ShieldCheck, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   api,
@@ -21,8 +21,8 @@ export function ImportExportTab() {
   return (
     <div className="space-y-4">
       <DatabaseSettings loading={dbLoading} setLoading={setDbLoading} />
-      <ForeignImportSettings />
       <DangerZone loading={dbLoading} setLoading={setDbLoading} />
+      <ForeignImportSettings />
     </div>
   );
 }
@@ -164,7 +164,7 @@ function RadioCard({
         checked
           ? danger
             ? "border-bad/50 bg-bad/5"
-            : "border-accent-500 bg-accent-500/5"
+            : "border-accent-500/30 bg-accent-500/10"
           : "border-line hover:border-line-strong hover:bg-hover",
       )}
     >
@@ -366,7 +366,7 @@ function ForeignImportSettings() {
     : [];
 
   return (
-    <SettingsCard title="Import from other routers" description="JSON imports keep existing data" busy={loading}>
+    <SettingsCard icon={Import} title="Import from other routers" description="JSON imports keep existing data" busy={loading}>
       <SettingRow
         label={
           <>
@@ -731,7 +731,7 @@ function DatabaseSettings({ loading, setLoading }: DbBusy) {
 
   return (
     <>
-      <SettingsCard title="Backups" busy={loading}>
+      <SettingsCard icon={DatabaseBackup} title="Backups" busy={loading}>
         <SettingRow label="Download configuration" description="JSON file. Local, or portable with a passphrase.">
           <Button variant="ghost" onClick={() => setExportOpen(true)} disabled={loading}>
             <Download className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
@@ -1002,19 +1002,19 @@ function DangerZone({ loading, setLoading }: DbBusy) {
   };
 
   return (
-    <SettingsCard title="Danger zone" tone="danger" busy={loading}>
+    <SettingsCard icon={ArchiveRestore} title="Restore database" tone="danger" busy={loading}>
       <SettingRow
-        label="Replace database"
+        label="Restore from SQLite backup"
         description={
           sqliteAvailable || sqlite.isLoading
-            ? "Swap in a .db backup. Current data is replaced; restart required."
+            ? "Upload a .db or .sqlite backup. Current data is replaced; restart required."
             : "Only available with SQLite storage."
         }
         info="KeiRouter checks the file's integrity and saves a safety copy of the current database before replacing it."
       >
         <Button variant="danger" onClick={() => sqliteImportRef.current?.click()} disabled={loading || !sqliteAvailable}>
           <Upload strokeWidth={1.75} aria-hidden="true" />
-          Replace from .db
+          Restore .db / .sqlite
         </Button>
         <input
           ref={sqliteImportRef}

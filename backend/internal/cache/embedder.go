@@ -62,15 +62,19 @@ func NewHashEmbedder(dims int) *HashEmbedder {
 // vector; different text yields effectively unrelated vectors.
 func (h *HashEmbedder) Embed(_ context.Context, text string) ([]float32, error) {
 	vec := make([]float32, h.dims)
-	// Expand the digest deterministically across the requested dimensions by
-	// re-hashing with a counter.
+	// Hash the prompt once, then expand the digest deterministically across
+	// the requested dimensions by re-hashing digest+counter. Hashing
+	// text+counter per dimension copied the whole prompt dims times (32 MB
+	// of allocation per 1 MB prompt).
+	base := sha256.Sum256([]byte(text))
+	var buf [sha256.Size + 8]byte
+	copy(buf[:], base[:])
 	for i := 0; i < h.dims; i++ {
-		var seed [8]byte
-		binary.LittleEndian.PutUint64(seed[:], uint64(i))
-		sum := sha256.Sum256(append([]byte(text), seed[:]...))
+		binary.LittleEndian.PutUint64(buf[sha256.Size:], uint64(i))
+		sum := sha256.Sum256(buf[:])
 		// Map the first 4 bytes to a float in [-1, 1].
 		u := binary.LittleEndian.Uint32(sum[:4])
-		vec[i] = float32(int32(u))/float32(1<<31) // normalize to ~[-1,1]
+		vec[i] = float32(int32(u)) / float32(1<<31) // normalize to ~[-1,1]
 	}
 	return vec, nil
 }

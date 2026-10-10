@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog } from "radix-ui";
-import { AlertTriangle, ArrowLeft, Check, CheckCircle2, ChevronRight, Copy, ExternalLink, Loader2, RefreshCw, X, type LucideIcon } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Check, ChevronRight, Copy, ExternalLink, Loader2, RefreshCw, X, type LucideIcon } from "lucide-react";
 import type { DeviceCode } from "../../lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderLogo } from "../ProviderLogo";
+import { Badge, IconTile } from "../ui";
 import { useToast } from "../Toast";
 
 // The connect kit is the shared vocabulary of every "connect a provider"
@@ -14,6 +15,11 @@ import { useToast } from "../Toast";
 // actually different about that provider.
 
 // ── Shell ────────────────────────────────────────────────────────────────────
+
+// Dialogs render in a portal outside <main>, so they don't inherit the page's
+// section tone. Every connect dialog belongs to the Providers group (teal);
+// `tone` lets a caller from another section override it.
+type DialogTone = "blue" | "violet" | "teal" | "orange" | "slate";
 
 export function ConnectDialog({
   title,
@@ -25,6 +31,7 @@ export function ConnectDialog({
   toolbar,
   children,
   footer,
+  tone = "teal",
 }: {
   title: string;
   description?: ReactNode;
@@ -37,6 +44,7 @@ export function ConnectDialog({
   toolbar?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
+  tone?: DialogTone;
 }) {
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
@@ -44,6 +52,7 @@ export function ConnectDialog({
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/45 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
         <Dialog.Content
           {...(description ? {} : { "aria-describedby": undefined })}
+          data-tone={tone}
           className={cn(
             "fixed left-1/2 top-1/2 z-50 flex max-h-[min(88vh,760px)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-float)] focus:outline-none",
             "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.98]",
@@ -119,7 +128,7 @@ export function PrimaryAction({
       aria-busy={busy || undefined}
       data-autofocus
       className={cn(
-        "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary px-3.5 text-[13px] font-medium text-primary-fg transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface [&_svg]:size-4",
+        "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-transparent bg-action px-3.5 text-[13px] font-medium text-action-fg shadow-[var(--shadow-card)] transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface [&_svg]:size-4",
         className,
       )}
     >
@@ -181,15 +190,15 @@ export function MethodPicker<T extends string>({ methods, onSelect, intro }: { m
               onClick={() => onSelect(m.id)}
               className="group flex w-full items-center gap-3 rounded-xl border border-line bg-surface px-3.5 py-3 text-left transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
             >
-              <m.icon className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <IconTile icon={m.icon} size="md" />
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2 text-[13px] font-medium text-fg">
                   {m.title}
-                  {m.recommended && <span className="rounded-md border border-line px-1.5 text-[11px] font-medium text-fg-muted">Recommended</span>}
+                  {m.recommended && <Badge tone="secondary">Recommended</Badge>}
                 </span>
                 <span className="mt-0.5 block text-[12.5px] leading-5 text-fg-muted">{m.description}</span>
               </span>
-              <ChevronRight className="h-4 w-4 shrink-0 text-fg-faint transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+              <ChevronRight className="h-4 w-4 shrink-0 text-fg-faint transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-tone" aria-hidden="true" />
             </button>
           </li>
         ))}
@@ -209,7 +218,7 @@ export function Steps({ title, steps }: { title?: string; steps: ReactNode[] }) 
       <ol className="space-y-2">
         {steps.map((s, i) => (
           <li key={i} className="flex items-start gap-2.5 text-[13px] leading-5 text-fg">
-            <span aria-hidden="true" className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-strong font-mono text-[11px] text-fg-muted">{i + 1}</span>
+            <span aria-hidden="true" className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-tone-soft font-mono text-[11px] font-semibold text-tone ring-1 ring-inset ring-tone-ring">{i + 1}</span>
             <span className="min-w-0">{s}</span>
           </li>
         ))}
@@ -393,14 +402,14 @@ export function DeviceWaiting({
         target="_blank"
         rel="noopener noreferrer"
         data-autofocus
-        className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-primary text-[13px] font-medium text-primary-fg transition-opacity hover:opacity-85 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+        className="flex h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-action text-[13px] font-medium text-action-fg shadow-[var(--shadow-card)] transition-colors hover:bg-action-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
       >
         <ExternalLink className="h-4 w-4" aria-hidden="true" />
         {openLabel}
         <span className="sr-only"> (opens in a new tab)</span>
       </a>
       <div className="flex items-center gap-2.5 rounded-xl border border-line px-3.5 py-2.5">
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-fg-muted" aria-hidden="true" />
+        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-tone" aria-hidden="true" />
         {/* The live region holds only the status text: the ticking timer stays
             outside it so screen readers aren't interrupted every second. */}
         <div className="min-w-0 flex-1" role="status" aria-live="polite">
@@ -427,7 +436,7 @@ function formatElapsed(s: number): string {
 export function Starting({ text }: { text: string }) {
   return (
     <div className="flex flex-col items-center gap-3 py-8" role="status" aria-live="polite">
-      <Loader2 className="h-6 w-6 animate-spin text-fg-muted" aria-hidden="true" />
+      <Loader2 className="h-6 w-6 animate-spin text-tone" aria-hidden="true" />
       <p className="text-[13px] text-fg-muted">{text}</p>
     </div>
   );
@@ -436,8 +445,8 @@ export function Starting({ text }: { text: string }) {
 export function Connected({ name }: { name: string }) {
   return (
     <div className="flex flex-col items-center gap-2 py-8 text-center" role="status" aria-live="polite">
-      <CheckCircle2 className="h-8 w-8 text-ok" strokeWidth={1.75} aria-hidden="true" />
-      <p className="text-[14px] font-medium text-fg">{name} connected</p>
+      <IconTile icon={Check} size="lg" tone="ok" className="mb-1" />
+      <p className="text-[14px] font-semibold text-fg">{name} connected</p>
       <p className="text-[12.5px] text-fg-muted">Refreshing accounts…</p>
     </div>
   );

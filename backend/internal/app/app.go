@@ -75,6 +75,7 @@ type App struct {
 // Build constructs the application from configuration. It opens the database,
 // applies migrations, initializes the crypto root, and wires the gateway.
 func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version string) (*App, error) {
+	applyMemoryLimit(log)
 	httputil.SetAllowPrivateBaseURL(cfg.Security.AllowPrivateBaseURL)
 
 	dataDir, err := resolveDataDir(cfg)
@@ -134,13 +135,20 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	pricing := buildPricing()
 	modelPrices := buildModelPrices(ctx, db, log)
 	mtr := meter.New(db.Usage(), pricing, modelPrices)
-	// Reprice deterministic legacy rows before serving analytics. Unknown or
-	// subscription-only models remain visibly unpriced instead of silently free.
-	if updated, backfillErr := mtr.BackfillUnpriced(ctx); backfillErr != nil {
-		log.Warn("usage price backfill failed", "err", backfillErr, "updated", updated)
-	} else if updated > 0 {
-		log.Info("usage price backfill completed", "updated", updated)
-	}
+	// Reprice deterministic legacy rows in the background so a large usage
+	// history (e.g. after a database restore) never delays the server from
+	// listening. Unknown or subscription-only models remain visibly unpriced
+	// instead of silently free.
+	go func() {
+		started := time.Now()
+		if updated, backfillErr := mtr.BackfillUnpriced(ctx); backfillErr != nil {
+			if ctx.Err() == nil {
+				log.Warn("usage price backfill failed", "err", backfillErr, "updated", updated)
+			}
+		} else if updated > 0 {
+			log.Info("usage price backfill completed", "updated", updated, "took", time.Since(started).Round(time.Millisecond))
+		}
+	}()
 	mtr.EnableAsync(meter.AsyncConfig{
 		Enabled:              cfg.Meter.Async,
 		BatchSize:            cfg.Meter.BatchSize,
@@ -430,6 +438,10 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		ReadHeaderTimeout: 15 * time.Second,
 		// No WriteTimeout: streaming responses are long-lived; the stall
 		// timeout is enforced per-stream inside the connectors instead.
+		// IdleTimeout reaps keep-alive client connections that went quiet so
+		// abandoned SDK pools do not pin file descriptors forever.
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
 
 	// Auto-seed accounts for free, no-auth providers so they are immediately
@@ -554,8 +566,14 @@ func (a *App) Run(ctx context.Context) error {
 		a.log.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		// A long-lived stream can outlast the grace period. That is not a
+		// reason to skip draining usage, telemetry and audit queues: the
+		// connections are closed forcibly and the drain still runs.
+		var shutdownErr error
 		if err := a.server.Shutdown(shutdownCtx); err != nil {
-			return err
+			a.log.Warn("graceful shutdown exceeded grace period; closing active connections", "err", err)
+			_ = a.server.Close()
+			shutdownErr = err
 		}
 		// Wait for background workers that query the DB (oauth keepalive, health
 		// checker, cooldown sweeper) to return before closing the store. They
@@ -577,7 +595,10 @@ func (a *App) Run(ctx context.Context) error {
 		if a.providerHealth != nil {
 			a.providerHealth.Close(5 * time.Second)
 		}
-		return a.db.Close()
+		if err := a.db.Close(); err != nil {
+			return err
+		}
+		return shutdownErr
 	case err := <-errCh:
 		return err
 	}

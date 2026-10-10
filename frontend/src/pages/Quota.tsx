@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  BatteryLow,
   ChevronDown,
   Loader2,
   MoreHorizontal,
@@ -12,6 +13,7 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
+  TimerReset,
   Trash2,
 } from "lucide-react";
 import { api, connectUsageStream, type QuotaAccount, type UpstreamQuota } from "../lib/api";
@@ -25,7 +27,11 @@ import {
   Card,
   EmptyState,
   ErrorCard,
+  IconTile,
   Input,
+  Kpi,
+  KpiGrid,
+  SectionTitle,
   Select,
   Skeleton,
   TablePagination,
@@ -35,6 +41,7 @@ import {
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { useToast } from "../components/Toast";
 import { useConfirm } from "../components/ui/confirm-dialog";
+import { ICONS } from "../lib/icons";
 
 const PERIODS = REPORT_PERIODS.map((p) => ({ ...p }));
 
@@ -346,6 +353,7 @@ export function QuotaPage() {
         <QuotaSkeleton />
       ) : accounts.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+          <IconTile icon={ICONS.quota} size="lg" className="mx-auto mb-3" />
           <h2 className="text-[14px] font-medium text-fg">No connected accounts</h2>
           <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
             Connect a provider account to track its usage and limits.
@@ -356,7 +364,7 @@ export function QuotaPage() {
           </Button>
         </div>
       ) : (
-        <div className="space-y-5 pb-12">
+        <div className="space-y-6 pb-12">
           {(depletedAccounts.length > 0 || resumableAccounts.length > 0) && (
             <CapacityActions
               depleted={depletedAccounts.length}
@@ -366,43 +374,56 @@ export function QuotaPage() {
             />
           )}
 
-          <SummaryStrip
-            cells={[
-              {
-                label: "Needs attention",
-                value: fmtInteger(totals.attention),
-                hint: `of ${fmtInteger(accounts.length)} accounts`,
-                tone: totals.attention > 0 ? "bad" : undefined,
-              },
-              {
-                label: "Near limit",
-                value: fmtInteger(totals.nearLimit),
-                hint: `${NEAR_LIMIT_USED}%+ of a window used`,
-                tone: totals.nearLimit > 0 ? "warn" : undefined,
-              },
-              {
-                label: "Exhausted",
-                value: fmtInteger(totals.exhausted),
-                hint: depletedAccounts.length > 0 ? `${fmtInteger(depletedAccounts.length)} still routing` : undefined,
-                tone: totals.exhausted > 0 ? "bad" : undefined,
-              },
-              {
-                label: "Next reset",
-                value: totals.nextReset ? formatCountdown(totals.nextReset.at).replace(/^in /, "") : "—",
-                hint: totals.nextReset ? totals.nextReset.account.label || totals.nextReset.account.provider_name : undefined,
-                title: totals.nextReset ? new Date(totals.nextReset.at).toLocaleString() : undefined,
-              },
-            ]}
-          />
+          <KpiGrid cols={4} label="Quota summary">
+            <Kpi
+              icon={ICONS.errors}
+              label="Needs attention"
+              value={fmtInteger(totals.attention)}
+              hint={`of ${fmtInteger(accounts.length)} accounts`}
+              tone={totals.attention > 0 ? "bad" : undefined}
+              valueClassName={totals.attention > 0 ? "text-bad" : ""}
+            />
+            <Kpi
+              icon={ICONS.quota}
+              label="Near limit"
+              value={fmtInteger(totals.nearLimit)}
+              hint={`${NEAR_LIMIT_USED}%+ of a window used`}
+              tone={totals.nearLimit > 0 ? "warn" : undefined}
+              valueClassName={totals.nearLimit > 0 ? "text-warn" : ""}
+            />
+            <Kpi
+              icon={BatteryLow}
+              label="Exhausted"
+              value={fmtInteger(totals.exhausted)}
+              hint={depletedAccounts.length > 0 ? `${fmtInteger(depletedAccounts.length)} still routing` : undefined}
+              tone={totals.exhausted > 0 ? "bad" : undefined}
+              valueClassName={totals.exhausted > 0 ? "text-bad" : ""}
+            />
+            <Kpi
+              icon={TimerReset}
+              label="Next reset"
+              value={
+                <span title={totals.nextReset ? new Date(totals.nextReset.at).toLocaleString() : undefined}>
+                  {totals.nextReset ? formatCountdown(totals.nextReset.at).replace(/^in /, "") : "—"}
+                </span>
+              }
+              hint={totals.nextReset ? totals.nextReset.account.label || totals.nextReset.account.provider_name : undefined}
+            />
+          </KpiGrid>
 
           <Card>
-            <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-              <h2 className="text-[13px] font-semibold text-fg">Accounts</h2>
-              <span role="status" className="shrink-0 text-[12px] tabular-nums text-fg-muted">
-                {sorted.length === accounts.length
-                  ? `${fmtInteger(accounts.length)} accounts`
-                  : `${fmtInteger(sorted.length)} of ${fmtInteger(accounts.length)} accounts`}
-              </span>
+            <div className="border-b border-line px-4 py-3">
+              <SectionTitle
+                icon={ICONS.account}
+                title="Accounts"
+                action={
+                  <span role="status" className="shrink-0 text-[12px] tabular-nums text-fg-muted">
+                    {sorted.length === accounts.length
+                      ? `${fmtInteger(accounts.length)} accounts`
+                      : `${fmtInteger(sorted.length)} of ${fmtInteger(accounts.length)} accounts`}
+                  </span>
+                }
+              />
             </div>
 
             <div className="border-b border-line px-4 py-2.5">
@@ -430,7 +451,7 @@ export function QuotaPage() {
                         onClick={() => setStatusFilter(chip.value)}
                         className={cn(
                           "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                          active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:text-fg",
+                          active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
                         )}
                       >
                         {chip.label}
@@ -611,17 +632,21 @@ function PeriodRadios({ value, onChange }: { value: string; onChange: (value: st
 function QuotaSkeleton() {
   return (
     <div className="space-y-5" aria-busy="true" aria-label="Loading quota data">
-      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-line bg-line sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
-          <div key={index} className="space-y-2 bg-surface px-4 py-3">
-            <Skeleton className="h-3 w-20" />
-            <Skeleton className="h-6 w-14" />
-            <Skeleton className="h-3 w-28" />
+          <div key={index} className="flex items-start gap-3 bg-surface px-4 py-3.5">
+            <Skeleton className="h-8 w-8 rounded-lg" />
+            <div className="space-y-2">
+              <Skeleton className="h-3 w-20" />
+              <Skeleton className="h-6 w-14" />
+              <Skeleton className="h-3 w-28" />
+            </div>
           </div>
         ))}
       </div>
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-        <div className="border-b border-line px-4 py-3">
+        <div className="flex items-center gap-2.5 border-b border-line px-4 py-3">
+          <Skeleton className="h-4 w-4 rounded" />
           <Skeleton className="h-3.5 w-24" />
         </div>
         <div className="divide-y divide-line">
@@ -646,34 +671,6 @@ function QuotaSkeleton() {
   );
 }
 
-function SummaryStrip({
-  cells,
-}: {
-  cells: { label: string; value: string; hint?: string; tone?: "warn" | "bad"; title?: string }[];
-}) {
-  return (
-    <section
-      aria-label="Quota summary"
-      className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line shadow-[var(--shadow-card)] lg:grid-cols-4"
-    >
-      {cells.map((cell) => (
-        <div key={cell.label} className="flex min-w-0 flex-col gap-1 bg-surface px-4 py-3" title={cell.title}>
-          <span className="text-[12px] font-medium text-fg-muted">{cell.label}</span>
-          <span
-            className={cn(
-              "text-[22px] font-semibold leading-tight tracking-[-0.02em] tabular-nums",
-              cell.tone === "bad" ? "text-bad" : cell.tone === "warn" ? "text-warn" : "text-fg",
-            )}
-          >
-            {cell.value}
-          </span>
-          {cell.hint && <span className="truncate text-[12px] tabular-nums text-fg-faint" title={cell.hint}>{cell.hint}</span>}
-        </div>
-      ))}
-    </section>
-  );
-}
-
 function CapacityActions({
   depleted,
   resumable,
@@ -687,7 +684,9 @@ function CapacityActions({
 }) {
   return (
     <section aria-label="Accounts needing attention" className="flex flex-col gap-3 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3 sm:flex-row sm:items-center">
-      <AlertTriangle className="hidden h-4 w-4 shrink-0 text-warn sm:block" strokeWidth={1.75} aria-hidden="true" />
+      <span className="hidden sm:block">
+        <IconTile icon={AlertTriangle} size="sm" tone="warn" />
+      </span>
       <div className="min-w-0 flex-1 text-[13px] leading-5">
         <p role="status" className="font-medium text-fg">
           {depleted > 0 && `${depleted} active account${depleted === 1 ? " is" : "s are"} almost out of quota`}

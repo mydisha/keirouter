@@ -9,6 +9,7 @@ package fastjson
 import (
 	"encoding/json"
 	"io"
+	"unsafe"
 
 	"github.com/bytedance/sonic"
 )
@@ -25,6 +26,21 @@ func Marshal(v interface{}) ([]byte, error) {
 // Unmarshal deserializes JSON data into v. Identical to json.Unmarshal.
 func Unmarshal(data []byte, v interface{}) error {
 	return defaultConfig.Unmarshal(data, v)
+}
+
+// UnmarshalNoCopy deserializes JSON data into v without first copying data.
+//
+// sonic's Unmarshal converts the input to a string (a full copy) so decoded
+// strings can safely reference it. On the request and stream hot paths the
+// caller already owns the buffer and never mutates it (request bodies from
+// io.ReadAll, per-frame copies made by the SSE pump), so that copy is pure
+// waste: it was ~30% of all bytes allocated while parsing. Decoded strings
+// alias data; callers must keep data immutable for the life of v.
+func UnmarshalNoCopy(data []byte, v interface{}) error {
+	if len(data) == 0 {
+		return defaultConfig.Unmarshal(data, v)
+	}
+	return defaultConfig.UnmarshalFromString(unsafe.String(unsafe.SliceData(data), len(data)), v)
 }
 
 // NewDecoder returns a streaming JSON decoder reading from r.

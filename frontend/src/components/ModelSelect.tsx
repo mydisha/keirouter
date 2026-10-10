@@ -4,7 +4,7 @@
 import { useState, useEffect, useId, useRef, useMemo, useCallback, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueries } from "@tanstack/react-query";
-import { X, Search, ChevronDown, Check, Eye, Brain } from "lucide-react";
+import { X, Search, ChevronDown, Check, Eye, Brain, Plus } from "lucide-react";
 import { api, type ModelCapabilities } from "../lib/api";
 import { ProviderLogo } from "./ProviderLogo";
 
@@ -488,7 +488,7 @@ export function ModelMultiSelect({
                         }}
                         onMouseMove={() => activeIndex !== index && setActiveIndex(index)}
                         className={`flex min-h-9 w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] transition-colors ${
-                          active ? "bg-hover ring-1 ring-inset ring-accent-500" : selected ? "bg-accent-500/[0.06] hover:bg-hover" : "hover:bg-hover"
+                          active ? "bg-hover ring-1 ring-inset ring-accent-500" : selected ? "bg-accent-500/10 hover:bg-accent-500/15" : "hover:bg-hover"
                         }`}
                       >
                         {/* Selected state is a check mark, not just a tint. */}
@@ -537,8 +537,9 @@ export function ModelMultiSelect({
                 type="button"
                 onClick={addCustom}
                 disabled={!customText.trim()}
-                className="h-9 rounded-lg border border-transparent bg-primary px-3 text-[13px] font-medium text-primary-fg transition-opacity hover:opacity-85 disabled:cursor-not-allowed disabled:opacity-40 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-transparent bg-action px-3 text-[13px] font-medium text-action-fg transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-subtle"
               >
+                <Plus className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
                 Add
               </button>
             </div>

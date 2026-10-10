@@ -1,6 +1,6 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, Check, CheckCircle, CheckCircle2, FileText, Layers, Upload, XCircle } from "lucide-react";
+import { AlertCircle, Check, CheckCircle, CheckCircle2, Layers, RefreshCw, Upload, XCircle } from "lucide-react";
 import { api, type AccountInput, type BulkAccountResult, type Provider } from "../../lib/api";
 import { parseKeys } from "../../lib/bulk";
 import { cn } from "@/lib/utils";
@@ -183,7 +183,7 @@ export function ApiKeyConnect({ provider, onClose }: { provider: Provider; onClo
         <>
           {!rules.isNoAuth && (
             <SecondaryAction onClick={runCheck} disabled={!complete || check.status === "checking"}>
-              <CheckCircle className={cn(check.status === "checking" && "animate-pulse")} aria-hidden="true" />
+              <RefreshCw className={cn(check.status === "checking" && "animate-spin")} aria-hidden="true" />
               {check.status === "checking" ? "Testing…" : "Test key"}
             </SecondaryAction>
           )}
@@ -451,7 +451,7 @@ export function BulkKeyImport({ provider, onClose }: { provider: Provider; onClo
               onClick={() => fileRef.current?.click()}
               className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line px-2 text-[12px] text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
             >
-              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
+              <Upload className="h-3.5 w-3.5" aria-hidden="true" />
               Load file
             </button>
             <input ref={fileRef} type="file" accept=".txt,.csv,text/plain,text/csv" className="hidden" tabIndex={-1} aria-hidden="true" onChange={onFile} />

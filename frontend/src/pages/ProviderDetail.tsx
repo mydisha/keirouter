@@ -23,7 +23,7 @@ import {
   Plus,
   RefreshCw,
   Search,
-  ShieldCheck,
+  SearchX,
   Trash2,
   X,
 } from "lucide-react";
@@ -44,7 +44,8 @@ import { ProviderLogo } from "../components/ProviderLogo";
 import { useToast } from "../components/Toast";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { ConnectProviderDialog, connectOptions, type ConnectMode } from "../components/connect";
-import { Badge, Button, Skeleton, TablePagination, Toggle, useClientPagination } from "../components/ui";
+import { Badge, Button, IconTile, Kpi, KpiGrid, SectionTitle, Skeleton, TablePagination, Toggle, useClientPagination } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../components/ui/tooltip";
 
@@ -147,6 +148,7 @@ export function ProviderDetailPage() {
   if (!provider) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+        <IconTile icon={ICONS.providers} size="lg" className="mx-auto mb-3" />
         <h1 className="text-[14px] font-semibold text-fg">Provider not found</h1>
         <p className="mt-1 text-[13px] text-fg-muted">It may have been deleted.</p>
         <Link to="/providers" className="mt-3 inline-block rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
@@ -332,52 +334,41 @@ function Dot() {
 const TICK_CLASS: Record<string, string> = { ok: "bg-ok/70", degraded: "bg-warn", down: "bg-bad", idle: "bg-track" };
 
 function ProviderSummary({ provider, health }: { provider: Provider; health?: HealthTimelineProvider }) {
-  const cells = [
-    {
-      label: "Requests · 24h",
-      value: health ? health.requests.toLocaleString("en-US") : "—",
-      hint: health && health.fallbacks ? `${health.fallbacks.toLocaleString("en-US")} fell over` : undefined,
-    },
-    {
-      label: "Success",
-      value: health && health.requests ? `${(health.success_rate * 100).toFixed(1)}%` : "—",
-      tone: health && health.requests ? (health.success_rate >= 0.99 ? undefined : health.success_rate >= 0.95 ? "warn" : "bad") : undefined,
-    },
-    { label: "Worst p95", value: health && health.worst_p95_ms ? fmtMs(health.worst_p95_ms) : "—" },
-  ] as { label: string; value: string; hint?: string; tone?: "warn" | "bad" }[];
+  const hasTraffic = !!health && health.requests > 0;
+  const successTone = !hasTraffic ? "section" : health.success_rate >= 0.99 ? "ok" : health.success_rate >= 0.95 ? "warn" : "bad";
   const badHours = health ? health.buckets.filter((b) => b.status === "degraded" || b.status === "down").length : 0;
 
   return (
-    <section aria-label="Last 24 hours" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-      <div className="grid grid-cols-2 gap-px bg-line sm:grid-cols-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.6fr)]">
-        {cells.map((c) => (
-          <div key={c.label} className="bg-surface px-4 py-3">
-            <p className="text-[12px] font-medium text-fg-muted">{c.label}</p>
-            <p className={cn("mt-1 text-[18px] font-semibold tracking-[-0.01em] tabular-nums", c.tone === "bad" ? "text-bad" : c.tone === "warn" ? "text-warn" : "text-fg")}>
-              {c.value === "—" ? (
-                <>
-                  <span aria-hidden="true">—</span>
-                  <span className="sr-only">No data</span>
-                </>
-              ) : (
-                c.value
-              )}
-            </p>
-            {c.hint && <p className="mt-0.5 text-[12px] tabular-nums text-warn">{c.hint}</p>}
-          </div>
-        ))}
-        <div className="col-span-2 flex flex-col justify-center gap-2 bg-surface px-4 py-3 sm:col-span-3 lg:col-span-1">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[12px] font-medium text-fg-muted">Hourly health</p>
+    <KpiGrid cols={4} label="Last 24 hours">
+      <Kpi
+        icon={ICONS.requests}
+        label="Requests · 24h"
+        value={health ? health.requests.toLocaleString("en-US") : <NoData />}
+        hint={health && health.fallbacks ? `${health.fallbacks.toLocaleString("en-US")} fell over` : undefined}
+      />
+      <Kpi
+        icon={ICONS.successRate}
+        label="Success"
+        tone={successTone}
+        value={hasTraffic ? `${(health.success_rate * 100).toFixed(1)}%` : <NoData />}
+        valueClassName={successTone === "bad" ? "text-bad" : successTone === "warn" ? "text-warn" : ""}
+      />
+      <Kpi icon={ICONS.latency} label="Worst p95" value={health && health.worst_p95_ms ? fmtMs(health.worst_p95_ms) : <NoData />} />
+      <div className="relative bg-surface py-3.5 pl-[3.75rem] pr-4">
+        <dt className="text-[12px] font-medium text-fg-muted">
+          <IconTile icon={ICONS.health} size="md" className="absolute left-4 top-4" />
+          Hourly health
+        </dt>
+        <dd className="absolute right-4 top-3">
             <Link
               to={`/provider-health/${encodeURIComponent(provider.id)}`}
-              className="inline-flex min-h-6 items-center rounded-md text-[12px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="-my-1 inline-flex min-h-6 items-center rounded-md text-[12px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
               aria-label={`${provider.display_name} health details`}
             >
               Details
             </Link>
-          </div>
-          <div>
+        </dd>
+          <dd className="mt-2">
             {health ? (
               <div
                 className="flex gap-[2px]"
@@ -389,12 +380,20 @@ function ProviderSummary({ provider, health }: { provider: Provider; health?: He
                 ))}
               </div>
             ) : (
-              <p className="text-[12.5px] text-fg-faint">No traffic yet</p>
+              <span className="text-[12.5px] text-fg-faint">No traffic yet</span>
             )}
-          </div>
-        </div>
+          </dd>
       </div>
-    </section>
+    </KpiGrid>
+  );
+}
+
+function NoData() {
+  return (
+    <>
+      <span aria-hidden="true">—</span>
+      <span className="sr-only">No data</span>
+    </>
   );
 }
 
@@ -530,6 +529,7 @@ function AccountsPanel({
   if (accounts.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+        <IconTile icon={ICONS.account} size="lg" className="mx-auto mb-3" />
         <h2 className="text-[14px] font-semibold text-fg">No accounts yet</h2>
         <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">Add one to start routing to {provider.display_name}.</p>
         <Button className="mt-4" onClick={onConnect}>
@@ -552,7 +552,8 @@ function AccountsPanel({
       )}
 
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-        <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-line px-4 py-2">
+        <div className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-2">
+          <SectionTitle icon={ICONS.account} title="Accounts" />
           <p className="text-[12.5px] text-fg-muted" role="status" aria-live="polite">
             {testingAll ? (
               <span className="text-fg">
@@ -604,7 +605,7 @@ function AccountsPanel({
               </>
             ) : (
               <Button variant="ghost" onClick={testAll} disabled={testingAll}>
-                {testingAll ? <Loader2 className="animate-spin" aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
+                {testingAll ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
                 {testingAll ? "Testing…" : "Test all"}
               </Button>
             )}
@@ -796,11 +797,11 @@ function AccountRow({
           </span>
         </td>
         <td className={cn(cell, "whitespace-nowrap")}>
-          <span className="inline-flex items-center gap-1.5 text-[12.5px]">
-            <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", status.tone === "warn" ? "bg-warn" : status.tone === "neutral" ? "bg-fg-faint" : "bg-ok")} />
-            <span className={status.tone === "warn" ? "text-warn" : status.tone === "neutral" ? "text-fg-muted" : "text-fg"}>{status.text}</span>
-          </span>
-          <span className="block text-[12px]" role="status" aria-live="polite">
+          <Badge tone={status.tone === "warn" ? "warning" : status.tone === "neutral" ? "neutral" : "success"}>
+            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+            {status.text}
+          </Badge>
+          <span className="mt-0.5 block text-[12px]" role="status" aria-live="polite">
             {testing && (
               <span className="inline-flex items-center gap-1 text-fg-muted">
                 <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
@@ -880,7 +881,7 @@ function AccountRow({
                 }}
               >
                 <DropdownMenuItem onSelect={onTest} disabled={testing || batchTesting}>
-                  <ShieldCheck />
+                  <RefreshCw />
                   Test connection
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -1232,6 +1233,7 @@ function ModelsPanel({
         <Skeleton className="h-72 w-full rounded-2xl" />
       ) : models.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+          <IconTile icon={ICONS.model} size="lg" className="mx-auto mb-3" />
           <h2 className="text-[14px] font-semibold text-fg">No models yet</h2>
           <p className="mt-1 text-[13px] text-fg-muted">
             {provider.custom ? "Sync the endpoint's /models list, or add them under Custom models." : "Add them under Custom models."}
@@ -1239,8 +1241,9 @@ function ModelsPanel({
         </div>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-          <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
-            <div className="relative w-full sm:w-72">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-2.5">
+            <SectionTitle icon={ICONS.model} title="Catalog" />
+            <div className="relative w-full sm:w-64">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
               <input
                 type="search"
@@ -1262,7 +1265,7 @@ function ModelsPanel({
                   onClick={() => setFilter(f)}
                   className={cn(
                     "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium capitalize focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                    filter === f ? "border-transparent bg-primary text-primary-fg" : "border-line text-fg-muted hover:text-fg",
+                    filter === f ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
                   )}
                 >
                   {f}
@@ -1293,7 +1296,10 @@ function ModelsPanel({
             </div>
           </div>
           {filtered.length === 0 ? (
-            <p className="px-6 py-10 text-center text-[13px] text-fg-muted">No models match.</p>
+            <div className="px-6 py-10 text-center">
+              <IconTile icon={SearchX} size="md" className="mx-auto mb-2.5" />
+              <p className="text-[13px] text-fg-muted">No models match.</p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full min-w-[720px] text-[13px]">
@@ -1479,13 +1485,10 @@ function RoutingForm({
 
   return (
     <section aria-labelledby="strategy-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-      <div className="border-b border-line px-5 py-3">
-        <h2 id="strategy-heading" className="text-[13px] font-semibold text-fg">
-          Account strategy
-        </h2>
-        {accountCount < 2 && <p className="mt-0.5 text-[12px] text-fg-muted">Takes effect with two or more accounts</p>}
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle id="strategy-heading" icon={ICONS.route} title="Account strategy" subtitle={accountCount < 2 ? "Takes effect with two or more accounts" : undefined} />
       </div>
-      <div className="grid gap-2 p-5 sm:grid-cols-2" role="radiogroup" aria-labelledby="strategy-heading" onKeyDown={onRadioKeys}>
+      <div className="grid gap-2 p-4 sm:grid-cols-2" role="radiogroup" aria-labelledby="strategy-heading" onKeyDown={onRadioKeys}>
         {STRATEGIES.map((s) => {
           const on = mode === s.value;
           return (
@@ -1514,7 +1517,7 @@ function RoutingForm({
         })}
       </div>
       {rotates && (
-        <div className="grid gap-4 border-t border-line px-5 py-4 sm:grid-cols-2">
+        <div className="grid gap-4 border-t border-line p-4 sm:grid-cols-2">
           <NumberSetting label="Requests before rotating" hint="Per account, before the next takes over" value={sticky} min={1} max={100} onChange={setSticky} disabled={saving} />
           {mode === "smart-round-robin" && (
             <NumberSetting label="Session affinity (hours)" hint="How long a conversation stays on its account" value={ttl} min={1} max={168} onChange={setTtl} disabled={saving} />

@@ -1,14 +1,15 @@
 import { useId, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { ChevronDown, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { Ban, ChevronDown, FileText, MoreHorizontal, Pencil, Plus, Target, Trash2, type LucideIcon } from "lucide-react";
 import { api, type BudgetStatus, type Plan } from "../lib/api";
 import { formatTokenLimit, ModelMultiSelect } from "../components/ModelSelect";
 import { microsToUSD, formatTokens, formatSpendUSD } from "../lib/format";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
-import { Button, Input, Select, Skeleton, ErrorBanner, Toggle, Modal } from "../components/ui";
+import { Badge, Button, Input, Select, Skeleton, ErrorBanner, Toggle, Modal, IconTile, SectionTitle, KpiGrid, Kpi } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import {
   DropdownMenu,
@@ -342,26 +343,33 @@ export function PlansPage() {
 
 // ── Shared bits ──────────────────────────────────────────────────────────────
 
-function KpiCell({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: "muted" | "warn" | "bad" }) {
+/** Value colour for a KPI: faint when zero, status colour when it needs attention. */
+function kpiValueClass(count: number, tone?: "warn" | "bad"): string {
+  if (count === 0) return "text-fg-faint";
+  return tone === "warn" ? "text-warn" : tone === "bad" ? "text-bad" : "";
+}
+
+/** Enforcement mode as a badge. Hard cutoff is neutral-strong, blocking is danger. */
+function EnforcementBadge({ hardCutoff, blocking = false }: { hardCutoff: boolean; blocking?: boolean }) {
+  if (!hardCutoff) return <Badge tone="neutral">Advisory</Badge>;
+  if (blocking)
+    return (
+      <Badge tone="danger">
+        <Ban className="h-3 w-3" strokeWidth={2} aria-hidden="true" />
+        Blocking requests
+      </Badge>
+    );
   return (
-    <div className="bg-surface px-4 py-3">
-      <p className="text-[12px] font-medium text-fg-muted">{label}</p>
-      <p
-        className={cn(
-          "mt-1 text-[20px] font-semibold leading-tight tracking-[-0.01em] tabular-nums",
-          tone === "muted" ? "text-fg-faint" : tone === "warn" ? "text-warn" : tone === "bad" ? "text-bad" : "text-fg",
-        )}
-      >
-        {value}
-      </p>
-      {hint && <p className="mt-0.5 truncate text-[12px] tabular-nums text-fg-faint">{hint}</p>}
-    </div>
+    <span className="inline-flex h-5 items-center whitespace-nowrap rounded-md border border-line-strong bg-surface px-1.5 text-[11.5px] font-medium text-fg">
+      Hard cutoff
+    </span>
   );
 }
 
-function EmptyPanel({ title, body, action }: { title: string; body: string; action?: ReactNode }) {
+function EmptyPanel({ icon, title, body, action }: { icon: LucideIcon; title: string; body: string; action?: ReactNode }) {
   return (
     <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+      <IconTile icon={icon} size="lg" className="mx-auto mb-3" />
       <h2 className="text-[14px] font-medium text-fg">{title}</h2>
       <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">{body}</p>
       {action && <div className="mt-4 flex justify-center">{action}</div>}
@@ -426,6 +434,7 @@ function PlansPanel({
   if (plans.length === 0) {
     return (
       <EmptyPanel
+        icon={ICONS.plans}
         title="No plans yet"
         body="A plan gives new keys the same budget, rate limits and models in one click."
         action={
@@ -443,16 +452,17 @@ function PlansPanel({
   const unusedCount = plans.filter((p) => p.key_count === 0).length;
 
   return (
-    <>
-      <section aria-label="Plan summary" className="mb-5 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-        <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-3">
-          <KpiCell label="Keys assigned" value={totalKeys.toLocaleString()} />
-          <KpiCell label="Hard cutoff" value={enforcedCount.toLocaleString()} hint={`of ${plans.length} plans`} />
-          <KpiCell label="Unused plans" value={unusedCount.toLocaleString()} hint={`of ${plans.length}`} tone={unusedCount === 0 ? "muted" : undefined} />
-        </div>
-      </section>
+    <div className="space-y-6">
+      <KpiGrid cols={3} label="Plan summary">
+        <Kpi icon={ICONS.keys} label="Keys assigned" value={totalKeys.toLocaleString()} />
+        <Kpi icon={Ban} label="Hard cutoff" value={enforcedCount.toLocaleString()} hint={`of ${plans.length} plans`} />
+        <Kpi icon={ICONS.plans} label="Unused plans" value={unusedCount.toLocaleString()} hint={`of ${plans.length}`} valueClassName={kpiValueClass(unusedCount)} />
+      </KpiGrid>
 
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        <div className="border-b border-line px-4 py-3">
+          <SectionTitle icon={ICONS.plans} title="Plan templates" />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-[13px]">
             <caption className="sr-only">Plans</caption>
@@ -475,7 +485,7 @@ function PlansPanel({
           </table>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -536,14 +546,7 @@ function PlanRow({ plan: p, onEdit, onDelete }: { plan: Plan; onEdit: () => void
         )}
       </td>
       <td className="whitespace-nowrap px-4 py-2.5">
-        <span
-          className={cn(
-            "inline-flex h-5 items-center rounded-md border px-1.5 text-[11.5px] font-medium",
-            p.hard_cutoff ? "border-line-strong bg-surface text-fg" : "border-line bg-subtle text-fg-muted",
-          )}
-        >
-          {p.hard_cutoff ? "Hard cutoff" : "Advisory"}
-        </span>
+        <EnforcementBadge hardCutoff={p.hard_cutoff} />
         <span className="block text-[12px] tabular-nums text-fg-faint">Alert at {p.alert_pct}%</span>
       </td>
       <td className={cn("whitespace-nowrap px-4 py-2.5 text-right tabular-nums", p.key_count > 0 ? "text-fg" : "text-fg-faint")}>
@@ -607,6 +610,7 @@ function BudgetsPanel({
   if (budgets.length === 0) {
     return (
       <EmptyPanel
+        icon={ICONS.budget}
         title="No budgets yet"
         body="Cap spend or tokens for a key, a project or all traffic."
         action={
@@ -635,41 +639,66 @@ function BudgetsPanel({
   const scopeOptions = (["all", "api_key", "project", "tenant"] as ScopeFilter[]).filter((s) => s === "all" || scopeCounts[s] > 0);
   const visible = scope === "all" ? sorted : sorted.filter((b) => b.scope_kind === scope);
 
-  return (
-    <>
-      <section aria-label="Budget summary" className="mb-5 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-        <div className="grid grid-cols-1 gap-px bg-line sm:grid-cols-3">
-          <KpiCell label="Past alert threshold" value={nearLimit.toLocaleString()} hint={`of ${budgets.length}`} tone={nearLimit > 0 ? "warn" : "muted"} />
-          <KpiCell label="Exhausted" value={exhausted.toLocaleString()} tone={exhausted > 0 ? "bad" : "muted"} />
-          <KpiCell label="Blocking requests" value={blocking.toLocaleString()} tone={blocking > 0 ? "bad" : "muted"} />
-        </div>
-      </section>
+  const scopeFilter = scopeOptions.length > 2 && (
+    <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Filter by scope">
+      {scopeOptions.map((s) => {
+        const active = scope === s;
+        return (
+          <button
+            key={s}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => setScope(s)}
+            className={cn(
+              "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+              active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+            )}
+          >
+            {s === "all" ? "All" : scopeLabels[s]}
+            <span className={cn("tabular-nums", !active && "text-fg-faint")}>{scopeCounts[s]}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
 
-      {scopeOptions.length > 2 && (
-        <div className="mb-3 flex flex-wrap gap-1.5" role="radiogroup" aria-label="Filter by scope">
-          {scopeOptions.map((s) => {
-            const active = scope === s;
-            return (
-              <button
-                key={s}
-                type="button"
-                role="radio"
-                aria-checked={active}
-                onClick={() => setScope(s)}
-                className={cn(
-                  "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                  active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
-                )}
-              >
-                {s === "all" ? "All" : scopeLabels[s]}
-                <span className={cn("tabular-nums", !active && "text-fg-faint")}>{scopeCounts[s]}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
+  return (
+    <div className="space-y-6">
+      <KpiGrid cols={3} label="Budget summary">
+        <Kpi
+          icon={ICONS.errors}
+          label="Past alert threshold"
+          value={nearLimit.toLocaleString()}
+          hint={`of ${budgets.length}`}
+          tone={nearLimit > 0 ? "warn" : undefined}
+          valueClassName={kpiValueClass(nearLimit, "warn")}
+        />
+        <Kpi
+          icon={ICONS.budget}
+          label="Exhausted"
+          value={exhausted.toLocaleString()}
+          tone={exhausted > 0 ? "bad" : undefined}
+          valueClassName={kpiValueClass(exhausted, "bad")}
+        />
+        <Kpi
+          icon={Ban}
+          label="Blocking requests"
+          value={blocking.toLocaleString()}
+          tone={blocking > 0 ? "bad" : undefined}
+          valueClassName={kpiValueClass(blocking, "bad")}
+        />
+      </KpiGrid>
 
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        <div className="border-b border-line px-4 py-3">
+          <SectionTitle
+            icon={ICONS.budget}
+            title="Budget usage"
+            subtitle="Closest to limit first"
+            action={scopeFilter}
+          />
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[820px] text-[13px]">
             <caption className="sr-only">Budgets, closest to their limit first</caption>
@@ -691,7 +720,7 @@ function BudgetsPanel({
           </table>
         </div>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -742,11 +771,7 @@ function BudgetRow({ budget: b, onEdit, onDelete }: { budget: BudgetStatus; onEd
         <span className="block text-[12px] tabular-nums text-fg-faint">{b.resets_at ? `Resets ${relativeFuture(b.resets_at)}` : "Never resets"}</span>
       </td>
       <td className="whitespace-nowrap px-4 py-2.5">
-        {b.hard_cutoff ? (
-          <span className={cn("text-[12.5px]", over ? "font-medium text-bad" : "text-fg")}>{over ? "Blocking requests" : "Hard cutoff"}</span>
-        ) : (
-          <span className="text-[12.5px] text-fg-muted">Advisory</span>
-        )}
+        <EnforcementBadge hardCutoff={b.hard_cutoff} blocking={over} />
       </td>
       <td className="px-2 py-2.5">
         <RowMenu label={`Actions for ${name} budget`} editLabel="Edit budget" deleteLabel="Delete budget" onEdit={onEdit} onDelete={onDelete} />
@@ -800,10 +825,11 @@ function FormField({
   );
 }
 
-function FormSection({ title, id, children }: { title: string; id?: string; children: ReactNode }) {
+function FormSection({ title, icon: Icon, id, children }: { title: string; icon: LucideIcon; id?: string; children: ReactNode }) {
   return (
     <section className="space-y-3 px-5 py-4" aria-labelledby={id}>
-      <h3 id={id} className="text-[13px] font-semibold text-fg">
+      <h3 id={id} className="flex items-center gap-2 text-[13px] font-semibold text-fg">
+        <Icon className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />
         {title}
       </h3>
       {children}
@@ -1049,7 +1075,7 @@ function PlanForm({ plan, onClose }: { plan?: Plan; onClose: () => void }) {
   return (
     <form className="flex max-h-[calc(100vh-10rem)] flex-col" onSubmit={handleSubmit} noValidate>
       <div className="min-h-0 divide-y divide-line overflow-y-auto">
-        <FormSection title="Details">
+        <FormSection title="Details" icon={FileText}>
           <div className="grid gap-3 sm:grid-cols-2">
             <FormField label="Name" marker="Required" error={nameError}>
               {(a11y) => (
@@ -1064,7 +1090,7 @@ function PlanForm({ plan, onClose }: { plan?: Plan; onClose: () => void }) {
           </div>
         </FormSection>
 
-        <FormSection title="Budget per key">
+        <FormSection title="Budget per key" icon={ICONS.budget}>
           <div className="grid gap-3 sm:grid-cols-3">
             <FormField label="Spend limit (USD)" hint={`Per ${periodNoun}`}>
               {(a11y) => <USDInput {...a11y} value={limit} onChange={setLimit} />}
@@ -1086,7 +1112,7 @@ function PlanForm({ plan, onClose }: { plan?: Plan; onClose: () => void }) {
           </div>
         </FormSection>
 
-        <FormSection title="Models" id={`${ids}-models`}>
+        <FormSection title="Models" icon={ICONS.model} id={`${ids}-models`}>
           <div role="group" aria-labelledby={`${ids}-models`} aria-describedby={`${ids}-models-hint`} className="space-y-1.5">
             <ModelMultiSelect value={allowedModels} onChange={setAllowedModels} aria-labelledby={`${ids}-models`} aria-describedby={`${ids}-models-hint`} />
             <p id={`${ids}-models-hint`} className="text-[12px] leading-5 text-fg-muted">
@@ -1104,7 +1130,10 @@ function PlanForm({ plan, onClose }: { plan?: Plan; onClose: () => void }) {
               onClick={() => setAdvancedOpen((v) => !v)}
               className="flex w-full items-center justify-between gap-3 rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
             >
-              <span className="text-[13px] font-semibold text-fg">Advanced: rate limits</span>
+              <span className="flex items-center gap-2 text-[13px] font-semibold text-fg">
+                <ICONS.requests className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />
+                Advanced: rate limits
+              </span>
               <span className="flex items-center gap-2 text-[12px] font-normal tabular-nums text-fg-muted">
                 {!showAdvanced && (rateSummary || "None")}
                 <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showAdvanced && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
@@ -1263,7 +1292,7 @@ function BudgetForm({ budget, existing, onClose }: { budget?: BudgetStatus; exis
   return (
     <form className="flex max-h-[calc(100vh-10rem)] flex-col" onSubmit={handleSubmit} noValidate>
       <div className="min-h-0 divide-y divide-line overflow-y-auto">
-        <FormSection title="Applies to">
+        <FormSection title="Applies to" icon={Target}>
           {budget ? (
             <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-lg bg-subtle px-3 py-2.5 text-[13px]">
               <dt className="text-fg-muted">Scope</dt>
@@ -1331,7 +1360,7 @@ function BudgetForm({ budget, existing, onClose }: { budget?: BudgetStatus; exis
           )}
         </FormSection>
 
-        <FormSection title="Limit">
+        <FormSection title="Limit" icon={ICONS.budget}>
           <div className="grid gap-3 sm:grid-cols-3">
             <FormField label="Spend limit (USD)" error={showUsd}>
               {(a11y) => <USDInput {...a11y} value={limit} onChange={setLimit} />}

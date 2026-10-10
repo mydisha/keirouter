@@ -6,11 +6,12 @@ import { cn } from "@/lib/utils";
 import { api, type Chain, type HealthChainRow, type Provider } from "../lib/api";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
-import { Badge, Button, ErrorBanner, Skeleton } from "../components/ui";
+import { Badge, Button, EmptyState, ErrorBanner, SectionTitle, Skeleton } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { ChainRoutePreview } from "../components/chains/ChainRoutePreview";
-import { strategyLabel } from "../components/chains/chainUtils";
+import { strategyIcon, strategyLabel } from "../components/chains/chainUtils";
 
 type StrategyFilter = "all" | "priority" | "round_robin" | "latency" | "cost";
 type HealthFilter = "all" | "healthy" | "degraded" | "unhealthy" | "unknown";
@@ -40,6 +41,15 @@ const statusDot = (status?: HealthChainRow["status"]) => {
     case "degraded": return "bg-warn";
     case "unhealthy": return "bg-bad";
     default: return "bg-fg-faint";
+  }
+};
+
+const statusBadge = (status?: HealthChainRow["status"]) => {
+  switch (status) {
+    case "healthy": return "success" as const;
+    case "degraded": return "warning" as const;
+    case "unhealthy": return "danger" as const;
+    default: return "neutral" as const;
   }
 };
 
@@ -126,6 +136,7 @@ function ChainRow({ chain, providers, health, onOpen, onCopy, onDelete }: {
   onDelete: () => void;
 }) {
   const hasIssue = health?.status === "degraded" || health?.status === "unhealthy";
+  const StrategyIcon = strategyIcon(chain.strategy);
   const stop = (event: MouseEvent) => event.stopPropagation();
   return (
     <tr className="cursor-pointer transition-colors hover:bg-hover" onClick={onOpen}>
@@ -150,14 +161,19 @@ function ChainRow({ chain, providers, health, onOpen, onCopy, onDelete }: {
         </button>
       </td>
       <td className="px-4 py-2.5">
-        <Badge>{strategyLabel(chain.strategy)}</Badge>
+        <Badge tone="secondary">
+          <StrategyIcon className="h-3 w-3 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+          {strategyLabel(chain.strategy)}
+        </Badge>
         <span className="mt-1 block text-[12px] tabular-nums text-fg-muted">{chain.steps.length} step{chain.steps.length === 1 ? "" : "s"}</span>
       </td>
       <td className="px-4 py-2.5"><ChainRoutePreview chain={chain} providers={providers} compact /></td>
       <td className="max-w-[220px] px-4 py-2.5">
-        <span className="inline-flex items-center gap-2" title={health?.main_issue || undefined}>
-          <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDot(health?.status))} aria-hidden="true" />
-          <span className={health ? "text-fg" : "text-fg-muted"}>{statusLabel(health?.status)}</span>
+        <span className="inline-flex" title={health?.main_issue || undefined}>
+          <Badge tone={statusBadge(health?.status)}>
+            <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", statusDot(health?.status))} aria-hidden="true" />
+            {statusLabel(health?.status)}
+          </Badge>
         </span>
         {hasIssue && health?.main_issue && <p className="mt-0.5 truncate text-[12px] text-fg-muted" title={health.main_issue}>{health.main_issue}</p>}
       </td>
@@ -273,18 +289,21 @@ export function ChainsPage() {
       ) : chainsQuery.isError ? (
         <ErrorBanner message="Couldn't load chains. Refresh the page to try again." />
       ) : allChains.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-          <h2 className="text-[14px] font-medium text-fg">No chains yet</h2>
-          <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
-            A chain tries models in order, so one failing provider doesn't fail the request.
-          </p>
-          <Button className="mt-4" onClick={() => navigate("/chains/new")}>
-            <Plus aria-hidden="true" />
-            Create chain
-          </Button>
+        <div className="rounded-2xl border border-dashed border-line-strong bg-surface">
+          <EmptyState
+            icon={ICONS.chains}
+            title="No chains yet"
+            hint="A chain tries models in order, so one failing provider doesn't fail the request."
+            action={(
+              <Button onClick={() => navigate("/chains/new")}>
+                <Plus aria-hidden="true" />
+                Create chain
+              </Button>
+            )}
+          />
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative w-full sm:w-64">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
@@ -329,21 +348,27 @@ export function ChainsPage() {
           )}
 
           <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-            {filtersActive && (
-              <div className="flex min-h-10 flex-wrap items-center gap-2 border-b border-line px-4 py-1.5">
-                <span className="text-[12.5px] tabular-nums text-fg-muted" role="status">
-                  {chains.length} of {allChains.length} chains
-                </span>
-                <button type="button" onClick={clearFilters} className="ml-auto min-h-6 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
-                  Clear filters
-                </button>
-              </div>
-            )}
+            <div className="border-b border-line px-4 py-3">
+              <SectionTitle
+                icon={ICONS.chains}
+                title={(
+                  <>
+                    All chains
+                    <span className="ml-2 text-[12px] font-normal tabular-nums text-fg-muted">
+                      {filtersActive ? `${chains.length} of ${allChains.length}` : allChains.length}
+                    </span>
+                  </>
+                )}
+                action={filtersActive ? (
+                  <button type="button" onClick={clearFilters} className="min-h-6 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+                    Clear filters
+                  </button>
+                ) : undefined}
+              />
+              <span className="sr-only" role="status">{filtersActive ? `${chains.length} of ${allChains.length} chains shown` : ""}</span>
+            </div>
             {chains.length === 0 ? (
-              <div className="px-6 py-10 text-center">
-                <p className="text-[13px] font-medium text-fg">No chains match</p>
-                <p className="mt-1 text-[12.5px] text-fg-muted">Clear the search or a filter to see every chain.</p>
-              </div>
+              <EmptyState icon={Search} title="No chains match" hint="Clear the search or a filter to see every chain." />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[840px] text-[13px]">

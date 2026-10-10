@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { BrandMark } from "../components/BrandMark";
-import { Button } from "../components/ui";
+import { Button, IconTile } from "../components/ui";
 
 /**
  * OAuthCallback is the landing page after a provider redirects back to the
@@ -100,13 +100,13 @@ export function OAuthCallbackPage() {
           <BrandMark size={26} />
         </div>
 
-        <div className="mt-5 flex items-center justify-center gap-2">
+        <div className="mt-6 flex flex-col items-center gap-3">
           {phase === "handoff" ? (
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-fg-muted" strokeWidth={1.75} aria-hidden="true" />
+            <IconTile icon={Loader2} size="lg" tone="blue" className="[&>svg]:animate-spin motion-reduce:[&>svg]:animate-none" />
           ) : phase === "success" ? (
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-ok" strokeWidth={1.75} aria-hidden="true" />
+            <IconTile icon={CheckCircle2} size="lg" tone="ok" />
           ) : (
-            <XCircle className="h-4 w-4 shrink-0 text-bad" strokeWidth={1.75} aria-hidden="true" />
+            <IconTile icon={XCircle} size="lg" tone="bad" />
           )}
           <h1 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">
             {phase === "handoff"
@@ -137,7 +137,7 @@ export function OAuthCallbackPage() {
           </div>
         )}
 
-        <Button variant="secondary" className="mt-6 w-full" onClick={goNext}>
+        <Button className="mt-6 w-full" onClick={goNext}>
           {nextLabel}
         </Button>
       </main>

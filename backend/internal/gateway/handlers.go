@@ -9,8 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
@@ -187,6 +190,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 		TenantID:      tenantID,
 		ProjectID:     key.ProjectID,
 		RequestID:     chimiddleware.GetReqID(r.Context()),
+		ClientBetas:   parseAnthropicBetaHeader(r.Header.Get("anthropic-beta")),
 	}
 
 	streamNote := ""
@@ -313,7 +317,7 @@ func (s *Server) unaryChat(w http.ResponseWriter, r *http.Request, codec transfo
 	if err != nil {
 		s.consoleLog.Log("ERROR", fmt.Sprintf("Provider request failed after %s", humanDuration(latency)), err.Error())
 		s.logRequest(keyName, req.Model, req.Model, 0, 0, latency, false, err)
-		s.writeProviderError(w, err)
+		s.writeProviderErrorAs(w, req.Metadata.SourceDialect, err)
 		return
 	}
 
@@ -410,6 +414,13 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 		if cpErr != nil && !isClientDisconnect(cpErr) {
 			s.consoleLog.Log("ERROR", fmt.Sprintf("Stream interrupted after %s", humanBytes(int(n))), cpErr.Error())
 			s.log.Warn("direct stream error", "bytes", n, "err", cpErr)
+			// The upstream read failed (stall, reset, truncated body). Tell the
+			// client in its own dialect instead of silently closing the
+			// stream, which strict clients treat as "retry the whole request".
+			var readErr *streamReadError
+			if errors.As(cpErr, &readErr) {
+				_, _ = dst.Write(streamErrorEvent(req.Metadata.SourceDialect, sanitizeUpstreamError(readErr.err)))
+			}
 		}
 		flusher.Flush()
 		// Complete direct-stream accounting exactly once. Client disconnects do
@@ -436,7 +447,10 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	// Wrap the response writer in a bufio.Writer to batch small SSE writes
 	// into fewer syscalls. The pool avoids allocating a new writer per request.
 	bw := core.SSEWriterPool.Get().(*bufio.Writer)
-	defer core.SSEWriterPool.Put(bw)
+	defer func() {
+		bw.Reset(nil)
+		core.SSEWriterPool.Put(bw)
+	}()
 	bw.Reset(w)
 
 	state := &transform.StreamState{Model: result.Model}
@@ -483,8 +497,6 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 					}
 				}
 			}
-			bw.Flush()
-			flusher.Flush()
 			return
 		}
 		events, rerr := streamCodec.RenderStreamChunk(cleaned, state)
@@ -498,8 +510,12 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 				return
 			}
 		}
-		// Flush the buffered writer to the underlying http.ResponseWriter,
-		// then flush the HTTP flusher to push bytes to the client.
+	}
+	// flushToClient pushes buffered events to the socket. It is called after
+	// each chunk only when no further chunk is already queued, so a burst of
+	// deltas costs one write+flush syscall pair instead of one per delta,
+	// while a lone delta still reaches the client immediately.
+	flushToClient := func() {
 		bw.Flush()
 		flusher.Flush()
 	}
@@ -545,6 +561,9 @@ streamLoop:
 			}
 			chunkCount++
 			sanitizer.Process(chunk, renderChunk)
+			if len(result.Chunks) == 0 {
+				flushToClient()
+			}
 		case <-heartbeatC:
 			// Only beat when the stream has actually been silent; steady chunk
 			// traffic is its own keep-alive.
@@ -606,6 +625,12 @@ type providerStreamEventError struct{ detail string }
 
 func (e *providerStreamEventError) Error() string { return "provider stream error: " + e.detail }
 
+// maxDirectStreamEventBytes bounds one buffered SSE event on the zero-copy
+// path so a misbehaving upstream cannot grow the event buffer without limit.
+const maxDirectStreamEventBytes = 16 << 20
+
+var errDirectStreamEventTooLarge = errors.New("upstream stream event exceeds the maximum supported size")
+
 type streamReadError struct{ err error }
 
 func (e *streamReadError) Error() string { return e.err.Error() }
@@ -619,8 +644,34 @@ func (e *streamWriteError) Unwrap() error { return e.err }
 // copySanitizedStream keeps the direct-stream path lightweight by framing SSE
 // events without decoding successful chunks. Only potential error events are
 // decoded; those are replaced with a dialect-compatible generic event.
+// directReaderPool reuses the 64 KiB read buffers of the zero-copy path; one
+// per concurrent stream otherwise churns through the allocator.
+var directReaderPool = sync.Pool{
+	New: func() any { return bufio.NewReaderSize(nil, 64*1024) },
+}
+
 func copySanitizedStream(dst io.Writer, src io.Reader, dialect core.Dialect, flush func()) (int64, error) {
-	reader := bufio.NewReaderSize(src, 64*1024)
+	reader := directReaderPool.Get().(*bufio.Reader)
+	reader.Reset(src)
+	defer func() {
+		reader.Reset(nil)
+		directReaderPool.Put(reader)
+	}()
+	if flush != nil {
+		// Defer the flush only while another complete frame is already
+		// buffered: a burst of frames that arrived together goes out in one
+		// syscall, but a frame followed by a partial one is pushed at once so
+		// the client never waits on bytes we already hold.
+		inner := flush
+		flush = func() {
+			if n := reader.Buffered(); n > 0 {
+				if pending, err := reader.Peek(n); err == nil && bytes.Contains(pending, []byte("\n\n")) {
+					return
+				}
+			}
+			inner()
+		}
+	}
 	if dialect == core.DialectOllama {
 		return copySanitizedNDJSON(dst, reader, dialect, flush)
 	}
@@ -630,6 +681,9 @@ func copySanitizedStream(dst io.Writer, src io.Reader, dialect core.Dialect, flu
 	for {
 		line, readErr := reader.ReadSlice('\n')
 		if len(line) > 0 {
+			if event.Len()+len(line) > maxDirectStreamEventBytes {
+				return written, &streamReadError{err: errDirectStreamEventTooLarge}
+			}
 			_, _ = event.Write(line)
 			if len(bytes.TrimRight(line, "\r\n")) == 0 {
 				n, err := writeSanitizedFrame(dst, event.Bytes(), dialect, flush)
@@ -698,7 +752,7 @@ func copySanitizedNDJSON(dst io.Writer, reader *bufio.Reader, dialect core.Diale
 }
 
 func writeSanitizedFrame(dst io.Writer, raw []byte, dialect core.Dialect, flush func()) (int64, error) {
-	providerErr := hasStreamErrorMarker(raw) && isProviderStreamError(string(raw))
+	providerErr := hasStreamErrorMarker(raw) && isProviderStreamError(raw)
 	out := raw
 	if providerErr {
 		out = streamErrorEvent(dialect, "upstream provider request failed")
@@ -723,43 +777,70 @@ func writeSanitizedFrame(dst io.Writer, raw []byte, dialect core.Dialect, flush 
 	return int64(n), nil
 }
 
+// hasStreamErrorMarker is the cheap pre-filter for frames that might carry a
+// provider error. A tool-call frame full of Go source matches "error" on
+// nearly every line, so instead of six substring scans it looks for the
+// shapes an error frame actually has: an SSE "event:" line mentioning error
+// or failure, or the quoted JSON keys/values an error envelope uses.
 func hasStreamErrorMarker(frame []byte) bool {
-	return bytes.Contains(frame, []byte("error")) || bytes.Contains(frame, []byte("Error")) ||
-		bytes.Contains(frame, []byte("ERROR")) || bytes.Contains(frame, []byte("failed")) ||
-		bytes.Contains(frame, []byte("Failed")) || bytes.Contains(frame, []byte("FAILED"))
-}
-
-func isProviderStreamError(event string) bool {
-	lowerEvent := strings.ToLower(event)
-	if !strings.Contains(lowerEvent, "error") && !strings.Contains(lowerEvent, "failed") {
-		return false
+	if bytes.Contains(frame, []byte(`"error"`)) || bytes.Contains(frame, []byte(`"failed"`)) ||
+		bytes.Contains(frame, []byte(`error"`)) {
+		return true
 	}
-
-	var data strings.Builder
-	for _, line := range strings.Split(event, "\n") {
-		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
-		switch {
-		case strings.HasPrefix(line, "event:"):
-			name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "event:")))
-			if strings.Contains(name, "error") || strings.Contains(name, "failed") {
+	// event: error / event: response.failed
+	for rest := frame; len(rest) > 0; {
+		nl := bytes.IndexByte(rest, '\n')
+		line := rest
+		if nl >= 0 {
+			line = rest[:nl]
+			rest = rest[nl+1:]
+		} else {
+			rest = nil
+		}
+		if bytes.HasPrefix(line, []byte("event:")) {
+			name := bytes.ToLower(bytes.TrimSpace(line[6:]))
+			if bytes.Contains(name, []byte("error")) || bytes.Contains(name, []byte("fail")) {
 				return true
 			}
-		case strings.HasPrefix(line, "data:"):
-			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if payload != "" && payload != "[DONE]" {
-				if data.Len() > 0 {
-					data.WriteByte('\n')
+		}
+	}
+	return false
+}
+
+func isProviderStreamError(event []byte) bool {
+	var data []byte
+	for rest := event; len(rest) > 0; {
+		nl := bytes.IndexByte(rest, '\n')
+		line := rest
+		if nl >= 0 {
+			line = rest[:nl]
+			rest = rest[nl+1:]
+		} else {
+			rest = nil
+		}
+		line = bytes.TrimSpace(line)
+		switch {
+		case bytes.HasPrefix(line, []byte("event:")):
+			name := bytes.ToLower(bytes.TrimSpace(line[6:]))
+			if bytes.Contains(name, []byte("error")) || bytes.Contains(name, []byte("failed")) {
+				return true
+			}
+		case bytes.HasPrefix(line, []byte("data:")):
+			payload := bytes.TrimSpace(line[5:])
+			if len(payload) > 0 && !bytes.Equal(payload, []byte("[DONE]")) {
+				if len(data) > 0 {
+					data = append(data, '\n')
 				}
-				data.WriteString(payload)
+				data = append(data, payload...)
 			}
 		}
 	}
-	if data.Len() == 0 {
-		standalone := strings.TrimSpace(event)
-		if !strings.HasPrefix(standalone, "{") {
+	if len(data) == 0 {
+		standalone := bytes.TrimSpace(event)
+		if len(standalone) == 0 || standalone[0] != '{' {
 			return false
 		}
-		data.WriteString(standalone)
+		data = standalone
 	}
 
 	var envelope struct {
@@ -767,7 +848,7 @@ func isProviderStreamError(event string) bool {
 		Status string          `json:"status"`
 		Error  json.RawMessage `json:"error"`
 	}
-	if err := json.Unmarshal([]byte(data.String()), &envelope); err != nil {
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		return false
 	}
 	typeName := strings.ToLower(envelope.Type)
@@ -822,30 +903,25 @@ func truncateStreamEvent(event string) string {
 }
 
 // writeProviderError maps a structured provider error to an HTTP status while
-// keeping the provider's original message in internal logs only.
+// keeping the provider's original message in internal logs only. The body is
+// OpenAI-shaped; use writeProviderErrorAs when the client's dialect is known.
 func (s *Server) writeProviderError(w http.ResponseWriter, err error) {
+	s.writeProviderErrorAs(w, core.DialectOpenAI, err)
+}
+
+// writeProviderErrorAs renders the error in the client's own dialect so SDK
+// retry logic keeps working: Claude Code reads Anthropic's
+// {"type":"error","error":{"type":"overloaded_error"}} to decide whether to
+// retry, and Gemini clients expect a google.rpc.Status-shaped envelope.
+func (s *Server) writeProviderErrorAs(w http.ResponseWriter, dialect core.Dialect, err error) {
 	pe := core.AsProviderError(err)
-	status := http.StatusBadGateway
-	switch pe.Kind {
-	case core.ErrBadRequest, core.ErrCapability:
-		status = http.StatusBadRequest
-	case core.ErrModelUnavailable:
-		status = http.StatusNotFound
-	case core.ErrAuth:
-		status = http.StatusUnauthorized
-	case core.ErrRateLimit:
-		status = http.StatusTooManyRequests
-		if pe.RetryAfter > 0 {
-			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", pe.RetryAfter.Seconds()))
-		}
-	case core.ErrQuotaExhausted, core.ErrBudgetBlocked:
-		status = http.StatusPaymentRequired
-	case core.ErrPolicyBlocked:
-		status = http.StatusForbidden
-	case core.ErrTimeout:
-		status = http.StatusGatewayTimeout
-	case core.ErrInternal:
-		status = http.StatusInternalServerError
+	status := providerErrorStatus(pe)
+	// Retry-After tells well-behaved clients (Claude Code, the OpenAI SDKs)
+	// how long to back off. It is meaningful for throttling and for upstream
+	// faults where the provider or the dispatcher knows the recovery window.
+	if pe.RetryAfter > 0 && (status == http.StatusTooManyRequests || status == http.StatusBadGateway ||
+		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
+		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", math.Ceil(pe.RetryAfter.Seconds())))
 	}
 
 	if s.log != nil {
@@ -856,7 +932,121 @@ func (s *Server) writeProviderError(w http.ResponseWriter, err error) {
 			"upstream_status", pe.StatusCode,
 			"error", err)
 	}
-	writeError(w, status, sanitizeUpstreamError(pe))
+	writeDialectError(w, dialect, status, sanitizeUpstreamError(pe))
+}
+
+// writeDialectError writes an error envelope in the given client dialect.
+func writeDialectError(w http.ResponseWriter, dialect core.Dialect, status int, message string) {
+	switch dialect {
+	case core.DialectAnthropic:
+		writeJSON(w, status, map[string]any{
+			"type":  "error",
+			"error": map[string]any{"type": anthropicErrorType(status), "message": message},
+		})
+	case core.DialectGemini:
+		writeJSON(w, status, map[string]any{
+			"error": map[string]any{"code": status, "message": message, "status": googleStatusName(status)},
+		})
+	case core.DialectOllama:
+		writeJSON(w, status, map[string]any{"error": message})
+	default:
+		writeError(w, status, message)
+	}
+}
+
+// anthropicErrorType maps an HTTP status to Anthropic's error type vocabulary.
+func anthropicErrorType(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "invalid_request_error"
+	case http.StatusUnauthorized:
+		return "authentication_error"
+	case http.StatusForbidden, http.StatusPaymentRequired:
+		return "permission_error"
+	case http.StatusNotFound:
+		return "not_found_error"
+	case http.StatusRequestEntityTooLarge:
+		return "request_too_large"
+	case http.StatusTooManyRequests:
+		return "rate_limit_error"
+	case http.StatusServiceUnavailable, 529:
+		return "overloaded_error"
+	default:
+		return "api_error"
+	}
+}
+
+// googleStatusName maps an HTTP status to the google.rpc.Code name Gemini
+// clients expect in error.status.
+func googleStatusName(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "INVALID_ARGUMENT"
+	case http.StatusUnauthorized:
+		return "UNAUTHENTICATED"
+	case http.StatusForbidden, http.StatusPaymentRequired:
+		return "PERMISSION_DENIED"
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	case http.StatusTooManyRequests:
+		return "RESOURCE_EXHAUSTED"
+	case http.StatusGatewayTimeout:
+		return "DEADLINE_EXCEEDED"
+	case http.StatusServiceUnavailable, http.StatusBadGateway:
+		return "UNAVAILABLE"
+	default:
+		return "INTERNAL"
+	}
+}
+
+// parseAnthropicBetaHeader splits a client's anthropic-beta header into the
+// individual feature flags, keeping only well-formed identifiers
+// (name-YYYY-MM-DD) so arbitrary header text never reaches the upstream.
+func parseAnthropicBetaHeader(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		flag := strings.ToLower(strings.TrimSpace(part))
+		if flag == "" || !anthropicBetaFlagRe.MatchString(flag) {
+			continue
+		}
+		out = append(out, flag)
+	}
+	return out
+}
+
+var anthropicBetaFlagRe = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*-\d{4}-\d{2}-\d{2}$`)
+
+// providerErrorStatus maps an error kind to the HTTP status returned to the
+// client.
+func providerErrorStatus(pe *core.ProviderError) int {
+	switch pe.Kind {
+	case core.ErrBadRequest, core.ErrCapability, core.ErrContextWindow, core.ErrContentFilter:
+		return http.StatusBadRequest
+	case core.ErrModelUnavailable:
+		return http.StatusNotFound
+	case core.ErrAuth:
+		return http.StatusUnauthorized
+	case core.ErrRateLimit:
+		return http.StatusTooManyRequests
+	case core.ErrQuotaExhausted, core.ErrBudgetBlocked:
+		return http.StatusPaymentRequired
+	case core.ErrPolicyBlocked:
+		return http.StatusForbidden
+	case core.ErrTimeout:
+		return http.StatusGatewayTimeout
+	case core.ErrInternal:
+		return http.StatusInternalServerError
+	case core.ErrUpstream:
+		// 529/503 from the provider means "overloaded, try again": surface it
+		// as 503 so SDK retry policies treat it as transient.
+		if pe.StatusCode == 529 || pe.StatusCode == http.StatusServiceUnavailable {
+			return http.StatusServiceUnavailable
+		}
+	}
+	return http.StatusBadGateway
 }
 
 // isClientDisconnect reports whether cancellation or a downstream response

@@ -1,17 +1,18 @@
 import { useEffect, useState, useRef, useCallback, useMemo, useId, type KeyboardEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Copy, Check, Loader2, ArrowUpRight, ChevronRight, KeyRound } from "lucide-react";
+import { Copy, Check, Loader2, ArrowUpRight, ChevronRight, KeyRound, Link2, Code2, BookOpen, Terminal, FileCode2, Braces, Bot, Variable, type LucideIcon } from "lucide-react";
+import { ICONS } from "../lib/icons";
 import { api, type TailscaleEnableResult } from "../lib/api";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
 import {
   Card,
-  CardHeader,
   Button,
   Input,
   Field,
   Badge,
+  SectionTitle,
   Skeleton,
 } from "../components/ui";
 
@@ -141,7 +142,7 @@ export function EndpointsPage() {
           </Link>
         }
       />
-      <div className="space-y-5">
+      <div className="space-y-6">
         <ConnectionCard localUrl={localUrl} loading={access.isLoading} tunnelUrl={tunnelUrl} />
         <QuickStartCard apiBase={apiBase} action={targetControl} />
         <CatalogueCard apiBase={apiBase} />
@@ -208,9 +209,17 @@ function ConnectionCard({
 }) {
   return (
     <Card>
-      <CardHeader title="Base URL" />
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle icon={Link2} title="Base URL" />
+      </div>
       <div className="divide-y divide-line">
-        <EndpointRow label="Local" url={localUrl} loading={loading} primary />
+        <EndpointRow
+          label="Local"
+          url={localUrl}
+          loading={loading}
+          primary
+          icon={<ICONS.server className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+        />
         {tunnelUrl && (
           <EndpointRow
             label="Public · Cloudflare Tunnel"
@@ -219,7 +228,7 @@ function ConnectionCard({
           />
         )}
       </div>
-      <p className="border-t border-line bg-subtle px-4 py-2.5 text-[12px] text-fg-muted sm:px-5">
+      <p className="border-t border-line bg-subtle px-4 py-2.5 text-[12px] text-fg-muted">
         Authenticate with <code className="font-mono text-fg">Authorization: Bearer &lt;key&gt;</code> or{" "}
         <code className="font-mono text-fg">x-api-key</code>.
       </p>
@@ -253,7 +262,7 @@ function EndpointRow({
   };
 
   return (
-    <div className="px-4 py-3.5 sm:px-5">
+    <div className="p-4">
       <div className="flex items-center gap-2">
         {icon}
         <h3 id={labelId} className="text-[12px] font-medium text-fg-muted">{label}</h3>
@@ -288,12 +297,12 @@ function EndpointRow({
 
 type SnippetId = "curl" | "python" | "node" | "claude" | "env";
 
-const SNIPPET_TABS: { value: SnippetId; label: string }[] = [
-  { value: "curl", label: "cURL" },
-  { value: "python", label: "Python" },
-  { value: "node", label: "Node.js" },
-  { value: "claude", label: "Claude Code" },
-  { value: "env", label: "Environment" },
+const SNIPPET_TABS: { value: SnippetId; label: string; icon: LucideIcon }[] = [
+  { value: "curl", label: "cURL", icon: Terminal },
+  { value: "python", label: "Python", icon: FileCode2 },
+  { value: "node", label: "Node.js", icon: Braces },
+  { value: "claude", label: "Claude Code", icon: Bot },
+  { value: "env", label: "Environment", icon: Variable },
 ];
 
 function buildSnippet(id: SnippetId, apiBase: string): { code: string; note: string } {
@@ -389,7 +398,9 @@ function QuickStartCard({ apiBase, action }: { apiBase: string; action: ReactNod
 
   return (
     <Card className="overflow-hidden">
-      <CardHeader title="Quick start" action={action} />
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle icon={Code2} title="Quick start" action={action} />
+      </div>
       <div role="tablist" aria-label="Snippet language" onKeyDown={onTabKeyDown} className="flex gap-1 overflow-x-auto border-b border-line px-1 pb-px sm:px-2">
         {SNIPPET_TABS.map((t) => {
           const active = t.value === tab;
@@ -403,17 +414,18 @@ function QuickStartCard({ apiBase, action }: { apiBase: string; action: ReactNod
               aria-controls={panelId}
               tabIndex={active ? 0 : -1}
               onClick={() => setTab(t.value)}
-              className={`relative whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500 ${
+              className={`relative inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500 ${
                 active ? "text-fg" : "text-fg-muted hover:text-fg"
               }`}
             >
+              <t.icon className={`h-3.5 w-3.5 shrink-0 ${active ? "text-link" : "text-fg-faint"}`} strokeWidth={1.75} aria-hidden="true" />
               {t.label}
               {active && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent-500" aria-hidden="true" />}
             </button>
           );
         })}
       </div>
-      <div id={panelId} role="tabpanel" aria-labelledby={tabId(tab)} className="p-4 sm:p-5">
+      <div id={panelId} role="tabpanel" aria-labelledby={tabId(tab)} className="p-4">
         <div className="relative rounded-lg border border-line bg-subtle">
           <div className="absolute right-1.5 top-1.5">
             <CopyIconButton value={snippet.code} title={`${label} snippet copied`} label={`Copy ${label} snippet`} />
@@ -511,17 +523,20 @@ function CatalogueCard({ apiBase }: { apiBase: string }) {
 
   return (
     <Card className="overflow-hidden">
-      <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3.5 sm:px-5">
-        <h2 className="text-[14px] font-semibold tracking-[-0.005em]">
-          API reference <span className="ml-1 text-[12px] font-normal tabular-nums text-fg-muted">{total} routes</span>
-        </h2>
-        <button
-          type="button"
-          onClick={() => setOpenGroups(allOpen ? new Set() : new Set(CATALOGUE.map((g) => g.group)))}
-          className="min-h-6 shrink-0 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
-        >
-          {allOpen ? "Collapse all" : "Expand all"}
-        </button>
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle
+          icon={BookOpen}
+          title={<>API reference <span className="ml-1 text-[12px] font-normal tabular-nums text-fg-muted">{total} routes</span></>}
+          action={(
+            <button
+              type="button"
+              onClick={() => setOpenGroups(allOpen ? new Set() : new Set(CATALOGUE.map((g) => g.group)))}
+              className="min-h-6 shrink-0 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            >
+              {allOpen ? "Collapse all" : "Expand all"}
+            </button>
+          )}
+        />
       </div>
       <div className="divide-y divide-line">
         {CATALOGUE.map((g, gi) => {
@@ -535,7 +550,7 @@ function CatalogueCard({ apiBase }: { apiBase: string }) {
                   aria-expanded={expanded}
                   aria-controls={regionId}
                   onClick={() => toggleGroup(g.group)}
-                  className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500 sm:px-5"
+                  className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
                 >
                   <ChevronRight
                     className={`h-4 w-4 shrink-0 text-fg-faint transition-transform ${expanded ? "rotate-90" : ""}`}
@@ -550,8 +565,8 @@ function CatalogueCard({ apiBase }: { apiBase: string }) {
               {expanded && (
                 <ul id={regionId} className="divide-y divide-line border-t border-line">
                   {g.entries.map((e) => (
-                    <li key={`${e.method} ${e.path}`} className="flex items-center gap-3 px-4 py-2 sm:pl-11 sm:pr-5">
-                      <span className="w-10 shrink-0 font-mono text-[12px] font-medium text-fg-muted">{e.method}</span>
+                    <li key={`${e.method} ${e.path}`} className="flex items-center gap-3 px-4 py-2 sm:pl-10">
+                      <MethodBadge method={e.method} />
                       <span className="min-w-0 flex-1">
                         <span className="block break-all font-mono text-[12.5px] text-fg">{e.path}</span>
                         <span className="block text-[12px] text-fg-muted">{e.purpose}</span>
@@ -583,14 +598,16 @@ function CatalogueCard({ apiBase }: { apiBase: string }) {
 function TunnelSection() {
   return (
     <Card>
-      <CardHeader title="Tunnels" description="Optional access from outside this machine" />
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle icon={ICONS.tunnel} title="Tunnels" subtitle="Optional access from outside this machine" />
+      </div>
       <div className="divide-y divide-line">
         <CloudflareTunnel />
         {/* Tailscale — temporarily disabled, under active development */}
         <TunnelRow
           name="Tailscale"
           description="Private network with HTTPS"
-          logo={<TailscaleLogo className="h-4 w-4 text-fg-faint" />}
+          logo={<TailscaleLogo className="h-4 w-4" />}
           loading={false}
           isRunning={false}
           displayUrl=""
@@ -707,7 +724,7 @@ function CloudflareTunnel() {
     <TunnelRow
       name="Cloudflare Tunnel"
       description="Quick tunnel — no account needed"
-      logo={<CloudflareLogo className="h-4 w-4 text-fg-faint" />}
+      logo={<CloudflareLogo className="h-4 w-4" />}
       isRunning={isRunning}
       reachable={reachable}
       loading={loading}
@@ -868,7 +885,7 @@ export function TailscaleTunnel() {
     <TunnelRow
       name="Tailscale"
       description="Private network with HTTPS"
-      logo={<TailscaleLogo className="h-4 w-4 text-fg-faint" />}
+      logo={<TailscaleLogo className="h-4 w-4" />}
       isRunning={isRunning}
       reachable={reachable}
       loading={loading}
@@ -980,9 +997,9 @@ function TunnelRow({
   children?: ReactNode;
 }) {
   return (
-    <div className="px-4 py-3.5 sm:px-5">
+    <div className="p-4">
       <div className="flex items-center gap-3">
-        <span className="shrink-0">{logo}</span>
+        <LogoTile running={isRunning} reachable={reachable}>{logo}</LogoTile>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="text-[13px] font-medium text-fg">{name}</h3>
@@ -1029,7 +1046,7 @@ function TunnelRow({
           )}
         </div>
       </div>
-      {children && <div className="mt-3 border-t border-line pt-3 sm:ml-7">{children}</div>}
+      {children && <div className="mt-3 border-t border-line pt-3 sm:ml-11">{children}</div>}
     </div>
   );
 }
@@ -1051,11 +1068,43 @@ function TunnelDot({ running, reachable }: { running: boolean; reachable: boolea
 }
 
 function TunnelBadge({ reachable }: { reachable: boolean | null }) {
-  const tone = reachable === true ? "success" : reachable === false ? "danger" : "neutral";
+  const tone = reachable === true ? "success" : reachable === false ? "danger" : "warning";
   const label = reachable === true ? "Reachable" : reachable === false ? "Unreachable" : "Checking…";
   return (
     <span role="status">
       <Badge tone={tone}>{label}</Badge>
+    </span>
+  );
+}
+
+// LogoTile frames a tunnel provider's monochrome mark in the section tone, or
+// in the status colour once the tunnel is up. The badge beside it carries the
+// status in text, so the tile itself is decorative.
+function LogoTile({ running, reachable, children }: { running: boolean; reachable: boolean | null; children: ReactNode }) {
+  const colours = !running
+    ? "bg-tone-soft text-tone ring-tone-ring"
+    : reachable === true
+      ? "bg-ok/10 text-ok ring-ok/20"
+      : reachable === false
+        ? "bg-bad/10 text-bad ring-bad/20"
+        : "bg-warn/12 text-warn ring-warn/25";
+  return (
+    <span aria-hidden="true" className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${colours}`}>
+      {children}
+    </span>
+  );
+}
+
+// MethodBadge colours HTTP methods the same way everywhere: GET in the accent
+// tint, POST in the section tone, anything else neutral. The method is always
+// written out, so colour is never the only cue.
+function MethodBadge({ method }: { method: string }) {
+  const tone = method === "GET" ? "accent" : method === "POST" ? "secondary" : "neutral";
+  return (
+    <span className="inline-flex w-12 shrink-0">
+      <Badge tone={tone}>
+        <span className="font-mono">{method}</span>
+      </Badge>
     </span>
   );
 }

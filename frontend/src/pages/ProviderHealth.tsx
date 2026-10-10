@@ -1,7 +1,7 @@
 import { useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, CornerDownRight, Lightbulb, Play, RefreshCw, X } from "lucide-react";
+import { ArrowLeft, ChevronRight, CircleAlert, CircleX, CornerDownRight, Lightbulb, Play, RefreshCw, X, type LucideIcon } from "lucide-react";
 import {
   api,
   type HealthStatus,
@@ -17,7 +17,8 @@ import {
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { ProviderLogo } from "../components/ProviderLogo";
-import { Badge, Button, ErrorCard, Skeleton, TablePagination, useClientPagination } from "../components/ui";
+import { Badge, Button, ErrorCard, IconTile, Kpi, KpiGrid, SectionTitle, Skeleton, TablePagination, useClientPagination } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { HealthStatusBadge, HealthScoreRing, fmtIssue } from "../components/HealthBadge";
 import { ErrorTypeBreakdown, HealthTrends } from "../components/HealthCharts";
 import { useToast } from "../components/Toast";
@@ -218,7 +219,7 @@ function Overview() {
       />
 
       {overview.isLoading ? (
-        <div className="space-y-5" aria-busy="true">
+        <div className="space-y-6" aria-busy="true">
           <span className="sr-only" role="status">Loading provider health</span>
           <Skeleton className="h-[84px] w-full rounded-2xl" />
           <TableSkeleton rows={6} />
@@ -226,7 +227,7 @@ function Overview() {
       ) : overview.isError ? (
         <ErrorCard message="Couldn't load provider health. Try refreshing." />
       ) : overview.data ? (
-        <div className="space-y-5">
+        <div className="space-y-6">
           <SummaryStrip summary={overview.data.summary} rows={overview.data.providers} />
 
           <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-2 border-b border-line">
@@ -266,7 +267,7 @@ function Overview() {
                       className={cn(
                         "h-7 rounded-lg border px-2.5 text-[12px] font-medium transition-colors",
                         FOCUS,
-                        active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:text-fg",
+                        active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
                       )}
                     >
                       {f.label}
@@ -292,24 +293,36 @@ function Overview() {
 function SummaryStrip({ summary, rows }: { summary: HealthSummary; rows: HealthProviderRow[] }) {
   const total = summary.healthy + summary.degraded + summary.unhealthy + summary.unknown + summary.disabled;
   const requests = rows.reduce((n, r) => n + (r.requests ?? 0), 0);
-  const cells: { label: string; value: string; tone?: "warn" | "bad"; hint?: string }[] = [
-    { label: "Unhealthy", value: String(summary.unhealthy), tone: summary.unhealthy ? "bad" : undefined, hint: total ? `of ${total} providers` : "No telemetry yet" },
-    { label: "Degraded", value: String(summary.degraded), tone: summary.degraded ? "warn" : undefined, hint: total ? `${summary.healthy} healthy` : undefined },
-    { label: "Fallbacks", value: summary.fallbacks.toLocaleString("en-US"), tone: summary.fallbacks ? "warn" : undefined, hint: requests ? `of ${requests.toLocaleString("en-US")} requests` : undefined },
-    { label: "Avg p95 latency", value: fmtMs(summary.avg_p95_latency_ms) },
-  ];
+  // Status cells are green when clear, tinted when something needs attention.
+  const statusTone = (n: number, bad: "warn" | "bad") => (!total ? "section" : n ? bad : "ok");
   return (
-    <section aria-label="Health summary" className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line shadow-[var(--shadow-card)] lg:grid-cols-4">
-      {cells.map((c) => (
-        <div key={c.label} className="flex flex-col gap-0.5 bg-surface px-4 py-3">
-          <span className="text-[12px] font-medium text-fg-muted">{c.label}</span>
-          <span className={cn("text-[22px] font-semibold leading-tight tracking-[-0.02em] tabular-nums", c.tone === "bad" ? "text-bad" : c.tone === "warn" ? "text-warn" : "text-fg")}>
-            {c.value}
-          </span>
-          <span className="text-[12px] tabular-nums text-fg-faint">{c.hint ?? " "}</span>
-        </div>
-      ))}
-    </section>
+    <KpiGrid cols={4} label="Health summary">
+      <Kpi
+        icon={CircleX}
+        label="Unhealthy"
+        value={String(summary.unhealthy)}
+        tone={statusTone(summary.unhealthy, "bad")}
+        valueClassName={summary.unhealthy ? "text-bad" : ""}
+        hint={total ? `of ${total} providers` : "No telemetry yet"}
+      />
+      <Kpi
+        icon={CircleAlert}
+        label="Degraded"
+        value={String(summary.degraded)}
+        tone={statusTone(summary.degraded, "warn")}
+        valueClassName={summary.degraded ? "text-warn" : ""}
+        hint={total ? `${summary.healthy} healthy` : undefined}
+      />
+      <Kpi
+        icon={ICONS.fallbacks}
+        label="Fallbacks"
+        value={summary.fallbacks.toLocaleString("en-US")}
+        tone={summary.fallbacks ? "warn" : "section"}
+        valueClassName={summary.fallbacks ? "text-warn" : ""}
+        hint={requests ? `of ${requests.toLocaleString("en-US")} requests` : undefined}
+      />
+      <Kpi icon={ICONS.latency} label="Avg p95 latency" value={fmtMs(summary.avg_p95_latency_ms)} />
+    </KpiGrid>
   );
 }
 
@@ -337,7 +350,7 @@ function ProviderTable({
   const sorted = [...rows].sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9));
   const { page, pages, paged, setPage, total } = useClientPagination(sorted, 15);
   if (rows.length === 0) {
-    return <EmptyPanel title="No provider telemetry in this range" hint="Health appears once requests flow or a probe runs." />;
+    return <EmptyPanel icon={ICONS.health} title="No provider telemetry in this range" hint="Health appears once requests flow or a probe runs." />;
   }
   return (
     <TableCard footer={<TablePagination page={page} pages={pages} total={total} onPage={setPage} />}>
@@ -448,9 +461,10 @@ function LoadingTable() {
   );
 }
 
-function EmptyPanel({ title, hint }: { title: string; hint?: string }) {
+function EmptyPanel({ icon, title, hint }: { icon: LucideIcon; title: string; hint?: string }) {
   return (
-    <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-10 text-center">
+    <div className="flex flex-col items-center rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-10 text-center">
+      <IconTile icon={icon} size="lg" className="mb-3" />
       <p className="text-[13px] font-medium text-fg">{title}</p>
       {hint && <p className="mt-1 text-[12.5px] text-fg-muted">{hint}</p>}
     </div>
@@ -479,7 +493,7 @@ function ModelTable({ query }: { query: UseQueryResult<{ models: HealthModelRow[
   if (query.isLoading) return <LoadingTable />;
   if (query.isError) return <ErrorCard message="Couldn't load model health. Try refreshing." />;
   const rows = (query.data as { models?: HealthModelRow[] } | undefined)?.models ?? [];
-  if (rows.length === 0) return <EmptyPanel title="No model health data yet" hint="Rows appear once a model gets traffic or a probe." />;
+  if (rows.length === 0) return <EmptyPanel icon={ICONS.model} title="No model health data yet" hint="Rows appear once a model gets traffic or a probe." />;
   return <ModelTableInner rows={rows} />;
 }
 
@@ -522,7 +536,7 @@ function ChainTable({ query }: { query: UseQueryResult<{ chains: HealthChainRow[
   if (query.isLoading) return <LoadingTable />;
   if (query.isError) return <ErrorCard message="Couldn't load chain impact. Try refreshing." />;
   const rows = query.data?.chains ?? [];
-  if (rows.length === 0) return <EmptyPanel title="No chains configured" hint="Chains show here once they serve traffic." />;
+  if (rows.length === 0) return <EmptyPanel icon={ICONS.chains} title="No chains configured" hint="Chains show here once they serve traffic." />;
   const close = () => {
     const id = selected;
     setSelected(null);
@@ -602,23 +616,31 @@ function ChainDetail({ id, onClose }: { id: string; onClose: () => void }) {
       onKeyDown={(e) => e.key === "Escape" && onClose()}
       className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
     >
-      <div className="flex items-start justify-between gap-3 border-b border-line px-4 py-3">
-        <div className="min-w-0">
-          <h2 id="chain-detail-title" className="flex flex-wrap items-center gap-2 text-[13px] font-semibold text-fg">
-            {q.data?.name ?? "Chain detail"}
-            {q.data && <Badge tone="neutral">{q.data.strategy}</Badge>}
-          </h2>
-          {q.data && (
-            <p className="mt-0.5 flex flex-wrap gap-x-2 text-[12px] tabular-nums text-fg-muted">
-              {q.data.requests != null && <span>{q.data.requests.toLocaleString("en-US")} requests</span>}
-              {q.data.fallback_rate != null && <span>· {fmtPct(q.data.fallback_rate)} fallback rate</span>}
-              {q.data.final_failure_count != null && q.data.final_failure_count > 0 && <span className="text-bad">· {q.data.final_failure_count} final failures</span>}
-            </p>
-          )}
-        </div>
-        <button type="button" onClick={onClose} aria-label="Close chain detail" className={cn("inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg", FOCUS)}>
-          <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
-        </button>
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle
+          id="chain-detail-title"
+          icon={ICONS.chains}
+          title={
+            <span className="inline-flex flex-wrap items-center gap-2">
+              {q.data?.name ?? "Chain detail"}
+              {q.data && <Badge tone="neutral">{q.data.strategy}</Badge>}
+            </span>
+          }
+          subtitle={
+            q.data && (
+              <span className="flex flex-wrap gap-x-2 tabular-nums">
+                {q.data.requests != null && <span>{q.data.requests.toLocaleString("en-US")} requests</span>}
+                {q.data.fallback_rate != null && <span>· {fmtPct(q.data.fallback_rate)} fallback rate</span>}
+                {q.data.final_failure_count != null && q.data.final_failure_count > 0 && <span className="text-bad">· {q.data.final_failure_count} final failures</span>}
+              </span>
+            )
+          }
+          action={
+            <button type="button" onClick={onClose} aria-label="Close chain detail" className={cn("inline-flex h-7 w-7 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg", FOCUS)}>
+              <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+            </button>
+          }
+        />
       </div>
       {q.isLoading ? (
         <div className="space-y-2 px-4 py-4" aria-hidden="true">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-11 w-full" />)}</div>
@@ -668,7 +690,7 @@ function ProbeHistoryTable({ range }: { range: string }) {
   const rows = q.data?.items ?? [];
   const total = q.data?.pagination.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / 50));
-  if (rows.length === 0) return <EmptyPanel title="No probes in this range" hint="Run a probe from a provider's health page." />;
+  if (rows.length === 0) return <EmptyPanel icon={Play} title="No probes in this range" hint="Run a probe from a provider's health page." />;
   return (
     <TableCard footer={<TablePagination page={page} pages={pages} total={total} onPage={setPage} />}>
       <table className="w-full min-w-[820px] text-[13px]">
@@ -743,18 +765,8 @@ function ProviderDetail({ provider }: { provider: string }) {
   const meta = providers.data?.providers.find((p) => p.id === d.provider);
   const name = meta?.display_name ?? d.provider;
   const m = d.metrics;
-  const kpis: { label: string; value: string; tone?: string; hint?: string; hintTone?: string }[] = [
-    { label: "Requests", value: m.requests.toLocaleString("en-US") },
-    {
-      label: "Success",
-      value: fmtPct(m.success_rate),
-      tone: m.requests && m.success_rate < 95 ? "text-warn" : "",
-      hint: `${fmtPct(m.error_rate)} errors`,
-      hintTone: m.error_rate >= 5 ? "text-bad" : "",
-    },
-    { label: "p95 latency", value: fmtMs(m.latency_p95_ms), hint: `TTFT ${fmtMs(m.ttft_p95_ms)}` },
-    { label: "Fallbacks", value: m.fallback_count.toLocaleString("en-US"), tone: m.fallback_count ? "text-warn" : "" },
-  ];
+  // Success is a status value: tinted only once there is traffic to judge.
+  const successTone = !m.requests ? "section" : m.success_rate >= 99 ? "ok" : m.success_rate >= 95 ? "warn" : "bad";
 
   return (
     <div>
@@ -796,39 +808,52 @@ function ProviderDetail({ provider }: { provider: string }) {
         <RangeSelect value={range} onChange={(v) => setParams((p) => { p.set("range", v); return p; }, { replace: true })} />
       </header>
 
-      {(d.main_issue || d.recommendation) && (
-        <RecommendationPanel issue={fmtIssue(d.main_issue)} recommendation={d.recommendation} />
-      )}
+      <div className="space-y-6">
+        {(d.main_issue || d.recommendation) && (
+          <RecommendationPanel issue={fmtIssue(d.main_issue)} recommendation={d.recommendation} />
+        )}
 
-      <section aria-label="Metrics" className="mb-5 grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line shadow-[var(--shadow-card)] lg:grid-cols-4">
-        {kpis.map((k) => (
-          <div key={k.label} className="bg-surface px-4 py-3">
-            <p className="text-[12px] font-medium text-fg-muted">{k.label}</p>
-            <p className={cn("mt-1 text-[20px] font-semibold tracking-[-0.01em] tabular-nums text-fg", k.tone)}>{k.value}</p>
-            {k.hint && <p className={cn("mt-0.5 text-[12px] tabular-nums text-fg-faint", k.hintTone)}>{k.hint}</p>}
-          </div>
-        ))}
-      </section>
+        <KpiGrid cols={4} label="Metrics">
+          <Kpi icon={ICONS.requests} label="Requests" value={m.requests.toLocaleString("en-US")} />
+          <Kpi
+            icon={ICONS.successRate}
+            label="Success"
+            value={fmtPct(m.success_rate)}
+            tone={successTone}
+            valueClassName={m.requests && m.success_rate < 95 ? "text-warn" : ""}
+            hint={<span className={cn("tabular-nums", m.error_rate >= 5 && "text-bad")}>{fmtPct(m.error_rate)} errors</span>}
+          />
+          <Kpi icon={ICONS.latency} label="p95 latency" value={fmtMs(m.latency_p95_ms)} hint={<span className="tabular-nums">TTFT {fmtMs(m.ttft_p95_ms)}</span>} />
+          <Kpi
+            icon={ICONS.fallbacks}
+            label="Fallbacks"
+            value={m.fallback_count.toLocaleString("en-US")}
+            tone={m.fallback_count ? "warn" : "section"}
+            valueClassName={m.fallback_count ? "text-warn" : ""}
+          />
+        </KpiGrid>
 
-      <HealthTrends snapshots={d.snapshots ?? []} range={range} />
+        <HealthTrends snapshots={d.snapshots ?? []} range={range} />
 
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <ErrorTypeBreakdown breakdown={d.error_breakdown} />
-        <section aria-labelledby="probe-title" className="self-start rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-          <div className="border-b border-line px-4 py-3">
-            <h2 id="probe-title" className="text-[13px] font-semibold text-fg">Run a probe</h2>
-            <p className="mt-0.5 text-[12px] text-fg-muted">Sends one test request now</p>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ErrorTypeBreakdown breakdown={d.error_breakdown} />
+          <section aria-labelledby="probe-title" className="self-start rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+            <div className="border-b border-line px-4 py-3">
+              <SectionTitle id="probe-title" icon={Play} title="Run a probe" subtitle="Sends one test request now" />
+            </div>
+            <div className="p-4">
+              <ManualProbeInline provider={provider} models={d.models.map((m) => m.model).filter(Boolean)} />
+            </div>
+          </section>
+        </div>
+
+        <section aria-labelledby="models-title">
+          <div className="mb-3">
+            <SectionTitle id="models-title" icon={ICONS.model} title="Models" />
           </div>
-          <div className="px-4 py-4">
-            <ManualProbeInline provider={provider} models={d.models.map((m) => m.model).filter(Boolean)} />
-          </div>
+          <ModelTable query={detail} />
         </section>
       </div>
-
-      <section aria-labelledby="models-title" className="mt-6">
-        <h2 id="models-title" className="mb-2 text-[14px] font-semibold text-fg">Models</h2>
-        <ModelTable query={detail} />
-      </section>
     </div>
   );
 }
@@ -844,7 +869,7 @@ function BackLink() {
 function RecommendationPanel({ issue, recommendation }: { issue: string; recommendation: string }) {
   if (!issue && !recommendation) return null;
   return (
-    <section aria-label="Main issue" className="mb-4 flex items-start gap-3 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3">
+    <section aria-label="Main issue" className="flex items-start gap-3 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3">
       <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
       <div className="text-[13px]">
         {issue && <p className="font-medium text-fg">{issue}</p>}

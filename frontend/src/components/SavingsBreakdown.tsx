@@ -1,6 +1,9 @@
 import { useId, useState } from "react";
 import type { ClientSaving, TokenSavings, UsageInsights } from "../lib/api";
+import type { LucideIcon } from "lucide-react";
+import { ICONS } from "../lib/icons";
 import { SavingsCardShareButton } from "./SavingsCard";
+import { Kpi, SectionTitle } from "./ui";
 
 function fmtNum(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -100,27 +103,29 @@ export function TokenSavingsBreakdown({ savings, totalRequests, insights, period
     { label: "Terse", count: savings.terse_requests, hint: "Concise-output directive" },
     { label: "Ponytail", count: savings.ponytail_requests, hint: "Output trimming" },
   ];
-  const cells = [
-    { label: "Value saved", value: fmtUSD(savings.usd_saved), hint: savings.usd_saved_estimate ? "Includes estimates" : "" },
-    { label: "Tokens saved", value: fmtNum(savings.total_tokens_saved), hint: `${fmtNum(savings.slim_tokens_saved)} RTK · ${fmtNum(savings.headroom_tokens_saved)} Headroom` },
-    { label: "Optimized requests", value: fmtNum(savings.optimized_requests), hint: `${share(savings.optimized_requests)} of all requests` },
-    { label: "Prompt reduced", value: fmtBytes(savings.slim_bytes_saved), hint: `${fmtNum(savings.saved_tokens_per_optimized_request)} tokens per request` },
+  const cells: { label: string; icon: LucideIcon; value: string; hint: string }[] = [
+    { label: "Value saved", icon: ICONS.savings, value: fmtUSD(savings.usd_saved), hint: savings.usd_saved_estimate ? "Includes estimates" : "" },
+    { label: "Tokens saved", icon: ICONS.tokens, value: fmtNum(savings.total_tokens_saved), hint: `${fmtNum(savings.slim_tokens_saved)} RTK · ${fmtNum(savings.headroom_tokens_saved)} Headroom` },
+    { label: "Optimized requests", icon: ICONS.requests, value: fmtNum(savings.optimized_requests), hint: `${share(savings.optimized_requests)} of all requests` },
+    { label: "Prompt reduced", icon: ICONS.prompt, value: fmtBytes(savings.slim_bytes_saved), hint: `${fmtNum(savings.saved_tokens_per_optimized_request)} tokens per request` },
   ];
 
   const titleId = useId();
   return (
     <section aria-labelledby={titleId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
-        <h2 id={titleId} className="text-[13px] font-semibold text-fg">Optimization</h2>
-        <SavingsCardShareButton insights={insights} period={period} />
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle id={titleId} icon={ICONS.savings} title="Optimization" action={<SavingsCardShareButton insights={insights} period={period} />} />
       </div>
-      <dl className="grid grid-cols-2 gap-px border-b border-line bg-line lg:grid-cols-4">
+      {/* Kpi cells sit directly in this card's hairline grid (KpiGrid would add a second border). */}
+      <dl className="grid grid-cols-1 gap-px border-b border-line bg-line sm:grid-cols-2 xl:grid-cols-4">
         {cells.map((c) => (
-          <div key={c.label} className="bg-surface px-4 py-3">
-            <dt className="text-[12px] font-medium text-fg-muted">{c.label}</dt>
-            <dd className="mt-1 text-[18px] font-semibold tracking-[-0.01em] tabular-nums text-fg">{c.value}</dd>
-            {c.hint && <dd className="mt-0.5 truncate text-[12px] text-fg-faint" title={c.hint}>{c.hint}</dd>}
-          </div>
+          <Kpi
+            key={c.label}
+            icon={c.icon}
+            label={c.label}
+            value={c.value}
+            hint={c.hint ? <span title={c.hint}>{c.hint}</span> : undefined}
+          />
         ))}
       </dl>
 

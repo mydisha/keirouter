@@ -1,7 +1,10 @@
 import { useId, useMemo } from "react";
+import { Hourglass } from "lucide-react";
 import { ChartCard, TimeBars, TimeLines, clockLabel, dayLabel } from "./charts/TimeSeries";
 import type { HealthSnapshot } from "../lib/api";
 import { cn } from "@/lib/utils";
+import { ICONS } from "@/lib/icons";
+import { IconTile, SectionTitle } from "./ui";
 import { fmtIssue } from "./HealthBadge";
 
 // Provider-health trend charts. Raw snapshots are one row per minute per
@@ -95,7 +98,8 @@ export function HealthTrends({ snapshots, range }: { snapshots: HealthSnapshot[]
   );
   if (!snapshots.length) {
     return (
-      <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-10 text-center">
+      <div className="flex flex-col items-center rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-10 text-center">
+        <IconTile icon={ICONS.trend} size="lg" className="mb-3" />
         <p className="text-[13px] font-medium text-fg">No trend data in this range</p>
         <p className="mt-1 text-[12.5px] text-fg-muted">Trends appear once requests or probes run.</p>
       </div>
@@ -104,6 +108,7 @@ export function HealthTrends({ snapshots, range }: { snapshots: HealthSnapshot[]
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <ChartCard
+        icon={ICONS.requests}
         title="Requests"
         subtitle={`${totals.requests.toLocaleString("en-US")} total · ${totals.failures.toLocaleString("en-US")} failed`}
         legend={[
@@ -126,6 +131,7 @@ export function HealthTrends({ snapshots, range }: { snapshots: HealthSnapshot[]
       </ChartCard>
 
       <ChartCard
+        icon={ICONS.latency}
         title="Latency"
         subtitle="Worst p95 and p99 per bucket"
         legend={[
@@ -149,11 +155,11 @@ export function HealthTrends({ snapshots, range }: { snapshots: HealthSnapshot[]
         />
       </ChartCard>
 
-      <ChartCard title="Time to first token" subtitle="Streaming requests, worst p95 per bucket" legend={[{ label: "TTFT p95", color: C.ok }]}>
+      <ChartCard icon={Hourglass} title="Time to first token" subtitle="Streaming requests, worst p95 per bucket" legend={[{ label: "TTFT p95", color: C.ok }]}>
         <TimeLines data={data} x={(b) => b.start} format={fmtMs} xFormat={tickFor(range)} tooltipTime={tipFor(range)} label="Time to first token over time" series={[{ key: "ttft", label: "TTFT p95", color: C.ok, value: (b) => b.ttft95 }]} />
       </ChartCard>
 
-      <ChartCard title="Error rate" legend={[{ label: "Errors", color: C.bad }]}>
+      <ChartCard icon={ICONS.errors} title="Error rate" legend={[{ label: "Errors", color: C.bad }]}>
         <TimeBars
           data={data}
           x={(b) => b.start}
@@ -165,7 +171,7 @@ export function HealthTrends({ snapshots, range }: { snapshots: HealthSnapshot[]
         />
       </ChartCard>
 
-      <ChartCard title="Fallbacks" subtitle={`${totals.fallbacks.toLocaleString("en-US")} moved to another target`} legend={[{ label: "Fell over", color: C.warn }]}>
+      <ChartCard icon={ICONS.fallbacks} title="Fallbacks" subtitle={`${totals.fallbacks.toLocaleString("en-US")} moved to another target`} legend={[{ label: "Fell over", color: C.warn }]}>
         <TimeBars data={data} x={(b) => b.start} xFormat={tickFor(range)} tooltipTime={tipFor(range)} label="Fallbacks over time" series={[{ key: "fb", label: "Fell over", color: C.warn, value: (b) => b.fallbacks }]} />
       </ChartCard>
     </div>
@@ -183,8 +189,12 @@ export function ErrorTypeBreakdown({ breakdown }: { breakdown: Record<string, nu
   return (
     <section aria-labelledby={titleId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
       <div className="border-b border-line px-4 py-3">
-        <h2 id={titleId} className="text-[13px] font-semibold text-fg">Errors by type</h2>
-        {total > 0 && <p className="mt-0.5 text-[12px] tabular-nums text-fg-muted">{total.toLocaleString("en-US")} failed attempts</p>}
+        <SectionTitle
+          id={titleId}
+          icon={ICONS.errors}
+          title="Errors by type"
+          subtitle={total > 0 ? <span className="tabular-nums">{total.toLocaleString("en-US")} failed attempts</span> : undefined}
+        />
       </div>
       {rows.length === 0 ? (
         <p className="px-4 py-8 text-center text-[13px] text-fg-muted">Every attempt in this range succeeded.</p>

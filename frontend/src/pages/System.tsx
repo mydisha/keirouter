@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
+import type { LucideIcon } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ChevronRight, RefreshCw } from "lucide-react";
+import { AlertTriangle, ChevronRight, RefreshCw, Workflow } from "lucide-react";
 import { api, type SystemSample } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
-import { Badge, ErrorCard, Skeleton } from "../components/ui";
+import { Badge, ErrorCard, Kpi, KpiGrid, SectionTitle, Skeleton } from "../components/ui";
 import { ChartCard, TimeLines } from "../components/charts/TimeSeries";
+import { ICONS } from "../lib/icons";
 
 // System shows what this KeiRouter instance and its host are using, refreshed
 // every 5 seconds from /api/system and /api/system/history. The history is a
@@ -58,10 +60,10 @@ export function SystemPage() {
     return (
       <>
         {header}
-        <div className="space-y-5" aria-busy="true">
+        <div className="space-y-6" aria-busy="true">
           <span className="sr-only" role="status">Loading system metrics</span>
           <Skeleton className="h-[92px] w-full rounded-2xl" />
-          <div className="grid gap-5 lg:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2">
             <Skeleton className="h-[260px] rounded-2xl" />
             <Skeleton className="h-[260px] rounded-2xl" />
           </div>
@@ -89,45 +91,57 @@ export function SystemPage() {
   const xFormat = spanS < 600 ? fmtClockSeconds : (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
 
   // Four vitals: host load leads, KeiRouter's own share is the context line.
-  const vitals: { label: string; value: string; pct: number; warn: number; hint: string }[] = [
-    { label: "CPU", value: `${s.cpu_pct.toFixed(1)}%`, pct: s.cpu_pct, warn: CPU_WARN, hint: `KeiRouter ${s.proc_cpu_pct.toFixed(1)}% · ${s.cpu_per_core.length} cores` },
-    { label: "Memory", value: `${s.mem_pct.toFixed(1)}%`, pct: s.mem_pct, warn: MEM_WARN, hint: `${fmtMB(s.mem_used_mb)} of ${fmtMB(s.mem_total_mb)} · KeiRouter ${fmtMB(s.proc_rss_mb)}` },
-    { label: "Disk", value: `${s.disk_pct.toFixed(1)}%`, pct: s.disk_pct, warn: 90, hint: `${s.disk_free_gb.toFixed(1)} GB free` },
-    { label: "Uptime", value: fmtDuration(s.uptime_s), pct: -1, warn: 0, hint: `${s.proc_threads} threads` },
+  const vitals: { label: string; icon: LucideIcon; value: string; pct: number; warn: number; hint: string }[] = [
+    { label: "CPU", icon: ICONS.system, value: `${s.cpu_pct.toFixed(1)}%`, pct: s.cpu_pct, warn: CPU_WARN, hint: `KeiRouter ${s.proc_cpu_pct.toFixed(1)}% · ${s.cpu_per_core.length} cores` },
+    { label: "Memory", icon: ICONS.memory, value: `${s.mem_pct.toFixed(1)}%`, pct: s.mem_pct, warn: MEM_WARN, hint: `${fmtMB(s.mem_used_mb)} of ${fmtMB(s.mem_total_mb)} · KeiRouter ${fmtMB(s.proc_rss_mb)}` },
+    { label: "Disk", icon: ICONS.disk, value: `${s.disk_pct.toFixed(1)}%`, pct: s.disk_pct, warn: 90, hint: `${s.disk_free_gb.toFixed(1)} GB free` },
+    { label: "Uptime", icon: ICONS.uptime, value: fmtDuration(s.uptime_s), pct: -1, warn: 0, hint: `${s.proc_threads} threads` },
   ];
 
   return (
     <>
       {header}
       <div className="space-y-6">
-        <section aria-label="Current usage" className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line shadow-[var(--shadow-card)] lg:grid-cols-4">
+        <KpiGrid cols={4} label="Current usage">
           {vitals.map((g) => (
-            <div key={g.label} className="min-w-0 bg-surface px-4 py-3">
-              <p className="text-[12px] font-medium text-fg-muted">{g.label}</p>
-              <p className={cn("mt-1 text-[22px] font-semibold leading-tight tracking-[-0.02em] tabular-nums", g.pct >= 0 ? toneText(g.pct, g.warn) : "text-fg")}>
-                {g.value}
-                {g.pct >= g.warn && g.pct >= 0 && <span className="sr-only"> (high)</span>}
-              </p>
-              {g.pct >= 0 && (
-                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-track" aria-hidden="true">
-                  <div className={cn("h-full rounded-full", toneFill(g.pct, g.warn))} style={{ width: `${Math.min(100, g.pct)}%` }} />
-                </div>
-              )}
-              <p className="mt-1.5 truncate text-[12px] tabular-nums text-fg-faint" title={g.hint}>
-                {g.hint}
-              </p>
-            </div>
+            <Kpi
+              key={g.label}
+              icon={g.icon}
+              label={g.label}
+              tone={g.pct >= 0 ? toneTile(g.pct, g.warn) : "section"}
+              valueClassName={g.pct >= 0 ? toneText(g.pct, g.warn) : ""}
+              value={
+                <>
+                  {g.value}
+                  {g.pct >= g.warn && g.pct >= 0 && <span className="sr-only"> (high)</span>}
+                  {g.pct >= 0 && (
+                    <span className="mt-1.5 block h-1 w-28 overflow-hidden rounded-full bg-track" aria-hidden="true">
+                      <span className={cn("block h-full rounded-full", toneFill(g.pct, g.warn))} style={{ width: `${Math.min(100, g.pct)}%` }} />
+                    </span>
+                  )}
+                </>
+              }
+              hint={
+                <span className="tabular-nums" title={g.hint}>
+                  {g.hint}
+                </span>
+              }
+            />
           ))}
-        </section>
+        </KpiGrid>
 
         <section aria-labelledby="history-title" className="space-y-3">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-            <h2 id="history-title" className="text-[14px] font-semibold text-fg">History</h2>
-            <p className="text-[12px] tabular-nums text-fg-muted">
-              {windowText}
-              {samples.length > 1 && spikes.length === 0 && " · no spikes"}
-            </p>
-          </div>
+          <SectionTitle
+            id="history-title"
+            icon={ICONS.trend}
+            title="History"
+            action={
+              <p className="text-[12px] tabular-nums text-fg-muted">
+                {windowText}
+                {samples.length > 1 && spikes.length === 0 && " · no spikes"}
+              </p>
+            }
+          />
           {history.isError && (
             <p role="status" className="flex items-center gap-2 text-[12.5px] text-warn">
               <AlertTriangle className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
@@ -135,8 +149,9 @@ export function SystemPage() {
             </p>
           )}
 
-          <div className="grid gap-5 lg:grid-cols-2">
+          <div className="grid gap-4 lg:grid-cols-2">
             <ChartCard
+              icon={ICONS.system}
               title="CPU"
               legend={[
                 { label: "Host", color: SERIES_MAIN },
@@ -160,7 +175,7 @@ export function SystemPage() {
               {s.cpu_per_core.length > 0 && <PerCore cores={s.cpu_per_core} />}
             </ChartCard>
 
-            <ChartCard title="Host memory" legend={[{ label: "Memory", color: SERIES_MAIN }]}>
+            <ChartCard icon={ICONS.memory} title="Host memory" legend={[{ label: "Memory", color: SERIES_MAIN }]}>
               <TimeLines
                 data={samples}
                 x={x}
@@ -175,6 +190,7 @@ export function SystemPage() {
             </ChartCard>
 
             <ChartCard
+              icon={ICONS.memory}
               title="KeiRouter memory"
               legend={[
                 { label: "RSS", color: SERIES_MAIN },
@@ -195,7 +211,7 @@ export function SystemPage() {
               />
             </ChartCard>
 
-            <ChartCard title="Goroutines" subtitle="A steady climb can mean a leak" legend={[{ label: "Goroutines", color: SERIES_MAIN }]}>
+            <ChartCard icon={Workflow} title="Goroutines" subtitle="A steady climb can mean a leak" legend={[{ label: "Goroutines", color: SERIES_MAIN }]}>
               <TimeLines
                 data={samples}
                 x={x}
@@ -211,10 +227,12 @@ export function SystemPage() {
         {spikes.length > 0 && (
           <section aria-labelledby="spikes-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
             <div className="border-b border-line px-4 py-3">
-              <h2 id="spikes-title" className="text-[13px] font-semibold text-fg">Spikes</h2>
-              <p className="mt-0.5 text-[12px] text-fg-muted">
-                CPU above {CPU_WARN}% or memory above {MEM_WARN}%
-              </p>
+              <SectionTitle
+                id="spikes-title"
+                icon={AlertTriangle}
+                title="Spikes"
+                subtitle={`CPU above ${CPU_WARN}% or memory above ${MEM_WARN}%`}
+              />
             </div>
             <div className="overflow-x-auto">
               <table className="w-full min-w-[560px] text-[13px]">
@@ -250,7 +268,7 @@ export function SystemPage() {
 
         <section aria-labelledby="details-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
           <div className="border-b border-line px-4 py-3">
-            <h2 id="details-title" className="text-[13px] font-semibold text-fg">Details</h2>
+            <SectionTitle id="details-title" icon={ICONS.server} title="Details" />
           </div>
           <div className="grid divide-y divide-line lg:grid-cols-2 lg:divide-x lg:divide-y-0">
             <DetailList
@@ -329,6 +347,10 @@ function DetailList({ title, rows }: { title: string; rows: [string, ReactNode][
 
 function toneText(pct: number, warn: number) {
   return pct >= warn ? "text-bad" : pct >= warn * 0.75 ? "text-warn" : "text-fg";
+}
+
+function toneTile(pct: number, warn: number): "bad" | "warn" | "section" {
+  return pct >= warn ? "bad" : pct >= warn * 0.75 ? "warn" : "section";
 }
 
 function toneFill(pct: number, warn: number) {

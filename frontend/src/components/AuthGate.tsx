@@ -2,7 +2,7 @@ import { useId, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { WifiOff } from "lucide-react";
 import { api, fetchPortalBranding } from "../lib/api";
-import { Button, Input, Spinner } from "./ui";
+import { Button, IconTile, Input, Spinner } from "./ui";
 import { BrandMark } from "./BrandMark";
 
 // AuthGate gates the dashboard behind a login, and surfaces a one-time
@@ -26,8 +26,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
         <div className="px-6 py-7 text-center">
           <AuthGateLogo className="mx-auto h-8 object-contain" />
           <div role="alert">
-            <h1 className="mt-5 flex items-center justify-center gap-1.5 text-[13px] font-medium text-bad">
-              <WifiOff className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+            <IconTile icon={WifiOff} size="lg" tone="bad" className="mx-auto mt-6" />
+            <h1 className="mt-3 text-[15px] font-semibold tracking-[-0.01em] text-fg">
               Cannot reach <AuthGateName />
             </h1>
             <p className="mt-1.5 text-[13px] text-fg-muted">

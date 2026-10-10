@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, Copy, Loader2, Plus, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, Copy, Eye, Loader2, Plus, Shield, X, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type Chain } from "../lib/api";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
-import { Button, ErrorBanner, Input, Skeleton, Toggle } from "../components/ui";
+import { Button, ErrorBanner, IconTile, Input, SectionTitle, Skeleton, Toggle } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { ChainModelPicker } from "../components/chains/ChainModelPicker";
-import { ChainRoutePreview } from "../components/chains/ChainRoutePreview";
-import { type ChainStrategy, type DraftChainStep, isValidChainName, makeDraftStep, normalizeChainStrategy, strategyDescription, strategyLabel, toDraftSteps } from "../components/chains/chainUtils";
+import { ChainRoutePreview, StepNumber } from "../components/chains/ChainRoutePreview";
+import { type ChainStrategy, type DraftChainStep, isValidChainName, makeDraftStep, normalizeChainStrategy, strategyDescription, strategyIcon, strategyLabel, toDraftSteps } from "../components/chains/chainUtils";
 
 const strategyOptions: { value: ChainStrategy; label: string }[] = [
   { value: "priority", label: "Priority" },
@@ -21,15 +22,11 @@ const strategyOptions: { value: ChainStrategy; label: string }[] = [
 
 const focusRing = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
 
-function Panel({ title, titleId, subtitle, action, children, className }: { title: ReactNode; titleId?: string; subtitle?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
+function Panel({ title, titleId, icon, subtitle, action, children, className }: { title: ReactNode; titleId?: string; icon?: LucideIcon; subtitle?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <section aria-labelledby={titleId} className={cn("rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
-        <div className="min-w-0">
-          <h2 id={titleId} className="text-[13px] font-semibold text-fg">{title}</h2>
-          {subtitle && <p className="mt-0.5 text-[12px] text-fg-muted">{subtitle}</p>}
-        </div>
-        {action && <div className="flex shrink-0 items-center gap-2">{action}</div>}
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle icon={icon} title={title} id={titleId} subtitle={subtitle} action={action} />
       </div>
       {children}
     </section>
@@ -76,6 +73,7 @@ function StrategyRadios({ value, onChange, labelledBy, describedBy }: {
     >
       {strategyOptions.map((option) => {
         const active = option.value === value;
+        const Icon = strategyIcon(option.value);
         return (
           <button
             key={option.value}
@@ -85,11 +83,12 @@ function StrategyRadios({ value, onChange, labelledBy, describedBy }: {
             tabIndex={active ? 0 : -1}
             onClick={() => onChange(option.value)}
             className={cn(
-              "h-7 rounded-lg px-2.5 text-[12px] font-medium transition-colors",
+              "inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-[12.5px] font-medium transition-colors",
               focusRing,
               active ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
             )}
           >
+            <Icon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-tone" : "text-fg-faint")} strokeWidth={1.75} aria-hidden="true" />
             {option.label}
           </button>
         );
@@ -301,10 +300,10 @@ export function ChainEditorPage() {
       </nav>
       <PageHeader title={isEdit ? `Edit ${existing?.name ?? "chain"}` : "Create chain"} />
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-        <div className="min-w-0 space-y-5">
-          <Panel title="Name and strategy" titleId="chain-basics-heading">
-            <div className="space-y-5 px-4 py-4 sm:px-5">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+        <div className="min-w-0 space-y-4">
+          <Panel title="Name and strategy" titleId="chain-basics-heading" icon={ICONS.chains}>
+            <div className="space-y-5 p-4">
               <div className="space-y-1.5">
                 <label htmlFor="chain-name" className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
                   Chain name
@@ -339,7 +338,7 @@ export function ChainEditorPage() {
             </div>
           </Panel>
 
-          <Panel title="Route steps" titleId="chain-steps-heading">
+          <Panel title="Route steps" titleId="chain-steps-heading" icon={ICONS.route}>
             <p id="chain-steps-keyboard-hint" className="sr-only">Press Alt plus Up or Down arrow inside a step to move it.</p>
             <ol className="divide-y divide-line" aria-labelledby="chain-steps-heading" aria-describedby="chain-steps-keyboard-hint">
               {steps.map((step, index) => {
@@ -347,8 +346,8 @@ export function ChainEditorPage() {
                 const position = `step ${index + 1} of ${steps.length}`;
                 const model = step.model ? `, ${step.model}` : "";
                 return (
-                  <li key={step.id} className="flex items-center gap-2 px-4 py-2.5 sm:px-5" onKeyDown={(event) => onStepKeyDown(event, index)}>
-                    <span className="w-5 shrink-0 text-right text-[12px] font-medium tabular-nums text-fg-muted" aria-hidden="true">{index + 1}</span>
+                  <li key={step.id} className="flex items-center gap-2.5 px-4 py-2.5" onKeyDown={(event) => onStepKeyDown(event, index)}>
+                    <span aria-hidden="true"><StepNumber n={index + 1} /></span>
                     <div className="min-w-0 flex-1">
                       <ChainModelPicker
                         value={step}
@@ -399,24 +398,29 @@ export function ChainEditorPage() {
               })}
             </ol>
             <span className="sr-only" role="status">{moveAnnouncement}</span>
-            <div className="space-y-2 border-t border-line px-4 py-3 sm:px-5">
+            <div className="space-y-2 border-t border-line px-4 py-3">
               {stepsError && <FieldMessage id="chain-steps-error">{stepsError}</FieldMessage>}
-              <Button variant="ghost" className="w-full border border-dashed border-line-strong" onClick={addStep}>
-                <Plus aria-hidden="true" />
+              <button
+                type="button"
+                onClick={addStep}
+                className={cn("inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:border-tone-ring hover:bg-tone-soft hover:text-tone", focusRing)}
+              >
+                <Plus className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
                 Add model
-              </Button>
+              </button>
             </div>
 
             <div className="border-t border-line">
-              <div className="flex items-center justify-between gap-4 px-4 py-3 sm:px-5">
-                <span className="min-w-0">
+              <div className="flex items-center gap-3 px-4 py-3">
+                <IconTile icon={Shield} size="sm" tone="warn" />
+                <span className="min-w-0 flex-1">
                   <label htmlFor="chain-fallback-toggle" id="chain-fallback-label" className="block cursor-pointer text-[13px] font-medium text-fg">Final fallback</label>
                   <span id="chain-fallback-hint" className="mt-0.5 block text-[12px] leading-5 text-fg-muted">Tried last, after every step fails.</span>
                 </span>
                 <Toggle aria-labelledby="chain-fallback-label" aria-describedby="chain-fallback-hint" id="chain-fallback-toggle" checked={fallbackEnabled} onChange={(next) => { setFallbackEnabled(next); setDirty(true); }} />
               </div>
               {fallbackEnabled && (
-                <div className="space-y-2 px-4 pb-3 sm:px-5">
+                <div className="mx-4 mb-3 space-y-2 rounded-lg border border-dashed border-warn/50 bg-warn/5 p-2.5">
                   <ChainModelPicker
                     value={fallback}
                     providers={providers}
@@ -435,7 +439,7 @@ export function ChainEditorPage() {
         </div>
 
         <aside className="min-w-0 lg:sticky lg:top-4" aria-label="Route preview">
-          <Panel title="Route preview" titleId="chain-preview-heading" subtitle={previewSummary}>
+          <Panel title="Route preview" titleId="chain-preview-heading" icon={Eye} subtitle={previewSummary}>
             <div className="px-4 py-4">
               <ChainRoutePreview chain={routeChain} providers={providers} />
             </div>

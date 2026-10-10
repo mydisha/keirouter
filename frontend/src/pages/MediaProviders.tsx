@@ -1,22 +1,25 @@
 import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ChevronRight, Search, X } from "lucide-react";
+import { AudioLines, Boxes, ChevronRight, Globe, Image, Mic, PlugZap, Search, X, type LucideIcon } from "lucide-react";
 import { api, type Account, type Provider } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { ProviderLogo } from "../components/ProviderLogo";
-import { Badge, ErrorBanner, Skeleton } from "../components/ui";
+import { Badge, ErrorBanner, IconTile, SectionTitle, Skeleton } from "../components/ui";
+import { ICONS } from "../lib/icons";
 
 // Media service kinds — everything that isn't a plain chat/LLM provider.
-const mediaKinds = [
-  { id: "embedding", label: "Embeddings", description: "Text embedding models for search and RAG." },
-  { id: "image", label: "Image", description: "Text-to-image generation providers." },
-  { id: "tts", label: "Text-to-speech", description: "Voice synthesis providers." },
-  { id: "stt", label: "Speech-to-text", description: "Audio transcription providers." },
-  { id: "search", label: "Web search", description: "Web search API providers." },
-  { id: "fetch", label: "Web fetch", description: "Web page content extraction." },
+// Icons match the capability icons on the provider detail page.
+const mediaKinds: { id: string; label: string; description: string; icon: LucideIcon }[] = [
+  { id: "embedding", label: "Embeddings", description: "Text embedding models for search and RAG.", icon: Boxes },
+  { id: "image", label: "Image", description: "Text-to-image generation providers.", icon: Image },
+  { id: "tts", label: "Text-to-speech", description: "Voice synthesis providers.", icon: AudioLines },
+  { id: "stt", label: "Speech-to-text", description: "Audio transcription providers.", icon: Mic },
+  { id: "search", label: "Web search", description: "Web search API providers.", icon: Search },
+  { id: "fetch", label: "Web fetch", description: "Web page content extraction.", icon: Globe },
 ];
+const kindIcons: Record<string, LucideIcon> = Object.fromEntries(mediaKinds.map((k) => [k.id, k.icon]));
 
 const kindLabels: Record<string, string> = {
   embedding: "Embed",
@@ -32,6 +35,27 @@ function capabilityList(p: Provider): string {
     .filter((k) => k !== "llm")
     .map((k) => kindLabels[k] ?? k)
     .join(" · ");
+}
+
+// CapabilityTags renders a provider's media capabilities as small icon chips.
+function CapabilityTags({ provider: p }: { provider: Provider }) {
+  const kinds = p.service_kinds.filter((k) => k !== "llm");
+  if (!kinds.length) return <span className="text-fg-faint">—</span>;
+  return (
+    <ul className="flex flex-wrap gap-1" aria-label="Capabilities">
+      {kinds.map((k) => {
+        const Icon = kindIcons[k];
+        return (
+          <li key={k}>
+            <Badge tone="neutral">
+              {Icon && <Icon className="h-3 w-3 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+              {kindLabels[k] ?? k}
+            </Badge>
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 export function MediaProvidersPage() {
@@ -112,6 +136,7 @@ export function MediaProvidersPage() {
         >
           {mediaKinds.map((k, i) => {
             const active = activeFilter === k.id;
+            const Icon = k.icon;
             return (
               <button
                 key={k.id}
@@ -122,10 +147,11 @@ export function MediaProvidersPage() {
                 title={k.description}
                 onClick={() => setActiveFilter(k.id)}
                 className={cn(
-                  "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                  active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+                  "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                  active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
                 )}
               >
+                <Icon className={cn("h-4 w-4 shrink-0", active ? "text-link" : "text-fg-faint")} strokeWidth={1.75} aria-hidden="true" />
                 {k.label}
               </button>
             );
@@ -155,7 +181,7 @@ export function MediaProvidersPage() {
       </div>
 
       {providers.isLoading ? (
-        <div className="space-y-5" aria-busy="true" aria-label="Loading providers">
+        <div className="space-y-6" aria-busy="true" aria-label="Loading providers">
           <Skeleton className="h-32 w-full rounded-2xl" />
           <Skeleton className="h-56 w-full rounded-2xl" />
         </div>
@@ -163,25 +189,33 @@ export function MediaProvidersPage() {
         <ErrorBanner message="Couldn't load providers. Check that the backend is running, then reload." />
       ) : !list.length ? (
         <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-          <h2 className="text-[13px] font-medium text-fg">No {kindLower} providers</h2>
+          <IconTile icon={activeKind.icon} size="lg" className="mx-auto mb-3" />
+          <h2 className="text-[13px] font-semibold text-fg">No {kindLower} providers</h2>
           <p className="mt-1 text-[12.5px] text-fg-muted">Pick another capability, or add an account on the Providers page.</p>
           <Link to="/providers" className="mt-3 inline-block rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
             Go to providers
           </Link>
         </div>
       ) : (
-        <div className="space-y-8">
+        <div className="space-y-6">
           <section aria-labelledby="media-connected-heading">
-            <div className="mb-2.5 flex items-baseline gap-2.5">
-              <h2 id="media-connected-heading" className="text-[14px] font-semibold text-fg">Connected</h2>
-              <span className="text-[12px] tabular-nums text-fg-muted" role="status">
-                {connected.length}
-                <span className="sr-only"> connected {kindLower} providers</span>
-              </span>
+            <div className="mb-3">
+              <SectionTitle
+                id="media-connected-heading"
+                icon={PlugZap}
+                title="Connected"
+                subtitle={
+                  <span className="tabular-nums" role="status">
+                    {connected.length}
+                    <span className="sr-only"> connected {kindLower} providers</span>
+                  </span>
+                }
+              />
             </div>
             {connected.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-8 text-center">
-                <p className="text-[13px] font-medium text-fg">{searchQuery ? "No connected provider matches" : `No ${kindLower} provider connected`}</p>
+                <IconTile icon={searchQuery ? Search : PlugZap} size="lg" className="mx-auto mb-3" />
+                <p className="text-[13px] font-semibold text-fg">{searchQuery ? "No connected provider matches" : `No ${kindLower} provider connected`}</p>
                 <p className="mt-1 text-[12.5px] text-fg-muted">
                   {searchQuery ? "Clear the search to see all of them." : "Pick one below and add an account."}
                 </p>
@@ -192,19 +226,25 @@ export function MediaProvidersPage() {
           </section>
 
           <section aria-labelledby="media-catalog-heading">
-            <div className="mb-2.5 flex items-baseline gap-2.5">
-              <h2 id="media-catalog-heading" className="text-[14px] font-semibold text-fg">Add a provider</h2>
-              <span className="text-[12px] tabular-nums text-fg-muted" role="status">
-                {available.length}
-                <span className="sr-only"> available {kindLower} providers</span>
-              </span>
+            <div className="mb-3">
+              <SectionTitle
+                id="media-catalog-heading"
+                icon={ICONS.providers}
+                title="Add a provider"
+                subtitle={
+                  <span className="tabular-nums" role="status">
+                    {available.length}
+                    <span className="sr-only"> available {kindLower} providers</span>
+                  </span>
+                }
+              />
             </div>
             {available.length === 0 ? (
               <div className="rounded-2xl border border-line bg-surface px-6 py-10 text-center text-[13px] text-fg-muted">
                 No other providers match{searchQuery ? ` “${searchQuery}”` : " this capability"}.
               </div>
             ) : (
-              <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+              <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
                 {available.map((p) => (
                   <li key={p.id}>
                     <CatalogCard provider={p} kind={activeFilter} />
@@ -270,7 +310,7 @@ function ConnectedTable({
                   </td>
                   <td className="px-4 py-2.5 text-[12.5px] text-fg-muted">
                     <span className="flex items-center justify-between gap-3">
-                      {capabilityList(p)}
+                      <CapabilityTags provider={p} />
                       <ChevronRight className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
                     </span>
                   </td>

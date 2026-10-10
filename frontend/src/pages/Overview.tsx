@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { AlertTriangle, ArrowRight, Check, Copy, Plus, RefreshCw } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, Copy, Inbox, Plus, RefreshCw, type LucideIcon } from "lucide-react";
 import {
   api,
   connectUsageStream,
@@ -16,7 +16,8 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { ProviderLogo } from "../components/ProviderLogo";
 import { TrafficCard } from "../components/charts/TrafficChart";
-import { ErrorCard, Skeleton } from "../components/ui";
+import { Badge, ErrorCard, IconTile, Kpi, KpiGrid, SectionTitle, Skeleton } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { useToast } from "../components/Toast";
 
 // ── Period model ─────────────────────────────────────────────────────────────
@@ -178,7 +179,7 @@ export function OverviewPage() {
                 <Link
                   to="/providers"
                   className={cn(
-                    "inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-medium text-primary-fg transition-opacity hover:opacity-85 focus-visible:ring-offset-2",
+                    "inline-flex h-8 items-center gap-1.5 rounded-lg bg-action px-3 text-[13px] font-medium text-action-fg transition-colors hover:bg-action-hover focus-visible:ring-offset-2",
                     FOCUS_RING,
                   )}
                 >
@@ -200,20 +201,20 @@ export function OverviewPage() {
       ) : firstRun ? (
         <FirstRun />
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-6">
           <KpiStrip data={data} />
 
-          <div className="grid gap-5 xl:grid-cols-3">
+          <div className="grid gap-4 xl:grid-cols-3">
             <TrafficCard data={data} className="xl:col-span-2" />
             <ProviderHealthCard providers={timeline.data?.providers} loading={timeline.isLoading} />
           </div>
 
-          <div className="grid gap-5 xl:grid-cols-3">
+          <div className="grid gap-4 xl:grid-cols-3">
             <TopModelsCard models={models.data?.models} loading={models.isLoading} className="xl:col-span-2" />
             <CostCard data={data} budgets={budgets.data?.budgets} budgetsLoading={budgets.isLoading} />
           </div>
 
-          <div className="grid gap-5 xl:grid-cols-3">
+          <div className="grid gap-4 xl:grid-cols-3">
             <RecentRequestsCard recent={data.recent} className="xl:col-span-2" />
             <ChainsCard chains={chains.data?.chains} loading={chains.isLoading} />
           </div>
@@ -297,7 +298,7 @@ function BudgetNotice({ budgets }: { budgets: BudgetStatus[] }) {
     <div
       role="status"
       className={cn(
-        "mb-5 flex items-center gap-3 rounded-2xl border px-4 py-2.5 text-[13px]",
+        "mb-6 flex items-center gap-3 rounded-2xl border px-4 py-2.5 text-[13px]",
         blocked ? "border-bad/30 bg-bad/5" : "border-warn/30 bg-warn/5",
       )}
     >
@@ -316,12 +317,14 @@ function BudgetNotice({ budgets }: { budgets: BudgetStatus[] }) {
 // ── Shared card chrome ───────────────────────────────────────────────────────
 
 function Panel({
+  icon,
   title,
   meta,
   action,
   className,
   children,
 }: {
+  icon: LucideIcon;
   title: string;
   meta?: ReactNode;
   action?: ReactNode;
@@ -331,12 +334,21 @@ function Panel({
   const id = useId();
   return (
     <section aria-labelledby={id} className={cn("flex min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
-      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-line px-4 py-3">
-        <div className="flex min-w-0 items-baseline gap-2">
-          <h2 id={id} className="text-[13px] font-semibold text-fg">{title}</h2>
-          {meta && <span className="text-[12px] text-fg-muted">{meta}</span>}
-        </div>
-        {action}
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle
+          id={id}
+          icon={icon}
+          title={
+            meta ? (
+              <>
+                {title} <span className="ml-1 text-[12px] font-normal text-fg-muted">{meta}</span>
+              </>
+            ) : (
+              title
+            )
+          }
+          action={action}
+        />
       </div>
       {children}
     </section>
@@ -352,9 +364,10 @@ function PanelLink({ to, children }: { to: string; children: ReactNode }) {
   );
 }
 
-function PanelEmpty({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
+function PanelEmpty({ icon = Inbox, title, hint, action }: { icon?: LucideIcon; title: string; hint?: string; action?: ReactNode }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-1 px-6 py-10 text-center">
+      <IconTile icon={icon} size="lg" className="mb-2" />
       <p className="text-[13px] font-medium text-fg">{title}</p>
       {hint && <p className="max-w-sm text-[12px] text-fg-muted">{hint}</p>}
       {action && <div className="mt-3">{action}</div>}
@@ -388,10 +401,14 @@ function KpiStrip({ data }: { data: UsageInsights }) {
   const headingId = useId();
 
   const successSeries = series.filter((pt) => pt.requests > 0).map((pt) => 1 - pt.failures / pt.requests);
+  // Success rate is the one health value in the strip, so only it gets a status tone.
+  const successTone = s.total_requests ? (s.success_rate >= 0.99 ? "ok" : s.success_rate >= 0.95 ? "warn" : "bad") : "section";
   // Four numbers answer "is it healthy and what does it cost". Optimizer
   // savings live in the Savings and budgets card (and as the Spend hint).
   const items: {
     label: string;
+    icon: LucideIcon;
+    tone?: "ok" | "warn" | "bad" | "section";
     value: string;
     sub?: string;
     delta: { text: string; tone: DeltaTone } | null;
@@ -399,18 +416,22 @@ function KpiStrip({ data }: { data: UsageInsights }) {
   }[] = [
     {
       label: "Requests",
+      icon: ICONS.requests,
       value: fmtInt(s.total_requests),
       delta: relDelta(s.total_requests, p?.total_requests, "flat"),
       spark: series.map((pt) => pt.requests),
     },
     {
       label: "Success rate",
+      icon: ICONS.successRate,
+      tone: successTone,
       value: s.total_requests ? fmtPct(s.success_rate, 2) : "—",
       delta: p && p.total_requests && s.total_requests ? ptsDelta(s.success_rate, p.success_rate) : null,
       spark: successSeries,
     },
     {
       label: "Latency p50",
+      icon: ICONS.latency,
       value: fmtMs(s.p50_latency_ms),
       sub: s.p95_latency_ms ? `p95 ${fmtMs(s.p95_latency_ms)}` : undefined,
       delta: relDelta(s.p50_latency_ms, p?.p50_latency_ms, "lower-better"),
@@ -418,6 +439,7 @@ function KpiStrip({ data }: { data: UsageInsights }) {
     },
     {
       label: "Spend",
+      icon: ICONS.spend,
       value: fmtUSD(s.cost_usd),
       sub: data.savings.usd_saved > 0 ? `${fmtUSD(data.savings.usd_saved)} saved` : undefined,
       delta: relDelta(s.cost_usd, p?.cost_usd, "flat"),
@@ -426,24 +448,30 @@ function KpiStrip({ data }: { data: UsageInsights }) {
   ];
 
   return (
-    <section aria-labelledby={headingId} className="overflow-hidden rounded-2xl border border-line bg-line shadow-[var(--shadow-card)]">
+    <section aria-labelledby={headingId}>
       <h2 id={headingId} className="sr-only">Key metrics</h2>
-      {/* gap-px over a line-coloured ground draws every divider. */}
-      <dl className="grid grid-cols-1 gap-px sm:grid-cols-2 xl:grid-cols-4">
+      <KpiGrid cols={4}>
         {items.map((item) => (
-          <div key={item.label} className="flex min-w-0 flex-col gap-1.5 bg-surface px-4 pb-3 pt-3.5">
-            <dt className="text-[12px] font-medium text-fg-muted">{item.label}</dt>
-            <dd className="flex min-w-0 items-baseline gap-2">
-              <span className="whitespace-nowrap text-[24px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-fg">{item.value}</span>
-              {item.sub && <span className="truncate text-[12px] tabular-nums text-fg-muted">{item.sub}</span>}
-            </dd>
-            <dd className="flex min-h-6 items-center justify-between gap-2">
-              {item.delta ? <DeltaText delta={item.delta} /> : <span className="text-[12px] text-fg-muted">No prior data</span>}
-              <Sparkline values={item.spark} />
-            </dd>
-          </div>
+          <Kpi
+            key={item.label}
+            icon={item.icon}
+            tone={item.tone}
+            label={item.label}
+            value={
+              <span className="whitespace-nowrap">
+                {item.value}
+                {item.sub && <span className="ml-2 text-[12px] font-normal tracking-normal text-fg-muted">{item.sub}</span>}
+              </span>
+            }
+            hint={
+              <span className="flex min-h-6 items-center gap-3">
+                {item.delta ? <DeltaText delta={item.delta} /> : <span>No prior data</span>}
+                <Sparkline values={item.spark} />
+              </span>
+            }
+          />
         ))}
-      </dl>
+      </KpiGrid>
     </section>
   );
 }
@@ -480,25 +508,25 @@ const TICK_CLASS: Record<string, string> = {
   idle: "bg-track",
 };
 
-function providerState(p: HealthTimelineProvider): { label: string; tone: "ok" | "warn" | "bad" | "idle" } {
-  if (p.requests === 0) return { label: "Idle", tone: "idle" };
+function providerState(p: HealthTimelineProvider): { label: string; tone: "success" | "warning" | "danger" | "neutral" } {
+  if (p.requests === 0) return { label: "Idle", tone: "neutral" };
   const recent = p.buckets.slice(-3).map((b) => b.status);
-  if (recent.includes("down")) return { label: "Down", tone: "bad" };
-  if (recent.includes("degraded")) return { label: p.rate_limited > 0 ? "Rate limited" : "Degraded", tone: "warn" };
-  return { label: "Operational", tone: "ok" };
+  if (recent.includes("down")) return { label: "Unhealthy", tone: "danger" };
+  if (recent.includes("degraded")) return { label: p.rate_limited > 0 ? "Rate limited" : "Degraded", tone: "warning" };
+  return { label: "Healthy", tone: "success" };
 }
 
 function ProviderHealthCard({ providers, loading }: { providers?: HealthTimelineProvider[]; loading: boolean }) {
   const rows = (providers ?? []).slice(0, 6);
   return (
-    <Panel title="Provider health" meta="24h" action={<PanelLink to="/provider-health">All providers</PanelLink>}>
+    <Panel icon={ICONS.health} title="Provider health" meta="24h" action={<PanelLink to="/provider-health">All providers</PanelLink>}>
       {loading ? (
         <div className="space-y-3 p-4" aria-busy="true">
           <span className="sr-only">Loading provider health</span>
           {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-11 w-full" />)}
         </div>
       ) : rows.length === 0 ? (
-        <PanelEmpty title="No provider traffic in the last 24 hours" />
+        <PanelEmpty icon={ICONS.health} title="No provider traffic in the last 24 hours" />
       ) : (
         <ul className="divide-y divide-line">
           {rows.map((p) => {
@@ -512,11 +540,11 @@ function ProviderHealthCard({ providers, loading }: { providers?: HealthTimeline
                   <div className="flex items-center gap-2.5">
                     <ProviderLogo icon={p.icon} name={p.display_name} />
                     <p className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">{p.display_name}</p>
-                    <div className="text-right">
-                      <p className={cn("inline-flex items-center gap-1.5 text-[12px] font-medium", toneText(state.tone))}>
+                    <div className="flex flex-col items-end gap-0.5 text-right">
+                      <Badge tone={state.tone}>
                         <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
                         {state.label}
-                      </p>
+                      </Badge>
                       <p className="text-[11.5px] tabular-nums text-fg-muted">
                         {p.requests ? `${fmtPct(p.success_rate, 1)} ok` : "—"} · p95 {fmtMs(p.worst_p95_ms)}
                       </p>
@@ -548,14 +576,14 @@ function TopModelsCard({ models, loading, className }: { models?: ModelUsage[]; 
   const rows = (models ?? []).slice(0, 6);
   const total = (models ?? []).reduce((sum, m) => sum + m.total_requests, 0);
   return (
-    <Panel title="Top models" action={<PanelLink to="/usage?tab=models">All models</PanelLink>} className={className}>
+    <Panel icon={ICONS.model} title="Top models" action={<PanelLink to="/usage?tab=models">All models</PanelLink>} className={className}>
       {loading ? (
         <div className="space-y-2 p-4" aria-busy="true">
           <span className="sr-only">Loading models</span>
           {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}
         </div>
       ) : rows.length === 0 ? (
-        <PanelEmpty title="No model traffic in this period" />
+        <PanelEmpty icon={ICONS.model} title="No model traffic in this period" />
       ) : (
         <div className="overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500" tabIndex={0} role="region" aria-label="Top models table">
           <table className="w-full min-w-[560px] text-[12.5px]">
@@ -622,7 +650,7 @@ function CostCard({ data, budgets, budgetsLoading }: { data: UsageInsights; budg
   const budgetsId = useId();
 
   return (
-    <Panel title="Savings and budgets">
+    <Panel icon={ICONS.savings} title="Savings and budgets">
       <section aria-labelledby={savingsId} className="px-4 pb-2 pt-3.5">
         <div className="flex items-center justify-between gap-3">
           <h3 id={savingsId} className="text-[12.5px] font-medium text-fg-muted">Saved by optimizers</h3>
@@ -719,7 +747,7 @@ const STEP_OPACITY = [1, 0.6, 0.38, 0.24, 0.16];
 function ChainsCard({ chains, loading, className }: { chains?: ChainUsage[]; loading: boolean; className?: string }) {
   const rows = (chains ?? []).slice(0, 4);
   return (
-    <Panel title="Routing chains" action={rows.length > 0 ? <PanelLink to="/chains">Manage chains</PanelLink> : undefined} className={className}>
+    <Panel icon={ICONS.chains} title="Routing chains" action={rows.length > 0 ? <PanelLink to="/chains">Manage chains</PanelLink> : undefined} className={className}>
       {loading ? (
         <div className="space-y-3 p-4" aria-busy="true">
           <span className="sr-only">Loading chains</span>
@@ -728,6 +756,7 @@ function ChainsCard({ chains, loading, className }: { chains?: ChainUsage[]; loa
       ) : rows.length === 0 ? (
         // The page's single next-step callout.
         <PanelEmpty
+          icon={ICONS.chains}
           title="No fallback chains yet"
           hint="A chain tries models in order, so one rate-limited provider never stops your tools."
           action={
@@ -752,7 +781,7 @@ function ChainsCard({ chains, loading, className }: { chains?: ChainUsage[]; loa
                 >
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="font-mono text-[13px] font-medium text-fg">{c.name}</span>
-                    <span className="inline-flex h-5 items-center rounded-md border border-line px-1.5 text-[11.5px] text-fg-muted">{humanStrategy(c.strategy)}</span>
+                    <Badge tone="neutral">{humanStrategy(c.strategy)}</Badge>
                     <span className="ml-auto text-[12px] tabular-nums text-fg-muted">
                       {c.requests > 0 ? (
                         <>
@@ -813,19 +842,20 @@ function usedPct(b: BudgetStatus): number {
 
 // ── Recent requests ──────────────────────────────────────────────────────────
 
-const STATUS_STYLE: Record<string, { label: string; className: string }> = {
-  success: { label: "OK", className: "border-line text-fg-muted [&>i]:bg-ok" },
-  cache_hit: { label: "Cache hit", className: "border-line text-fg-muted [&>i]:bg-accent-500" },
-  failed: { label: "Failed", className: "border-transparent bg-bad/10 text-bad [&>i]:bg-bad" },
-  blocked: { label: "Blocked", className: "border-transparent bg-warn/12 text-warn [&>i]:bg-warn" },
-  cancelled: { label: "Cancelled", className: "border-line text-fg-muted [&>i]:bg-fg-faint" },
+// Same labels and tones as the Usage requests table.
+const STATUS_STYLE: Record<string, { label: string; tone: "success" | "accent" | "danger" | "warning" | "neutral" }> = {
+  success: { label: "Success", tone: "success" },
+  cache_hit: { label: "Cache hit", tone: "accent" },
+  failed: { label: "Failed", tone: "danger" },
+  blocked: { label: "Blocked", tone: "warning" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
 };
 
 function RecentRequestsCard({ recent, className }: { recent: RecentActivity[]; className?: string }) {
   return (
-    <Panel title="Recent requests" action={<PanelLink to="/usage?tab=requests">All requests</PanelLink>} className={className}>
+    <Panel icon={ICONS.requests} title="Recent requests" action={<PanelLink to="/usage?tab=requests">All requests</PanelLink>} className={className}>
       {recent.length === 0 ? (
-        <PanelEmpty title="No requests in this period" />
+        <PanelEmpty icon={ICONS.requests} title="No requests in this period" />
       ) : (
         <div className="overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500" tabIndex={0} role="region" aria-label="Recent requests table">
           <table className="w-full min-w-[600px] text-[12.5px]">
@@ -849,10 +879,9 @@ function RecentRequestsCard({ recent, className }: { recent: RecentActivity[]; c
                       {formatClock(r.created_at)}
                     </td>
                     <td className="px-4 py-2">
-                      <span className={cn("inline-flex h-5 items-center gap-1.5 whitespace-nowrap rounded-md border px-1.5 text-[11.5px] font-medium", st.className)} title={r.error_kind || undefined}>
-                        <i className="h-1.5 w-1.5 rounded-full" aria-hidden="true" />
+                      <Badge tone={st.tone} title={r.error_kind || undefined}>
                         {r.status === "failed" && r.error_kind ? humanError(r.error_kind) : st.label}
-                      </span>
+                      </Badge>
                     </td>
                     <td className="max-w-[300px] px-4 py-2">
                       <span className="flex min-w-0 items-center gap-2.5">
@@ -942,28 +971,36 @@ function FirstRun() {
   };
 
   return (
-    <div className="grid gap-5 xl:grid-cols-3">
+    <div className="grid gap-4 xl:grid-cols-3">
       <section aria-labelledby={setupId} className="min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] xl:col-span-2">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
-          <div className="flex items-baseline gap-2">
-            <h2 id={setupId} className="text-[13px] font-semibold text-fg">Finish setting up</h2>
-            <span className="text-[12px] tabular-nums text-fg-muted">{done} of 4 done</span>
-          </div>
-          <div
-            className="h-1.5 w-40 overflow-hidden rounded-full bg-track"
-            role="progressbar"
-            aria-valuenow={done * 25}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuetext={`${done} of 4 steps done`}
-            aria-label="Setup progress"
-          >
-            <div className="h-full bg-accent-500 transition-[width]" style={{ width: `${done * 25}%` }} />
-          </div>
+        <div className="border-b border-line px-4 py-3">
+          <SectionTitle
+            id={setupId}
+            icon={ICONS.checklist}
+            title={
+              <>
+                Finish setting up <span className="ml-1 text-[12px] font-normal tabular-nums text-fg-muted">{done} of 4 done</span>
+              </>
+            }
+            action={
+              <div
+                className="h-1.5 w-40 overflow-hidden rounded-full bg-track"
+                role="progressbar"
+                aria-valuenow={done * 25}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuetext={`${done} of 4 steps done`}
+                aria-label="Setup progress"
+              >
+                <div className="h-full bg-accent-500 transition-[width]" style={{ width: `${done * 25}%` }} />
+              </div>
+            }
+          />
         </div>
         <ol className="divide-y divide-line">
           <SetupStep
             index={0}
+            icon={ICONS.providers}
             current={current}
             done={steps[0]}
             title="Connect a provider"
@@ -972,6 +1009,7 @@ function FirstRun() {
           />
           <SetupStep
             index={1}
+            icon={ICONS.keys}
             current={current}
             done={steps[1]}
             title="Create an API key"
@@ -980,6 +1018,7 @@ function FirstRun() {
           />
           <SetupStep
             index={2}
+            icon={ICONS.cliTools}
             current={current}
             done={steps[2]}
             title="Point a tool at KeiRouter"
@@ -1031,6 +1070,7 @@ function FirstRun() {
           </SetupStep>
           <SetupStep
             index={3}
+            icon={ICONS.requests}
             current={current}
             done={false}
             title="Send your first request"
@@ -1052,12 +1092,18 @@ function FirstRun() {
       </section>
 
       <section aria-labelledby={gatewayId} className="min-w-0 self-start overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-          <h2 id={gatewayId} className="text-[13px] font-semibold text-fg">Gateway</h2>
-          <span className="inline-flex h-5 items-center gap-1.5 rounded-md border border-line px-1.5 text-[11.5px] font-medium text-fg-muted">
-            <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
-            Running
-          </span>
+        <div className="border-b border-line px-4 py-3">
+          <SectionTitle
+            id={gatewayId}
+            icon={ICONS.server}
+            title="Gateway"
+            action={
+              <Badge tone="success">
+                <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
+                Running
+              </Badge>
+            }
+          />
         </div>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 px-4 py-3.5 text-[12.5px]">
           <dt className="text-fg-muted">Endpoint</dt>
@@ -1082,6 +1128,7 @@ function FirstRun() {
 
 function SetupStep({
   index,
+  icon,
   current,
   done,
   title,
@@ -1090,6 +1137,7 @@ function SetupStep({
   children,
 }: {
   index: number;
+  icon: LucideIcon;
   current: number;
   done: boolean;
   title: string;
@@ -1100,16 +1148,10 @@ function SetupStep({
   const isCurrent = index === current;
   return (
     <li className={cn("flex gap-3.5 px-4 py-4", isCurrent && "bg-subtle")} aria-current={isCurrent ? "step" : undefined}>
-      <span
-        aria-hidden="true"
-        className={cn(
-          "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold tabular-nums",
-          done ? "bg-ok text-white" : isCurrent ? "border-[1.5px] border-accent-500 text-fg" : "border-[1.5px] border-line-strong text-fg-muted",
-        )}
-      >
-        {done ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : index + 1}
-      </span>
-      <div className="min-w-0 flex-1">
+      {/* Done steps turn into a green check; the current step carries the page
+          tone; later steps stay neutral. The sr-only text in the heading says which. */}
+      <IconTile icon={done ? Check : icon} size="md" tone={done ? "ok" : isCurrent ? "section" : "slate"} />
+      <div className="min-w-0 flex-1 pt-0.5">
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-[min(100%,220px)] flex-1">
             <h3 className={cn("text-[13px]", done ? "font-medium text-fg-muted line-through decoration-line-strong" : isCurrent ? "font-semibold text-fg" : "font-medium text-fg")}>
@@ -1134,7 +1176,7 @@ function SetupAction({ to, primary, children }: { to: string; primary?: boolean;
       className={cn(
         "inline-flex h-8 shrink-0 items-center rounded-lg px-3 text-[13px] font-medium transition-colors focus-visible:ring-offset-2",
         FOCUS_RING,
-        primary ? "bg-primary text-primary-fg hover:opacity-85" : "border border-line-strong bg-surface text-fg hover:bg-hover",
+        primary ? "bg-action text-action-fg hover:bg-action-hover" : "border border-line-strong bg-surface text-fg hover:bg-hover",
       )}
     >
       {children}
@@ -1146,14 +1188,14 @@ function SetupAction({ to, primary, children }: { to: string; primary?: boolean;
 
 function OverviewSkeleton() {
   return (
-    <div className="space-y-5" aria-busy="true">
+    <div className="space-y-6" aria-busy="true">
       <span className="sr-only" role="status">Loading overview</span>
       <Skeleton className="h-[104px] w-full rounded-2xl" />
-      <div className="grid gap-5 xl:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-3">
         <Skeleton className="h-[340px] rounded-2xl xl:col-span-2" />
         <Skeleton className="h-[340px] rounded-2xl" />
       </div>
-      <div className="grid gap-5 xl:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-3">
         <Skeleton className="h-[280px] rounded-2xl xl:col-span-2" />
         <Skeleton className="h-[280px] rounded-2xl" />
       </div>
@@ -1219,10 +1261,6 @@ function absUSDDelta(cur: number, prev: number | undefined): { text: string; ton
 
 function deltaClass(tone: DeltaTone): string {
   return tone === "good" ? "text-ok" : tone === "bad" ? "text-bad" : "text-fg-muted";
-}
-
-function toneText(tone: "ok" | "warn" | "bad" | "idle"): string {
-  return tone === "ok" ? "text-ok" : tone === "warn" ? "text-warn" : tone === "bad" ? "text-bad" : "text-fg-muted";
 }
 
 function formatBucket(iso: string, withDate: boolean): string {

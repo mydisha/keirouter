@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { CheckCircle2, ExternalLink, XCircle } from "lucide-react";
+import { CheckCircle2, ExternalLink, Minimize2, RefreshCw, Scissors, XCircle } from "lucide-react";
+import { ICONS } from "../../lib/icons";
 import { api, type EndpointSettings, type HeadroomTestResult } from "../../lib/api";
 import { Button } from "../../components/ui";
 import {
@@ -153,7 +154,7 @@ export function SavingTab({
 
   return (
     <div className="space-y-4">
-      <SettingsCard title="Input compression" description="Saves input tokens">
+      <SettingsCard icon={Minimize2} title="Input compression" description="Saves input tokens">
         <ToggleRow label="RTK input compression"
           description="Shrinks bulky tool output before it reaches the model."
           info="Compacts diffs, greps, listings and build logs. Safe by design — it never corrupts content."
@@ -179,7 +180,7 @@ export function SavingTab({
         )}
       </SettingsCard>
 
-      <SettingsCard title="Output compression" description="Caveman and terse can't run together">
+      <SettingsCard icon={Scissors} title="Output compression" description="Caveman and terse can't run together">
         <ToggleRow label="Caveman mode"
           description="Terse caveman-style answers. Cuts output tokens 65–75%."
           info="Keeps all technical substance and drops filler. Turning it on turns terse mode off."
@@ -256,7 +257,7 @@ export function SavingTab({
         )}
       </SettingsCard>
 
-      <SettingsCard title="Headroom proxy" description="External input compression">
+      <SettingsCard icon={ICONS.server} title="Headroom proxy" description="External input compression">
         <ToggleRow label="Headroom input compression"
           description="Fails open — proxy errors leave the request untouched."
           checked={local.headroom_enabled}
@@ -399,6 +400,7 @@ function HeadroomTestConnection({ url, timeoutMs }: { url: string; timeoutMs: nu
       }
     >
       <Button variant="ghost" disabled={disabled} onClick={() => test.mutate()}>
+        <RefreshCw className={test.isPending ? "animate-spin" : undefined} aria-hidden="true" />
         {test.isPending ? "Testing…" : "Test connection"}
       </Button>
     </SettingRow>

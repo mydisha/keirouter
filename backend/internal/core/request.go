@@ -42,10 +42,18 @@ type ChatRequest struct {
 	// System holds top-level system instructions hoisted out of Messages for
 	// dialects that carry them separately (Anthropic, Gemini).
 	System string `json:"system,omitempty"`
+	// SystemCacheControl is an Anthropic cache breakpoint that was attached to
+	// the (last) system block; the flattened System text is cached as a whole.
+	SystemCacheControl json.RawMessage `json:"system_cache_control,omitempty"`
 
-	Tools      []Tool   `json:"tools,omitempty"`
-	ToolChoice any      `json:"tool_choice,omitempty"`
-	Stop       []string `json:"stop,omitempty"`
+	Tools      []Tool `json:"tools,omitempty"`
+	ToolChoice any    `json:"tool_choice,omitempty"`
+	// ParallelToolCalls, when set, requests (true) or forbids (false) the
+	// model issuing several tool calls in one turn. OpenAI: parallel_tool_calls;
+	// Anthropic: tool_choice.disable_parallel_tool_use. Nil leaves the
+	// provider default.
+	ParallelToolCalls *bool    `json:"parallel_tool_calls,omitempty"`
+	Stop              []string `json:"stop,omitempty"`
 
 	Temperature *float64 `json:"temperature,omitempty"`
 	TopP        *float64 `json:"top_p,omitempty"`
@@ -63,6 +71,11 @@ type ChatRequest struct {
 
 	// Reasoning controls extended thinking / reasoning effort where supported.
 	Reasoning *ReasoningConfig `json:"reasoning,omitempty"`
+
+	// PreviousResponseID chains a Responses API request to the server-side
+	// state of an earlier response. It is only meaningful for a Responses
+	// dialect upstream; other dialects cannot honour it.
+	PreviousResponseID string `json:"previous_response_id,omitempty"`
 
 	// ResponseFormat carries structured-output constraints (json_schema, etc).
 	ResponseFormat json.RawMessage `json:"response_format,omitempty"`
@@ -88,6 +101,13 @@ type ReasoningConfig struct {
 type Tool struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	// Raw holds a provider-native tool definition that has no function-style
+	// equivalent (Anthropic server tools such as web_search_20250305, bash,
+	// text_editor, computer). It is forwarded verbatim to a same-dialect
+	// upstream and dropped for other dialects.
+	Raw json.RawMessage `json:"raw,omitempty"`
+	// CacheControl is an Anthropic prompt-caching breakpoint on this tool.
+	CacheControl json.RawMessage `json:"cache_control,omitempty"`
 	// Parameters is a JSON Schema object describing the tool arguments.
 	Parameters json.RawMessage `json:"parameters,omitempty"`
 }
@@ -96,6 +116,10 @@ type Tool struct {
 type RequestMetadata struct {
 	// ClientKind is the detected calling tool (claude-code, cursor, codex, ...).
 	ClientKind string
+	// ClientBetas are the anthropic-beta features the client asked for
+	// (context-1m, interleaved-thinking, ...). Forwarded to the Anthropic
+	// connector so API-key users keep the features their client relies on.
+	ClientBetas []string
 	// SourceDialect is the wire format the client used.
 	SourceDialect Dialect
 	// APIKeyID is the id of the authenticated KeiRouter key (for metering/audit).

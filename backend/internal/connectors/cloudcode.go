@@ -552,53 +552,11 @@ func (c *CloudCode) Stream(ctx context.Context, req *core.ChatRequest, creds cor
 	}
 
 	out := make(chan core.StreamChunk, 16)
-	go func() {
-		defer close(out)
-		defer resp.Body.Close()
-
-		ttft := newTTFTTracker(cfg)
-
-		scanner := sseScanner(resp.Body)
-		for scanner.Scan() {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			line := scanner.Text()
-			payload, ok := parseSSEData(line)
-			if !ok {
-				if isSSEKeepAlive(line) {
-					select {
-					case out <- core.StreamChunk{Type: core.ChunkPing}:
-					case <-ctx.Done():
-						return
-					}
-				}
-				continue
-			}
-			inner := unwrapCloudCodeResponse([]byte(payload))
-			chunks, perr := c.codec.ParseStreamLine(inner, request.Model)
-			if perr != nil {
-				continue
-			}
-			for _, ch := range chunks {
-				ttft.maybeReport(ch)
-				select {
-				case out <- ch:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			out <- core.StreamChunk{
-				Type: core.ChunkError,
-				Err:  &core.ProviderError{Kind: core.ErrTimeout, Provider: c.id, Model: request.Model, Message: err.Error(), Cause: err},
-			}
-		}
-	}()
+	// SSE comment heartbeats are turned into ChunkPing by the pump so the
+	// stall detector sees the connection is alive.
+	go streamSSE(ctx, c.id, request.Model, resp.Body, out, cfg, sseDataLines, func(payload []byte) ([]core.StreamChunk, error) {
+		return c.codec.ParseStreamLine(unwrapCloudCodeResponse(payload), request.Model)
+	})
 	return out, nil
 }
 

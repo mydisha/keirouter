@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Copy, Info, RefreshCw, Search, X } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Copy, Hash, Inbox, Info, RefreshCw, Search, Tag, X, type LucideIcon } from "lucide-react";
 import {
   api,
   connectUsageStream,
@@ -18,7 +18,8 @@ import {
 import { REPORT_PERIODS } from "../lib/periods";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
-import { Badge, Button, ErrorBanner, ErrorCard, Skeleton, TablePagination, useClientPagination } from "../components/ui";
+import { Badge, Button, ErrorBanner, ErrorCard, IconTile, Kpi, KpiGrid, SectionTitle, Skeleton, TablePagination, useClientPagination } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { HealthStatusBadge } from "../components/HealthBadge";
 import { ProviderLogo } from "../components/ProviderLogo";
 import { TrafficCard } from "../components/charts/TrafficChart";
@@ -173,7 +174,7 @@ export function UsagePage() {
       />
 
       {insights.isLoading ? (
-        <div className="space-y-5" aria-busy="true">
+        <div className="space-y-6" aria-busy="true">
           <span className="sr-only" role="status">Loading usage</span>
           <Skeleton className="h-[86px] w-full rounded-2xl" />
           <Skeleton className="h-[360px] w-full rounded-2xl" />
@@ -181,7 +182,7 @@ export function UsagePage() {
       ) : insights.isError || !data ? (
         <ErrorCard message="Couldn't load usage analytics. Check that the gateway is running, then refresh." />
       ) : (
-        <div className="space-y-5">
+        <div className="space-y-6">
           <KpiStrip data={data} />
           <PricingCoverageNotice summary={data.summary} />
 
@@ -222,8 +223,8 @@ export function UsagePage() {
 
           <div id={`${tabsId}-panel`} role="tabpanel" aria-labelledby={`${tabsId}-tab-${tab}`}>
             {tab === "overview" && (
-              <div className="space-y-5">
-                <div className="grid gap-5 xl:grid-cols-3">
+              <div className="space-y-6">
+                <div className="grid gap-4 xl:grid-cols-3">
                   <TrafficCard data={data} className="xl:col-span-2" />
                   <ProviderDistribution providers={data.providers} onShowAll={() => setTab("providers")} />
                 </div>
@@ -246,9 +247,10 @@ function KpiStrip({ data }: { data: UsageInsights }) {
   const s = data.summary;
   const headingId = useId();
   const lowSuccess = s.total_requests > 0 && s.success_rate < 0.95;
-  const cells: { label: string; value: string; hint: ReactNode }[] = [
+  const cells: { label: string; icon: LucideIcon; value: string; hint: ReactNode }[] = [
     {
       label: "Requests",
+      icon: ICONS.requests,
       value: fmtInteger(s.total_requests),
       hint: (
         <>
@@ -258,6 +260,7 @@ function KpiStrip({ data }: { data: UsageInsights }) {
     },
     {
       label: "Spend",
+      icon: ICONS.spend,
       value: fmtUSD(s.cost_usd),
       hint: (
         <>
@@ -266,21 +269,17 @@ function KpiStrip({ data }: { data: UsageInsights }) {
         </>
       ),
     },
-    { label: "Tokens", value: fmtCompact(s.total_tokens), hint: `${fmtCompact(s.prompt_tokens)} in · ${fmtCompact(s.completion_tokens)} out` },
-    { label: "Latency p50", value: fmtMs(s.p50_latency_ms), hint: `p95 ${fmtMs(s.p95_latency_ms)} · TTFT ${fmtMs(s.avg_ttft_ms)}` },
+    { label: "Tokens", icon: ICONS.tokens, value: fmtCompact(s.total_tokens), hint: `${fmtCompact(s.prompt_tokens)} in · ${fmtCompact(s.completion_tokens)} out` },
+    { label: "Latency p50", icon: ICONS.latency, value: fmtMs(s.p50_latency_ms), hint: `p95 ${fmtMs(s.p95_latency_ms)} · TTFT ${fmtMs(s.avg_ttft_ms)}` },
   ];
   return (
-    <section aria-labelledby={headingId} className="overflow-hidden rounded-2xl border border-line bg-line shadow-[var(--shadow-card)]">
+    <section aria-labelledby={headingId}>
       <h2 id={headingId} className="sr-only">Key metrics</h2>
-      <dl className="grid grid-cols-1 gap-px sm:grid-cols-2 xl:grid-cols-4">
+      <KpiGrid cols={4}>
         {cells.map((c) => (
-          <div key={c.label} className="min-w-0 bg-surface px-4 py-3">
-            <dt className="text-[12px] font-medium text-fg-muted">{c.label}</dt>
-            <dd className="mt-1 truncate text-[22px] font-semibold tracking-[-0.02em] tabular-nums text-fg">{c.value}</dd>
-            <dd className="mt-0.5 truncate text-[12px] tabular-nums text-fg-muted">{c.hint}</dd>
-          </div>
+          <Kpi key={c.label} icon={c.icon} label={c.label} value={c.value} hint={<span className="tabular-nums">{c.hint}</span>} />
         ))}
-      </dl>
+      </KpiGrid>
     </section>
   );
 }
@@ -352,12 +351,14 @@ function PricingCoverageNotice({ summary }: { summary: UsageInsights["summary"] 
 
 // ── Shared chrome ────────────────────────────────────────────────────────────
 
-function Panel({ title, action, children, className }: { title: string; action?: ReactNode; children: ReactNode; className?: string }) {
+function Panel({ icon, title, action, children, className }: { icon: LucideIcon; title: string; action?: ReactNode; children: ReactNode; className?: string }) {
   const id = useId();
   return (
     <section aria-labelledby={id} className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
+      {/* Toolbar sits in this wrapping row, not SectionTitle's non-shrinking
+          action slot, so search + filters can reflow at 320px. */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
-        <h2 id={id} className="text-[13px] font-semibold text-fg">{title}</h2>
+        <SectionTitle id={id} icon={icon} title={title} />
         {action}
       </div>
       {children}
@@ -365,9 +366,10 @@ function Panel({ title, action, children, className }: { title: string; action?:
   );
 }
 
-function Empty({ title, action }: { title: string; action?: ReactNode }) {
+function Empty({ icon = Inbox, title, action }: { icon?: LucideIcon; title: string; action?: ReactNode }) {
   return (
     <div className="px-6 py-10 text-center">
+      <IconTile icon={icon} size="lg" className="mx-auto mb-3" />
       <p className="text-[13px] font-medium text-fg">{title}</p>
       {action && <div className="mt-3">{action}</div>}
     </div>
@@ -382,9 +384,9 @@ const THEAD = "border-b border-line bg-subtle text-left text-[12px] text-fg-fain
 function ProviderDistribution({ providers, onShowAll }: { providers: ProviderUsage[]; onShowAll: () => void }) {
   const active = providers.filter((p) => p.total_requests > 0).sort((a, b) => b.total_requests - a.total_requests);
   return (
-    <Panel title="Where requests went">
+    <Panel icon={ICONS.route} title="Where requests went">
       {active.length === 0 ? (
-        <Empty title="No provider traffic in this period" />
+        <Empty icon={ICONS.route} title="No provider traffic in this period" />
       ) : (
         <>
           <ul className="space-y-3 px-4 py-4">
@@ -436,7 +438,7 @@ function ProviderAccounting({
   const healthBy = new Map<string, HealthProviderRow>((health?.providers ?? []).map((h) => [h.provider, h]));
   const dropped = health?.summary.telemetry_dropped ?? 0;
   return (
-    <div className="space-y-3">
+    <div className="space-y-4">
       {healthError && <ErrorBanner message="Health data is unavailable right now. Usage figures below are complete." />}
       {dropped > 0 && (
         <p role="status" className="flex items-start gap-2 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-2.5 text-[12.5px] text-fg">
@@ -445,6 +447,7 @@ function ProviderAccounting({
         </p>
       )}
       <Panel
+        icon={ICONS.providers}
         title="Provider accounting"
         action={
           <Link to="/provider-health" className={cn("inline-flex min-h-6 items-center rounded-md text-[12px] font-medium text-link hover:underline", FOCUS_RING)}>
@@ -453,7 +456,7 @@ function ProviderAccounting({
         }
       >
         {rows.length === 0 ? (
-          <Empty title="No provider usage in this period" />
+          <Empty icon={ICONS.providers} title="No provider usage in this period" />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[860px] text-[13px]">
@@ -570,6 +573,7 @@ function ModelUsageTable({ models, loading, error }: { models: ModelUsage[]; loa
 
   return (
     <Panel
+      icon={ICONS.model}
       title="Model accounting"
       action={
         <div className="relative w-full sm:w-64">
@@ -604,6 +608,7 @@ function ModelUsageTable({ models, loading, error }: { models: ModelUsage[]; loa
         </div>
       ) : filtered.length === 0 ? (
         <Empty
+          icon={models.length === 0 ? ICONS.model : Search}
           title={models.length === 0 ? "No model usage in this period" : "No models match"}
           action={models.length > 0 ? <Button variant="secondary" onClick={() => setSearch("")}>Clear filter</Button> : undefined}
         />
@@ -727,6 +732,7 @@ function RecentRequests({ records }: { records: RecentActivity[] }) {
   return (
     <>
       <Panel
+        icon={ICONS.requests}
         title="Recent requests"
         action={
           <div className="flex flex-wrap items-center gap-2">
@@ -763,7 +769,7 @@ function RecentRequests({ records }: { records: RecentActivity[] }) {
                   className={cn(
                     "h-8 rounded-lg border px-2.5 text-[12px] font-medium transition-colors",
                     FOCUS_RING,
-                    status === f.value ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:text-fg",
+                    status === f.value ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
                   )}
                 >
                   {f.label}
@@ -778,6 +784,7 @@ function RecentRequests({ records }: { records: RecentActivity[] }) {
         </p>
         {filtered.length === 0 ? (
           <Empty
+            icon={records.length === 0 ? ICONS.requests : Search}
             title={records.length === 0 ? "No requests in this period" : "No requests match"}
             action={records.length > 0 ? <Button variant="secondary" onClick={clearFilters}>Clear filters</Button> : undefined}
           />
@@ -917,7 +924,8 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
   );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    // The Sheet portals outside <main data-tone>, so restate the Monitor tone for the group icons.
+    <div data-tone="blue" className="flex h-full min-h-0 flex-col">
       <div className="border-b border-line px-5 pb-0 pt-4">
         <div className="flex items-start gap-3">
           <ProviderLogo icon={record.provider_icon} name={record.provider_name || record.provider} size={32} className="mt-0.5" />
@@ -982,7 +990,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
               <Metric label="End to end" value={fmtMs(record.end_to_end_latency_ms)} hint={`TTFT ${fmtMs(record.ttft_ms)}`} />
             </dl>
 
-            <Group title="Request">
+            <Group icon={Hash} title="Request">
               <Rows
                 rows={[
                   [
@@ -1003,7 +1011,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
               />
             </Group>
 
-            <Group title="Tokens" hint="Totals include cache and reasoning">
+            <Group icon={ICONS.tokens} title="Tokens" hint="Totals include cache and reasoning">
               <div className="grid gap-4 sm:grid-cols-2">
                 <Rows
                   head={["Input", fmtInteger(record.prompt_tokens)]}
@@ -1024,6 +1032,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
             </Group>
 
             <Group
+              icon={cacheHit ? ICONS.savings : ICONS.spend}
               title={cacheHit ? "Avoided provider cost" : "Cost"}
               hint={
                 legacyBreakdownUnavailable
@@ -1062,7 +1071,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
               )}
             </Group>
 
-            <Group title="Latency">
+            <Group icon={ICONS.latency} title="Latency">
               <Rows
                 rows={[
                   ["Upstream", fmtMs(record.upstream_latency_ms)],
@@ -1072,7 +1081,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
               />
             </Group>
 
-            <Group title="Optimizations">
+            <Group icon={ICONS.savings} title="Optimizations">
               {!hasOptimization ? (
                 <p className="text-[12.5px] text-fg-muted">None ran on this request.</p>
               ) : (
@@ -1105,7 +1114,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
           </>
         ) : (
           <>
-            <Group title="Pricing provenance">
+            <Group icon={Tag} title="Pricing provenance">
               <Rows
                 rows={[
                   ["Status", <PricingBadge key="s" status={record.pricing_status} />],
@@ -1131,7 +1140,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
                 ]}
               />
             </Group>
-            <Group title="Rates per 1M tokens" hint="USD">
+            <Group icon={ICONS.spend} title="Rates per 1M tokens" hint="USD">
               {legacyBreakdownUnavailable || pricingUnavailable ? (
                 <Unavailable
                   label="Rate snapshot"
@@ -1150,7 +1159,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
                 />
               )}
             </Group>
-            <Group title="Record" hint="For logs and reconciliation">
+            <Group icon={ICONS.database} title="Record" hint="For logs and reconciliation">
               <Rows
                 rows={[
                   ["Usage row", mono(record.id, "u")],
@@ -1211,12 +1220,15 @@ function NoticeList({ notices }: { notices: RequestNotice[] }) {
 
 // Group is a heading + content block inside the drawer: no box, just a hairline
 // above, so the drawer reads as one scannable column.
-function Group({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
+function Group({ icon: Icon, title, hint, children }: { icon: LucideIcon; title: string; hint?: string; children: ReactNode }) {
   const id = useId();
   return (
     <section aria-labelledby={id} className="border-t border-line pt-4">
       <div className="mb-2.5 flex items-baseline justify-between gap-3">
-        <h3 id={id} className="text-[13px] font-semibold text-fg">{title}</h3>
+        <h3 id={id} className="inline-flex items-center gap-2 text-[13px] font-semibold text-fg">
+          <Icon className="h-3.5 w-3.5 shrink-0 self-center text-tone" strokeWidth={1.75} aria-hidden="true" />
+          {title}
+        </h3>
         {hint && <p className="text-[12px] text-fg-muted">{hint}</p>}
       </div>
       {children}
