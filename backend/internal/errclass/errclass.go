@@ -1,7 +1,6 @@
 // Package errclass holds provider-agnostic error-text classifiers shared by
 // the HTTP status mapper (connectors) and the stream codecs (transform). The
-// phrase lists mirror LiteLLM's exception_mapping_utils so a provider's
-// wording is recognised the same way on both gateways.
+// phrase lists cover the wording providers actually use for each condition.
 package errclass
 
 import (

@@ -473,3 +473,85 @@ func TestOpenAIRenderCanonicalisesCloudflareModel(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "meta/llama-3.3-70b-instruct-fp8-fast", decodeJSON(t, body)["model"])
 }
+
+// ---- usage normalisation ---------------------------------------------------
+
+func TestAnthropicUsageNormalisationWithCacheTTLAndSearch(t *testing.T) {
+	body := `{"id":"m","model":"claude","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn",
+	  "usage":{"input_tokens":100,"output_tokens":20,"cache_read_input_tokens":500,"cache_creation_input_tokens":300,
+	    "cache_creation":{"ephemeral_5m_input_tokens":100,"ephemeral_1h_input_tokens":200},
+	    "server_tool_use":{"web_search_requests":2}}}`
+	resp, err := AnthropicCodec{}.ParseResponse([]byte(body), "claude")
+	require.NoError(t, err)
+	u := resp.Usage
+	require.Equal(t, 900, u.PromptTokens, "prompt includes cache reads and writes")
+	require.Equal(t, 300, u.CacheWriteTokens)
+	require.Equal(t, 200, u.CacheWrite1hTokens)
+	require.Equal(t, 2, u.WebSearchRequests)
+
+	// Iterations (compaction / server tool loops) are summed.
+	iter := `{"id":"m","model":"claude","content":[],"stop_reason":"end_turn",
+	  "usage":{"input_tokens":1,"output_tokens":1,"iterations":[
+	    {"input_tokens":10,"output_tokens":5,"cache_read_input_tokens":20,"cache_creation_input_tokens":0},
+	    {"input_tokens":30,"output_tokens":7,"cache_read_input_tokens":0,"cache_creation_input_tokens":40,"server_tool_use":{"web_search_requests":1}}]}}`
+	resp, err = AnthropicCodec{}.ParseResponse([]byte(iter), "claude")
+	require.NoError(t, err)
+	require.Equal(t, 100, resp.Usage.PromptTokens)
+	require.Equal(t, 12, resp.Usage.CompletionTokens)
+	require.Equal(t, 1, resp.Usage.WebSearchRequests)
+
+	// Streaming message_start carries the same shape.
+	chunks, err := AnthropicCodec{}.ParseStreamLine([]byte(`{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":1,"cache_read_input_tokens":90,"cache_creation_input_tokens":50,"cache_creation":{"ephemeral_1h_input_tokens":50}}}}`), "claude")
+	require.NoError(t, err)
+	require.Equal(t, 150, chunks[0].Usage.PromptTokens)
+	require.Equal(t, 50, chunks[0].Usage.CacheWrite1hTokens)
+}
+
+func TestGeminiUsageInclusiveThoughtsAndGrounding(t *testing.T) {
+	// Totals prove thoughts are already inside candidates: do not add them.
+	inclusive := gemUsageMetadata{PromptTokenCount: 100, CandidatesTokenCount: 60, ThoughtsTokenCount: 20, TotalTokenCount: 160}
+	u := gemUsageToCore(inclusive, nil)
+	require.Equal(t, 60, u.CompletionTokens)
+	require.Equal(t, 20, u.ReasoningTokens)
+
+	// Totals show thoughts are separate: add them.
+	separate := gemUsageMetadata{PromptTokenCount: 100, CandidatesTokenCount: 60, ThoughtsTokenCount: 20, TotalTokenCount: 180}
+	u = gemUsageToCore(separate, nil)
+	require.Equal(t, 80, u.CompletionTokens)
+
+	// Tool-use prompt tokens are prompt tokens unless search grounding ran.
+	withTool := gemUsageMetadata{PromptTokenCount: 100, CandidatesTokenCount: 10, ToolUsePromptTokenCount: 30, TotalTokenCount: 140}
+	require.Equal(t, 130, gemUsageToCore(withTool, nil).PromptTokens)
+	grounded := gemUsageToCore(withTool, json.RawMessage(`{"webSearchQueries":["x"],"groundingChunks":[]}`))
+	require.Equal(t, 100, grounded.PromptTokens)
+	require.Equal(t, 1, grounded.WebSearchRequests)
+}
+
+func TestOpenRouterUsageAccountingAndCost(t *testing.T) {
+	req := &core.ChatRequest{Model: "some/model", Messages: []core.Message{{Role: core.RoleUser, Content: []core.ContentPart{{Type: core.PartText, Text: "hi"}}}}}
+	body, err := OpenAICodec{}.RenderRequestForProvider(req, "openrouter")
+	require.NoError(t, err)
+	require.Equal(t, true, decodeJSON(t, body)["usage"].(map[string]any)["include"])
+	body, err = OpenAICodec{}.RenderRequestForProvider(req, "openai")
+	require.NoError(t, err)
+	_, has := decodeJSON(t, body)["usage"]
+	require.False(t, has)
+
+	resp, err := OpenAICodec{}.ParseResponse([]byte(`{"id":"r","model":"m","choices":[{"message":{"role":"assistant","content":"x"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"cost":0.00123}}`), "m")
+	require.NoError(t, err)
+	require.EqualValues(t, 1_230_000, resp.Usage.ProviderCostNanos)
+
+	chunks, err := OpenAICodec{}.ParseStreamLine([]byte(`{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"cost":0.5}}`), "m")
+	require.NoError(t, err)
+	require.EqualValues(t, 500_000_000, chunks[0].Usage.ProviderCostNanos)
+}
+
+func TestDeepSeekPromptCacheHitTokensCountAsCached(t *testing.T) {
+	resp, err := OpenAICodec{}.ParseResponse([]byte(`{"id":"r","model":"deepseek-chat","choices":[{"message":{"role":"assistant","content":"x"},"finish_reason":"stop"}],
+	  "usage":{"prompt_tokens":1000,"completion_tokens":5,"total_tokens":1005,"prompt_cache_hit_tokens":768,"prompt_cache_miss_tokens":232}}`), "deepseek-chat")
+	require.NoError(t, err)
+	require.Equal(t, 768, resp.Usage.CachedTokens)
+	chunks, err := OpenAICodec{}.ParseStreamLine([]byte(`{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":1,"total_tokens":101,"prompt_cache_hit_tokens":64}}`), "deepseek-chat")
+	require.NoError(t, err)
+	require.Equal(t, 64, chunks[0].Usage.CachedTokens)
+}

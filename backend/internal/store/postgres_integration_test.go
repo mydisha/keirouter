@@ -67,6 +67,63 @@ func TestPostgresCompatibility(t *testing.T) {
 		require.Equal(t, len(records), count)
 	})
 
+	t.Run("cost rollups scan into int64", func(t *testing.T) {
+		now := time.Now().UTC()
+		prefix := fmt.Sprintf("pg-cost-%d", now.UnixNano())
+		keyID := prefix + "-key"
+		require.NoError(t, db.Usage().RecordBatch(ctx, []UsageRecord{
+			{ID: prefix + "-a", TenantID: prefix, APIKeyID: keyID, Provider: "p", Model: "m",
+				PromptTokens: 10, CompletionTokens: 5, CostNanos: 1_234_567, CreatedAt: now},
+			{ID: prefix + "-b", TenantID: prefix, APIKeyID: keyID, Provider: "p", Model: "m",
+				PromptTokens: 1, CompletionTokens: 1, CostNanos: 1_000, CreatedAt: now},
+		}))
+		since := now.Add(-time.Minute)
+		const wantMicros = int64(1_236) // (1_235_567 + 500) / 1000
+
+		spent, err := db.Usage().SpendSince(ctx, ScopeAPIKey, keyID, since)
+		require.NoError(t, err)
+		require.Equal(t, wantMicros, spent)
+
+		batch, err := db.Usage().SpendAndTokensBatch(ctx, []SpendScope{
+			{Kind: ScopeAPIKey, ScopeID: keyID, Since: since},
+			{Kind: ScopeTenant, ScopeID: prefix + "-empty", Since: since},
+		})
+		require.NoError(t, err)
+		require.Equal(t, []SpendResult{{CostMicros: wantMicros, Tokens: 17}, {}}, batch)
+
+		sum, err := db.Usage().Summarize(ctx, prefix, since)
+		require.NoError(t, err)
+		require.Equal(t, wantMicros, sum.CostMicros)
+
+		byModel, err := db.Usage().ByModelByKey(ctx, keyID, since)
+		require.NoError(t, err)
+		require.Len(t, byModel, 1)
+		require.Equal(t, wantMicros, byModel[0].CostMicros)
+
+		daily, err := db.Usage().DailyByKey(ctx, keyID, since)
+		require.NoError(t, err)
+		require.Len(t, daily, 1)
+		require.Equal(t, wantMicros, daily[0].CostMicros)
+	})
+
+	t.Run("time buckets truncate like SQLite", func(t *testing.T) {
+		since := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+		tenant := fmt.Sprintf("pg-bucket-%d", time.Now().UnixNano())
+		// 42 minutes is 70% into a one-hour slot; rounding would move it to bucket 1.
+		require.NoError(t, db.Usage().Record(ctx, UsageRecord{
+			ID: tenant + "-a", TenantID: tenant, Provider: "p", Model: "m",
+			CreatedAt: since.Add(42 * time.Minute),
+		}))
+		buckets, err := db.Usage().Timeline(ctx, tenant, since, since.Add(24*time.Hour), 24)
+		require.NoError(t, err)
+		require.Equal(t, []TimeBucket{{Bucket: 0, Count: 1}}, buckets)
+
+		accurate, err := db.Usage().TimelineAccurate(ctx, tenant, since, since.Add(24*time.Hour), 24)
+		require.NoError(t, err)
+		require.Len(t, accurate, 1)
+		require.Equal(t, 0, accurate[0].Bucket)
+	})
+
 	t.Run("calendar grouping is UTC", func(t *testing.T) {
 		_, err := db.sql.ExecContext(ctx, "SET TIME ZONE 'America/Los_Angeles'")
 		require.NoError(t, err)

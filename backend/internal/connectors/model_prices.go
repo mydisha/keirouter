@@ -13,6 +13,8 @@ type ModelPrice struct {
 	CachedInputPerM      float64
 	CacheWritePerM       float64
 	ReasoningPerM        float64
+	CacheWrite1hPerM     float64
+	WebSearchPerK        float64
 	LongContextThreshold int
 	LongInputPerM        float64
 	LongOutputPerM       float64
@@ -105,7 +107,39 @@ func priceModelCandidates(model string) []string {
 			break
 		}
 	}
+	// Fine-tunes and dated snapshots price like their base model.
+	for _, candidate := range out {
+		base := candidate
+		if strings.HasPrefix(base, "ft:") {
+			rest := strings.TrimPrefix(base, "ft:")
+			if i := strings.IndexByte(rest, ':'); i >= 0 {
+				rest = rest[:i]
+			}
+			base = rest
+		}
+		if n := len(base); n > 11 && base[n-11] == '-' && looksLikeDate(base[n-10:]) {
+			base = base[:n-11]
+		}
+		if base != candidate {
+			out = append(out, base)
+		}
+	}
 	return out
+}
+
+func looksLikeDate(s string) bool {
+	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if i == 4 || i == 7 {
+			continue
+		}
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func priceModelFingerprint(model string) string {

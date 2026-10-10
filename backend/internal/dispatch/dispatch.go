@@ -72,8 +72,7 @@ const (
 	// (5xx, timeouts, network faults) an account must accumulate within
 	// TransientFailureWindow before it is cooled down. A single blip on the
 	// only configured account used to lock the whole router out for
-	// TransientCooldown; LiteLLM likewise never cools a deployment down on a
-	// lone 5xx and requires a failure-rate threshold first.
+	// TransientCooldown; a failure threshold must trip first.
 	TransientFailureThreshold = 3
 	// TransientFailureWindow bounds how long transient strikes are remembered.
 	TransientFailureWindow = time.Minute

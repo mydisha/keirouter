@@ -116,6 +116,9 @@ type Tool struct {
 type RequestMetadata struct {
 	// ClientKind is the detected calling tool (claude-code, cursor, codex, ...).
 	ClientKind string
+	// ServiceTier is the OpenAI service tier requested ("flex", "priority");
+	// it changes the billed rates.
+	ServiceTier string
 	// ClientBetas are the anthropic-beta features the client asked for
 	// (context-1m, interleaved-thinking, ...). Forwarded to the Anthropic
 	// connector so API-key users keep the features their client relies on.

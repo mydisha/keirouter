@@ -103,8 +103,7 @@ func (c *Checker) CheckOnce(ctx context.Context, tenantID string) {
 	recent, _ := c.health.RecentAccountModels(ctx, tenantID, time.Now().Add(-c.cfg.RecentModelWindow), len(accounts)*c.cfg.MaxModelsPerProvider)
 	// Real traffic is the strongest health signal: a pair that served a
 	// successful request within the staleness window needs no synthetic
-	// probe (LiteLLM probes everything and pays for it; we only probe what
-	// has gone quiet).
+	// probe; only pairs that have gone quiet are probed.
 	provenHealthy, _ := c.health.RecentSuccessfulAccountModels(ctx, tenantID, time.Now().Add(-c.stalenessWindow()))
 
 	modelsByAccount := map[string][]string{}
@@ -163,7 +162,7 @@ func (c *Checker) CheckOnce(ctx context.Context, tenantID string) {
 }
 
 // stalenessWindow is how long a real-traffic success keeps a pair exempt from
-// probing: two intervals, like LiteLLM's health staleness default.
+// probing: two intervals.
 func (c *Checker) stalenessWindow() time.Duration {
 	return 2 * c.cfg.Interval
 }

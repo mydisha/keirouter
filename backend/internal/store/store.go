@@ -192,9 +192,12 @@ func (db *DB) Close() error { return db.sql.Close() }
 // epochExpr returns a dialect-specific SQL expression that converts a TEXT
 // RFC3339 timestamp (column or placeholder) to unix-epoch seconds. SQLite has
 // strftime; Postgres needs an explicit cast to timestamptz before EXTRACT.
+// The Postgres result is cast to BIGINT because EXTRACT yields NUMERIC: bucket
+// math like CAST((a-b)/? AS INTEGER) would then round instead of truncating
+// the way SQLite's integer division does, shifting rows into the next bucket.
 func (db *DB) epochExpr(operand string) string {
 	if db.dialect == DialectPostgres {
-		return "EXTRACT(EPOCH FROM " + operand + "::timestamptz)"
+		return "CAST(EXTRACT(EPOCH FROM " + operand + "::timestamptz) AS BIGINT)"
 	}
 	return "strftime('%s', " + operand + ")"
 }

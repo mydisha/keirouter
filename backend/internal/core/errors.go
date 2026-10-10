@@ -27,12 +27,12 @@ const (
 	ErrBadRequest ErrorKind = "bad_request"
 	// ErrContextWindow: the prompt exceeds the model's context window. The
 	// request is valid for a model with a larger window, so the chain advances
-	// to the next target (LiteLLM's context_window_fallbacks) without cooling
-	// anything down. Surfaced as 400 when every target rejects it.
+	// to the next target without cooling anything down. Surfaced as 400 when
+	// every target rejects it.
 	ErrContextWindow ErrorKind = "context_window"
 	// ErrContentFilter: the upstream safety system rejected the prompt or
-	// output. Another provider may accept it (LiteLLM's
-	// content_policy_fallbacks), so the chain advances; nothing is cooled down.
+	// output. Another provider may accept it, so the chain advances; nothing
+	// is cooled down.
 	ErrContentFilter ErrorKind = "content_filter"
 	// ErrModelUnavailable: the selected model or endpoint is unavailable. Skip
 	// the model without disabling credentials that may still serve other models.

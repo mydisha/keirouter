@@ -26,6 +26,11 @@ type Price struct {
 	CachedInputPerM float64
 	CacheWritePerM  float64
 	ReasoningPerM   float64
+	// CacheWrite1hPerM prices one-hour cache writes. Zero falls back to
+	// CacheWritePerM × 1.6 (Anthropic lists 1h at 2× input vs 1.25× for 5m).
+	CacheWrite1hPerM float64
+	// WebSearchPerK is the USD price per 1,000 provider-side web searches.
+	WebSearchPerK float64
 
 	LongContextThreshold int
 	LongInputPerM        float64
@@ -128,9 +133,12 @@ type Event struct {
 	ChainID       string
 	FallbackCount int
 
-	Usage           core.Usage
-	UsageSource     string // provider | estimated | cache | none
-	CacheHit        bool
+	Usage       core.Usage
+	UsageSource string // provider | estimated | cache | none
+	CacheHit    bool
+	// ServiceTier is the OpenAI service tier the request ran under
+	// ("flex", "priority", "default"); flex and priority change the rates.
+	ServiceTier     string
 	Latency         time.Duration // winning upstream attempt
 	EndToEndLatency time.Duration
 	TTFT            time.Duration
@@ -209,7 +217,7 @@ func (m *Meter) Record(ctx context.Context, ev Event) (int64, error) {
 		// Do not inflate coverage merely because the target exists in the catalog.
 		cost.Pricing = PricingMatch{Status: "none", MatchKind: "none"}
 	} else {
-		cost = m.CalculateCost(ev.Provider, ev.Model, u, ev.CacheHit, savedTokens)
+		cost = m.CalculateCostWith(ev.Provider, ev.Model, u, ev.CacheHit, savedTokens, ev.ServiceTier)
 	}
 	endToEnd := ev.EndToEndLatency
 	if endToEnd <= 0 {
@@ -228,8 +236,9 @@ func (m *Meter) Record(ctx context.Context, ev Event) (int64, error) {
 		Status: status, ErrorKind: ev.ErrorKind, UsageSource: usageSource,
 		PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens,
 		CachedTokens: u.CachedTokens, CacheWriteTokens: u.CacheWriteTokens,
-		ReasoningTokens: u.ReasoningTokens,
-		CostMicros:      cost.CostMicros, CostNanos: cost.CostNanos,
+		ReasoningTokens: u.ReasoningTokens, CacheWrite1hTokens: u.CacheWrite1hTokens,
+		WebSearchRequests: u.WebSearchRequests,
+		CostMicros:        cost.CostMicros, CostNanos: cost.CostNanos, ToolCostNanos: cost.ToolCostNanos,
 		InputCostNanos: cost.InputCostNanos, CachedCostNanos: cost.CachedCostNanos,
 		CacheWriteCostNanos: cost.CacheWriteCostNanos, OutputCostNanos: cost.OutputCostNanos,
 		ReasoningCostNanos: cost.ReasoningCostNanos, AvoidedCostNanos: cost.AvoidedCostNanos,

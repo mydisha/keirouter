@@ -11,7 +11,7 @@ import (
 )
 
 // Same-attempt retry policy, applied only when no alternative account or
-// target remains. Mirrors LiteLLM's router: with other healthy deployments a
+// target remains. With other healthy deployments a
 // failure moves to the next one immediately; with a single deployment the
 // same one is retried after min(8s, 0.5s·2^n) + jitter, honouring a short
 // Retry-After. Without this, a lone transient 502 on a single-account chain
@@ -165,7 +165,7 @@ func isTransientForSameRetry(pe *core.ProviderError) bool {
 	return true
 }
 
-// sameRetryDelay is LiteLLM's calculate_retry_after: a Retry-After of at most
+// sameRetryDelay computes the backoff before a same-attempt retry: a Retry-After of at most
 // 60s wins; otherwise 0.5s·2^n capped at 8s. Both get up to 750ms of jitter.
 func sameRetryDelay(n int, retryAfter time.Duration) time.Duration {
 	jitter := time.Duration(rand.Int64N(int64(sameRetryJitter) + 1))

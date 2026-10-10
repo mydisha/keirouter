@@ -146,6 +146,7 @@ func (r *UsageRepo) TimelineAccurate(ctx context.Context, tenantID string, since
 type UnpricedUsageRecord struct {
 	ID, Provider, Model                                                             string
 	PromptTokens, CompletionTokens, CachedTokens, CacheWriteTokens, ReasoningTokens int
+	CacheWrite1hTokens, WebSearchRequests                                           int
 	CacheHit                                                                        bool
 	SlimTokensSaved, HeadroomTokensSaved                                            int
 	CreatedAt                                                                       time.Time
@@ -158,7 +159,7 @@ func (r *UsageRepo) ListUnpriced(ctx context.Context, after time.Time, afterID s
 	q := r.db.rebind(`
 		SELECT id, provider, model, prompt_tokens, completion_tokens, cached_tokens,
 			cache_write_tokens, reasoning_tokens, cache_hit, slim_tokens_saved, headroom_tokens_saved,
-			created_at
+			created_at, cache_write_1h_tokens, web_search_requests
 		FROM usage_records
 		WHERE cost_nanos=0 AND prompt_tokens+completion_tokens>0
 			AND pricing_status IN ('missing','legacy')
@@ -177,7 +178,8 @@ func (r *UsageRepo) ListUnpriced(ctx context.Context, after time.Time, afterID s
 		var createdAt string
 		if err := rows.Scan(&u.ID, &u.Provider, &u.Model, &u.PromptTokens, &u.CompletionTokens,
 			&u.CachedTokens, &u.CacheWriteTokens, &u.ReasoningTokens, &cacheHit,
-			&u.SlimTokensSaved, &u.HeadroomTokensSaved, &createdAt); err != nil {
+			&u.SlimTokensSaved, &u.HeadroomTokensSaved, &createdAt,
+			&u.CacheWrite1hTokens, &u.WebSearchRequests); err != nil {
 			return nil, err
 		}
 		u.CacheHit = cacheHit != 0
@@ -192,7 +194,7 @@ type UsagePricingUpdate struct {
 	CostMicros, CostNanos                                 int64
 	InputCostNanos, CachedCostNanos, CacheWriteCostNanos  int64
 	OutputCostNanos, ReasoningCostNanos, AvoidedCostNanos int64
-	SavedCostNanos                                        int64
+	SavedCostNanos, ToolCostNanos                         int64
 	PricingStatus, PricingSource, PricingKey              string
 	PricingMatchKind, PricingSourceURL                    string
 	PricingAsOf                                           *time.Time
@@ -205,14 +207,14 @@ func (r *UsageRepo) UpdateUsagePricing(ctx context.Context, id string, p UsagePr
 	q := r.db.rebind(`UPDATE usage_records SET
 		cost_micros=?, cost_nanos=?, input_cost_nanos=?, cached_cost_nanos=?,
 		cache_write_cost_nanos=?, output_cost_nanos=?, reasoning_cost_nanos=?,
-		avoided_cost_nanos=?, saved_cost_nanos=?, pricing_status=?, pricing_source=?, pricing_key=?,
+		avoided_cost_nanos=?, saved_cost_nanos=?, tool_cost_nanos=?, pricing_status=?, pricing_source=?, pricing_key=?,
 		pricing_match_kind=?, pricing_source_url=?, pricing_as_of=?, pricing_backfilled=?,
 		input_rate_per_m=?, cached_rate_per_m=?, cache_write_rate_per_m=?, output_rate_per_m=?, reasoning_rate_per_m=?
 		WHERE id=?`)
 	_, err := r.db.sql.ExecContext(ctx, q,
 		p.CostMicros, p.CostNanos, p.InputCostNanos, p.CachedCostNanos,
 		p.CacheWriteCostNanos, p.OutputCostNanos, p.ReasoningCostNanos,
-		p.AvoidedCostNanos, p.SavedCostNanos, p.PricingStatus, p.PricingSource, p.PricingKey,
+		p.AvoidedCostNanos, p.SavedCostNanos, p.ToolCostNanos, p.PricingStatus, p.PricingSource, p.PricingKey,
 		p.PricingMatchKind, p.PricingSourceURL, nullTime(p.PricingAsOf), boolToInt(p.PricingBackfilled),
 		p.InputRatePerM, p.CachedRatePerM, p.CacheWriteRatePerM, p.OutputRatePerM, p.ReasoningRatePerM, id)
 	if err != nil {

@@ -39,19 +39,9 @@ type antStreamEvent struct {
 		Signature string `json:"signature"`
 		Data      string `json:"data"`
 	} `json:"content_block"`
-	Usage *struct {
-		InputTokens              int `json:"input_tokens"`
-		OutputTokens             int `json:"output_tokens"`
-		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	} `json:"usage"`
+	Usage   *antUsage `json:"usage"`
 	Message *struct {
-		Usage struct {
-			InputTokens              int `json:"input_tokens"`
-			OutputTokens             int `json:"output_tokens"`
-			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-		} `json:"usage"`
+		Usage antUsage `json:"usage"`
 	} `json:"message"`
 }
 
@@ -128,35 +118,15 @@ func (AnthropicCodec) ParseStreamLine(line []byte, _ string) ([]core.StreamChunk
 			})
 		}
 		if ev.Usage != nil {
-			promptTokens := ev.Usage.InputTokens + ev.Usage.CacheReadInputTokens + ev.Usage.CacheCreationInputTokens
-			chunks = append(chunks, core.StreamChunk{
-				Type: core.ChunkUsage,
-				Usage: &core.Usage{
-					CompletionTokens: ev.Usage.OutputTokens,
-					PromptTokens:     promptTokens,
-					TotalTokens:      promptTokens + ev.Usage.OutputTokens,
-					CachedTokens:     ev.Usage.CacheReadInputTokens,
-					CacheWriteTokens: ev.Usage.CacheCreationInputTokens,
-					Source:           core.UsageSourceProvider,
-				},
-			})
+			u := antUsageToCore(*ev.Usage)
+			chunks = append(chunks, core.StreamChunk{Type: core.ChunkUsage, Usage: &u})
 		}
 		return chunks, nil
 
 	case "message_start":
 		if ev.Message != nil {
-			promptTokens := ev.Message.Usage.InputTokens + ev.Message.Usage.CacheReadInputTokens + ev.Message.Usage.CacheCreationInputTokens
-			return []core.StreamChunk{{
-				Type: core.ChunkUsage,
-				Usage: &core.Usage{
-					PromptTokens:     promptTokens,
-					CompletionTokens: ev.Message.Usage.OutputTokens,
-					TotalTokens:      promptTokens + ev.Message.Usage.OutputTokens,
-					CachedTokens:     ev.Message.Usage.CacheReadInputTokens,
-					CacheWriteTokens: ev.Message.Usage.CacheCreationInputTokens,
-					Source:           core.UsageSourceProvider,
-				},
-			}}, nil
+			u := antUsageToCore(ev.Message.Usage)
+			return []core.StreamChunk{{Type: core.ChunkUsage, Usage: &u}}, nil
 		}
 		return nil, nil
 

@@ -143,15 +143,19 @@ type UsageRecord struct {
 	// failed and a later chain step served (or terminally failed) the request.
 	ChainID       string
 	FallbackCount int
-	Status    string // success | cache_hit | blocked | failed | cancelled
-	ErrorKind string
+	Status        string // success | cache_hit | blocked | failed | cancelled
+	ErrorKind     string
 
 	PromptTokens     int
 	CompletionTokens int
 	CachedTokens     int
 	CacheWriteTokens int
 	ReasoningTokens  int
-	UsageSource      string // provider | estimated | cache | none
+	// CacheWrite1hTokens is the 1h-TTL subset of CacheWriteTokens.
+	CacheWrite1hTokens int
+	// WebSearchRequests counts provider-side web searches billed per request.
+	WebSearchRequests int
+	UsageSource       string // provider | estimated | cache | none
 
 	// CostMicros remains for budget/backward compatibility. CostNanos is the
 	// authoritative value and avoids each small request being rounded to zero.
@@ -162,6 +166,7 @@ type UsageRecord struct {
 	CacheWriteCostNanos int64
 	OutputCostNanos     int64
 	ReasoningCostNanos  int64
+	ToolCostNanos       int64 // provider-side tool use (web search) charges
 	AvoidedCostNanos    int64 // semantic-cache retail-equivalent cost avoided
 	SavedCostNanos      int64 // input compression retail-equivalent saving
 

@@ -551,16 +551,62 @@ func quoteIfNotJSON(s string) string {
 
 type gemResponse struct {
 	Candidates []struct {
-		Content      gemContent `json:"content"`
-		FinishReason string     `json:"finishReason"`
+		Content           gemContent      `json:"content"`
+		FinishReason      string          `json:"finishReason"`
+		GroundingMetadata json.RawMessage `json:"groundingMetadata"`
 	} `json:"candidates"`
-	UsageMetadata struct {
-		PromptTokenCount        int `json:"promptTokenCount"`
-		CandidatesTokenCount    int `json:"candidatesTokenCount"`
-		ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
-		TotalTokenCount         int `json:"totalTokenCount"`
-		CachedContentTokenCount int `json:"cachedContentTokenCount"`
-	} `json:"usageMetadata"`
+	UsageMetadata gemUsageMetadata `json:"usageMetadata"`
+}
+
+// gemUsageMetadata is Gemini's usage block. promptTokenCount already includes
+// cached tokens; thoughtsTokenCount may or may not be inside
+// candidatesTokenCount depending on the model generation.
+type gemUsageMetadata struct {
+	PromptTokenCount        int `json:"promptTokenCount"`
+	CandidatesTokenCount    int `json:"candidatesTokenCount"`
+	ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
+	ToolUsePromptTokenCount int `json:"toolUsePromptTokenCount"`
+	TotalTokenCount         int `json:"totalTokenCount"`
+	CachedContentTokenCount int `json:"cachedContentTokenCount"`
+}
+
+// gemUsageToCore normalises Gemini usage with these rules:
+//   - thoughts are added to candidates only when the total proves they are
+//     not already included (prompt + candidates + toolUse != total);
+//   - tool-use prompt tokens count as prompt tokens unless the response was
+//     search-grounded, where they are billed per query instead;
+//   - grounded responses count one web search request.
+func gemUsageToCore(m gemUsageMetadata, grounding json.RawMessage) core.Usage {
+	grounded := len(grounding) > 0 && !bytes.Equal(bytes.TrimSpace(grounding), []byte("null")) &&
+		bytes.Contains(grounding, []byte("webSearchQueries"))
+	prompt := m.PromptTokenCount
+	if !grounded {
+		prompt += m.ToolUsePromptTokenCount
+	}
+	completion := m.CandidatesTokenCount
+	inclusive := m.TotalTokenCount > 0 && m.PromptTokenCount+m.CandidatesTokenCount+m.ToolUsePromptTokenCount == m.TotalTokenCount
+	if !inclusive {
+		completion += m.ThoughtsTokenCount
+	}
+	if completion == 0 && m.TotalTokenCount > m.PromptTokenCount {
+		completion = m.TotalTokenCount - m.PromptTokenCount
+	}
+	total := m.TotalTokenCount
+	if total == 0 {
+		total = prompt + completion
+	}
+	u := core.Usage{
+		PromptTokens:     prompt,
+		CompletionTokens: completion,
+		TotalTokens:      total,
+		CachedTokens:     m.CachedContentTokenCount,
+		ReasoningTokens:  m.ThoughtsTokenCount,
+		Source:           core.UsageSourceProvider,
+	}
+	if grounded {
+		u.WebSearchRequests = 1
+	}
+	return u
 }
 
 func (GeminiCodec) ParseResponse(body []byte, model string) (*core.ChatResponse, error) {
@@ -575,22 +621,11 @@ func (GeminiCodec) ParseResponse(body []byte, model string) (*core.ChatResponse,
 	msg := parseGemContent(cand.Content)
 	msg.Role = core.RoleAssistant
 
-	completionTokens := raw.UsageMetadata.CandidatesTokenCount + raw.UsageMetadata.ThoughtsTokenCount
-	if completionTokens == 0 && raw.UsageMetadata.TotalTokenCount > raw.UsageMetadata.PromptTokenCount {
-		completionTokens = raw.UsageMetadata.TotalTokenCount - raw.UsageMetadata.PromptTokenCount
-	}
 	return &core.ChatResponse{
 		Model:        model,
 		Message:      msg,
 		FinishReason: mapGemCandidateFinish(cand.Content, cand.FinishReason),
-		Usage: core.Usage{
-			PromptTokens:     raw.UsageMetadata.PromptTokenCount,
-			CompletionTokens: completionTokens,
-			TotalTokens:      raw.UsageMetadata.TotalTokenCount,
-			CachedTokens:     raw.UsageMetadata.CachedContentTokenCount,
-			ReasoningTokens:  raw.UsageMetadata.ThoughtsTokenCount,
-			Source:           core.UsageSourceProvider,
-		},
+		Usage:        gemUsageToCore(raw.UsageMetadata, cand.GroundingMetadata),
 	}, nil
 }
 
@@ -657,7 +692,7 @@ func mapGemFinish(r string) core.FinishReason {
 		return core.FinishFilter
 	default:
 		// MALFORMED_FUNCTION_CALL, UNEXPECTED_TOOL_CALL, MISSING_THOUGHT_SIGNATURE
-		// and friends end the turn like a stop (LiteLLM's mapping).
+		// and friends end the turn like a stop.
 		return core.FinishStop
 	}
 }

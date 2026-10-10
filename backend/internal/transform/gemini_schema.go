@@ -587,7 +587,7 @@ func deepCopySchema(node any) any {
 
 // ensureArrayItems gives every array schema an items definition; Gemini
 // rejects {"type":"array"} without one. Untyped arrays (common in MCP tools)
-// become arrays of free-form objects, matching LiteLLM.
+// become arrays of free-form objects.
 func ensureArrayItems(node any) {
 	switch v := node.(type) {
 	case map[string]any:

@@ -146,7 +146,7 @@ func ClassifyErrorDetail(errType string, code int, status, message string) *core
 		return pe
 	}
 
-	// Message vocabulary next (LiteLLM's string heuristics).
+	// Message vocabulary next.
 	switch {
 	case LooksLikeContextWindow(lowerMsg):
 		pe.Kind, pe.Scope = core.ErrContextWindow, core.FailureScopeModel

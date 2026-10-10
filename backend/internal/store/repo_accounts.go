@@ -248,18 +248,18 @@ func (r *AccountRepo) queryList(ctx context.Context, q string, args ...any) ([]A
 // shared Scan signature.
 func scanAccountRow(scan func(dest ...any) error) (Account, error) {
 	var (
-		a              Account
-		authKind       string
-		secretDEK      sql.NullString
-		secretCT       sql.NullString
-		tokenDEK       sql.NullString
-		tokenCT        sql.NullString
-		refreshDEK     sql.NullString
-		refreshCT      sql.NullString
-		tokenExpires   sql.NullString
-		backoffLevel   int
-		cooldown       sql.NullString
-		disabled       int
+		a                Account
+		authKind         string
+		secretDEK        sql.NullString
+		secretCT         sql.NullString
+		tokenDEK         sql.NullString
+		tokenCT          sql.NullString
+		refreshDEK       sql.NullString
+		refreshCT        sql.NullString
+		tokenExpires     sql.NullString
+		backoffLevel     int
+		cooldown         sql.NullString
+		disabled         int
 		proxyPoolID      sql.NullString
 		needsReconnect   int
 		creditsExhausted int

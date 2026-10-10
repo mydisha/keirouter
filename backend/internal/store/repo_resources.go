@@ -72,9 +72,9 @@ func (r *ResourceRepo) ResourceBuckets(ctx context.Context, since time.Time, int
 	var out []ResourceBucket
 	for rows.Next() {
 		var (
-			b       ResourceBucket
-			_       int64 // bucket timestamp (unused, derived from Bucket)
-			count   int
+			b     ResourceBucket
+			_     int64 // bucket timestamp (unused, derived from Bucket)
+			count int
 		)
 		if err := rows.Scan(
 			&b.Bucket,

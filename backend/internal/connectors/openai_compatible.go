@@ -41,7 +41,7 @@ func (c *OpenAICompatible) baseURL(creds core.Credentials) string {
 	u = resolveURLPlaceholders(u, creds.Extra)
 	if c.id == "cloudflare-ai" {
 		// A legacy /ai/run base (or an AI Gateway URL without /v1) does not
-		// serve the OpenAI-compatible endpoint; rewrite it like LiteLLM does.
+		// serve the OpenAI-compatible endpoint; rewrite it.
 		u = NormalizeCloudflareBaseURL(u)
 	}
 	return u

@@ -40,9 +40,8 @@ var errNonJSONResponse = errors.New("upstream returned a non-JSON (HTML) respons
 // 32 MiB matches the inbound request body limit.
 const maxResponseBodyBytes = 32 << 20 // 32 MiB
 
-// Transport tuning. The values follow what LiteLLM's aiohttp transport settled
-// on for AI-proxy traffic (many long-lived streams to a handful of hosts) and
-// what Go needs on top of that for liveness:
+// Transport tuning for AI-proxy traffic (many long-lived streams to a handful
+// of upstream hosts), plus what Go needs for connection liveness:
 //
 //   - dialTimeout bounds TCP connect. Without it a SYN black-hole stalls for
 //     the kernel's ~2 minute default before the request fails over.
@@ -129,8 +128,8 @@ func newFreshConnTransport(proxy func(*http.Request) (*url.URL, error)) *http.Tr
 }
 
 // sharedClient is reused across connectors; the transport pools connections.
-// Environment proxies (HTTPS_PROXY, NO_PROXY) are honoured like LiteLLM's
-// trust_env; dashboard/account proxies take precedence via clientFor.
+// Environment proxies (HTTPS_PROXY, NO_PROXY) are honoured; dashboard/account
+// proxies take precedence via clientFor.
 var sharedClient = &http.Client{
 	Timeout:   0, // per-request deadlines come from context
 	Transport: newTransport(http.ProxyFromEnvironment),
@@ -299,8 +298,7 @@ func headerBudget(ctx context.Context) time.Duration {
 //     with ErrTimeout wrapping context.DeadlineExceeded (no cooldown).
 //   - A request that died before any response bytes because the pooled
 //     connection was stale, or because the dial itself failed, is replayed
-//     exactly once on a fresh connection (LiteLLM: one retry on
-//     ConnectError/RemoteProtocolError with a new client). Replays are safe
+//     exactly once on a fresh connection. Replays are safe
 //     here because nothing reached the provider.
 //   - Transport failures are mapped to ProviderErrors via transportError.
 func sendRequest(ctx context.Context, provider, model string, build requestBuilder) (*http.Response, error) {
@@ -745,7 +743,7 @@ func isTimeoutNetError(err error) bool {
 //   - the pooled connection was already closed by the server (stale socket);
 //   - the dial itself failed (refused, reset, unreachable, DNS);
 //   - the connection dropped with EOF before headers (the server went away
-//     while the request was in flight; LiteLLM's RemoteProtocolError case).
+//     while the request was in flight).
 //
 // HTTP responses, timeouts and cancellations are handled by normal fallback so
 // a request is never multiplied blindly.
@@ -782,7 +780,7 @@ func shouldRetryFreshConnection(ctx context.Context, err error) bool {
 
 // httpStatusError maps an HTTP error status to a structured ProviderError.
 //
-// Classification follows LiteLLM's exception mapping: the body text is
+// Classification is body-first: the body text is
 // consulted before the bare status because providers and the gateways in
 // front of them routinely wrap one condition in another status (a 429 inside
 // a 503, a context-window overflow inside a generic 400, a depleted balance

@@ -22,8 +22,7 @@ import (
 //
 // Chat traffic uses the first; model discovery must use the second. The
 // catalogue base URL ends in /ai/v1, so the account root is derived by
-// stripping that suffix (LiteLLM does the same rewrite in reverse for the
-// legacy /ai/run base).
+// stripping that suffix.
 
 const (
 	cloudflareV1Suffix  = "/ai/v1"
@@ -47,8 +46,7 @@ func cloudflareAccountRoot(base string) string {
 
 // NormalizeCloudflareBaseURL rewrites a Workers AI base URL to the
 // OpenAI-compatible /ai/v1 surface. Users copy the legacy /ai/run URL from
-// older docs, which does not serve chat/completions; LiteLLM rewrites it the
-// same way.
+// older docs, which does not serve chat/completions.
 func NormalizeCloudflareBaseURL(base string) string {
 	trimmed := strings.TrimRight(base, "/")
 	if strings.HasSuffix(trimmed, cloudflareRunSuffix) {

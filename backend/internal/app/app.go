@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -825,6 +826,26 @@ func (a *App) runCooldownSweeper(ctx context.Context) {
 	}
 }
 
+// applyProviderPriceDefaults fills price classes the catalogue entries do not
+// spell out but the provider bills: Anthropic 1h cache writes at 2× input and
+// web search at $10 per 1,000 searches; Gemini grounding at $35 per 1,000
+// grounded prompts. Explicit catalogue values win.
+func applyProviderPriceDefaults(provider, model string, p *meter.Price) {
+	switch provider {
+	case "anthropic", "claude", "claude-code":
+		if p.CacheWrite1hPerM == 0 && p.InputPerM > 0 {
+			p.CacheWrite1hPerM = p.InputPerM * 2
+		}
+		if p.WebSearchPerK == 0 && strings.HasPrefix(strings.ToLower(model), "claude") {
+			p.WebSearchPerK = 10
+		}
+	case "gemini", "gemini-cli", "vertex":
+		if p.WebSearchPerK == 0 && strings.HasPrefix(strings.ToLower(model), "gemini") {
+			p.WebSearchPerK = 35
+		}
+	}
+}
+
 // buildModelPrices builds the per-model pricing table from the connector model prices.
 func buildModelPrices(ctx context.Context, db *store.DB, log *slog.Logger) map[string]meter.Price {
 	out := make(map[string]meter.Price)
@@ -834,15 +855,17 @@ func buildModelPrices(ctx context.Context, db *store.DB, log *slog.Logger) map[s
 			source = "catalog"
 		}
 		estimated := mp.Estimated || mp.Provider == "kiro"
-		out[mp.Provider+"/"+mp.Model] = meter.Price{
+		price := meter.Price{
 			InputPerM: mp.InputPerM, OutputPerM: mp.OutputPerM,
 			CachedInputPerM: mp.CachedInputPerM, CacheWritePerM: mp.CacheWritePerM,
-			ReasoningPerM:        mp.ReasoningPerM,
+			ReasoningPerM: mp.ReasoningPerM, CacheWrite1hPerM: mp.CacheWrite1hPerM, WebSearchPerK: mp.WebSearchPerK,
 			LongContextThreshold: mp.LongContextThreshold,
 			LongInputPerM:        mp.LongInputPerM, LongOutputPerM: mp.LongOutputPerM,
 			LongCachedInputPerM: mp.LongCachedInputPerM, LongCacheWritePerM: mp.LongCacheWritePerM,
 			Source: source, SourceURL: mp.SourceURL, Estimated: estimated, ExplicitFree: mp.ExplicitFree,
 		}
+		applyProviderPriceDefaults(mp.Provider, mp.Model, &price)
+		out[mp.Provider+"/"+mp.Model] = price
 	}
 	// User-entered custom prices are the highest-priority exact match. Imported
 	// zero values mean "unknown", not free, and intentionally do not override a

@@ -103,18 +103,22 @@ func (OpenAICodec) ParseStreamLine(line []byte, model string) ([]core.StreamChun
 		if raw.Usage.PromptTokensDetails != nil {
 			cached = raw.Usage.PromptTokensDetails.CachedTokens
 		}
+		if cached == 0 {
+			cached = raw.Usage.PromptCacheHitTokens
+		}
 		if raw.Usage.CompletionTokensDetails != nil {
 			reasoning = raw.Usage.CompletionTokensDetails.ReasoningTokens
 		}
 		chunks = append(chunks, core.StreamChunk{
 			Type: core.ChunkUsage,
 			Usage: &core.Usage{
-				PromptTokens:     raw.Usage.PromptTokens,
-				CompletionTokens: raw.Usage.CompletionTokens,
-				TotalTokens:      raw.Usage.TotalTokens,
-				CachedTokens:     cached,
-				ReasoningTokens:  reasoning,
-				Source:           core.UsageSourceProvider,
+				PromptTokens:      raw.Usage.PromptTokens,
+				CompletionTokens:  raw.Usage.CompletionTokens,
+				TotalTokens:       raw.Usage.TotalTokens,
+				CachedTokens:      cached,
+				ReasoningTokens:   reasoning,
+				ProviderCostNanos: usdToNanos(raw.Usage.Cost),
+				Source:            core.UsageSourceProvider,
 			},
 		})
 	}

@@ -32,14 +32,15 @@ type oaiRequest struct {
 	// o-series) require instead of max_tokens.
 	MaxCompletionTokens *int `json:"max_completion_tokens,omitempty"`
 	// Stop accepts either a string or an array of strings on input.
-	Stop              json.RawMessage `json:"stop,omitempty"`
-	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
-	Stream            bool            `json:"stream,omitempty"`
-	StreamOpts        *oaiStreamOpt   `json:"stream_options,omitempty"`
-	ResponseFormat    json.RawMessage `json:"response_format,omitempty"`
-	ReasoningEffort   string          `json:"reasoning_effort,omitempty"`
-	Thinking          *oaiThinking    `json:"thinking,omitempty"`
-	ExtraBody         map[string]any  `json:"extra_body,omitempty"`
+	Stop              json.RawMessage     `json:"stop,omitempty"`
+	ParallelToolCalls *bool               `json:"parallel_tool_calls,omitempty"`
+	Stream            bool                `json:"stream,omitempty"`
+	StreamOpts        *oaiStreamOpt       `json:"stream_options,omitempty"`
+	ResponseFormat    json.RawMessage     `json:"response_format,omitempty"`
+	ReasoningEffort   string              `json:"reasoning_effort,omitempty"`
+	Thinking          *oaiThinking        `json:"thinking,omitempty"`
+	UsageAccounting   *oaiUsageAccounting `json:"usage,omitempty"`
+	ExtraBody         map[string]any      `json:"extra_body,omitempty"`
 	// Extra carries passthrough parameters (seed, penalties, logprobs, user,
 	// service_tier, ...) that the canonical model does not represent. They
 	// are spliced into the rendered JSON by MarshalJSON.
@@ -92,7 +93,7 @@ func spliceExtra(obj []byte, extra map[string]json.RawMessage) ([]byte, error) {
 // not model. They are kept verbatim and rendered back to OpenAI-dialect
 // upstreams. Tier "any" is understood by essentially every OpenAI-compatible
 // server; tier "first-party" only by api.openai.com / Azure and is dropped
-// elsewhere to avoid "unsupported parameter" 400s (LiteLLM's drop_params).
+// elsewhere to avoid "unsupported parameter" 400s.
 var oaiPassthroughParams = map[string]string{
 	"seed": "any", "frequency_penalty": "any", "presence_penalty": "any",
 	"logit_bias": "any", "logprobs": "any", "top_logprobs": "any", "n": "any",
@@ -139,6 +140,11 @@ func filterExtraForProvider(extra map[string]json.RawMessage, providerID string)
 
 type oaiThinking struct {
 	Type string `json:"type,omitempty"`
+}
+
+// oaiUsageAccounting is OpenRouter's {"usage":{"include":true}} request flag.
+type oaiUsageAccounting struct {
+	Include bool `json:"include"`
 }
 
 type oaiStreamOpt struct {
@@ -586,6 +592,10 @@ func renderOAIRequestForProvider(req *core.ChatRequest, providerID string, scope
 		return nil, err
 	}
 	out.Extra = filterExtraForProvider(req.Extra, providerID)
+	if providerID == "openrouter" {
+		// Ask OpenRouter to report the exact charge with the usage block.
+		out.UsageAccounting = &oaiUsageAccounting{Include: true}
+	}
 	if providerID == "cloudflare-ai" {
 		// Workers AI model ids are namespaced ("@cf/meta/..."); a bare
 		// "meta/..." answers 400. Accept the short form clients tend to type.
@@ -628,6 +638,14 @@ func canonicalCloudflareModel(model string) string {
 		return model
 	}
 	return "@cf/" + model
+}
+
+// usdToNanos converts a provider-reported USD amount to nanodollars.
+func usdToNanos(usd float64) int64 {
+	if usd <= 0 {
+		return 0
+	}
+	return int64(usd*1e9 + 0.5)
 }
 
 // isOpenAIFirstParty reports whether the provider is api.openai.com or Azure
@@ -1107,10 +1125,16 @@ type oaiResponse struct {
 }
 
 type oaiUsage struct {
-	PromptTokens        int `json:"prompt_tokens"`
-	CompletionTokens    int `json:"completion_tokens"`
-	TotalTokens         int `json:"total_tokens"`
-	PromptTokensDetails *struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+	// Cost is the USD charge OpenRouter reports when usage accounting is
+	// requested; it is exact and preferred over catalogue pricing.
+	Cost float64 `json:"cost"`
+	// PromptCacheHitTokens is DeepSeek's cache-read count (reported before
+	// the OpenAI-style prompt_tokens_details existed; still emitted today).
+	PromptCacheHitTokens int `json:"prompt_cache_hit_tokens"`
+	PromptTokensDetails  *struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"prompt_tokens_details,omitempty"`
 	CompletionTokensDetails *struct {
@@ -1187,16 +1211,20 @@ func (OpenAICodec) buildResponse(raw oaiResponse, model string) (*core.ChatRespo
 		if raw.Usage.PromptTokensDetails != nil {
 			cached = raw.Usage.PromptTokensDetails.CachedTokens
 		}
+		if cached == 0 {
+			cached = raw.Usage.PromptCacheHitTokens
+		}
 		if raw.Usage.CompletionTokensDetails != nil {
 			reasoning = raw.Usage.CompletionTokensDetails.ReasoningTokens
 		}
 		resp.Usage = core.Usage{
-			PromptTokens:     raw.Usage.PromptTokens,
-			CompletionTokens: raw.Usage.CompletionTokens,
-			TotalTokens:      raw.Usage.TotalTokens,
-			CachedTokens:     cached,
-			ReasoningTokens:  reasoning,
-			Source:           core.UsageSourceProvider,
+			PromptTokens:      raw.Usage.PromptTokens,
+			CompletionTokens:  raw.Usage.CompletionTokens,
+			TotalTokens:       raw.Usage.TotalTokens,
+			CachedTokens:      cached,
+			ReasoningTokens:   reasoning,
+			ProviderCostNanos: usdToNanos(raw.Usage.Cost),
+			Source:            core.UsageSourceProvider,
 		}
 	}
 	return resp, nil

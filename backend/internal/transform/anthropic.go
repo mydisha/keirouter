@@ -356,8 +356,8 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 		thinkingBudget = req.Reasoning.MaxTokens
 	} else if req.Reasoning != nil && !adaptive {
 		// OpenAI-style reasoning_effort carries no budget; Anthropic's
-		// budget-style thinking needs one or it answers 400. Map effort to
-		// LiteLLM's budgets and give the answer room above the budget.
+		// budget-style thinking needs one or it answers 400. Map effort to a
+		// fixed budget and give the answer room above it.
 		if budget := anthropicEffortBudget(req.Reasoning.Effort); budget > 0 {
 			thinkingBudget = budget
 			if !explicitMaxTokens {
@@ -486,7 +486,7 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 		tcMap, _ := tc.(map[string]any)
 		if thinkingEnabled && tcMap != nil {
 			// Forced tool use is incompatible with extended thinking (400);
-			// LiteLLM downgrades it to auto, so do we.
+			// downgrade it to auto.
 			if typ, _ := tcMap["type"].(string); typ == "any" || typ == "tool" {
 				tcMap = map[string]any{"type": "auto"}
 				tc = tcMap
@@ -685,12 +685,77 @@ type antResponse struct {
 	Model      string     `json:"model"`
 	Content    []antBlock `json:"content"`
 	StopReason string     `json:"stop_reason"`
-	Usage      struct {
-		InputTokens              int `json:"input_tokens"`
-		OutputTokens             int `json:"output_tokens"`
-		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	} `json:"usage"`
+	Usage      antUsage   `json:"usage"`
+}
+
+// antUsage is Anthropic's usage object. input_tokens excludes cache reads and
+// writes; cache_creation splits writes by TTL; server_tool_use counts billed
+// web searches; iterations (compaction / server tool loops) each carry their
+// own counts that must be summed.
+type antUsage struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheCreation            *struct {
+		Ephemeral5m int `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1h int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
+	ServerToolUse *struct {
+		WebSearchRequests int `json:"web_search_requests"`
+	} `json:"server_tool_use"`
+	Iterations []antUsageIteration `json:"iterations"`
+}
+
+type antUsageIteration struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheCreation            *struct {
+		Ephemeral1h int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
+	ServerToolUse *struct {
+		WebSearchRequests int `json:"web_search_requests"`
+	} `json:"server_tool_use"`
+}
+
+// antUsageToCore normalises Anthropic usage: prompt tokens include cache reads
+// and writes, and per-iteration counts are summed.
+func antUsageToCore(u antUsage) core.Usage {
+	in, out, read, write, write1h, searches := u.InputTokens, u.OutputTokens, u.CacheReadInputTokens, u.CacheCreationInputTokens, 0, 0
+	if u.CacheCreation != nil {
+		write1h = u.CacheCreation.Ephemeral1h
+	}
+	if u.ServerToolUse != nil {
+		searches = u.ServerToolUse.WebSearchRequests
+	}
+	if len(u.Iterations) > 0 {
+		in, out, read, write, write1h, searches = 0, 0, 0, 0, 0, 0
+		for _, it := range u.Iterations {
+			in += it.InputTokens
+			out += it.OutputTokens
+			read += it.CacheReadInputTokens
+			write += it.CacheCreationInputTokens
+			if it.CacheCreation != nil {
+				write1h += it.CacheCreation.Ephemeral1h
+			}
+			if it.ServerToolUse != nil {
+				searches += it.ServerToolUse.WebSearchRequests
+			}
+		}
+	}
+	prompt := in + read + write
+	return core.Usage{
+		PromptTokens:       prompt,
+		CompletionTokens:   out,
+		TotalTokens:        prompt + out,
+		CachedTokens:       read,
+		CacheWriteTokens:   write,
+		CacheWrite1hTokens: write1h,
+		WebSearchRequests:  searches,
+		Source:             core.UsageSourceProvider,
+	}
 }
 
 func (AnthropicCodec) ParseResponse(body []byte, model string) (*core.ChatResponse, error) {
@@ -723,15 +788,7 @@ func (AnthropicCodec) ParseResponse(body []byte, model string) (*core.ChatRespon
 		Model:        firstNonEmpty(raw.Model, model),
 		Message:      msg,
 		FinishReason: mapAntStop(raw.StopReason),
-		Usage: core.Usage{
-			PromptTokens:     raw.Usage.InputTokens + raw.Usage.CacheReadInputTokens + raw.Usage.CacheCreationInputTokens,
-			CompletionTokens: raw.Usage.OutputTokens,
-			TotalTokens: raw.Usage.InputTokens + raw.Usage.CacheReadInputTokens +
-				raw.Usage.CacheCreationInputTokens + raw.Usage.OutputTokens,
-			CachedTokens:     raw.Usage.CacheReadInputTokens,
-			CacheWriteTokens: raw.Usage.CacheCreationInputTokens,
-			Source:           core.UsageSourceProvider,
-		},
+		Usage:        antUsageToCore(raw.Usage),
 	}, nil
 }
 
@@ -793,12 +850,12 @@ const (
 	// antMinThinkingBudget is the smallest budget Anthropic accepts.
 	antMinThinkingBudget = 1024
 	// antThinkingAnswerReserve is added above the thinking budget when the
-	// client did not pin max_tokens (LiteLLM: budget + 4096).
+	// client did not pin max_tokens.
 	antThinkingAnswerReserve = 4096
 )
 
 // anthropicEffortBudget maps an OpenAI-style reasoning_effort to Anthropic's
-// budget_tokens (LiteLLM's table). Zero means "no mapping" (none/off/auto).
+// budget_tokens. Zero means "no mapping" (none/off/auto).
 func anthropicEffortBudget(effort string) int {
 	switch strings.ToLower(strings.TrimSpace(effort)) {
 	case "minimal", "low":

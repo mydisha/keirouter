@@ -21,16 +21,11 @@ import (
 // gemStreamChunk is one SSE "data:" payload from streamGenerateContent.
 type gemStreamChunk struct {
 	Candidates []struct {
-		Content      gemContent `json:"content"`
-		FinishReason string     `json:"finishReason"`
+		Content           gemContent      `json:"content"`
+		FinishReason      string          `json:"finishReason"`
+		GroundingMetadata json.RawMessage `json:"groundingMetadata"`
 	} `json:"candidates"`
-	UsageMetadata *struct {
-		PromptTokenCount        int `json:"promptTokenCount"`
-		CandidatesTokenCount    int `json:"candidatesTokenCount"`
-		ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
-		TotalTokenCount         int `json:"totalTokenCount"`
-		CachedContentTokenCount int `json:"cachedContentTokenCount"`
-	} `json:"usageMetadata"`
+	UsageMetadata *gemUsageMetadata `json:"usageMetadata"`
 }
 
 // ParseStreamLine converts one Gemini SSE data payload into canonical chunks.
@@ -83,21 +78,12 @@ func (GeminiCodec) ParseStreamLine(line []byte, _ string) ([]core.StreamChunk, e
 	}
 
 	if raw.UsageMetadata != nil {
-		completionTokens := raw.UsageMetadata.CandidatesTokenCount + raw.UsageMetadata.ThoughtsTokenCount
-		if completionTokens == 0 && raw.UsageMetadata.TotalTokenCount > raw.UsageMetadata.PromptTokenCount {
-			completionTokens = raw.UsageMetadata.TotalTokenCount - raw.UsageMetadata.PromptTokenCount
+		var grounding json.RawMessage
+		if len(raw.Candidates) > 0 {
+			grounding = raw.Candidates[0].GroundingMetadata
 		}
-		chunks = append(chunks, core.StreamChunk{
-			Type: core.ChunkUsage,
-			Usage: &core.Usage{
-				PromptTokens:     raw.UsageMetadata.PromptTokenCount,
-				CompletionTokens: completionTokens,
-				TotalTokens:      raw.UsageMetadata.TotalTokenCount,
-				CachedTokens:     raw.UsageMetadata.CachedContentTokenCount,
-				ReasoningTokens:  raw.UsageMetadata.ThoughtsTokenCount,
-				Source:           core.UsageSourceProvider,
-			},
-		})
+		u := gemUsageToCore(*raw.UsageMetadata, grounding)
+		chunks = append(chunks, core.StreamChunk{Type: core.ChunkUsage, Usage: &u})
 	}
 	return chunks, nil
 }

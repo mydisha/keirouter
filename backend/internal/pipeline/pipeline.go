@@ -1009,8 +1009,8 @@ func (p *Pipeline) pumpStream(ctx context.Context, req *core.ChatRequest, in <-c
 	var sawUsage bool
 	var completionChars int
 	// sawFinish/sawToolCall detect a stream that was cut off: an EOF without
-	// a terminal event. LiteLLM synthesizes finish_reason=stop in that case;
-	// we do the same once output exists, and report an error when none does.
+	// a terminal event. A finish of "stop" is synthesized once output exists,
+	// and an error is reported when none does.
 	var sawFinish, sawToolCall bool
 	nameRestorer := newToolNameRestorer(req.Tools)
 
@@ -1225,7 +1225,9 @@ func (p *Pipeline) pumpStream(ctx context.Context, req *core.ChatRequest, in <-c
 // include_usage clients always receive a usage event.
 func estimateStreamUsage(req *core.ChatRequest, completionChars int) core.Usage {
 	prompt := core.EstimatePromptTokens(req)
-	completion := core.EstimateTokensFromChars(completionChars)
+	// Streamed output is counted by characters; code-heavy answers tokenize
+	// denser than prose, so lean toward 3.5 characters per token.
+	completion := (completionChars*2 + 6) / 7
 	return core.Usage{
 		PromptTokens:     prompt,
 		CompletionTokens: completion,
@@ -1257,6 +1259,15 @@ func mergeUsage(old, new core.Usage) core.Usage {
 	if new.ReasoningTokens != 0 {
 		old.ReasoningTokens = new.ReasoningTokens
 	}
+	if new.CacheWrite1hTokens != 0 {
+		old.CacheWrite1hTokens = new.CacheWrite1hTokens
+	}
+	if new.WebSearchRequests != 0 {
+		old.WebSearchRequests = new.WebSearchRequests
+	}
+	if new.ProviderCostNanos != 0 {
+		old.ProviderCostNanos = new.ProviderCostNanos
+	}
 	if new.Source != "" {
 		old.Source = new.Source
 	}
@@ -1282,6 +1293,9 @@ func addAttemptUsage(total, attempt core.Usage) core.Usage {
 	total.CachedTokens += attempt.CachedTokens
 	total.CacheWriteTokens += attempt.CacheWriteTokens
 	total.ReasoningTokens += attempt.ReasoningTokens
+	total.CacheWrite1hTokens += attempt.CacheWrite1hTokens
+	total.WebSearchRequests += attempt.WebSearchRequests
+	total.ProviderCostNanos += attempt.ProviderCostNanos
 
 	switch {
 	case total.Source == "":
@@ -1330,22 +1344,7 @@ func estimateChatTokens(req *core.ChatRequest) int64 {
 	if req == nil {
 		return 0
 	}
-	chars := len(req.System)
-	for _, m := range req.Messages {
-		for _, part := range m.Content {
-			chars += len(part.Text)
-			if part.ToolCall != nil {
-				chars += len(part.ToolCall.Arguments)
-			}
-			if part.ToolResult != nil {
-				chars += len(part.ToolResult.Content)
-			}
-		}
-	}
-	for _, t := range req.Tools {
-		chars += len(t.Name) + len(t.Description) + len(t.Parameters)
-	}
-	tokens := int64((chars + 3) / 4)
+	tokens := int64(core.EstimatePromptTokens(req))
 	if req.MaxTokens != nil && *req.MaxTokens > 0 {
 		tokens += int64(*req.MaxTokens)
 	}
@@ -1363,6 +1362,13 @@ func rateLimitError(decision limits.Decision) *core.ProviderError {
 func (p *Pipeline) preflight(ctx context.Context, req *core.ChatRequest, opts Options) error {
 	if len(opts.Targets) == 0 {
 		return &core.ProviderError{Kind: core.ErrBadRequest, Message: "no routing targets resolved for model"}
+	}
+	// The service tier changes OpenAI's rates; remember it for metering.
+	if raw, ok := req.Extra["service_tier"]; ok {
+		var tier string
+		if json.Unmarshal(raw, &tier) == nil {
+			req.Metadata.ServiceTier = tier
+		}
 	}
 	if p.budget != nil {
 		scope := budget.Scope{
@@ -1747,10 +1753,20 @@ func (p *Pipeline) recordAttemptTerminal(ctx context.Context, meta core.RequestM
 }
 
 func partialStreamUsage(req *core.ChatRequest, usage core.Usage, completionChars int) core.Usage {
-	if usage.PromptTokens+usage.CompletionTokens > 0 {
-		return usage
+	if usage.PromptTokens+usage.CompletionTokens == 0 {
+		return estimateStreamUsage(req, completionChars)
 	}
-	return estimateStreamUsage(req, completionChars)
+	// An Anthropic message_start reports a placeholder output count (1 token)
+	// before any content; if the stream died before message_delta, the real
+	// output is whatever was streamed. Estimate it from the text instead of
+	// billing a single token.
+	if usage.CompletionTokens <= 1 && completionChars > 4 {
+		est := estimateStreamUsage(req, completionChars)
+		usage.CompletionTokens = est.CompletionTokens
+		usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+		usage.Source = core.UsageSourceEstimated
+	}
+	return usage
 }
 
 // capabilityOf derives the capability label for a target. KeiRouter routes by
@@ -1804,6 +1820,7 @@ func (p *Pipeline) recordOutcomeWithTTFT(ctx context.Context, meta core.RequestM
 		Usage:           usage,
 		UsageSource:     string(usage.Source),
 		CacheHit:        cacheHit,
+		ServiceTier:     meta.ServiceTier,
 		Latency:         upstreamLatency,
 		EndToEndLatency: endToEndLatency,
 		TTFT:            ttft,

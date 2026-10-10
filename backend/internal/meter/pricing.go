@@ -31,10 +31,12 @@ type CostBreakdown struct {
 	CacheWriteCostNanos int64
 	OutputCostNanos     int64
 	ReasoningCostNanos  int64
-	CostNanos           int64
-	CostMicros          int64
-	AvoidedCostNanos    int64
-	SavedCostNanos      int64
+	// ToolCostNanos prices provider-side tool use (web search requests).
+	ToolCostNanos    int64
+	CostNanos        int64
+	CostMicros       int64
+	AvoidedCostNanos int64
+	SavedCostNanos   int64
 
 	InputRatePerM      float64
 	CachedRatePerM     float64
@@ -72,7 +74,46 @@ func modelCandidates(model string) []string {
 			break
 		}
 	}
+	// Fine-tunes ("ft:gpt-4o-mini:org::id") and dated snapshots
+	// ("gpt-4o-2024-08-06") are priced like their base model.
+	for _, candidate := range out {
+		if base := stripFineTuneAndDate(candidate); base != candidate {
+			out = append(out, base)
+		}
+	}
 	return out
+}
+
+// stripFineTuneAndDate reduces "ft:<base>:<org>:<suffix>:<id>" to <base> and
+// drops a trailing "-YYYY-MM-DD" snapshot date.
+func stripFineTuneAndDate(model string) string {
+	m := model
+	if strings.HasPrefix(m, "ft:") {
+		rest := strings.TrimPrefix(m, "ft:")
+		if i := strings.IndexByte(rest, ':'); i >= 0 {
+			rest = rest[:i]
+		}
+		m = rest
+	}
+	if n := len(m); n > 11 && m[n-11] == '-' && isDateSuffix(m[n-10:]) {
+		m = m[:n-11]
+	}
+	return m
+}
+
+func isDateSuffix(s string) bool {
+	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
+		return false
+	}
+	for i, r := range s {
+		if i == 4 || i == 7 {
+			continue
+		}
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // fingerprintReplacer is shared: building a Replacer per call dominated the
@@ -107,6 +148,7 @@ func samePrice(a, b Price) bool {
 	return a.InputPerM == b.InputPerM && a.OutputPerM == b.OutputPerM &&
 		a.CachedInputPerM == b.CachedInputPerM && a.CacheWritePerM == b.CacheWritePerM &&
 		a.ReasoningPerM == b.ReasoningPerM && a.LongContextThreshold == b.LongContextThreshold &&
+		a.CacheWrite1hPerM == b.CacheWrite1hPerM && a.WebSearchPerK == b.WebSearchPerK &&
 		a.LongInputPerM == b.LongInputPerM && a.LongOutputPerM == b.LongOutputPerM &&
 		a.LongCachedInputPerM == b.LongCachedInputPerM &&
 		a.LongCacheWritePerM == b.LongCacheWritePerM && a.ExplicitFree == b.ExplicitFree
@@ -217,7 +259,30 @@ func pricingMatch(key string, price Price, kind string, estimated bool) PricingM
 
 func hasAnyRate(p Price) bool {
 	return p.InputPerM != 0 || p.OutputPerM != 0 || p.CachedInputPerM != 0 ||
-		p.CacheWritePerM != 0 || p.ReasoningPerM != 0 || p.LongInputPerM != 0 || p.LongOutputPerM != 0
+		p.CacheWritePerM != 0 || p.ReasoningPerM != 0 || p.LongInputPerM != 0 || p.LongOutputPerM != 0 ||
+		p.WebSearchPerK != 0
+}
+
+// cacheWrite1hRatio is the default one-hour cache write premium over the
+// five-minute write rate (Anthropic: 2.0× input vs 1.25× input).
+const cacheWrite1hRatio = 1.6
+
+// serviceTierMultiplier is the OpenAI service-tier price factor applied when
+// the catalogue has no explicit per-tier rates: flex is half price, priority
+// is double.
+func serviceTierMultiplier(provider, tier string) float64 {
+	switch normalizeProvider(provider) {
+	case "openai", "azure", "azure_openai":
+	default:
+		return 1
+	}
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "flex":
+		return 0.5
+	case "priority", "fast":
+		return 2
+	}
+	return 1
 }
 
 func effectivePrice(p Price, promptTokens int) Price {
@@ -272,6 +337,15 @@ func clampUsage(u core.Usage) core.Usage {
 	if u.ReasoningTokens > u.CompletionTokens {
 		u.ReasoningTokens = u.CompletionTokens
 	}
+	if u.CacheWrite1hTokens < 0 {
+		u.CacheWrite1hTokens = 0
+	}
+	if u.CacheWrite1hTokens > u.CacheWriteTokens {
+		u.CacheWrite1hTokens = u.CacheWriteTokens
+	}
+	if u.WebSearchRequests < 0 {
+		u.WebSearchRequests = 0
+	}
 	u.TotalTokens = u.PromptTokens + u.CompletionTokens
 	return u
 }
@@ -279,13 +353,34 @@ func clampUsage(u core.Usage) core.Usage {
 // CalculateCost prices one normalized usage snapshot. Reasoning is a subset of
 // completion, never an additional token class, which prevents double charging.
 func (m *Meter) CalculateCost(provider, model string, raw core.Usage, cacheHit bool, savedInputTokens int) CostBreakdown {
+	return m.CalculateCostWith(provider, model, raw, cacheHit, savedInputTokens, "")
+}
+
+// CalculateCostWith is CalculateCost with the request's service tier. A cost
+// reported by the provider itself (OpenRouter usage.cost) is authoritative
+// over the catalogue and short-circuits the computation.
+func (m *Meter) CalculateCostWith(provider, model string, raw core.Usage, cacheHit bool, savedInputTokens int, serviceTier string) CostBreakdown {
 	u := clampUsage(raw)
 	match := m.ResolvePrice(provider, model)
 	out := CostBreakdown{Pricing: match}
+	if u.ProviderCostNanos > 0 && !cacheHit {
+		out.Pricing = PricingMatch{Key: match.Key, Status: "priced", Source: "provider", MatchKind: "provider_reported", SourceURL: match.SourceURL}
+		out.CostNanos = u.ProviderCostNanos
+		out.CostMicros = int64(math.Round(float64(out.CostNanos) / 1000))
+		return out
+	}
 	if match.Status == "missing" || match.Status == "none" {
 		return out
 	}
 	p := effectivePrice(match.Price, u.PromptTokens)
+	if mult := serviceTierMultiplier(provider, serviceTier); mult != 1 {
+		p.InputPerM *= mult
+		p.OutputPerM *= mult
+		p.CachedInputPerM *= mult
+		p.CacheWritePerM *= mult
+		p.CacheWrite1hPerM *= mult
+		p.ReasoningPerM *= mult
+	}
 	out.InputRatePerM = p.InputPerM
 	out.CachedRatePerM = p.CachedInputPerM
 	if out.CachedRatePerM == 0 {
@@ -301,14 +396,24 @@ func (m *Meter) CalculateCost(provider, model string, raw core.Usage, cacheHit b
 		out.ReasoningRatePerM = p.OutputPerM
 	}
 
+	write1hRate := p.CacheWrite1hPerM
+	if write1hRate == 0 {
+		write1hRate = out.CacheWriteRatePerM * cacheWrite1hRatio
+	}
+
 	standardInput := u.PromptTokens - u.CachedTokens - u.CacheWriteTokens
 	normalOutput := u.CompletionTokens - u.ReasoningTokens
+	write5m := u.CacheWriteTokens - u.CacheWrite1hTokens
 	out.InputCostNanos = tokenCostNanos(standardInput, out.InputRatePerM)
 	out.CachedCostNanos = tokenCostNanos(u.CachedTokens, out.CachedRatePerM)
-	out.CacheWriteCostNanos = tokenCostNanos(u.CacheWriteTokens, out.CacheWriteRatePerM)
+	out.CacheWriteCostNanos = tokenCostNanos(write5m, out.CacheWriteRatePerM) + tokenCostNanos(u.CacheWrite1hTokens, write1hRate)
 	out.OutputCostNanos = tokenCostNanos(normalOutput, out.OutputRatePerM)
 	out.ReasoningCostNanos = tokenCostNanos(u.ReasoningTokens, out.ReasoningRatePerM)
-	retail := out.InputCostNanos + out.CachedCostNanos + out.CacheWriteCostNanos + out.OutputCostNanos + out.ReasoningCostNanos
+	if u.WebSearchRequests > 0 && p.WebSearchPerK > 0 {
+		// USD per 1,000 requests → nanodollars per request = perK × 1e6.
+		out.ToolCostNanos = int64(math.Round(float64(u.WebSearchRequests) * p.WebSearchPerK * 1e6))
+	}
+	retail := out.InputCostNanos + out.CachedCostNanos + out.CacheWriteCostNanos + out.OutputCostNanos + out.ReasoningCostNanos + out.ToolCostNanos
 	out.SavedCostNanos = tokenCostNanos(savedInputTokens, out.InputRatePerM)
 	if cacheHit {
 		out.AvoidedCostNanos = retail
@@ -373,7 +478,8 @@ func (m *Meter) BackfillUnpriced(ctx context.Context) (int, error) {
 				continue
 			}
 			usage := core.Usage{PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens,
-				CachedTokens: row.CachedTokens, CacheWriteTokens: row.CacheWriteTokens, ReasoningTokens: row.ReasoningTokens}
+				CachedTokens: row.CachedTokens, CacheWriteTokens: row.CacheWriteTokens, ReasoningTokens: row.ReasoningTokens,
+				CacheWrite1hTokens: row.CacheWrite1hTokens, WebSearchRequests: row.WebSearchRequests}
 			cost := m.CalculateCost(row.Provider, row.Model, usage, row.CacheHit, row.SlimTokensSaved+row.HeadroomTokensSaved)
 			if cost.Pricing.Status == "missing" || cost.Pricing.Status == "none" {
 				unpriceable[modelKey] = true
@@ -388,7 +494,7 @@ func (m *Meter) BackfillUnpriced(ctx context.Context) (int, error) {
 				InputCostNanos: cost.InputCostNanos, CachedCostNanos: cost.CachedCostNanos,
 				CacheWriteCostNanos: cost.CacheWriteCostNanos, OutputCostNanos: cost.OutputCostNanos,
 				ReasoningCostNanos: cost.ReasoningCostNanos, AvoidedCostNanos: cost.AvoidedCostNanos,
-				SavedCostNanos: cost.SavedCostNanos, PricingStatus: pricingStatus,
+				SavedCostNanos: cost.SavedCostNanos, ToolCostNanos: cost.ToolCostNanos, PricingStatus: pricingStatus,
 				PricingSource: cost.Pricing.Source, PricingKey: cost.Pricing.Key,
 				PricingMatchKind: cost.Pricing.MatchKind, PricingSourceURL: cost.Pricing.SourceURL,
 				PricingAsOf: &asOf, PricingBackfilled: true,
