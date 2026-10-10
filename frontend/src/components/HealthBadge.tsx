@@ -63,40 +63,18 @@ export function HealthStatusBadge({ status, issue }: { status: HealthStatus; iss
 }
 
 // HealthScoreRing renders a compact circular gauge for the 0-100 score.
-export function HealthScoreRing({ score, size = 44 }: { score: number; size?: number }) {
-  const stroke = 4;
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
+// HealthScoreRing shows the 0–100 health score as a compact number with a
+// short bar; colour carries meaning only below the healthy threshold.
+export function HealthScoreRing({ score }: { score: number; size?: number }) {
   const pct = Math.max(0, Math.min(100, score));
-  const offset = c - (pct / 100) * c;
-  const color =
-    score >= 90 ? "var(--color-accent-500)" : score >= 65 ? "var(--color-warning)" : "var(--color-danger)";
+  const tone = score >= 90 ? "bg-ok" : score >= 65 ? "bg-warn" : "bg-bad";
+  const text = score >= 90 ? "text-fg" : score >= 65 ? "text-warn" : "text-bad";
   return (
-    <svg width={size} height={size} className="shrink-0" role="img" aria-label={`Health score ${score}`}>
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--border)" strokeWidth={stroke} />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={r}
-        fill="none"
-        stroke={color}
-        strokeWidth={stroke}
-        strokeDasharray={c}
-        strokeDashoffset={offset}
-        strokeLinecap="round"
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-        style={{ transition: "stroke-dashoffset 0.4s ease" }}
-      />
-      <text
-        x="50%"
-        y="50%"
-        dy="0.35em"
-        textAnchor="middle"
-        className="fill-[var(--text)]"
-        style={{ fontSize: size * 0.3, fontWeight: 600 }}
-      >
-        {score}
-      </text>
-    </svg>
+    <span className="inline-flex items-center gap-2" role="img" aria-label={`Health score ${score}`}>
+      <span className={`w-7 text-right text-[13px] font-medium tabular-nums ${text}`}>{score}</span>
+      <span className="h-1.5 w-12 overflow-hidden rounded-full bg-track" aria-hidden="true">
+        <span className={`block h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
+      </span>
+    </span>
   );
 }

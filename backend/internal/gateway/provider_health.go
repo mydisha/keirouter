@@ -73,6 +73,10 @@ func (s *Server) adminHealthOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	statusFilter := r.URL.Query().Get("status")
 	requestedRange := r.URL.Query().Get("range")
+	if s.healthRangeIsHistorical(requestedRange) {
+		s.historicalHealthOverview(w, r, requestedRange, statusFilter)
+		return
+	}
 
 	rows, err := s.db.ProviderHealth().ListCurrent(r.Context(), "")
 	if err != nil {
@@ -239,17 +243,80 @@ func (s *Server) adminHealthOverview(w http.ResponseWriter, r *http.Request) {
 }
 
 // adminHealthProviderDetail returns detailed metrics + snapshots for one provider.
+// Short ranges read the live rolling window; longer ranges — or any range when
+// the live window is empty, e.g. right after a restart — are aggregated from
+// persisted snapshots. Model rows always share one normalized shape (status,
+// percentages) whichever source produced them.
 func (s *Server) adminHealthProviderDetail(w http.ResponseWriter, r *http.Request) {
 	provider := chi.URLParam(r, "provider")
-	since := parseRange(r.URL.Query().Get("range"))
+	requestedRange := r.URL.Query().Get("range")
+	since := parseRange(requestedRange)
 
 	rows, err := s.db.ProviderHealth().ListCurrentByProvider(r.Context(), provider)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
-	if len(rows) == 0 {
-		writeError(w, http.StatusNotFound, "no health data for provider: "+provider)
+	snaps, _ := s.db.ProviderHealth().ListSnapshots(r.Context(), provider, "", "", "", since)
+
+	errBreakdown := map[string]int64{}
+	for _, sn := range snaps {
+		errBreakdown["rate_limited"] += sn.RateLimitedCount
+		errBreakdown["auth_error"] += sn.AuthErrorCount
+		errBreakdown["quota_exceeded"] += sn.QuotaExceededCount
+		errBreakdown["timeout"] += sn.TimeoutCount
+		errBreakdown["provider_5xx"] += sn.Provider5xxCount
+		errBreakdown["bad_request"] += sn.BadRequestCount
+		errBreakdown["network_error"] += sn.NetworkErrorCount
+	}
+
+	if s.healthRangeIsHistorical(requestedRange) || len(rows) == 0 {
+		sums, err := s.db.ProviderHealth().SummarizeSnapshots(r.Context(), since, true)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+			return
+		}
+		live := liveStatusByProvider(rows, true)
+		var total store.SnapshotSummary
+		total.Provider = provider
+		models := []map[string]any{}
+		for _, sum := range sums {
+			if sum.Provider != provider {
+				continue
+			}
+			addSnapshotSummary(&total, sum)
+			entry := snapshotRow(sum, live[sum.Provider+"\x00"+sum.Model])
+			entry["model"] = sum.Model
+			entry["last_updated_at"] = sum.LastBucket
+			models = append(models, entry)
+		}
+		if total.Requests == 0 && len(rows) == 0 {
+			writeError(w, http.StatusNotFound, "no health data for provider: "+provider)
+			return
+		}
+		status, score := snapshotStatus(total)
+		if cur := liveStatusByProvider(rows, false)[provider]; cur != "" {
+			status = cur
+		}
+		issue := snapshotIssue(total)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"provider":       provider,
+			"status":         status,
+			"score":          score,
+			"main_issue":     issue,
+			"recommendation": health.RecommendationForIssue(issue),
+			"metrics": map[string]any{
+				"requests":       total.Requests,
+				"success_rate":   pct(total.Successes, total.Requests),
+				"error_rate":     pct(total.Failures, total.Requests),
+				"latency_p95_ms": total.LatencyP95Ms,
+				"ttft_p95_ms":    total.TTFTP95Ms,
+				"fallback_count": total.Fallbacks,
+			},
+			"error_breakdown": errBreakdown,
+			"models":          models,
+			"snapshots":       snaps,
+		})
 		return
 	}
 
@@ -258,9 +325,8 @@ func (s *Server) adminHealthProviderDetail(w http.ResponseWriter, r *http.Reques
 	var score int = 100
 	status := health.StatusHealthy
 	var mainIssue, recommendation string
-	errBreakdown := map[string]int64{}
 	var lp95, ttft95 int
-
+	models := make([]map[string]any, 0, len(rows))
 	for _, c := range rows {
 		requests += c.RequestCount
 		successes += int64(float64(c.RequestCount) * c.SuccessRate)
@@ -284,17 +350,7 @@ func (s *Server) adminHealthProviderDetail(w http.ResponseWriter, r *http.Reques
 		if c.TTFTP95Ms != nil && *c.TTFTP95Ms > ttft95 {
 			ttft95 = *c.TTFTP95Ms
 		}
-	}
-
-	snaps, _ := s.db.ProviderHealth().ListSnapshots(r.Context(), provider, "", "", "", since)
-	for _, sn := range snaps {
-		errBreakdown["rate_limited"] += sn.RateLimitedCount
-		errBreakdown["auth_error"] += sn.AuthErrorCount
-		errBreakdown["quota_exceeded"] += sn.QuotaExceededCount
-		errBreakdown["timeout"] += sn.TimeoutCount
-		errBreakdown["provider_5xx"] += sn.Provider5xxCount
-		errBreakdown["bad_request"] += sn.BadRequestCount
-		errBreakdown["network_error"] += sn.NetworkErrorCount
+		models = append(models, currentModelRow(c))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -312,14 +368,46 @@ func (s *Server) adminHealthProviderDetail(w http.ResponseWriter, r *http.Reques
 			"fallback_count": fallbacks,
 		},
 		"error_breakdown": errBreakdown,
-		"models":          rows,
+		"models":          models,
 		"snapshots":       snaps,
 	})
+}
+
+// currentModelRow normalizes a live current-window row to the model row shape
+// the dashboard reads (status + percentages), matching snapshotRow.
+func currentModelRow(c store.ProviderHealthCurrent) map[string]any {
+	entry := map[string]any{
+		"provider":            c.Provider,
+		"provider_account_id": c.ProviderAccountID,
+		"model":               c.Model,
+		"capability":          c.Capability,
+		"status":              c.HealthStatus,
+		"score":               c.HealthScore,
+		"requests":            c.RequestCount,
+		"success_rate":        c.SuccessRate * 100,
+		"error_rate":          c.ErrorRate * 100,
+		"fallback_count":      c.FallbackCount,
+		"last_updated_at":     c.LastUpdatedAt,
+	}
+	if c.LatencyP95Ms != nil {
+		entry["latency_p95_ms"] = *c.LatencyP95Ms
+	}
+	if c.TTFTP95Ms != nil {
+		entry["ttft_p95_ms"] = *c.TTFTP95Ms
+	}
+	if c.MainIssue != nil {
+		entry["main_issue"] = *c.MainIssue
+	}
+	return entry
 }
 
 // adminHealthModels returns the model-level health matrix.
 func (s *Server) adminHealthModels(w http.ResponseWriter, r *http.Request) {
 	statusFilter := r.URL.Query().Get("status")
+	if requestedRange := r.URL.Query().Get("range"); s.healthRangeIsHistorical(requestedRange) {
+		s.historicalHealthModels(w, r, requestedRange, statusFilter)
+		return
+	}
 	rows, err := s.db.ProviderHealth().ListCurrent(r.Context(), statusFilter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
@@ -370,9 +458,12 @@ func (s *Server) adminHealthChains(w http.ResponseWriter, r *http.Request) {
 		healthByKey[store.HealthKey(h.Provider, h.ProviderAccountID, h.Model, h.Capability)] = h
 	}
 
-	// Real-traffic chain stats from the telemetry aggregator (rolling window).
+	// Real-traffic chain stats: the telemetry aggregator's rolling window for
+	// short ranges, persisted usage rows for longer ones.
 	chainStats := map[string]health.ChainStat{}
-	if s.providerHealth != nil {
+	if requestedRange := r.URL.Query().Get("range"); s.healthRangeIsHistorical(requestedRange) {
+		chainStats = s.persistedChainStats(r, parseRange(requestedRange))
+	} else if s.providerHealth != nil {
 		for _, st := range s.providerHealth.ChainStats() {
 			chainStats[st.ChainID] = st
 		}

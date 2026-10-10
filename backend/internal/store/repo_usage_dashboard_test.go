@@ -143,3 +143,34 @@ func TestChainUsageGroupsByServingTarget(t *testing.T) {
 	require.Equal(t, int64(1), by["codex"].Successes)
 	require.Equal(t, int64(2), by["codex"].FellBack)
 }
+
+func TestSummarizeSnapshotsByProviderAndModel(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	since := time.Now().UTC().Add(-2 * time.Hour)
+	p95 := func(v int) *int { return &v }
+	for _, s := range []ProviderHealthSnapshot{
+		{ID: "1", BucketStart: since.Add(time.Minute), BucketSizeSeconds: 60, Provider: "gemini", ProviderAccountID: "a1", Model: "pro",
+			RequestCount: 10, SuccessCount: 8, FailureCount: 2, RateLimitedCount: 2, LatencyP95Ms: p95(900), HealthStatus: "degraded"},
+		{ID: "2", BucketStart: since.Add(2 * time.Minute), BucketSizeSeconds: 60, Provider: "gemini", ProviderAccountID: "a2", Model: "flash",
+			RequestCount: 5, SuccessCount: 5, LatencyP95Ms: p95(400), HealthStatus: "healthy"},
+	} {
+		s.CreatedAt = time.Now().UTC()
+		require.NoError(t, db.ProviderHealth().InsertSnapshot(ctx, s))
+	}
+
+	byProvider, err := db.ProviderHealth().SummarizeSnapshots(ctx, since, false)
+	require.NoError(t, err)
+	require.Len(t, byProvider, 1)
+	g := byProvider[0]
+	require.Equal(t, int64(15), g.Requests)
+	require.Equal(t, int64(2), g.RateLimited)
+	require.Equal(t, int64(900), g.LatencyP95Ms)
+	require.Equal(t, int64(2), g.Accounts)
+	require.Equal(t, int64(2), g.Models)
+	require.Equal(t, 2, g.WorstStatusRank)
+
+	byModel, err := db.ProviderHealth().SummarizeSnapshots(ctx, since, true)
+	require.NoError(t, err)
+	require.Len(t, byModel, 2)
+}

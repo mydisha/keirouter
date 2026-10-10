@@ -1843,10 +1843,18 @@ export interface HealthProviderRow {
   last_probe_at?: string;
   main_issue?: string;
   recommendation?: string;
+  /** Historical ranges only: request volume, status over the whole range, and the live status. */
+  requests?: number;
+  range_status?: HealthStatus;
+  live_status?: HealthStatus;
+  rate_limited_count?: number;
+  final_failure_count?: number;
+  last_seen_at?: string;
 }
 
 export interface HealthOverviewWindow {
-  kind: "rolling_current";
+  /** rolling_current: the live telemetry window; historical: persisted snapshots over the requested range. */
+  kind: "rolling_current" | "historical";
   duration_seconds: number;
   requested_range: string;
   generated_at: string;
@@ -1915,6 +1923,8 @@ export interface HealthModelRow {
   fallback_count: number;
   main_issue?: string;
   last_updated_at?: string;
+  requests?: number;
+  recommendation?: string;
 }
 
 export interface HealthChainRow {
