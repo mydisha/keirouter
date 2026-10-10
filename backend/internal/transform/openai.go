@@ -9,6 +9,7 @@ import (
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
 
+	"github.com/mydisha/keirouter/backend/internal/capability"
 	"github.com/mydisha/keirouter/backend/internal/core"
 )
 
@@ -40,7 +41,12 @@ type oaiRequest struct {
 	ReasoningEffort   string              `json:"reasoning_effort,omitempty"`
 	Thinking          *oaiThinking        `json:"thinking,omitempty"`
 	UsageAccounting   *oaiUsageAccounting `json:"usage,omitempty"`
-	ExtraBody         map[string]any      `json:"extra_body,omitempty"`
+	// Vendor reasoning switches rendered per ThinkingFormat (provider_quirks.go).
+	EnableThinking  *bool          `json:"enable_thinking,omitempty"`  // Qwen / Hunyuan
+	ThinkingBudget  *int           `json:"thinking_budget,omitempty"`  // Qwen
+	ReasoningSplit  *bool          `json:"reasoning_split,omitempty"`  // MiniMax
+	ReasoningFormat string         `json:"reasoning_format,omitempty"` // Groq
+	ExtraBody       map[string]any `json:"extra_body,omitempty"`
 	// Extra carries passthrough parameters (seed, penalties, logprobs, user,
 	// service_tier, ...) that the canonical model does not represent. They
 	// are spliced into the rendered JSON by MarshalJSON.
@@ -592,6 +598,10 @@ func renderOAIRequestForProvider(req *core.ChatRequest, providerID string, scope
 		return nil, err
 	}
 	out.Extra = filterExtraForProvider(req.Extra, providerID)
+	if out.Extra == nil {
+		out.Extra = map[string]json.RawMessage{}
+	}
+	profile := capability.ResolveProfile(providerID, req.Model)
 	if providerID == "openrouter" {
 		// Ask OpenRouter to report the exact charge with the usage block.
 		out.UsageAccounting = &oaiUsageAccounting{Include: true}
@@ -605,15 +615,15 @@ func renderOAIRequestForProvider(req *core.ChatRequest, providerID string, scope
 		applyDeepSeekRequestFixes(out, req, providerID)
 	} else if isOpenAIFirstParty(providerID) {
 		applyOpenAIFirstPartyFixes(out, req)
-	} else if scope != reasoningNone {
-		// Non-DeepSeek reasoning providers (GLM, Kimi, MiniMax, etc.) still
-		// need thinking type + reasoning_effort forwarded. DeepSeek has its
-		// own fixes above; this path handles the rest without duplicating
-		// provider-specific hacks.
-		applyGenericReasoningConfig(out, req)
+	} else {
+		applyThinkingByFormat(out, req, providerID, profile, scope)
 	}
 	if providerID == "codebuddy" {
 		applyCodebuddyRequestFixes(out, req)
+	}
+	applyProviderParamRules(out, req, providerID, profile)
+	if len(out.Extra) == 0 {
+		out.Extra = nil
 	}
 	if stripReasoningFor(providerID) {
 		stripReasoningContent(out)
@@ -1116,8 +1126,12 @@ type oaiResponse struct {
 			Content string `json:"content"`
 			// ReasoningContent carries thinking/reasoning text from models
 			// that expose it as a structured field (DeepSeek, some MiMo).
-			ReasoningContent string        `json:"reasoning_content"`
-			ToolCalls        []oaiToolCall `json:"tool_calls"`
+			ReasoningContent string `json:"reasoning_content"`
+			// Reasoning is the field name OpenRouter, Groq and vLLM use.
+			Reasoning string `json:"reasoning"`
+			// ReasoningDetails is MiniMax's split reasoning (reasoning_split).
+			ReasoningDetails []oaiReasoningDetail `json:"reasoning_details"`
+			ToolCalls        []oaiToolCall        `json:"tool_calls"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -1171,7 +1185,8 @@ func (OpenAICodec) buildResponse(raw oaiResponse, model string) (*core.ChatRespo
 
 	// Extract thinking content: prefer structured reasoning_content field,
 	// fall back to <think> tag extraction from content.
-	thinkingText := choice.Message.ReasoningContent
+	thinkingText := firstNonEmpty(choice.Message.ReasoningContent, choice.Message.Reasoning,
+		reasoningDetailsText(choice.Message.ReasoningDetails))
 	contentText := choice.Message.Content
 	if thinkingText == "" && contentText != "" {
 		thinkingChunks, clean := StripThinkTags(contentText)
@@ -1310,9 +1325,12 @@ func mapOAIFinish(r string) core.FinishReason {
 		return core.FinishLength
 	case "tool_calls", "function_call":
 		return core.FinishToolCalls
-	case "content_filter":
+	case "content_filter", "sensitive":
+		// "sensitive" is GLM's content-policy stop.
 		return core.FinishFilter
 	default:
+		// GLM "network_error", mid-stream "error" and unknown values end the
+		// turn like a stop.
 		return core.FinishStop
 	}
 }

@@ -4,8 +4,6 @@ import (
 	"crypto/sha256"
 	"strings"
 
-	json "github.com/mydisha/keirouter/backend/internal/fastjson"
-
 	"github.com/mydisha/keirouter/backend/internal/capability"
 	"github.com/mydisha/keirouter/backend/internal/core"
 )
@@ -18,7 +16,7 @@ import (
 // and what a tool-call id may look like. The capability table records each
 // model's reasoning wire format (ThinkingFormat); this file turns that plus
 // the provider id into concrete request edits so the codec does not grow a
-// forest of per-provider ifs.
+// forest of per-provider conditionals.
 
 // effortBudget maps an OpenAI-style effort to a thinking token budget for
 // budget-driven APIs (Qwen thinking_budget).
@@ -47,105 +45,101 @@ func thinkingDisabled(effort string) bool {
 	return false
 }
 
-// standardEffort returns the effort if it is a value OpenAI-style APIs accept.
-func standardEffort(effort string) string {
-	switch e := strings.ToLower(strings.TrimSpace(effort)); e {
-	case "minimal", "low", "medium", "high", "xhigh":
-		return e
-	case "max":
-		return "xhigh"
+// thinkingFormatFor resolves the reasoning wire format to render for a
+// provider. Vendor switches (enable_thinking, reasoning_split, ...) are only
+// understood by the vendor's own API, so they are keyed on the provider id;
+// an aggregator serving the same model (Groq, OpenRouter, Cloudflare, a vLLM
+// box) gets the generic rendering regardless of the model's native format.
+func thinkingFormatFor(providerID string) string {
+	switch providerID {
+	case "volcengine-ark", "byteplus", "doubao":
+		return "doubao"
+	case "alicode", "alicode-intl", "dashscope", "qwen":
+		return "qwen"
+	case "hunyuan":
+		return "hunyuan"
+	case "minimax":
+		return "minimax"
+	case "moonshot", "kimi":
+		return "kimi"
+	case "glm", "glm-cn", "zai":
+		return "zai"
 	}
 	return ""
 }
 
 // applyThinkingByFormat renders the canonical reasoning config in the wire
-// format the target model understands. Formats come from the capability
-// table; providers that use a known format for every model are mapped below.
-func applyThinkingByFormat(out *oaiRequest, req *core.ChatRequest, providerID string, profile capability.Profile) {
+// format the target model understands. Formats without a dedicated switch
+// keep the generic thinking/reasoning_effort rendering for providers that
+// echo reasoning (scope != none) and leave other requests untouched.
+func applyThinkingByFormat(out *oaiRequest, req *core.ChatRequest, providerID string, profile capability.Profile, scope reasoningScope) {
 	if req.Reasoning == nil {
 		return
 	}
-	format := profile.ThinkingFormat
-	switch providerID {
-	case "volcengine-ark", "byteplus":
-		format = "doubao"
-	case "alicode", "alicode-intl", "qwen":
-		if format == "" {
-			format = "qwen"
-		}
-	case "glm-cn", "zai":
-		if format == "" {
-			format = "zai"
-		}
-	}
 	effort := req.Reasoning.Effort
 	off := thinkingDisabled(effort)
-	if off && !profile.ThinkingCanDisable && profile.Reasoning {
-		// The model cannot stop reasoning; sending "disabled" is a 400.
+	if off && profile.Reasoning && !profile.ThinkingCanDisable {
+		// The model cannot stop reasoning; asking for "disabled" is a 400.
+		// Leave the request as-is so the upstream default applies.
+		out.Thinking = nil
+		out.ReasoningEffort = ""
 		return
 	}
 
-	switch format {
+	switch thinkingFormatFor(providerID) {
 	case "qwen", "hunyuan":
-		// DashScope / Hunyuan: enable_thinking + thinking_budget.
+		// DashScope and Hunyuan switch reasoning with enable_thinking and
+		// bound it with thinking_budget; they reject the thinking object.
 		enabled := !off
 		out.EnableThinking = &enabled
-		if enabled {
-			budget := req.Reasoning.MaxTokens
-			if budget <= 0 {
-				budget = effortBudget(effort)
-			}
-			if r := profile.ThinkingRange; r != nil && budget > 0 {
-				if r.Min > 0 && budget < r.Min {
-					budget = r.Min
-				}
-				if r.Max > 0 && budget > r.Max {
-					budget = r.Max
-				}
-			}
-			if budget > 0 {
-				out.ThinkingBudget = &budget
-			}
-		}
 		out.Thinking = nil
 		out.ReasoningEffort = ""
-	case "zai", "doubao":
-		// GLM and Doubao: {"thinking":{"type":"enabled"|"disabled"}} only;
-		// their parameter whitelists reject reasoning_effort.
+		if !enabled {
+			return
+		}
+		budget := req.Reasoning.MaxTokens
+		if budget <= 0 {
+			budget = effortBudget(effort)
+		}
+		if r := profile.ThinkingRange; r != nil && budget > 0 {
+			if r.Min > 0 && budget < r.Min {
+				budget = r.Min
+			}
+			if r.Max > 0 && budget > r.Max {
+				budget = r.Max
+			}
+		}
+		if budget > 0 {
+			out.ThinkingBudget = &budget
+		}
+	case "doubao":
+		// Volcengine Ark / BytePlus: {"thinking":{"type":"enabled"|"disabled"|"auto"}}.
 		typ := "enabled"
-		if off {
+		switch {
+		case off:
 			typ = "disabled"
+		case strings.EqualFold(strings.TrimSpace(effort), "auto"), strings.EqualFold(strings.TrimSpace(effort), "adaptive"):
+			typ = "auto"
 		}
 		out.Thinking = &oaiThinking{Type: typ}
 		out.ReasoningEffort = ""
-	case "kimi":
-		// Moonshot: reasoning_effort string; no thinking object.
-		out.Thinking = nil
-		out.ReasoningEffort = ""
-		if !off {
-			if e := standardEffort(effort); e != "" {
-				out.ReasoningEffort = e
-			}
-		}
 	case "minimax":
-		// MiniMax: reasoning is split out of content when reasoning_split is
-		// set; thinking cannot be turned off on M2.x and M3 is adaptive.
+		// MiniMax returns reasoning in reasoning_details when asked to split
+		// it out of content; thinking.type / reasoning_effort are ignored.
 		split := true
 		out.ReasoningSplit = &split
-		out.Thinking = nil
-		out.ReasoningEffort = ""
-	case "deepseek":
 		applyGenericReasoningConfig(out, req)
-	case "openai", "":
-		// OpenAI-style reasoning_effort is the most widely accepted knob;
-		// a vendor-specific thinking object is a 400 on strict servers.
-		out.Thinking = nil
-		out.ReasoningEffort = ""
+	case "kimi":
+		applyGenericReasoningConfig(out, req)
 		if !off {
-			out.ReasoningEffort = standardEffort(effort)
+			// Moonshot thinking models accept only the default sampling.
+			out.Temperature = nil
+			out.TopP = nil
 		}
 	default:
-		applyGenericReasoningConfig(out, req)
+		if scope != reasoningNone {
+			applyGenericReasoningConfig(out, req)
+		}
 	}
 }
 
@@ -155,7 +149,7 @@ func applyProviderParamRules(out *oaiRequest, req *core.ChatRequest, providerID 
 	model := strings.ToLower(req.Model)
 	switch providerID {
 	case "mistral":
-		// tool_choice "required" and object forms are spelled "any".
+		// tool_choice "required" and the object form are spelled "any".
 		if len(out.Tools) > 0 && out.ToolChoice != nil {
 			switch tc := out.ToolChoice.(type) {
 			case string:
@@ -166,7 +160,7 @@ func applyProviderParamRules(out *oaiRequest, req *core.ChatRequest, providerID 
 				out.ToolChoice = "any"
 			}
 		}
-		// seed is random_seed; reasoning history is rejected (extra_forbidden).
+		// seed is random_seed; echoed reasoning history is extra_forbidden.
 		if seed, ok := out.Extra["seed"]; ok {
 			delete(out.Extra, "seed")
 			out.Extra["random_seed"] = seed
@@ -179,49 +173,35 @@ func applyProviderParamRules(out *oaiRequest, req *core.ChatRequest, providerID 
 		}
 		applyMistralToolIDs(out)
 	case "groq":
-		// Groq returns reasoning in a separate field only when asked.
+		// Groq only separates reasoning from content when asked.
 		if req.Reasoning != nil && !thinkingDisabled(req.Reasoning.Effort) && profile.Reasoning {
 			out.ReasoningFormat = "parsed"
 		}
 		out.Thinking = nil
 	case "xai":
-		if strings.HasPrefix(model, "grok-4") || strings.HasPrefix(model, "grok-code") || strings.HasPrefix(model, "grok-3-mini") {
-			out.Stop = nil
-		}
 		if strings.HasPrefix(model, "grok-4") || strings.HasPrefix(model, "grok-code") {
+			out.Stop = nil
 			delete(out.Extra, "frequency_penalty")
 			delete(out.Extra, "presence_penalty")
 		}
 		out.Thinking = nil
 	case "cerebras", "sambanova":
-		for _, k := range []string{"frequency_penalty", "presence_penalty", "n", "logprobs", "top_logprobs", "logit_bias"} {
+		for _, k := range []string{"frequency_penalty", "presence_penalty", "logit_bias", "service_tier"} {
 			delete(out.Extra, k)
 		}
-		if providerID == "sambanova" {
-			out.ParallelToolCalls = nil
-		}
+		out.ParallelToolCalls = nil
 		out.Thinking = nil
-	case "volcengine-ark", "byteplus":
+	case "volcengine-ark", "byteplus", "doubao":
 		out.ParallelToolCalls = nil
 	}
 
-	// Reasoning-only models reject sampling overrides.
-	if profile.Reasoning && !profile.ThinkingCanDisable {
-		if profile.ThinkingFormat == "deepseek" || profile.ThinkingFormat == "kimi" {
-			out.Temperature = nil
-			out.TopP = nil
-			delete(out.Extra, "logprobs")
-			delete(out.Extra, "top_logprobs")
-		}
-	}
-	// Moonshot reasoning models accept only the default temperature.
-	if profile.ThinkingFormat == "kimi" && profile.Reasoning {
+	// Locked reasoning models (deepseek-reasoner, r1) ignore or reject
+	// sampling overrides; drop them rather than risk a 400.
+	if profile.Reasoning && !profile.ThinkingCanDisable && profile.ThinkingFormat == "deepseek" {
 		out.Temperature = nil
 		out.TopP = nil
-		if tc, ok := out.ToolChoice.(string); ok && tc == "required" {
-			// Not supported by Moonshot; auto is the closest safe value.
-			out.ToolChoice = "auto"
-		}
+		delete(out.Extra, "logprobs")
+		delete(out.Extra, "top_logprobs")
 	}
 }
 
@@ -243,6 +223,8 @@ func applyMistralToolIDs(out *oaiRequest) {
 
 const mistralIDAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
+// mistralToolID returns id unchanged when it already fits, otherwise a
+// deterministic nine-character digest so repeated ids map consistently.
 func mistralToolID(id string, seen map[string]string) string {
 	if mapped, ok := seen[id]; ok {
 		return mapped
@@ -263,31 +245,31 @@ func mistralToolID(id string, seen map[string]string) string {
 func isAlnum(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && (c < '0' || c > '9') {
 			return false
 		}
 	}
 	return true
 }
 
-// reasoningDetailsText folds MiniMax-style reasoning_details into one text.
-func reasoningDetailsText(details []oaiReasoningDetail) string {
-	if len(details) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for _, d := range details {
-		if d.Text != "" {
-			b.WriteString(d.Text)
-		}
-	}
-	return b.String()
-}
-
-// oaiReasoningDetail is one entry of reasoning_details (MiniMax, OpenRouter).
+// oaiReasoningDetail is one entry of reasoning_details (MiniMax reasoning_split,
+// OpenRouter). Only text entries carry visible reasoning.
 type oaiReasoningDetail struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
 }
 
-var _ = json.Marshal
+// reasoningDetailsText folds reasoning_details into one thinking string.
+func reasoningDetailsText(details []oaiReasoningDetail) string {
+	switch len(details) {
+	case 0:
+		return ""
+	case 1:
+		return details[0].Text
+	}
+	var b strings.Builder
+	for _, d := range details {
+		b.WriteString(d.Text)
+	}
+	return b.String()
+}

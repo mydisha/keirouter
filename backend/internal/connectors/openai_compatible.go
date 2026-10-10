@@ -216,7 +216,10 @@ func isStreamRequiredError(err error) bool {
 	msg := strings.ToLower(pe.Message)
 	return strings.Contains(msg, "stream must be set to true") ||
 		strings.Contains(msg, "streaming is required") ||
-		strings.Contains(msg, "stream parameter is required")
+		strings.Contains(msg, "stream parameter is required") ||
+		// DashScope: Qwen thinking is streaming-only; the pipeline
+		// transparently re-issues the call as a stream.
+		(strings.Contains(msg, "enable_thinking") && strings.Contains(msg, "stream"))
 }
 
 // drainStreamToResponse consumes a stream channel and folds the chunks into a

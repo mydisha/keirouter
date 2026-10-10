@@ -122,3 +122,15 @@ func TestMergeBetaFlags(t *testing.T) {
 	require.Equal(t, "x-2025-01-01", mergeBetaFlags("", []string{"x-2025-01-01"}))
 	require.Equal(t, "x-2025-01-01", mergeBetaFlags("x-2025-01-01", nil))
 }
+
+func TestStreamRequiredErrorRecognisesDashScopeThinking(t *testing.T) {
+	err := &core.ProviderError{Kind: core.ErrBadRequest, StatusCode: 400,
+		Message: "parameter.enable_thinking must be set to false for non-streaming calls"}
+	if !isStreamRequiredError(err) {
+		t.Fatal("DashScope enable_thinking/stream error must trigger the stream retry")
+	}
+	other := &core.ProviderError{Kind: core.ErrBadRequest, StatusCode: 400, Message: "enable_thinking is not supported"}
+	if isStreamRequiredError(other) {
+		t.Fatal("unrelated enable_thinking error must not trigger the stream retry")
+	}
+}

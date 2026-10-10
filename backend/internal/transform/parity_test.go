@@ -555,3 +555,193 @@ func TestDeepSeekPromptCacheHitTokensCountAsCached(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 64, chunks[0].Usage.CachedTokens)
 }
+
+// ---- Open-model provider quirks ------------------------------------------
+
+func quirkReq(model string, effort string) *core.ChatRequest {
+	temp := 0.2
+	req := &core.ChatRequest{
+		Model:       model,
+		Temperature: &temp,
+		Messages:    []core.Message{{Role: core.RoleUser, Content: []core.ContentPart{{Type: core.PartText, Text: "hi"}}}},
+	}
+	if effort != "" {
+		req.Reasoning = &core.ReasoningConfig{Effort: effort}
+	}
+	return req
+}
+
+func TestQwenThinkingRendersEnableThinkingAndBudget(t *testing.T) {
+	body, err := OpenAICodec{}.RenderRequestForProvider(quirkReq("qwen3-235b-a22b", "medium"), "alicode")
+	require.NoError(t, err)
+	m := decodeJSON(t, body)
+	require.Equal(t, true, m["enable_thinking"])
+	require.EqualValues(t, 4096, m["thinking_budget"])
+	require.Nil(t, m["thinking"])
+	require.Nil(t, m["reasoning_effort"])
+
+	body, err = OpenAICodec{}.RenderRequestForProvider(quirkReq("qwen3-235b-a22b", "none"), "alicode")
+	require.NoError(t, err)
+	m = decodeJSON(t, body)
+	require.Equal(t, false, m["enable_thinking"])
+	require.Nil(t, m["thinking_budget"])
+
+	// An explicit budget wins over the effort bucket.
+	req := quirkReq("qwen3-235b-a22b", "high")
+	req.Reasoning.MaxTokens = 777
+	body, err = OpenAICodec{}.RenderRequestForProvider(req, "alicode")
+	require.NoError(t, err)
+	require.EqualValues(t, 777, decodeJSON(t, body)["thinking_budget"])
+}
+
+func TestLockedReasoningModelIgnoresDisable(t *testing.T) {
+	// QwQ cannot switch thinking off; the request must not carry a disable.
+	body, err := OpenAICodec{}.RenderRequestForProvider(quirkReq("qwq-32b", "none"), "alicode")
+	require.NoError(t, err)
+	m := decodeJSON(t, body)
+	require.Nil(t, m["enable_thinking"])
+	require.Nil(t, m["thinking"])
+}
+
+func TestDoubaoThinkingType(t *testing.T) {
+	for effort, want := range map[string]string{"high": "enabled", "none": "disabled", "auto": "auto"} {
+		body, err := OpenAICodec{}.RenderRequestForProvider(quirkReq("doubao-seed-1.6", effort), "volcengine-ark")
+		require.NoError(t, err)
+		m := decodeJSON(t, body)
+		require.Equal(t, want, m["thinking"].(map[string]any)["type"], effort)
+		require.Nil(t, m["reasoning_effort"])
+		require.Nil(t, m["parallel_tool_calls"])
+	}
+}
+
+func TestMiniMaxReasoningSplitAndDetails(t *testing.T) {
+	body, err := OpenAICodec{}.RenderRequestForProvider(quirkReq("MiniMax-M2.7", "high"), "minimax")
+	require.NoError(t, err)
+	require.Equal(t, true, decodeJSON(t, body)["reasoning_split"])
+
+	resp, err := OpenAICodec{}.ParseResponse([]byte(`{"choices":[{"message":{"role":"assistant","content":"4",
+	  "reasoning_details":[{"type":"reasoning.text","text":"2+2 "},{"type":"reasoning.text","text":"is 4"}]},"finish_reason":"stop"}]}`), "MiniMax-M2.7")
+	require.NoError(t, err)
+	var thinking, text string
+	for _, p := range resp.Message.Content {
+		switch p.Type {
+		case core.PartThinking:
+			thinking += p.Text
+		case core.PartText:
+			text += p.Text
+		}
+	}
+	require.Equal(t, "2+2 is 4", thinking)
+	require.Equal(t, "4", text)
+
+	chunks, err := OpenAICodec{}.ParseStreamLine([]byte(`{"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","text":"hmm"}]}}]}`), "MiniMax-M2.7")
+	require.NoError(t, err)
+	require.Len(t, chunks, 1)
+	require.Equal(t, core.ChunkThinking, chunks[0].Type)
+	require.Equal(t, "hmm", chunks[0].Delta)
+}
+
+func TestKimiThinkingDropsSamplingOverrides(t *testing.T) {
+	body, err := OpenAICodec{}.RenderRequestForProvider(quirkReq("kimi-k2.5", "high"), "moonshot")
+	require.NoError(t, err)
+	m := decodeJSON(t, body)
+	require.Nil(t, m["temperature"], "Moonshot thinking accepts only the default temperature")
+	require.Equal(t, "enabled", m["thinking"].(map[string]any)["type"])
+
+	// Without thinking the user's temperature is honoured.
+	body, err = OpenAICodec{}.RenderRequestForProvider(quirkReq("kimi-k2.5", ""), "moonshot")
+	require.NoError(t, err)
+	require.EqualValues(t, 0.2, decodeJSON(t, body)["temperature"])
+}
+
+func TestMistralParameterSpelling(t *testing.T) {
+	req := quirkReq("mistral-large-latest", "")
+	req.Tools = []core.Tool{{Name: "lookup", Parameters: json.RawMessage(`{"type":"object"}`)}}
+	req.ToolChoice = "required"
+	req.Extra = map[string]json.RawMessage{"seed": json.RawMessage(`7`)}
+	req.Messages = []core.Message{
+		{Role: core.RoleUser, Name: "dias", Content: []core.ContentPart{{Type: core.PartText, Text: "hi"}}},
+		{Role: core.RoleAssistant, Content: []core.ContentPart{
+			{Type: core.PartThinking, Text: "long enough reasoning to be stripped"},
+			{Type: core.PartToolCall, ToolCall: &core.ToolCall{ID: "call_abc123456789", Name: "lookup", Arguments: json.RawMessage(`{}`)}},
+		}},
+		{Role: core.RoleTool, Content: []core.ContentPart{{Type: core.PartToolResult, ToolResult: &core.ToolResult{CallID: "call_abc123456789", Content: "ok"}}}},
+	}
+	body, err := OpenAICodec{}.RenderRequestForProvider(req, "mistral")
+	require.NoError(t, err)
+	m := decodeJSON(t, body)
+	require.Equal(t, "any", m["tool_choice"])
+	require.EqualValues(t, 7, m["random_seed"])
+	require.Nil(t, m["seed"])
+	msgs := m["messages"].([]any)
+	require.Nil(t, msgs[0].(map[string]any)["name"], "name is only valid on tool messages")
+	asst := msgs[1].(map[string]any)
+	require.Nil(t, asst["reasoning_content"])
+	id := asst["tool_calls"].([]any)[0].(map[string]any)["id"].(string)
+	require.Len(t, id, 9)
+	require.True(t, isAlnum(id))
+	require.Equal(t, id, msgs[2].(map[string]any)["tool_call_id"], "tool result must reference the rewritten id")
+	// Deterministic across requests.
+	body2, _ := OpenAICodec{}.RenderRequestForProvider(req, "mistral")
+	require.Equal(t, string(body), string(body2))
+}
+
+func TestGroqReasoningFormatParsed(t *testing.T) {
+	body, err := OpenAICodec{}.RenderRequestForProvider(quirkReq("qwen/qwen3-32b", "high"), "groq")
+	require.NoError(t, err)
+	m := decodeJSON(t, body)
+	require.Equal(t, "parsed", m["reasoning_format"])
+	require.Nil(t, m["thinking"])
+	require.Nil(t, m["enable_thinking"], "Groq is not DashScope even for Qwen models")
+}
+
+func TestXAIGrok4DropsUnsupportedParams(t *testing.T) {
+	req := quirkReq("grok-4", "")
+	req.Stop = []string{"END"}
+	req.Extra = map[string]json.RawMessage{"presence_penalty": json.RawMessage(`0.5`), "seed": json.RawMessage(`1`)}
+	body, err := OpenAICodec{}.RenderRequestForProvider(req, "xai")
+	require.NoError(t, err)
+	m := decodeJSON(t, body)
+	require.Nil(t, m["stop"])
+	require.Nil(t, m["presence_penalty"])
+	require.EqualValues(t, 1, m["seed"])
+
+	body, err = OpenAICodec{}.RenderRequestForProvider(req, "openai")
+	require.NoError(t, err)
+	require.NotNil(t, decodeJSON(t, body)["stop"], "other providers keep stop")
+}
+
+func TestCerebrasDropsPenalties(t *testing.T) {
+	req := quirkReq("llama-3.3-70b", "")
+	req.Extra = map[string]json.RawMessage{"frequency_penalty": json.RawMessage(`0.5`), "logit_bias": json.RawMessage(`{}`)}
+	body, err := OpenAICodec{}.RenderRequestForProvider(req, "cerebras")
+	require.NoError(t, err)
+	m := decodeJSON(t, body)
+	require.Nil(t, m["frequency_penalty"])
+	require.Nil(t, m["logit_bias"])
+}
+
+func TestDeepSeekReasonerDropsSampling(t *testing.T) {
+	body, err := OpenAICodec{}.RenderRequestForProvider(quirkReq("deepseek-reasoner", "high"), "deepseek")
+	require.NoError(t, err)
+	require.Nil(t, decodeJSON(t, body)["temperature"])
+	body, err = OpenAICodec{}.RenderRequestForProvider(quirkReq("deepseek-chat", ""), "deepseek")
+	require.NoError(t, err)
+	require.EqualValues(t, 0.2, decodeJSON(t, body)["temperature"])
+}
+
+func TestGLMSensitiveFinishIsFilter(t *testing.T) {
+	require.Equal(t, core.FinishFilter, mapOAIFinish("sensitive"))
+	require.Equal(t, core.FinishStop, mapOAIFinish("network_error"))
+}
+
+func TestUnknownProviderReasoningUntouched(t *testing.T) {
+	// A provider with no quirks and no reasoning echo keeps the plain
+	// rendering: no vendor thinking object is invented.
+	body, err := OpenAICodec{}.RenderRequestForProvider(quirkReq("some-model", "high"), "custom")
+	require.NoError(t, err)
+	m := decodeJSON(t, body)
+	require.Nil(t, m["thinking"])
+	require.Nil(t, m["enable_thinking"])
+	require.EqualValues(t, 0.2, m["temperature"])
+}
