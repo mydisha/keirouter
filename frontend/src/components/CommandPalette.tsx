@@ -501,7 +501,7 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
             groupsToRender.map((group, gi) => (
               <div key={group.section || `results-${gi}`}>
                 {group.heading && group.section && (
-                  <p className="flex items-center gap-1.5 px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  <p className="flex items-center gap-1.5 px-4 pb-1 pt-2 text-[11.5px] font-medium text-[var(--text-muted)]">
                     {group.section === "Recent" && <History className="h-3 w-3" />}
                     {group.section}
                   </p>

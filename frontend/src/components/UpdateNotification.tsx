@@ -71,7 +71,7 @@ export function UpdateNotification() {
         >
           <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg-elevated)]/90 px-4 py-3.5">
             <div className="flex min-w-0 items-center gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent-100 text-accent-700 shadow-inner dark:bg-accent-900/45 dark:text-accent-200">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line bg-subtle text-fg-muted">
                 <Sparkles className="h-4 w-4" strokeWidth={2} />
               </div>
               <div className="min-w-0">

@@ -25,6 +25,15 @@ type AccurateSummary struct {
 // from latency. Pricing coverage only considers token-bearing requests and
 // treats legacy totals without rate snapshots as uncovered.
 func (r *UsageRepo) SummarizeAccurate(ctx context.Context, tenantID string, since time.Time) (AccurateSummary, error) {
+	return r.SummarizeAccurateRange(ctx, tenantID, since, time.Time{})
+}
+
+// SummarizeAccurateRange is SummarizeAccurate over the half-open window
+// [since, until). A zero until leaves the window open-ended, which is how the
+// current period is summarised; a non-zero until summarises a closed window
+// such as the previous period used for period-over-period deltas.
+func (r *UsageRepo) SummarizeAccurateRange(ctx context.Context, tenantID string, since, until time.Time) (AccurateSummary, error) {
+	where, args := rangeWhere(tenantID, since, until)
 	q := r.db.rebind(`
 		SELECT COUNT(*),
 			COALESCE(SUM(CASE WHEN status IN ('success','cache_hit') THEN 1 ELSE 0 END),0),
@@ -50,9 +59,9 @@ func (r *UsageRepo) SummarizeAccurate(ctx context.Context, tenantID string, sinc
 			COALESCE(SUM(ponytail_active),0),
 			COALESCE(SUM(CASE WHEN slim_active=1 OR headroom_active=1 OR caveman_active=1 OR terse_active=1 OR ponytail_active=1 THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(saved_cost_nanos),0), COALESCE(SUM(avoided_cost_nanos),0)
-		FROM usage_records WHERE tenant_id=? AND created_at>=?`)
+		FROM usage_records WHERE ` + where)
 	var s AccurateSummary
-	err := r.db.sql.QueryRowContext(ctx, q, tenantID, formatTime(since)).Scan(
+	err := r.db.sql.QueryRowContext(ctx, q, args...).Scan(
 		&s.TotalRequests, &s.SuccessCount, &s.FailureCount,
 		&s.PromptTokens, &s.CompletionTokens, &s.CachedTokens, &s.CacheWriteTokens,
 		&s.ReasoningTokens, &s.CostNanos, &s.CacheHits, &s.AvgTTFTMS, &s.AvgLatencyMS,
@@ -201,6 +210,90 @@ func (r *UsageRepo) ByModelAccurate(ctx context.Context, tenantID string, since 
 			m.OutputRatePerM, m.ReasoningRatePerM = minOutput, minReasoning
 		}
 		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// rangeWhere builds the tenant + time-window predicate shared by the range
+// aggregate queries. until is exclusive and omitted when zero.
+func rangeWhere(tenantID string, since, until time.Time) (string, []any) {
+	where := "tenant_id=? AND created_at>=?"
+	args := []any{tenantID, formatTime(since)}
+	if !until.IsZero() {
+		where += " AND created_at<?"
+		args = append(args, formatTime(until))
+	}
+	return where, args
+}
+
+// LatencyPercentiles returns the p50 and p95 end-to-end latency (ms) of
+// successful requests (including cache hits) in [since, until). SQLite has no
+// percentile aggregate, so each percentile is read as a single row at its
+// ordinal offset, which works identically on SQLite and Postgres.
+func (r *UsageRepo) LatencyPercentiles(ctx context.Context, tenantID string, since, until time.Time) (p50, p95 int64, err error) {
+	where, args := rangeWhere(tenantID, since, until)
+	where += " AND end_to_end_latency_ms > 0 AND status IN ('success','cache_hit')"
+	var n int64
+	if err := r.db.sql.QueryRowContext(ctx, r.db.rebind(`SELECT COUNT(*) FROM usage_records WHERE `+where), args...).Scan(&n); err != nil {
+		return 0, 0, fmt.Errorf("store: latency percentile count: %w", err)
+	}
+	if n == 0 {
+		return 0, 0, nil
+	}
+	at := func(pct float64) (int64, error) {
+		offset := int64(float64(n-1) * pct)
+		q := r.db.rebind(`SELECT end_to_end_latency_ms FROM usage_records WHERE ` + where + ` ORDER BY end_to_end_latency_ms LIMIT 1 OFFSET ?`)
+		var v int64
+		if err := r.db.sql.QueryRowContext(ctx, q, append(append([]any{}, args...), offset)...).Scan(&v); err != nil {
+			return 0, fmt.Errorf("store: latency percentile: %w", err)
+		}
+		return v, nil
+	}
+	if p50, err = at(0.50); err != nil {
+		return 0, 0, err
+	}
+	if p95, err = at(0.95); err != nil {
+		return 0, 0, err
+	}
+	return p50, p95, nil
+}
+
+// ChainServedUsage is one (chain, serving provider, serving model) rollup:
+// how many chain-routed requests that target terminally handled, how many of
+// those only reached it after failing over, and what they cost.
+type ChainServedUsage struct {
+	ChainID, Provider, Model      string
+	Requests, Successes, FellBack int64
+	CostNanos, AvgLatencyMS       int64
+}
+
+// ChainUsage groups chain-routed requests by the target that served them.
+// The caller maps (provider, model) back onto the chain's current steps, which
+// keeps the step distribution correct even when a cost/latency/round-robin
+// strategy reorders the steps at dispatch time.
+func (r *UsageRepo) ChainUsage(ctx context.Context, tenantID string, since time.Time) ([]ChainServedUsage, error) {
+	q := r.db.rebind(`
+		SELECT chain_id, provider, model, COUNT(*),
+			COALESCE(SUM(CASE WHEN status IN ('success','cache_hit') THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN fallback_count > 0 THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(cost_nanos),0),
+			COALESCE(CAST(AVG(CASE WHEN end_to_end_latency_ms>0 AND status IN ('success','cache_hit') THEN end_to_end_latency_ms END) AS INTEGER),0)
+		FROM usage_records
+		WHERE tenant_id=? AND created_at>=? AND chain_id<>''
+		GROUP BY chain_id, provider, model`)
+	rows, err := r.db.sql.QueryContext(ctx, q, tenantID, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("store: chain usage: %w", err)
+	}
+	defer rows.Close()
+	var out []ChainServedUsage
+	for rows.Next() {
+		var c ChainServedUsage
+		if err := rows.Scan(&c.ChainID, &c.Provider, &c.Model, &c.Requests, &c.Successes,
+			&c.FellBack, &c.CostNanos, &c.AvgLatencyMS); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
 	}
 	return out, rows.Err()
 }

@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -13,29 +14,49 @@ import (
 
 const usageTimelineBuckets = 24
 
+// parseTimelineBuckets reads the optional ?buckets= override for the trend
+// series, clamped so a client cannot request an unbounded GROUP BY.
+func parseTimelineBuckets(raw string) int {
+	if raw == "" {
+		return usageTimelineBuckets
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 6 || n > 168 {
+		return usageTimelineBuckets
+	}
+	return n
+}
+
 // adminUsageInsights returns the authoritative Usage dashboard payload. Costs
 // come from immutable nanodollar snapshots; cached and reasoning tokens remain
 // subsets of input/output so aggregate token totals never double count them.
 func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 	period := r.URL.Query().Get("period")
 	tz := r.URL.Query().Get("tz")
-	cacheKey := "insights-v2|" + period + "|" + tz
-	if s.cacheHit(w, cacheKey) {
-		return
-	}
-
 	recentLimit := 50
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 && parsed <= 200 {
 			recentLimit = parsed
 		}
 	}
+	bucketCount := parseTimelineBuckets(r.URL.Query().Get("buckets"))
+	// limit and buckets change the payload, so they are part of the cache key.
+	cacheKey := "insights-v2|" + period + "|" + tz + "|" + strconv.Itoa(recentLimit) + "|" + strconv.Itoa(bucketCount)
+	if s.cacheHit(w, cacheKey) {
+		return
+	}
 
 	ctx := r.Context()
 	now := time.Now().UTC()
 	since := sinceForPeriod(period, tz)
+	// The previous period is the window of equal length immediately before
+	// this one, so deltas compare like with like.
+	prevSince := since.Add(-now.Sub(since))
 	var (
 		summary       store.AccurateSummary
+		previous      store.AccurateSummary
+		p50, p95      int64
+		prevP50       int64
 		providers     []store.AccurateProviderUsage
 		recent        []store.AccurateRecentRecord
 		timeline      []store.AccurateTimeBucket
@@ -51,6 +72,21 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 	})
 	group.Go(func() error {
 		var err error
+		previous, err = s.usage.SummarizeAccurateRange(groupCtx, adminTenant, prevSince, since)
+		return err
+	})
+	group.Go(func() error {
+		var err error
+		p50, p95, err = s.usage.LatencyPercentiles(groupCtx, adminTenant, since, time.Time{})
+		return err
+	})
+	group.Go(func() error {
+		var err error
+		prevP50, _, err = s.usage.LatencyPercentiles(groupCtx, adminTenant, prevSince, since)
+		return err
+	})
+	group.Go(func() error {
+		var err error
 		providers, err = s.usage.BreakdownAccurate(groupCtx, adminTenant, since)
 		return err
 	})
@@ -61,7 +97,7 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 	})
 	group.Go(func() error {
 		var err error
-		timeline, err = s.usage.TimelineAccurate(groupCtx, adminTenant, since, now, usageTimelineBuckets)
+		timeline, err = s.usage.TimelineAccurate(groupCtx, adminTenant, since, now, bucketCount)
 		return err
 	})
 	group.Go(func() error {
@@ -120,12 +156,18 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	keyNames, accountLabels := s.usageNameLookups(ctx, recent)
 	recentRows := make([]map[string]any, 0, len(recent))
 	for _, record := range recent {
 		display, color, icon := usageProviderMetadata(record.Provider)
 		recentRows = append(recentRows, map[string]any{
 			"id":                     record.ID,
 			"request_id":             record.RequestID,
+			"api_key_id":             record.APIKeyID,
+			"api_key_name":           keyNames[record.APIKeyID],
+			"account_id":             record.AccountID,
+			"account_label":          accountLabels[record.AccountID],
+			"client":                 record.Client,
 			"provider":               record.Provider,
 			"provider_name":          display,
 			"provider_color":         color,
@@ -179,7 +221,7 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	series, busiest := accurateTimelineSeries(timeline, since, now, usageTimelineBuckets, tz)
+	series, busiest := accurateTimelineSeries(timeline, since, now, bucketCount, tz)
 	rules := make([]map[string]any, 0, len(ruleSavings))
 	for _, saving := range ruleSavings {
 		rules = append(rules, map[string]any{
@@ -238,6 +280,8 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 			"cache_hits":                summary.CacheHits,
 			"success_rate":              successRate,
 			"avg_latency_ms":            summary.AvgLatencyMS,
+			"p50_latency_ms":            p50,
+			"p95_latency_ms":            p95,
 			"avg_ttft_ms":               summary.AvgTTFTMS,
 			"pricing_eligible_requests": pricingEligibleRequests,
 			"priced_requests":           summary.PricedRequests,
@@ -272,6 +316,7 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 			"rules":                              rules,
 			"by_client":                          clients,
 		},
+		"previous":  previousPeriodSummary(previous, prevP50, prevSince, since),
 		"providers": providerRows,
 		"recent":    recentRows,
 		"series":    series,
@@ -467,7 +512,53 @@ func accurateTimelineSeries(points []store.AccurateTimeBucket, from, to time.Tim
 			"prompt_tokens":     point.PromptTokens,
 			"completion_tokens": point.CompletionTokens,
 			"cost_usd":          nanosToUSD(point.CostNanos),
+			"saved_usd":         nanosToUSD(point.SavedNanos),
+			"cache_hits":        point.CacheHits,
+			"avg_latency_ms":    point.AvgLatencyMS,
 		})
 	}
 	return series, busiest
+}
+
+// previousPeriodSummary is the compact headline rollup of the window before
+// the selected period. The dashboard derives period-over-period deltas from
+// it; the full breakdown is only computed for the current period.
+func previousPeriodSummary(prev store.AccurateSummary, p50 int64, since, until time.Time) map[string]any {
+	return map[string]any{
+		"since":               since,
+		"until":               until,
+		"total_requests":      prev.TotalRequests,
+		"successful_requests": prev.SuccessCount,
+		"failed_requests":     prev.FailureCount,
+		"success_rate":        ratio(prev.SuccessCount, prev.TotalRequests),
+		"total_tokens":        prev.PromptTokens + prev.CompletionTokens,
+		"cost_usd":            nanosToUSD(prev.CostNanos),
+		"usd_saved":           nanosToUSD(prev.SavedCostNanos + prev.AvoidedCostNanos),
+		"cache_hits":          prev.CacheHits,
+		"avg_latency_ms":      prev.AvgLatencyMS,
+		"p50_latency_ms":      p50,
+	}
+}
+
+// usageNameLookups resolves the API key names and account labels referenced
+// by recent usage rows so the dashboard can show "team-frontend" instead of
+// an opaque id. Lookup failures degrade to empty names rather than failing
+// the whole insights payload.
+func (s *Server) usageNameLookups(ctx context.Context, recent []store.AccurateRecentRecord) (map[string]string, map[string]string) {
+	keyNames := map[string]string{}
+	accountLabels := map[string]string{}
+	if len(recent) == 0 {
+		return keyNames, accountLabels
+	}
+	if keys, err := s.identity.List(ctx, adminTenant); err == nil {
+		for _, k := range keys {
+			keyNames[k.ID] = k.Name
+		}
+	}
+	if accounts, err := s.accounts.ListByTenant(ctx, adminTenant); err == nil {
+		for _, a := range accounts {
+			accountLabels[a.ID] = a.Label
+		}
+	}
+	return keyNames, accountLabels
 }

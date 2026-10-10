@@ -71,7 +71,7 @@ const usageColumns = `id, request_id, tenant_id, project_id, api_key_id, provide
 	cache_write_rate_per_m, output_rate_per_m, reasoning_rate_per_m, cache_hit, latency_ms,
 	upstream_latency_ms, end_to_end_latency_ms, ttft_ms, slim_bytes_saved, slim_tokens_saved,
 	slim_rules, slim_active, caveman_active, terse_active, headroom_tokens_saved,
-	headroom_bytes_saved, headroom_active, ponytail_active, created_at`
+	headroom_bytes_saved, headroom_active, ponytail_active, chain_id, fallback_count, created_at`
 
 func insertUsageBatch(ctx context.Context, tx *sql.Tx, rebind func(string) string, records []UsageRecord) error {
 	argsPerRow := len(usageArgs(UsageRecord{}))
@@ -127,7 +127,7 @@ func usageArgs(u UsageRecord) []any {
 		u.SlimBytesSaved, u.SlimTokensSaved, u.SlimRules,
 		boolToInt(u.SlimActive), boolToInt(u.CavemanActive), boolToInt(u.TerseActive),
 		u.HeadroomTokensSaved, u.HeadroomBytesSaved, boolToInt(u.HeadroomActive), boolToInt(u.PonytailActive),
-		formatTime(u.CreatedAt),
+		u.ChainID, u.FallbackCount, formatTime(u.CreatedAt),
 	}
 }
 

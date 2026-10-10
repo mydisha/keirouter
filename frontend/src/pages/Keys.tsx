@@ -21,6 +21,7 @@ import {
   TablePagination,
   useClientPagination,
 } from "../components/ui";
+import { useConfirm } from "../components/ui/confirm-dialog";
 
 const budgetPeriods = [
   { value: "daily", label: "Daily" },
@@ -54,7 +55,7 @@ function StatusPill({ disabled }: { disabled: boolean }) {
     return (
       <span className="inline-flex items-center gap-1.5 px-1 py-0.5 text-[11px] font-medium text-[var(--text-muted)]">
         <span className="relative flex h-1.5 w-1.5">
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-red-500 opacity-60"></span>
+          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-bad opacity-60"></span>
         </span>
         Inactive
       </span>
@@ -62,8 +63,8 @@ function StatusPill({ disabled }: { disabled: boolean }) {
   }
 
   return (
-    <span className="inline-flex items-center gap-1.5 px-1 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+    <span className="inline-flex items-center gap-1.5 px-1 py-0.5 text-[11px] font-medium text-ok">
+      <span className="h-1.5 w-1.5 rounded-full bg-ok" />
       Active
     </span>
   );
@@ -82,15 +83,15 @@ function SummaryItem({
 }) {
   const iconTone =
     tone === "danger"
-      ? "text-red-600 dark:text-red-400"
+      ? "text-bad"
       : tone === "warning"
-        ? "text-amber-600 dark:text-amber-400"
+        ? "text-warn"
         : "text-secondary-600 dark:text-secondary-300";
   return (
     <div className="flex min-w-0 items-center gap-3 px-4 py-3 sm:px-5">
       <Icon className={`h-4 w-4 shrink-0 ${iconTone}`} strokeWidth={2} />
       <div className="min-w-0">
-        <p className="truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</p>
+        <p className="truncate text-[12px] font-medium text-[var(--text-muted)]">{label}</p>
         <p className="mt-0.5 text-lg font-semibold leading-none tabular-nums text-[var(--text)]">{value}</p>
       </div>
     </div>
@@ -136,7 +137,7 @@ function KeyEmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="px-6 py-14">
       <div className="mx-auto max-w-md text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary-100 text-secondary-700 dark:bg-secondary-900/40 dark:text-secondary-200">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-subtle text-fg-muted">
           <KeyRound className="h-5 w-5" />
         </div>
         <h3 className="mt-4 text-base font-semibold tracking-tight text-[var(--text)]">No API keys yet</h3>
@@ -206,7 +207,7 @@ function KeyRow({
       <div className="flex min-w-0 items-center gap-2 pl-12 text-xs md:pl-0">
         <span className="truncate font-medium text-[var(--text)]">{apiKey.plan_name || "Custom plan"}</span>
         <span className="text-[var(--text-muted)]">·</span>
-        <span className={modelCount > 0 ? "truncate text-amber-600 dark:text-amber-400" : "truncate text-[var(--text-muted)]"}>
+        <span className={modelCount > 0 ? "truncate text-warn" : "truncate text-[var(--text-muted)]"}>
           {modelCount > 0 ? `${modelCount} model${modelCount > 1 ? "s" : ""}` : "Plan defaults"}
         </span>
       </div>
@@ -248,6 +249,7 @@ function KeyRow({
 }
 
 export function KeysPage() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -419,10 +421,10 @@ export function KeysPage() {
     onError: (e: Error) => toast.error("Bulk revocation failed", e.message),
   });
 
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
-    if (!confirm(`Revoke ${ids.length} key${ids.length > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    if (!(await confirm({ title: `Revoke ${ids.length} key${ids.length > 1 ? "s" : ""}?`, description: "Tools using them stop authenticating immediately. This cannot be undone.", confirmLabel: "Revoke", tone: "danger" }))) return;
     bulkRemove.mutate(ids);
   };
 
@@ -633,8 +635,8 @@ export function KeysPage() {
                     onSelect={() => toggleSelect(k.id)}
                     onToggle={() => toggleDisabled.mutate({ id: k.id, disabled: !k.disabled })}
                     onConfigure={() => navigate(`/keys/${k.id}`)}
-                    onRevoke={() => {
-                      if (!confirm(`Revoke ${k.name}? This cannot be undone.`)) return;
+                    onRevoke={async () => {
+                      if (!(await confirm({ title: `Revoke ${k.name}?`, description: "Tools using this key stop authenticating immediately. This cannot be undone.", confirmLabel: "Revoke", tone: "danger" }))) return;
                       remove.mutate(k.id);
                     }}
                     togglePending={toggleDisabled.isPending}
@@ -1089,7 +1091,7 @@ function StepSuccess({
 
       <div className="rounded-xl border border-accent-400/40 bg-accent-500/5 p-4">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Ready to copy</p>
+          <p className="text-xs font-medium text-[var(--text-muted)]">Ready to copy</p>
           <Button
             variant="ghost"
             onClick={() => {

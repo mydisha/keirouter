@@ -1,5 +1,5 @@
-// Reusable UI primitives styled with the KeiRouter design system. Calm,
-// generously spaced, soft shadows and rounded surfaces — no gradients or neon.
+// Reusable UI primitives styled with the KeiRouter design system: neutral
+// surfaces, hairline borders, monochrome primary actions, colour only for meaning.
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import type {
   ButtonHTMLAttributes,
@@ -53,23 +53,16 @@ export function SectionHeader({
   iconTone?: "accent" | "neutral" | "danger" | "secondary";
   action?: ReactNode;
 }) {
-  const toneClasses: Record<string, string> = {
-    accent: "bg-accent-100 text-accent-700 dark:bg-accent-800/40 dark:text-accent-200",
-    neutral: "bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300",
-    danger: "bg-[color:var(--color-danger)]/15 text-[color:var(--color-danger)]",
-    secondary: "bg-secondary-100 text-secondary-700 dark:bg-secondary-800/40 dark:text-secondary-200",
-  };
+  // Icons render as quiet glyphs, not tinted chips; only danger keeps colour
+  // because it carries meaning.
+  const iconColor = iconTone === "danger" ? "text-bad" : "text-fg-faint";
   return (
-    <div className="flex flex-col gap-4 px-5 pb-4 pt-5 sm:flex-row sm:items-start sm:justify-between sm:px-6">
-      <div className="flex min-w-0 items-start gap-3">
-        {Icon && (
-          <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${toneClasses[iconTone]}`}>
-            <Icon className="h-[18px] w-[18px]" strokeWidth={2} />
-          </div>
-        )}
+    <div className="flex flex-col gap-3 px-4 pb-3 pt-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
+      <div className="flex min-w-0 items-start gap-2.5">
+        {Icon && <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${iconColor}`} strokeWidth={1.75} aria-hidden="true" />}
         <div>
-          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-          {description && <p className="mt-0.5 text-sm text-[var(--text-muted)]">{description}</p>}
+          <h2 className="text-[14px] font-semibold tracking-[-0.005em]">{title}</h2>
+          {description && <p className="mt-0.5 text-[13px] text-fg-muted">{description}</p>}
         </div>
       </div>
       {action}
@@ -88,10 +81,10 @@ export function CardHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-col gap-4 border-b border-[var(--border)] px-5 py-5 sm:flex-row sm:items-start sm:justify-between sm:px-6">
+    <div className="flex flex-col gap-3 border-b border-[var(--border)] px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
       <div className="min-w-0">
-        <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-        {description && <p className="mt-1 max-w-2xl text-sm leading-5 text-[var(--text-muted)]">{description}</p>}
+        <h2 className="text-[14px] font-semibold tracking-[-0.005em]">{title}</h2>
+        {description && <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-fg-muted">{description}</p>}
       </div>
       {action && <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div>}
     </div>
@@ -112,12 +105,8 @@ export function SettingsSection({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2.5 pt-2">
-        {Icon && (
-          <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--bg-subtle)]">
-            <Icon className="h-4 w-4 text-[var(--text-muted)]" strokeWidth={2} />
-          </div>
-        )}
-        <h3 className="text-sm font-semibold uppercase tracking-widest text-[var(--text-muted)]">
+        {Icon && <Icon className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+        <h3 className="text-[13px] font-semibold text-fg-muted">
           {title}
         </h3>
         <div className="flex-1 border-t border-[var(--border)]" />
@@ -135,14 +124,17 @@ type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 
 export function Button({ variant = "primary", className = "", ...props }: ButtonProps) {
   const base =
-    "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold transition-[transform,background-color,border-color,color,box-shadow] duration-150 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] [&_svg]:shrink-0";
+    "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-[background-color,border-color,color,opacity] duration-150 disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] [&_svg]:size-4 [&_svg]:shrink-0";
+  // Primary is monochrome (ink / paper). Colour is reserved for data and
+  // meaning, so "secondary" and "ghost" are both neutral surfaces.
   const variants = {
-    primary: "border border-secondary-600 bg-secondary-600 text-white shadow-sm hover:border-secondary-700 hover:bg-secondary-700 hover:shadow-[var(--shadow-card)] dark:border-secondary-500 dark:bg-secondary-500 dark:hover:border-secondary-400 dark:hover:bg-secondary-400",
-    secondary: "border border-accent-600 bg-accent-600 text-white shadow-sm hover:border-accent-700 hover:bg-accent-700 hover:shadow-[var(--shadow-card)] dark:border-accent-500 dark:bg-accent-500 dark:hover:border-accent-400 dark:hover:bg-accent-400",
+    primary: "border border-transparent bg-primary text-primary-fg hover:opacity-85",
+    secondary:
+      "border border-line-strong bg-surface text-fg hover:bg-hover",
     ghost:
-      "border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text)] shadow-sm hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)]",
+      "border border-line bg-surface text-fg hover:border-line-strong hover:bg-hover",
     danger:
-      "border border-[color:var(--color-danger)]/35 bg-[var(--bg-elevated)] text-[color:var(--color-danger)] hover:bg-[color:var(--color-danger)]/10",
+      "border border-bad/35 bg-surface text-bad hover:bg-bad/10",
   };
   return <button className={`${base} ${variants[variant]} ${className}`} {...props} />;
 }
@@ -150,7 +142,7 @@ export function Button({ variant = "primary", className = "", ...props }: Button
 export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
-      className={`min-h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-sm transition-[border-color,box-shadow,background-color] placeholder:text-[var(--text-muted)] hover:border-[var(--border-strong)] focus:border-accent-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/30 disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:opacity-60 ${className}`}
+      className={`min-h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[13px] transition-[border-color,box-shadow,background-color] placeholder:text-fg-faint hover:border-[var(--border-strong)] focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25 disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:opacity-60 ${className}`}
       {...props}
     />
   );
@@ -159,7 +151,7 @@ export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInpu
 export function Select({ className = "", children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
-      className={`min-h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-sm transition-[border-color,box-shadow,background-color] hover:border-[var(--border-strong)] focus:border-accent-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/30 disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:opacity-60 ${className}`}
+      className={`min-h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[13px] transition-[border-color,box-shadow,background-color] hover:border-[var(--border-strong)] focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25 disabled:cursor-not-allowed disabled:bg-[var(--bg-subtle)] disabled:opacity-60 ${className}`}
       {...props}
     >
       {children}
@@ -186,16 +178,16 @@ export function Badge({
   title?: string;
 }) {
   const tones = {
-    neutral: "bg-ink-100 text-ink-600 dark:bg-ink-800 dark:text-ink-300",
-    accent: "bg-accent-100 text-accent-700 dark:bg-accent-800/40 dark:text-accent-200",
-    secondary: "bg-secondary-100 text-secondary-700 dark:bg-secondary-800/40 dark:text-secondary-200",
-    danger: "bg-[color:var(--color-danger)]/15 text-[color:var(--color-danger)]",
-    warning: "bg-[color:var(--color-warning)]/15 text-[color:var(--color-warning)]",
-    success: "bg-accent-100 text-accent-700 dark:bg-accent-800/40 dark:text-accent-200",
+    neutral: "border-line bg-subtle text-fg-muted",
+    accent: "border-transparent bg-accent-500/10 text-accent-600 dark:text-accent-300",
+    secondary: "border-transparent bg-secondary-500/10 text-secondary-600 dark:text-secondary-300",
+    danger: "border-transparent bg-bad/10 text-bad",
+    warning: "border-transparent bg-warn/12 text-warn",
+    success: "border-transparent bg-ok/10 text-ok",
   };
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-lg border border-transparent px-2 py-0.5 text-xs font-semibold ${tones[tone]}`}
+      className={`inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11.5px] font-medium ${tones[tone]}`}
       title={title}
     >
       {children}
@@ -206,10 +198,10 @@ export function Badge({
 // StatusDot is the small filled circle used next to "Healthy" / "Active" labels.
 export function StatusDot({ tone = "success", label }: { tone?: "success" | "danger" | "warning" | "secondary"; label?: string }) {
   const colors = {
-    success: "bg-accent-500",
-    secondary: "bg-secondary-500",
-    danger: "bg-[color:var(--color-danger)]",
-    warning: "bg-[color:var(--color-warning)]",
+    success: "bg-ok",
+    secondary: "bg-fg-faint",
+    danger: "bg-bad",
+    warning: "bg-warn",
   };
   return <span className={`inline-block h-1.5 w-1.5 rounded-full ${colors[tone]}`} role="img" aria-label={label || tone} />;
 }
@@ -254,7 +246,7 @@ export function ErrorCard({ message }: { message: string }) {
 export function Spinner() {
   return (
     <div className="flex items-center justify-center py-10" role="status" aria-label="Loading">
-      <div className="h-5 w-5 animate-spin rounded-full border-2 border-ink-300 border-t-accent-500 dark:border-ink-600 dark:border-t-accent-400" />
+      <div className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-fg-muted" />
     </div>
   );
 }
@@ -274,41 +266,20 @@ export function StatCard({
 }) {
   const deltaColor =
     delta?.direction === "up"
-      ? "text-emerald-600 dark:text-emerald-400"
+      ? "text-ok"
       : delta?.direction === "down"
-        ? "text-red-500 dark:text-red-400"
-        : "text-[var(--text-muted)]";
-  const arrow = delta?.direction === "up" ? "↑" : delta?.direction === "down" ? "↓" : "";
-
-  const tone = iconTone === "accent"
-    ? { marker: "bg-secondary-500", icon: "text-secondary-600 dark:text-secondary-300", iconBg: "bg-secondary-50 ring-secondary-200/70 dark:bg-secondary-950/30 dark:ring-secondary-900/60" }
-    : iconTone === "warning"
-      ? { marker: "bg-amber-500", icon: "text-amber-700 dark:text-amber-300", iconBg: "bg-amber-50 ring-amber-200/70 dark:bg-amber-950/30 dark:ring-amber-900/60" }
-      : { marker: "bg-red-500", icon: "text-red-700 dark:text-red-300", iconBg: "bg-red-50 ring-red-200/70 dark:bg-red-950/30 dark:ring-red-900/60" };
+        ? "text-bad"
+        : "text-fg-muted";
+  const iconColor = iconTone === "danger" ? "text-bad" : iconTone === "warning" ? "text-warn" : "text-fg-faint";
 
   return (
-    <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ring-1 ${tone.iconBg}`}>
-              <Icon className={`h-3.5 w-3.5 ${tone.icon}`} strokeWidth={2} />
-            </span>
-            <p className="truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--text-muted)]">
-              {label}
-            </p>
-          </div>
-          <p className="mt-3 text-3xl font-semibold tracking-tight tabular-nums text-[var(--text)]">
-            {value}
-          </p>
-        </div>
-        <span className={`h-9 w-1.5 shrink-0 rounded-full ${tone.marker}`} aria-hidden="true" />
+    <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3.5 shadow-[var(--shadow-card)]">
+      <div className="flex items-center gap-1.5 text-[12px] font-medium text-fg-muted">
+        <Icon className={`h-3.5 w-3.5 shrink-0 ${iconColor}`} strokeWidth={1.75} aria-hidden="true" />
+        <span className="truncate">{label}</span>
       </div>
-      {delta && (
-        <p className={`mt-3 text-xs font-medium ${deltaColor}`}>
-          {arrow} {delta.text}
-        </p>
-      )}
+      <p className="mt-1.5 text-2xl font-semibold tracking-[-0.02em] tabular-nums text-fg">{value}</p>
+      {delta && <p className={`mt-1 text-[12px] font-medium tabular-nums ${deltaColor}`}>{delta.text}</p>}
     </div>
   );
 }
@@ -324,7 +295,7 @@ export function SegmentedControl<T extends string>({
   options: { value: T; label: string }[];
 }) {
   return (
-    <div className="inline-flex rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] p-0.5" role="radiogroup">
+    <div className="inline-flex rounded-xl border border-line bg-subtle p-0.5" role="radiogroup">
       {options.map((opt) => (
         <button
           key={opt.value}
@@ -332,9 +303,9 @@ export function SegmentedControl<T extends string>({
           role="radio"
           aria-checked={value === opt.value}
           onClick={() => onChange(opt.value)}
-          className={`rounded-md px-3 py-2 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 ${
+          className={`h-7 rounded-lg px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 ${
             value === opt.value
-              ? "bg-[var(--bg-elevated)] text-[var(--text)] shadow-sm"
+              ? "bg-surface text-fg shadow-[0_0_0_1px_var(--border-strong)]"
               : "text-[var(--text-muted)] hover:text-[var(--text)]"
           }`}
         >
@@ -437,7 +408,7 @@ export function Modal({
 
 	return (
 		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm"
+			className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 animate-in fade-in-0 duration-150"
 			onClick={onClose}
 		>
 			<div
@@ -446,20 +417,20 @@ export function Modal({
 				aria-modal="true"
 				aria-labelledby={titleId}
 				tabIndex={-1}
-				className={`w-full ${maxWidth} rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-float)]`}
+				className={`w-full ${maxWidth} rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-float)] animate-in fade-in-0 zoom-in-[0.98] duration-150`}
 				onClick={(e) => e.stopPropagation()}
 			>
-				<div className="flex items-center justify-between border-b border-[var(--border)] px-6 py-4">
+				<div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3.5">
 					<div>
-						<h2 id={titleId} className="text-base font-semibold tracking-tight">{title}</h2>
-            {subtitle && <p className="mt-0.5 text-sm text-[var(--text-muted)]">{subtitle}</p>}
+						<h2 id={titleId} className="text-[15px] font-semibold tracking-[-0.01em]">{title}</h2>
+            {subtitle && <p className="mt-0.5 text-[13px] text-fg-muted">{subtitle}</p>}
           </div>
 					<button
 						type="button"
 						onClick={onClose}
 						aria-label="Close"
 						data-modal-autofocus
-            className="flex h-9 w-9 items-center justify-center rounded-xl text-[var(--text-muted)] transition-colors hover:bg-ink-100 hover:text-[var(--text)] dark:hover:bg-ink-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60"
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
           >
             <X className="h-4 w-4" />
           </button>
@@ -506,16 +477,16 @@ export function TabBar<T extends string>({
             role="tab"
             aria-selected={isActive}
             onClick={() => onChange(tab.value)}
-            className={`relative flex items-center gap-2 whitespace-nowrap rounded-t-lg px-4 py-2.5 text-sm font-medium transition-[color,background-color] duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 ${
+            className={`relative flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 ${
               isActive
-                ? "text-accent-700 dark:text-accent-200"
-                : "text-[var(--text-muted)] hover:text-[var(--text)]"
+                ? "text-fg"
+                : "text-fg-muted hover:text-fg"
             }`}
           >
-            {tab.icon && <tab.icon className="h-4 w-4 shrink-0" strokeWidth={2} />}
+            {tab.icon && <tab.icon className="h-4 w-4 shrink-0" strokeWidth={1.75} />}
             {tab.label}
             {isActive && (
-              <span className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-accent-600 dark:bg-accent-400" />
+              <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent-500" />
             )}
           </button>
         );
@@ -530,13 +501,13 @@ export function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: 
       role="switch"
       aria-checked={checked}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-secondary-400/60 ${
-        checked ? "bg-secondary-600" : "bg-ink-300 dark:bg-ink-700"
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)] ${
+        checked ? "bg-accent-500" : "bg-ink-300 dark:bg-ink-700"
       }`}
     >
       <span
-        className={`inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition-transform ${
-          checked ? "translate-x-[22px]" : "translate-x-1"
+        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-sm transition-transform ${
+          checked ? "translate-x-[18px]" : "translate-x-0.5"
         }`}
       />
     </button>

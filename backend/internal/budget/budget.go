@@ -342,6 +342,21 @@ func (e *Engine) getReserved(kind store.BudgetScope, scopeID string) int64 {
 }
 
 // PeriodStart returns the start of the current budget window for a period.
+// PeriodEnd returns when a budget window that began at start resets. A
+// "total" budget never resets and yields the zero time.
+func PeriodEnd(period string, start time.Time) time.Time {
+	switch period {
+	case "daily":
+		return start.AddDate(0, 0, 1)
+	case "weekly":
+		return start.AddDate(0, 0, 7)
+	case "monthly":
+		return start.AddDate(0, 1, 0)
+	default:
+		return time.Time{}
+	}
+}
+
 func PeriodStart(period string, now time.Time) time.Time {
 	now = now.UTC()
 	switch period {

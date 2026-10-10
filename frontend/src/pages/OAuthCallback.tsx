@@ -73,7 +73,7 @@ export function OAuthCallbackPage() {
       <div className="w-full max-w-sm space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] p-8 text-center shadow-[var(--shadow-float)]">
         {ok ? (
           <>
-            <CheckCircle className="mx-auto h-10 w-10 text-emerald-500" />
+            <CheckCircle className="mx-auto h-10 w-10 text-ok" />
             <h1 className="text-sm font-semibold text-[var(--text)]">
               Connected{provider ? ` to ${provider}` : ""}
             </h1>
@@ -83,7 +83,7 @@ export function OAuthCallbackPage() {
           </>
         ) : (
           <>
-            <XCircle className="mx-auto h-10 w-10 text-red-500" />
+            <XCircle className="mx-auto h-10 w-10 text-bad" />
             <h1 className="text-sm font-semibold text-[var(--text)]">
               Connection failed
             </h1>

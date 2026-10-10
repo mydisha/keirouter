@@ -73,10 +73,12 @@ func (s *Server) mountAdmin(r chi.Router) {
 	r.Get("/usage", s.adminUsageSummary)
 	r.Get("/usage/insights", s.adminUsageInsights)
 	r.Get("/usage/models", s.adminModelUsageAccurate)
+	r.Get("/usage/chains", s.adminChainUsage)
 	r.Get("/usage/stream", s.adminUsageStream)
 	r.Get("/quota", s.adminQuotaUsage)
 	r.Get("/health/accounts", s.adminListAccountHealth)
 	r.Post("/health/check-now", s.adminRunHealthCheck)
+	r.Get("/gateway/info", s.adminGatewayInfo)
 	s.mountProviderHealth(r)
 	r.Get("/console", s.adminConsoleLog)
 	r.Delete("/console", s.adminConsoleClear)
@@ -367,6 +369,7 @@ func (s *Server) adminListKeys(w http.ResponseWriter, r *http.Request) {
 		entry := map[string]any{
 			"id": k.ID, "name": k.Name, "display": k.Display,
 			"disabled": k.Disabled, "plan_id": k.PlanID, "created_at": k.CreatedAt,
+			"last_used_at": k.LastUsedAt,
 		}
 		// Resolve plan name.
 		if k.PlanID != "" {
@@ -2458,6 +2461,7 @@ func (s *Server) adminBudgetStatus(w http.ResponseWriter, r *http.Request) {
 			"pct_used":        pctUsed,
 			"tokens_pct_used": tokPctUsed,
 			"period_start":    since,
+			"resets_at":       optionalTime(budget.PeriodEnd(b.Period, since)),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"budgets": out})

@@ -278,7 +278,7 @@ function CustomModelCell({
     <article className="group flex min-h-36 flex-col bg-[var(--bg-elevated)] p-4 transition-colors duration-150 hover:bg-[var(--bg-subtle)]">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-100 text-accent-700 dark:bg-accent-800/40 dark:text-accent-200">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-subtle text-fg-muted">
             <Sparkles className="h-4 w-4" />
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
@@ -329,7 +329,7 @@ function CustomModelCell({
           title="Copy model path"
           aria-label={`Copy model path ${fullModel}`}
         >
-          {copied ? <CheckCircle className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+          {copied ? <CheckCircle className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4" />}
         </button>
       </div>
     </article>

@@ -333,7 +333,7 @@ export function ModelMultiSelect({
                 <div key={g.provider}>
                   <div className="sticky top-0 z-10 flex items-center gap-2 bg-[var(--bg-elevated)] px-3 pb-1.5 pt-2.5">
                     <ProviderIcon option={g.models[0]} className="h-5 w-5 rounded-md" />
-                    <span className="text-[11px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">
+                    <span className="text-[12px] font-medium text-[var(--text-muted)]">
                       {g.providerName}
                     </span>
                   </div>

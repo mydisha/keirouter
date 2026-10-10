@@ -489,3 +489,50 @@ func assignIntPtr(n sql.NullInt64, dst **int) {
 		*dst = &v
 	}
 }
+
+// ProviderHealthRollup is one provider's aggregate over one timeline bucket,
+// summed across every account/model/capability snapshot in that bucket.
+type ProviderHealthRollup struct {
+	Provider       string
+	Bucket         int
+	Requests       int64
+	Successes      int64
+	Failures       int64
+	Fallbacks      int64
+	RateLimited    int64
+	LatencyP95Ms   int64 // worst per-snapshot p95 in the bucket
+	WorstStatusRnk int   // 3 unhealthy, 2 degraded, 1 healthy, 0 unknown
+}
+
+// RollupSnapshots aggregates every provider's 1-minute health snapshots since
+// `since` into buckets of bucketSecs, in one query for all providers. It is
+// the data behind the dashboard's per-provider uptime strips.
+func (r *ProviderHealthRepo) RollupSnapshots(ctx context.Context, since time.Time, bucketSecs int64) ([]ProviderHealthRollup, error) {
+	if bucketSecs <= 0 {
+		bucketSecs = 3600
+	}
+	epochBucket, epochSince := r.db.epochExpr("bucket_start"), r.db.epochExpr("?")
+	q := r.db.rebind(fmt.Sprintf(`SELECT provider, CAST((%s-%s)/? AS INTEGER),
+		COALESCE(SUM(request_count),0), COALESCE(SUM(success_count),0), COALESCE(SUM(failure_count),0),
+		COALESCE(SUM(fallback_count),0), COALESCE(SUM(rate_limited_count),0),
+		COALESCE(MAX(latency_p95_ms),0),
+		COALESCE(MAX(CASE health_status WHEN 'unhealthy' THEN 3 WHEN 'degraded' THEN 2 WHEN 'healthy' THEN 1 ELSE 0 END),0)
+		FROM provider_health_snapshots
+		WHERE bucket_start >= ?
+		GROUP BY 1, 2 ORDER BY 1, 2`, epochBucket, epochSince))
+	rows, err := r.db.sql.QueryContext(ctx, q, formatTime(since), bucketSecs, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("store: rollup provider health snapshots: %w", err)
+	}
+	defer rows.Close()
+	var out []ProviderHealthRollup
+	for rows.Next() {
+		var p ProviderHealthRollup
+		if err := rows.Scan(&p.Provider, &p.Bucket, &p.Requests, &p.Successes, &p.Failures,
+			&p.Fallbacks, &p.RateLimited, &p.LatencyP95Ms, &p.WorstStatusRnk); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

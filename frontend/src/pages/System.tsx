@@ -97,7 +97,7 @@ export function SystemPage() {
         <div className="px-6 pb-5 grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-4">
           {/* Host column */}
           <div className="space-y-3">
-            <p className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">Host</p>
+            <p className="text-xs font-medium text-[var(--text-muted)]">Host</p>
             <MetricBar label="CPU" value={s.cpu_pct} unit="%" detail={`${s.cpu_per_core.length} cores`} />
             <MetricBar label="Memory" value={s.mem_pct} unit="%" detail={`${s.mem_used_mb} / ${s.mem_total_mb} MB`} />
             <MetricBar label="Disk" value={s.disk_pct} unit="%" detail={`${s.disk_used_gb.toFixed(1)} / ${s.disk_total_gb.toFixed(1)} GB`} />
@@ -108,7 +108,7 @@ export function SystemPage() {
           </div>
           {/* Process column */}
           <div className="space-y-3">
-            <p className="text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">Process (PID {s.pid})</p>
+            <p className="text-xs font-medium text-[var(--text-muted)]">Process (PID {s.pid})</p>
             <MetricBar label="CPU" value={s.proc_cpu_pct} unit="%" detail={`Uptime ${formatUptime(s.uptime_s)}`} />
             <MetricBar label="RSS" value={Math.min((s.proc_rss_mb / s.mem_total_mb) * 100, 100)} unit="%" detail={`${s.proc_rss_mb.toFixed(0)} MB`} />
             <div className="flex items-center justify-between text-sm">
@@ -188,11 +188,11 @@ export function SystemPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[var(--border)]">
-                    <th className="pb-2 pr-4 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">Time</th>
-                    <th className="pb-2 pr-4 text-left text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">Type</th>
-                    <th className="pb-2 pr-4 text-right text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">CPU %</th>
-                    <th className="pb-2 pr-4 text-right text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">Mem %</th>
-                    <th className="pb-2 text-right text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">Goroutines</th>
+                    <th className="pb-2 pr-4 text-left text-xs font-medium text-[var(--text-muted)]">Time</th>
+                    <th className="pb-2 pr-4 text-left text-xs font-medium text-[var(--text-muted)]">Type</th>
+                    <th className="pb-2 pr-4 text-right text-xs font-medium text-[var(--text-muted)]">CPU %</th>
+                    <th className="pb-2 pr-4 text-right text-xs font-medium text-[var(--text-muted)]">Mem %</th>
+                    <th className="pb-2 text-right text-xs font-medium text-[var(--text-muted)]">Goroutines</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[var(--border)]">
@@ -379,7 +379,7 @@ function MetricChart({
                   boxShadow: "var(--shadow-pop)",
                 }}
                 labelStyle={{ fontSize: 11, color: "var(--text-muted)" }}
-                formatter={(val: number) => [`${val}${unit}`, title]}
+                formatter={(val) => [`${val}${unit}`, title]}
               />
               {threshold != null && (
                 <Area

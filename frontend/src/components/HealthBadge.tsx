@@ -35,7 +35,7 @@ export function fmtIssue(issue?: string): string {
 }
 
 const STATUS_TONE: Record<HealthStatus, string> = {
-  healthy: "bg-accent-100 text-accent-700 dark:bg-accent-800/40 dark:text-accent-200",
+  healthy: "bg-ok/10 text-ok",
   degraded: "bg-[color:var(--color-warning)]/15 text-[color:var(--color-warning)]",
   unhealthy: "bg-[color:var(--color-danger)]/15 text-[color:var(--color-danger)]",
   unknown: "bg-ink-100 text-ink-500 dark:bg-ink-800 dark:text-ink-400",
@@ -43,7 +43,7 @@ const STATUS_TONE: Record<HealthStatus, string> = {
 };
 
 const STATUS_DOT: Record<HealthStatus, string> = {
-  healthy: "bg-accent-500",
+  healthy: "bg-ok",
   degraded: "bg-[color:var(--color-warning)]",
   unhealthy: "bg-[color:var(--color-danger)]",
   unknown: "bg-ink-400",

@@ -26,7 +26,7 @@ export function ModelCapabilityIcons({
         <span
           title="Reasoning — supports extended thinking"
           aria-label="Reasoning — supports extended thinking"
-          className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-secondary-100 text-secondary-700 dark:bg-secondary-800/40 dark:text-secondary-200"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-line bg-subtle text-fg-muted"
         >
           <Brain size={size} aria-hidden="true" />
         </span>

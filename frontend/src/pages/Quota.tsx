@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { api, connectUsageStream, type QuotaAccount, type UpstreamQuota } from "../lib/api";
+import { REPORT_PERIODS } from "../lib/periods";
 import { PageHeader } from "../components/Layout";
 import {
   Badge,
@@ -27,12 +28,9 @@ import {
   useClientPagination,
 } from "../components/ui";
 import { useToast } from "../components/Toast";
+import { useConfirm } from "../components/ui/confirm-dialog";
 
-const PERIODS = [
-  { value: "today", label: "Today" },
-  { value: "week", label: "7D" },
-  { value: "month", label: "30D" },
-];
+const PERIODS = REPORT_PERIODS.map((p) => ({ ...p }));
 
 const REFRESH_INTERVAL = 10_000;
 const DEPLETED_THRESHOLD = 5;
@@ -49,7 +47,8 @@ const statusMeta: Record<string, { label: string; tone: "success" | "warning" | 
 };
 
 export function QuotaPage() {
-  const [period, setPeriod] = useState("month");
+  const confirm = useConfirm();
+  const [period, setPeriod] = useState<string>("30d");
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -203,16 +202,16 @@ export function QuotaPage() {
     setSelected(new Set());
   };
 
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     if (selectedAccounts.length === 0) return;
-    if (!window.confirm(`Delete ${selectedAccounts.length} selected account${selectedAccounts.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+    if (!(await confirm({ title: `Delete ${selectedAccounts.length} account${selectedAccounts.length === 1 ? "" : "s"}?`, description: "Their stored credentials are removed too. This cannot be undone.", tone: "danger" }))) return;
     selectedAccounts.forEach((account) => deleteAccount.mutate(account.id));
     toast.success("Accounts removed", `${selectedAccounts.length} account${selectedAccounts.length === 1 ? "" : "s"} deleted.`);
     setSelected(new Set());
   };
 
-  const handleDeleteAccount = (account: QuotaAccount) => {
-    if (!window.confirm(`Delete ${account.label || account.provider_name} account? This cannot be undone.`)) return;
+  const handleDeleteAccount = async (account: QuotaAccount) => {
+    if (!(await confirm({ title: `Delete ${account.label || account.provider_name}?`, description: "The account and its stored credentials are removed. This cannot be undone.", tone: "danger" }))) return;
     deleteAccount.mutate(account.id, {
       onSuccess: () => toast.success("Account removed", "The provider account and its stored secrets were deleted."),
     });
@@ -339,7 +338,7 @@ export function QuotaPage() {
                     : "border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-muted)]"
                 }`}
               >
-                <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? "bg-emerald-500" : "bg-[var(--text-muted)]"}`} />
+                <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? "bg-ok" : "bg-[var(--text-muted)]"}`} />
                 {autoRefresh ? `Auto refresh · ${countdown}s` : "Auto refresh off"}
               </button>
             </div>
@@ -391,7 +390,7 @@ export function QuotaPage() {
                 {selectedCanPause.length > 0 && (
                   <button type="button" onClick={() => applyBulkState(selectedCanPause, true)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 font-medium hover:bg-[var(--bg-subtle)]">Pause</button>
                 )}
-                <button type="button" onClick={handleBulkDelete} className="rounded-lg border border-red-300/60 bg-[var(--bg-elevated)] px-2.5 py-1.5 font-medium text-red-600 hover:bg-red-50 dark:border-red-700/50 dark:text-red-300 dark:hover:bg-red-950/20">Delete</button>
+                <button type="button" onClick={handleBulkDelete} className="rounded-lg border border-red-300/60 bg-[var(--bg-elevated)] px-2.5 py-1.5 font-medium text-bad hover:bg-red-50 dark:border-red-700/50 dark:text-red-300 dark:hover:bg-red-950/20">Delete</button>
                 <button type="button" onClick={() => setSelected(new Set())} className="px-2 py-1.5 text-[var(--text-muted)] hover:text-[var(--text)]">Clear</button>
               </div>
             )}
@@ -421,7 +420,7 @@ export function QuotaPage() {
                 <div className="hidden overflow-x-auto md:block">
                   <table className="w-full min-w-[1120px] text-xs">
                     <thead>
-                      <tr className="border-b border-[var(--border)] text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                      <tr className="border-b border-[var(--border)] text-[11.5px] font-medium text-[var(--text-muted)]">
                         <th className="w-12 px-4 py-3 text-left">
                           <input
                             type="checkbox"
@@ -483,7 +482,7 @@ function CapacityActions({
 }) {
   return (
     <div className="flex flex-col gap-3 rounded-xl border border-amber-300/60 bg-amber-50/40 px-4 py-3 dark:border-amber-700/40 dark:bg-amber-950/10 lg:flex-row lg:items-center">
-      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+      <AlertTriangle className="h-4 w-4 shrink-0 text-warn" />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold">Capacity actions available</p>
         <p className="mt-0.5 text-xs text-[var(--text-muted)]">
@@ -492,7 +491,7 @@ function CapacityActions({
       </div>
       <div className="flex flex-wrap gap-2">
         {depleted > 0 && (
-          <button type="button" onClick={onPauseDepleted} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-300/70 bg-[var(--bg-elevated)] px-3 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-700/50 dark:text-red-300 dark:hover:bg-red-950/20">
+          <button type="button" onClick={onPauseDepleted} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-300/70 bg-[var(--bg-elevated)] px-3 text-xs font-medium text-bad hover:bg-red-50 dark:border-red-700/50 dark:text-red-300 dark:hover:bg-red-950/20">
             <PowerOff className="h-3.5 w-3.5" /> Pause depleted ({depleted})
           </button>
         )}
@@ -527,11 +526,11 @@ function SummaryGroupCard({
       background: "bg-secondary-50 ring-secondary-200/70 dark:bg-secondary-950/30 dark:ring-secondary-900/60",
     },
     success: {
-      icon: "text-emerald-600 dark:text-emerald-300",
+      icon: "text-ok",
       background: "bg-emerald-50 ring-emerald-200/70 dark:bg-emerald-950/30 dark:ring-emerald-900/60",
     },
     warning: {
-      icon: "text-amber-700 dark:text-amber-300",
+      icon: "text-warn",
       background: "bg-amber-50 ring-amber-200/70 dark:bg-amber-950/30 dark:ring-amber-900/60",
     },
   };
@@ -543,7 +542,7 @@ function SummaryGroupCard({
         <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ${colors.background}`}>
           <Icon className={`h-4 w-4 ${colors.icon}`} />
         </span>
-        <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{title}</span>
+        <span className="text-xs font-medium text-[var(--text-muted)]">{title}</span>
       </div>
       <div className="mt-4 flex items-baseline gap-2">
         <span className="text-3xl font-semibold tracking-tight tabular-nums">{primary}</span>
@@ -554,12 +553,12 @@ function SummaryGroupCard({
           <div key={item.label} className="min-w-0">
             <div className={`truncate text-xs font-semibold tabular-nums sm:text-sm ${
               item.tone === "good"
-                ? "text-emerald-600 dark:text-emerald-300"
+                ? "text-ok"
                 : item.tone === "danger"
-                  ? "text-red-600 dark:text-red-300"
+                  ? "text-bad"
                   : "text-[var(--text)]"
             }`} title={item.value}>{item.value}</div>
-            <div className="mt-0.5 text-[9px] font-medium uppercase tracking-wider text-[var(--text-muted)]">{item.label}</div>
+            <div className="mt-0.5 text-[9px] font-medium text-[var(--text-muted)]">{item.label}</div>
           </div>
         ))}
       </div>
@@ -770,12 +769,12 @@ function QuotaAccountMobile({
 
       <div className="mt-3 grid grid-cols-2 gap-3 border-t border-[var(--border)] pt-3">
         <div>
-          <div className="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Period usage</div>
+          <div className="text-[9px] font-medium text-[var(--text-muted)]">Period usage</div>
           <div className="mt-1 text-xs font-semibold tabular-nums">{fmtInteger(account.total_requests)} requests</div>
           <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{fmtCompact(account.prompt_tokens + account.completion_tokens)} tokens</div>
         </div>
         <div className="text-right">
-          <div className="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">Attributed cost</div>
+          <div className="text-[9px] font-medium text-[var(--text-muted)]">Attributed cost</div>
           <div className="mt-1 text-xs font-semibold tabular-nums">{fmtUSD(account.cost_usd)}</div>
           <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">Priority {account.priority}</div>
         </div>
@@ -797,7 +796,7 @@ function QuotaAccountMobile({
           {account.status === "paused" ? <Power className="h-3.5 w-3.5" /> : <PowerOff className="h-3.5 w-3.5" />}
           {account.status === "paused" ? "Enable" : "Pause"}
         </button>
-        <button type="button" onClick={onDelete} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-300/50 px-2.5 text-[10px] font-medium text-red-600 hover:bg-red-50 dark:border-red-700/40 dark:text-red-300 dark:hover:bg-red-950/20">
+        <button type="button" onClick={onDelete} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-300/50 px-2.5 text-[10px] font-medium text-bad hover:bg-red-50 dark:border-red-700/40 dark:text-red-300 dark:hover:bg-red-950/20">
           <Trash2 className="h-3.5 w-3.5" /> Delete
         </button>
       </div>
@@ -830,17 +829,17 @@ function QuotaVisibilityCell({ account, expanded, onExpand }: { account: QuotaAc
       error: {
         label: "Refresh failed",
         detail: account.message || "Retry the upstream quota request.",
-        tone: "bg-red-500",
+        tone: "bg-bad",
       },
       pending: {
         label: "Not yet reported",
         detail: "The provider supports upstream limits.",
-        tone: "bg-amber-500",
+        tone: "bg-warn",
       },
       unavailable: {
         label: "Not reported",
         detail: account.message || "The provider returned no limit buckets.",
-        tone: "bg-amber-500",
+        tone: "bg-warn",
       },
     };
     const item = content[state] ?? content.unavailable;
@@ -903,7 +902,7 @@ function QuotaDetails({ account }: { account: QuotaAccount }) {
       <div className="hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[680px] text-xs">
           <thead>
-            <tr className="border-b border-[var(--border)] text-[9px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+            <tr className="border-b border-[var(--border)] text-[9px] font-medium text-[var(--text-muted)]">
               <th className="px-4 py-2.5 text-left">Resource</th>
               <th className="px-3 py-2.5 text-left">Consumption</th>
               <th className="px-3 py-2.5 text-right">Used</th>
@@ -1041,9 +1040,9 @@ function accountAttentionScore(account: QuotaAccount): number {
 }
 
 function quotaColor(remaining: number): { bar: string; text: string } {
-  if (remaining > 70) return { bar: "bg-emerald-500", text: "text-emerald-600 dark:text-emerald-300" };
-  if (remaining >= 30) return { bar: "bg-amber-500", text: "text-amber-600 dark:text-amber-300" };
-  return { bar: "bg-red-500", text: "text-red-600 dark:text-red-300" };
+  if (remaining > 70) return { bar: "bg-ok", text: "text-ok" };
+  if (remaining >= 30) return { bar: "bg-warn", text: "text-warn" };
+  return { bar: "bg-bad", text: "text-bad" };
 }
 
 function formatCountdown(value: string | number): string {

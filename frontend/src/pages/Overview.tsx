@@ -1,61 +1,84 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import {
-  Activity,
-  AlertTriangle,
-  ArrowUpRight,
-  Database,
-  DollarSign,
-  Layers3,
-  RefreshCw,
-  ShieldCheck,
-  Timer,
-  TrendingUp,
-  Wallet,
-  type LucideIcon,
-} from "lucide-react";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { AlertTriangle, ArrowRight, Check, ChevronRight, Copy, Plus, RefreshCw } from "lucide-react";
 import {
   api,
-  type ProviderUsage,
+  connectUsageStream,
+  type BudgetStatus,
+  type ChainUsage,
+  type HealthTimelineProvider,
+  type ModelUsage,
   type RecentActivity,
   type SeriesPoint,
   type UsageInsights,
-  type UsageTerminalStatus,
 } from "../lib/api";
-import { microsToUSD } from "../lib/format";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
-import {
-  Badge,
-  Card,
-  EmptyState,
-  ErrorCard,
-  SegmentedControl,
-  Skeleton,
-  TablePagination,
-  useClientPagination,
-} from "../components/ui";
+import { ProviderLogo } from "../components/ProviderLogo";
+import { ErrorCard, Skeleton } from "../components/ui";
+import { useToast } from "../components/Toast";
 
-const PERIODS = [
-  { value: "today", label: "Today" },
-  { value: "week", label: "7D" },
-  { value: "month", label: "30D" },
-];
+// ── Period model ─────────────────────────────────────────────────────────────
+
+type PeriodKey = "24h" | "7d" | "30d" | "90d";
+
+const PERIODS: Record<PeriodKey, { label: string; buckets: number; text: string; vs: string }> = {
+  "24h": { label: "24h", buckets: 24, text: "last 24 hours", vs: "compared with the 24 hours before" },
+  "7d": { label: "7d", buckets: 42, text: "last 7 days", vs: "compared with the 7 days before" },
+  "30d": { label: "30d", buckets: 30, text: "last 30 days", vs: "compared with the 30 days before" },
+  "90d": { label: "90d", buckets: 45, text: "last 90 days", vs: "compared with the 90 days before" },
+};
+const PERIOD_KEYS = Object.keys(PERIODS) as PeriodKey[];
+const PERIOD_STORAGE_KEY = "kr.overview.period";
+
+function readStoredPeriod(): PeriodKey {
+  try {
+    const raw = localStorage.getItem(PERIOD_STORAGE_KEY);
+    if (raw && raw in PERIODS) return raw as PeriodKey;
+  } catch {
+    /* storage unavailable: fall through to the default */
+  }
+  return "7d";
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 export function OverviewPage() {
-  const [period, setPeriod] = useState("week");
+  const [period, setPeriodState] = useState<PeriodKey>(readStoredPeriod);
+  const setPeriod = (p: PeriodKey) => {
+    setPeriodState(p);
+    try {
+      localStorage.setItem(PERIOD_STORAGE_KEY, p);
+    } catch {
+      /* non-essential */
+    }
+  };
+  const cfg = PERIODS[period];
+  const qc = useQueryClient();
+
+  const insightsKey = ["usage-insights", period, "overview"] as const;
   const insights = useQuery({
-    queryKey: ["usage-insights", period],
-    queryFn: () => api.usageInsights(period),
+    queryKey: insightsKey,
+    queryFn: () => api.usageInsights(period, { limit: 8, buckets: cfg.buckets }),
+    staleTime: 15_000,
+    placeholderData: (previous) => previous,
+  });
+  const models = useQuery({
+    queryKey: ["model-usage", period],
+    queryFn: () => api.modelUsage(period),
+    staleTime: 30_000,
+    placeholderData: (previous) => previous,
+  });
+  const timeline = useQuery({
+    queryKey: ["health-timeline", "24h"],
+    queryFn: () => api.healthTimeline("24h", 24),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+  const chains = useQuery({
+    queryKey: ["chain-usage", period],
+    queryFn: () => api.chainUsage(period),
     staleTime: 30_000,
     placeholderData: (previous) => previous,
   });
@@ -64,606 +87,1296 @@ export function OverviewPage() {
     queryFn: () => api.budgetStatus(),
     staleTime: 30_000,
     refetchInterval: 60_000,
-    placeholderData: (previous) => previous,
   });
 
-  const alerts = (budgets.data?.budgets ?? []).filter((budget) => budget.pct_used >= budget.alert_pct);
-  const blocked = alerts.filter((budget) => budget.pct_used >= 100 && budget.hard_cutoff);
-  const warnings = alerts.filter((budget) => budget.pct_used < 100 || !budget.hard_cutoff);
-  const isRefreshing = insights.isFetching && !insights.isLoading;
+  // Live: the usage stream is an invalidation signal. Coalesce bursts so a
+  // busy gateway refreshes the page at most every few seconds.
+  const [live, setLive] = useState(false);
+  const lastRefresh = useRef(0);
+  useEffect(() => {
+    let timer: number | undefined;
+    const stop = connectUsageStream(() => {
+      setLive(true);
+      const wait = Math.max(0, 4_000 - (Date.now() - lastRefresh.current));
+      if (timer !== undefined) return;
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        lastRefresh.current = Date.now();
+        qc.invalidateQueries({ queryKey: ["usage-insights"] });
+        qc.invalidateQueries({ queryKey: ["model-usage"] });
+        qc.invalidateQueries({ queryKey: ["chain-usage"] });
+      }, wait);
+    });
+    return () => {
+      stop();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [qc]);
+
+  const data = insights.data;
+  const firstRun = !!data && data.summary.total_requests === 0 && (data.previous?.total_requests ?? 0) === 0;
+  const refreshing = insights.isFetching && !insights.isLoading;
+
+  const refreshAll = () => {
+    qc.invalidateQueries({ queryKey: ["usage-insights"] });
+    qc.invalidateQueries({ queryKey: ["model-usage"] });
+    qc.invalidateQueries({ queryKey: ["health-timeline"] });
+    qc.invalidateQueries({ queryKey: ["chain-usage"] });
+    qc.invalidateQueries({ queryKey: ["budget-status"] });
+  };
 
   return (
     <>
       <PageHeader
-        title="Overview"
-        icon={Activity}
-        description="A concise view of traffic, spend, and routing performance."
+        title={firstRun ? "Welcome to KeiRouter" : "Overview"}
+        description={
+          firstRun
+            ? "Your gateway is running. A few more steps and your tools start routing through it."
+            : `Traffic, spend and routing health across every provider · ${cfg.text}, ${cfg.vs}`
+        }
         action={
-          <div className="flex items-center gap-2">
-            <SegmentedControl value={period} onChange={setPeriod} options={PERIODS} />
-            <button
-              type="button"
-              onClick={() => insights.refetch()}
-              disabled={insights.isFetching}
-              aria-label="Refresh overview"
-              title="Refresh overview"
-              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-muted)] shadow-sm transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] disabled:opacity-60"
+          <>
+            <BaseUrlChip />
+            {!firstRun && (
+              <>
+                {live && (
+                  <span className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12px] font-medium text-fg-muted">
+                    <span className="live-dot h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
+                    Live
+                  </span>
+                )}
+                <PeriodSelect value={period} onChange={setPeriod} />
+                <button
+                  type="button"
+                  onClick={refreshAll}
+                  aria-label="Refresh overview"
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+                >
+                  <RefreshCw className={cn("h-3.5 w-3.5", refreshing && "animate-spin")} />
+                </button>
+              </>
+            )}
+            <Link
+              to="/providers"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-medium text-primary-fg transition-opacity hover:opacity-85 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 focus-visible:ring-offset-2"
             >
-              <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
-            </button>
-          </div>
+              <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+              Connect provider
+            </Link>
+          </>
         }
       />
 
-      <BudgetNotice blocked={blocked} warnings={warnings} />
+      <BudgetNotice budgets={budgets.data?.budgets ?? []} />
 
       {insights.isLoading ? (
         <OverviewSkeleton />
-      ) : insights.isError ? (
-        <ErrorCard message="Failed to load overview data. Is the backend running?" />
-      ) : insights.data ? (
-        <InsightsDashboard data={insights.data} />
-      ) : null}
+      ) : insights.isError || !data ? (
+        <ErrorCard message="Couldn't load the overview. Is the backend running?" />
+      ) : firstRun ? (
+        <FirstRun />
+      ) : (
+        <div className="space-y-5">
+          <KpiStrip data={data} />
+
+          <div className="grid gap-5 xl:grid-cols-3">
+            <TrafficCard data={data} className="xl:col-span-2" />
+            <ProviderHealthCard providers={timeline.data?.providers} loading={timeline.isLoading} />
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-3">
+            <TopModelsCard models={models.data?.models} loading={models.isLoading} periodText={cfg.text} className="xl:col-span-2" />
+            <SavingsCard data={data} />
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-3">
+            <ChainsCard chains={chains.data?.chains} loading={chains.isLoading} periodText={cfg.text} className="xl:col-span-2" />
+            <LimitsCard budgets={budgets.data?.budgets} loading={budgets.isLoading} />
+          </div>
+
+          <RecentRequestsCard recent={data.recent} />
+        </div>
+      )}
     </>
   );
 }
 
-function BudgetNotice({
-  blocked,
-  warnings,
-}: {
-  blocked: Array<{ scope_name: string; limit_micros: number; period: string }>;
-  warnings: Array<{ scope_name: string; pct_used: number }>;
-}) {
-  if (blocked.length === 0 && warnings.length === 0) return null;
-  const isBlocked = blocked.length > 0;
-  const items = isBlocked
-    ? blocked.map((budget) => `${budget.scope_name} · ${microsToUSD(budget.limit_micros)} ${budget.period}`)
-    : warnings.map((budget) => `${budget.scope_name} · ${budget.pct_used.toFixed(0)}% used`);
+// ── Header controls ──────────────────────────────────────────────────────────
 
+function PeriodSelect({ value, onChange }: { value: PeriodKey; onChange: (p: PeriodKey) => void }) {
   return (
-    <div className={`mb-6 flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center ${
-      isBlocked
-        ? "border-red-300/70 bg-red-50/60 dark:border-red-700/50 dark:bg-red-950/20"
-        : "border-amber-300/70 bg-amber-50/60 dark:border-amber-700/50 dark:bg-amber-950/20"
-    }`}>
-      {isBlocked
-        ? <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
-        : <Wallet className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />}
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-[var(--text)]">
-          {isBlocked ? "Plan limit reached" : "Plan threshold reached"}
-        </p>
-        <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]" title={items.join(", ")}>
-          {items.join(" · ")}
-        </p>
-      </div>
-      <Link
-        to="/plans"
-        className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-[var(--text)] hover:text-accent-600"
+    <div className="inline-flex h-8 items-center rounded-xl border border-line bg-subtle p-0.5" role="radiogroup" aria-label="Time range">
+      {PERIOD_KEYS.map((key) => {
+        const active = key === value;
+        return (
+          <button
+            key={key}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(key)}
+            className={cn(
+              "h-full rounded-lg px-2.5 font-mono text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+              active ? "bg-surface text-fg shadow-[0_0_0_1px_var(--border-strong)]" : "text-fg-muted hover:text-fg",
+            )}
+          >
+            {PERIODS[key].label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// The base URL is the single most-copied value in the app. In production the
+// dashboard is served by the gateway itself and in development Vite proxies
+// /v1, so the page origin is always the correct client-facing endpoint.
+function BaseUrlChip() {
+  const toast = useToast();
+  const url = `${window.location.origin}/v1`;
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Base URL copied", url);
+    } catch {
+      toast.error("Couldn't copy", "Your browser blocked clipboard access.");
+    }
+  };
+  return (
+    <div className="hidden h-8 items-center overflow-hidden rounded-lg border border-line bg-surface md:inline-flex">
+      <span className="flex h-full items-center border-r border-line px-2.5 text-[12px] text-fg-faint">Base URL</span>
+      <span className="px-2.5 font-mono text-[12px] text-fg">{url}</span>
+      <button
+        type="button"
+        onClick={copy}
+        aria-label="Copy base URL"
+        className="flex h-full w-8 items-center justify-center border-l border-line bg-subtle text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500/40"
       >
-        Manage plans <ArrowUpRight className="h-3.5 w-3.5" />
+        <Copy className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+function BudgetNotice({ budgets }: { budgets: BudgetStatus[] }) {
+  const over = budgets.filter((b) => usedPct(b) >= 100 && b.hard_cutoff);
+  const near = budgets.filter((b) => usedPct(b) >= b.alert_pct && !(usedPct(b) >= 100 && b.hard_cutoff));
+  if (over.length === 0 && near.length === 0) return null;
+  const blocked = over.length > 0;
+  const list = (blocked ? over : near).map((b) => `${b.scope_name} · ${Math.round(usedPct(b))}%`).join("  ·  ");
+  return (
+    <div
+      role="status"
+      className={cn(
+        "mb-5 flex items-center gap-3 rounded-2xl border px-4 py-2.5 text-[13px]",
+        blocked ? "border-bad/30 bg-bad/5" : "border-warn/30 bg-warn/5",
+      )}
+    >
+      <AlertTriangle className={cn("h-4 w-4 shrink-0", blocked ? "text-bad" : "text-warn")} />
+      <p className="min-w-0 flex-1 truncate">
+        <span className="font-medium text-fg">{blocked ? "Budget limit reached — requests are being blocked." : "Budget alert threshold reached."}</span>{" "}
+        <span className="text-fg-muted" title={list}>{list}</span>
+      </p>
+      <Link to="/plans" className="shrink-0 text-[12px] font-medium text-accent-500 hover:underline">
+        Review budgets
       </Link>
     </div>
   );
 }
 
-function OverviewSkeleton() {
+// ── Shared card chrome ───────────────────────────────────────────────────────
+
+function Panel({ className, children, label }: { className?: string; children: ReactNode; label: string }) {
   return (
-    <div className="space-y-6 pb-12">
-      <div className="grid gap-4 lg:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <Card key={index} className="p-5">
-            <Skeleton className="h-8 w-28" />
-            <Skeleton className="mt-4 h-9 w-32" />
-            <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[var(--border)] pt-3">
-              {Array.from({ length: 3 }).map((__, item) => <Skeleton key={item} className="h-8 w-full" />)}
-            </div>
-          </Card>
-        ))}
+    <section aria-label={label} className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
+      {children}
+    </section>
+  );
+}
+
+function PanelHeader({ title, subtitle, action }: { title: ReactNode; subtitle?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+      <div className="min-w-0">
+        <h2 className="text-[13px] font-semibold tracking-[-0.005em] text-fg">{title}</h2>
+        {subtitle && <p className="mt-0.5 text-[12px] text-fg-muted">{subtitle}</p>}
       </div>
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,1fr)]">
-        <Card className="p-6"><Skeleton className="h-72 w-full" /></Card>
-        <Card className="p-6"><Skeleton className="h-72 w-full" /></Card>
-      </div>
-      <Card className="p-6"><Skeleton className="h-28 w-full" /></Card>
-      <Card className="p-6"><Skeleton className="h-96 w-full" /></Card>
+      {action}
     </div>
   );
 }
 
-function InsightsDashboard({ data }: { data: UsageInsights }) {
-  const { summary, savings, providers, recent, series } = data;
-
+function PanelLink({ to, children }: { to: string; children: ReactNode }) {
   return (
-    <div className="space-y-6 pb-12">
-      <div className="grid gap-4 lg:grid-cols-3">
-        <SummaryGroupCard
-          icon={Activity}
-          title="Traffic"
-          primary={fmtCompact(summary.total_requests)}
-          primaryLabel="requests"
-          items={[
-            { label: "Input", value: fmtCompact(summary.prompt_tokens) },
-            { label: "Output", value: fmtCompact(summary.completion_tokens) },
-            { label: "Cache read", value: fmtCompact(summary.cached_tokens) },
-          ]}
-        />
-        <SummaryGroupCard
-          icon={DollarSign}
-          title="Spend & value"
-          primary={fmtUSD(summary.cost_usd)}
-          primaryLabel="tracked cost"
-          tone={summary.unpriced_requests > 0 ? "warning" : "accent"}
-          items={[
-            { label: "Value saved", value: fmtUSD(savings.usd_saved), tone: "good" },
-            { label: "Cost / request", value: fmtUSD(summary.cost_per_request_usd) },
-            { label: "Pricing coverage", value: fmtCoverage(summary.pricing_request_coverage) },
-          ]}
-        />
-        <SummaryGroupCard
-          icon={ShieldCheck}
-          title="Reliability"
-          primary={fmtPercent(summary.success_rate)}
-          primaryLabel="successful"
-          tone={summary.success_rate < 0.95 && summary.total_requests > 0 ? "warning" : "success"}
-          items={[
-            { label: "Failed", value: fmtCompact(summary.failed_requests), tone: summary.failed_requests > 0 ? "danger" : undefined },
-            { label: "Avg latency", value: fmtMs(summary.avg_latency_ms) },
-            { label: "TTFT", value: fmtMs(summary.avg_ttft_ms) },
-          ]}
-        />
-      </div>
+    <Link to={to} className="inline-flex items-center gap-1 text-[12px] font-medium text-accent-500 hover:underline hover:underline-offset-2 dark:text-accent-400">
+      {children}
+      <ArrowRight className="h-3 w-3" />
+    </Link>
+  );
+}
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,1fr)]">
-        <TrendCard series={series} busiest={data.busiest} />
-        <ProviderPerformance providers={providers} />
-      </div>
-
-      <TokenComposition data={data} />
-      <RecentActivityTable recent={recent} providers={providers} />
+function PanelEmpty({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-1 px-6 py-10 text-center">
+      <p className="text-[13px] font-medium text-fg">{title}</p>
+      {hint && <p className="max-w-sm text-[12px] text-fg-muted">{hint}</p>}
+      {action && <div className="mt-2">{action}</div>}
     </div>
   );
 }
 
-type SummaryTone = "accent" | "success" | "warning";
+// ── KPI strip ────────────────────────────────────────────────────────────────
 
-function SummaryGroupCard({
-  icon: Icon,
-  title,
-  primary,
-  primaryLabel,
-  items,
-  tone = "accent",
-}: {
-  icon: LucideIcon;
-  title: string;
-  primary: string;
-  primaryLabel: string;
-  items: Array<{ label: string; value: string; tone?: "good" | "danger" }>;
-  tone?: SummaryTone;
-}) {
-  const tones: Record<SummaryTone, { icon: string; background: string }> = {
-    accent: {
-      icon: "text-secondary-600 dark:text-secondary-300",
-      background: "bg-secondary-50 ring-secondary-200/70 dark:bg-secondary-950/30 dark:ring-secondary-900/60",
-    },
-    success: {
-      icon: "text-emerald-600 dark:text-emerald-300",
-      background: "bg-emerald-50 ring-emerald-200/70 dark:bg-emerald-950/30 dark:ring-emerald-900/60",
-    },
-    warning: {
-      icon: "text-amber-700 dark:text-amber-300",
-      background: "bg-amber-50 ring-amber-200/70 dark:bg-amber-950/30 dark:ring-amber-900/60",
-    },
-  };
-  const colors = tones[tone];
+type DeltaTone = "good" | "bad" | "flat";
 
-  return (
-    <Card className="p-5">
-      <div className="flex items-center gap-2">
-        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ${colors.background}`}>
-          <Icon className={`h-4 w-4 ${colors.icon}`} />
-        </span>
-        <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{title}</span>
-      </div>
-      <div className="mt-4 flex items-baseline gap-2">
-        <span className="text-3xl font-semibold tracking-tight tabular-nums text-[var(--text)]">{primary}</span>
-        <span className="text-xs text-[var(--text-muted)]">{primaryLabel}</span>
-      </div>
-      <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[var(--border)] pt-3">
-        {items.map((item) => (
-          <div key={item.label} className="min-w-0">
-            <div className={`truncate text-xs font-semibold tabular-nums sm:text-sm ${
-              item.tone === "good"
-                ? "text-emerald-600 dark:text-emerald-300"
-                : item.tone === "danger"
-                  ? "text-red-600 dark:text-red-300"
-                  : "text-[var(--text)]"
-            }`} title={item.value}>{item.value}</div>
-            <div className="mt-0.5 text-[9px] font-medium uppercase tracking-wider text-[var(--text-muted)]">{item.label}</div>
-          </div>
-        ))}
-      </div>
-    </Card>
-  );
-}
+function KpiStrip({ data }: { data: UsageInsights }) {
+  const s = data.summary;
+  const p = data.previous;
+  const series = data.series;
+  const gross = s.cost_usd + data.savings.usd_saved;
 
-type TrendMetric = "requests" | "tokens" | "cost" | "failures";
-type TrendPoint = SeriesPoint & { total_tokens: number };
-
-const TREND_OPTIONS = [
-  { value: "requests", label: "Requests" },
-  { value: "tokens", label: "Tokens" },
-  { value: "cost", label: "Cost" },
-  { value: "failures", label: "Failures" },
-];
-
-const TREND_CONFIG: Record<TrendMetric, { key: keyof TrendPoint; label: string; color: string }> = {
-  requests: { key: "requests", label: "Requests", color: "var(--color-chart-1)" },
-  tokens: { key: "total_tokens", label: "Tokens", color: "var(--color-chart-2)" },
-  cost: { key: "cost_usd", label: "Cost", color: "var(--color-accent-500)" },
-  failures: { key: "failures", label: "Failures", color: "var(--color-danger)" },
-};
-
-function TrendCard({ series, busiest }: { series: SeriesPoint[]; busiest: string }) {
-  const [metric, setMetric] = useState<TrendMetric>("requests");
-  const points = useMemo<TrendPoint[]>(
-    () => series.map((point) => ({
-      ...point,
-      requests: point.requests || point.count,
-      total_tokens: point.prompt_tokens + point.completion_tokens,
-    })),
-    [series],
-  );
-  const config = TREND_CONFIG[metric];
-
-  return (
-    <Card className="flex min-h-[370px] flex-col">
-      <div className="flex flex-col gap-3 border-b border-[var(--border)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-2.5">
-          <TrendingUp className="mt-0.5 h-4 w-4 text-[var(--text-muted)]" />
-          <div>
-            <h2 className="text-sm font-semibold">Usage trend</h2>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">
-              {busiest ? `Busiest request bucket: ${busiest}` : "Volume across the selected period."}
-            </p>
-          </div>
-        </div>
-        <SegmentedControl value={metric} onChange={(value) => setMetric(value as TrendMetric)} options={TREND_OPTIONS} />
-      </div>
-      {points.length === 0 ? (
-        <EmptyState title="No activity in this period." />
-      ) : (
-        <div className="min-h-0 flex-1 px-3 pb-4 pt-5 sm:px-5">
-          <ResponsiveContainer width="100%" height="100%" minHeight={260}>
-            <AreaChart data={points} margin={{ top: 4, right: 8, left: -8, bottom: 0 }}>
-              <defs>
-                <linearGradient id={`overview-${metric}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={config.color} stopOpacity={0.22} />
-                  <stop offset="95%" stopColor={config.color} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: "var(--text-muted)" }} minTickGap={28} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: "var(--text-muted)" }} width={46} tickFormatter={(value) => fmtAxis(Number(value), metric)} />
-              <Tooltip
-                cursor={{ stroke: "var(--border-strong)", strokeWidth: 1 }}
-                contentStyle={{
-                  background: "var(--bg-elevated)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "10px",
-                  fontSize: "12px",
-                  boxShadow: "var(--shadow-card)",
-                }}
-                formatter={(value) => [fmtTrendValue(Number(value), metric), config.label]}
-              />
-              <Area
-                type="monotone"
-                dataKey={config.key}
-                name={config.label}
-                stroke={config.color}
-                strokeWidth={2}
-                fill={`url(#overview-${metric})`}
-                animationDuration={350}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function ProviderPerformance({ providers }: { providers: ProviderUsage[] }) {
-  const { page, pages, paged, setPage, total } = useClientPagination(providers, 5);
-
-  return (
-    <Card className="flex min-h-[370px] flex-col">
-      <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
-        <div className="flex items-start gap-2.5">
-          <Database className="mt-0.5 h-4 w-4 text-[var(--text-muted)]" />
-          <div>
-            <h2 className="text-sm font-semibold">Provider mix</h2>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">Traffic share and delivery quality.</p>
-          </div>
-        </div>
-        <span className="text-xs tabular-nums text-[var(--text-muted)]">{providers.length} providers</span>
-      </div>
-      {providers.length === 0 ? (
-        <EmptyState title="No provider usage yet." />
-      ) : (
-        <>
-          <div className="flex-1 divide-y divide-[var(--border)] px-5">
-            {paged.map((provider) => (
-              <div key={provider.provider} className="py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <SmallProviderIcon provider={provider} className="h-6 w-6" />
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold" title={provider.display_name}>{provider.display_name}</div>
-                      <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
-                        {fmtPercent(provider.success_rate)} success · {fmtMs(provider.avg_latency_ms)} avg
-                      </div>
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <div className="text-xs font-semibold tabular-nums">{fmtCompact(provider.total_requests)} req</div>
-                    <div className="mt-0.5 text-[10px] tabular-nums text-[var(--text-muted)]">{fmtUSD(provider.cost_usd)}</div>
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-                    <div className="h-full rounded-full bg-secondary-500" style={{ width: `${Math.max(0, Math.min(100, provider.share_pct))}%` }} />
-                  </div>
-                  <span className="w-11 text-right text-[10px] font-medium tabular-nums text-[var(--text-muted)]">{provider.share_pct.toFixed(1)}%</span>
-                </div>
-              </div>
-            ))}
-          </div>
-          <TablePagination page={page} pages={pages} total={total} onPage={setPage} />
-        </>
-      )}
-    </Card>
-  );
-}
-
-function TokenComposition({ data }: { data: UsageInsights }) {
-  const { summary } = data;
-  const regularInput = Math.max(0, summary.prompt_tokens - summary.cached_tokens - summary.cache_write_tokens);
-  const total = summary.prompt_tokens + summary.completion_tokens;
-  const rows = [
-    { label: "Regular input", value: regularInput, color: "bg-secondary-500" },
-    { label: "Cache read", value: summary.cached_tokens, color: "bg-accent-500" },
-    { label: "Cache write", value: summary.cache_write_tokens, color: "bg-amber-500" },
+  const successSeries = series.filter((pt) => pt.requests > 0).map((pt) => 1 - pt.failures / pt.requests);
+  const items: {
+    label: string;
+    value: string;
+    sub?: string;
+    delta: { text: string; tone: DeltaTone } | null;
+    spark: number[];
+  }[] = [
     {
-      label: "Output",
-      value: summary.completion_tokens,
-      color: "bg-[var(--color-chart-4)]",
-      note: summary.reasoning_tokens > 0
-        ? `${((summary.completion_tokens / Math.max(1, total)) * 100).toFixed(1)}% · ${fmtCompact(summary.reasoning_tokens)} reasoning`
-        : undefined,
+      label: "Requests",
+      value: fmtInt(s.total_requests),
+      delta: relDelta(s.total_requests, p?.total_requests, "flat"),
+      spark: series.map((pt) => pt.requests),
+    },
+    {
+      label: "Success rate",
+      value: s.total_requests ? fmtPct(s.success_rate, 2) : "—",
+      delta: p && p.total_requests && s.total_requests ? ptsDelta(s.success_rate, p.success_rate) : null,
+      spark: successSeries,
+    },
+    {
+      label: "Latency p50",
+      value: fmtMs(s.p50_latency_ms),
+      sub: s.p95_latency_ms ? `p95 ${fmtMs(s.p95_latency_ms)}` : undefined,
+      delta: relDelta(s.p50_latency_ms, p?.p50_latency_ms, "lower-better"),
+      spark: series.filter((pt) => pt.avg_latency_ms > 0).map((pt) => pt.avg_latency_ms),
+    },
+    {
+      label: "Spend",
+      value: fmtUSD(s.cost_usd),
+      delta: relDelta(s.cost_usd, p?.cost_usd, "flat"),
+      spark: series.map((pt) => pt.cost_usd),
+    },
+    {
+      label: "Saved by optimizers",
+      value: fmtUSD(data.savings.usd_saved),
+      sub: gross > 0 ? `${fmtPct(data.savings.usd_saved / gross, 1)} of gross` : undefined,
+      delta: absUSDDelta(data.savings.usd_saved, p?.usd_saved),
+      spark: series.map((pt) => pt.saved_usd ?? 0),
     },
   ];
 
   return (
-    <Card>
-      <div className="grid gap-5 px-5 py-5 lg:grid-cols-[minmax(180px,0.55fr)_minmax(0,1.45fr)] lg:items-center lg:px-6">
-        <div className="flex items-start gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-subtle)] text-[var(--text-muted)]">
-            <Layers3 className="h-4 w-4" />
-          </span>
-          <div>
-            <h2 className="text-sm font-semibold">Token composition</h2>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-semibold tracking-tight tabular-nums">{fmtCompact(total)}</span>
-              <span className="text-xs text-[var(--text-muted)]">tokens</span>
-            </div>
-            <p className="mt-1 text-[10px] text-[var(--text-muted)]">{fmtCompact(summary.cache_hits)} request cache hits</p>
+    // gap-px over a line-coloured ground draws every divider for any column
+    // count; the last cell spans the spare column so no empty slot shows.
+    <Panel label="Key metrics" className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 xl:grid-cols-5">
+      {items.map((item) => (
+        <div key={item.label} className="flex min-w-0 flex-col gap-1.5 bg-surface px-4 pb-3 pt-3.5 sm:last:col-span-2 xl:last:col-span-1">
+          <span className="text-[12px] font-medium text-fg-muted">{item.label}</span>
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className="whitespace-nowrap text-[24px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-fg">{item.value}</span>
+            {item.sub && <span className="truncate text-[12px] tabular-nums text-fg-muted">{item.sub}</span>}
+          </div>
+          <div className="flex min-h-6 items-center justify-between gap-2">
+            {item.delta ? (
+              <span className={cn("whitespace-nowrap text-[12px] font-medium tabular-nums", deltaClass(item.delta.tone))}>{item.delta.text}</span>
+            ) : (
+              <span className="text-[12px] text-fg-faint">No prior data</span>
+            )}
+            <Sparkline values={item.spark} />
           </div>
         </div>
-        {total === 0 ? (
-          <p className="text-sm text-[var(--text-muted)]">No token usage recorded in this period.</p>
-        ) : (
-          <div className="min-w-0">
-            <div className="flex h-2.5 overflow-hidden rounded-full bg-[var(--bg-subtle)]" aria-label="Token composition">
-              {rows.filter((row) => row.value > 0).map((row) => (
-                <div
-                  key={row.label}
-                  className={row.color}
-                  style={{ width: `${(row.value / total) * 100}%` }}
-                  title={`${row.label}: ${fmtInteger(row.value)}`}
-                />
-              ))}
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3 sm:grid-cols-4">
-              {rows.map((row) => (
-                <div key={row.label} className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${row.color}`} />
-                    <span className="truncate text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">{row.label}</span>
-                  </div>
-                  <div className="mt-1 text-sm font-semibold tabular-nums">{fmtCompact(row.value)}</div>
-                  <div className="mt-0.5 truncate text-[10px] text-[var(--text-muted)]">
-                    {row.note || `${((row.value / total) * 100).toFixed(1)}% of total`}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </Card>
+      ))}
+    </Panel>
   );
 }
 
-function RecentActivityTable({ recent, providers }: { recent: RecentActivity[]; providers: ProviderUsage[] }) {
-  const { page, pages, paged, setPage, total } = useClientPagination(recent, 10);
-  const providerMap = useMemo(() => new Map(providers.map((provider) => [provider.provider, provider])), [providers]);
+function Sparkline({ values }: { values: number[] }) {
+  if (values.length < 2 || values.every((v) => v === values[0])) return <span className="h-6 w-[72px]" aria-hidden="true" />;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const points = values
+    .map((v, i) => `${((i / (values.length - 1)) * 100).toFixed(2)},${(25 - ((v - min) / span) * 21).toFixed(2)}`)
+    .join(" ");
+  return (
+    <svg width="72" height="24" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true" className="shrink-0">
+      <polyline
+        points={points}
+        fill="none"
+        stroke="var(--color-accent-500)"
+        strokeWidth="1.5"
+        vectorEffect="non-scaling-stroke"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+// ── Traffic chart ────────────────────────────────────────────────────────────
+
+type MetricKey = "requests" | "tokens" | "cost" | "latency";
+
+interface MetricDef {
+  label: string;
+  legendA: string;
+  legendB?: string;
+  /** Secondary series colour: "alt" = orange (failures), "soft" = light accent. */
+  bTone?: "alt" | "soft";
+  a: (p: SeriesPoint) => number;
+  b?: (p: SeriesPoint) => number;
+  fmt: (v: number) => string;
+  total: (d: UsageInsights) => string;
+}
+
+const METRICS: Record<MetricKey, MetricDef> = {
+  requests: {
+    label: "Requests",
+    legendA: "Succeeded",
+    legendB: "Failed",
+    bTone: "alt",
+    a: (p) => Math.max(0, p.requests - p.failures),
+    b: (p) => p.failures,
+    fmt: (v) => fmtCompact(v),
+    total: (d) => fmtInt(d.summary.total_requests),
+  },
+  tokens: {
+    label: "Tokens",
+    legendA: "Input",
+    legendB: "Output",
+    bTone: "soft",
+    a: (p) => p.prompt_tokens,
+    b: (p) => p.completion_tokens,
+    fmt: (v) => fmtCompact(v),
+    total: (d) => fmtCompact(d.summary.total_tokens),
+  },
+  cost: {
+    label: "Cost",
+    legendA: "Billed",
+    legendB: "Saved",
+    bTone: "soft",
+    a: (p) => p.cost_usd,
+    b: (p) => p.saved_usd ?? 0,
+    fmt: (v) => fmtUSD(v),
+    total: (d) => fmtUSD(d.summary.cost_usd),
+  },
+  latency: {
+    label: "Latency",
+    legendA: "Avg latency",
+    a: (p) => p.avg_latency_ms ?? 0,
+    fmt: (v) => fmtMs(v),
+    total: (d) => (d.summary.p95_latency_ms ? `p95 ${fmtMs(d.summary.p95_latency_ms)}` : "—"),
+  },
+};
+const METRIC_KEYS = Object.keys(METRICS) as MetricKey[];
+
+function TrafficCard({ data, className }: { data: UsageInsights; className?: string }) {
+  const [metric, setMetric] = useState<MetricKey>("requests");
+  const [hover, setHover] = useState<number | null>(null);
+  const def = METRICS[metric];
+  const series = data.series;
+
+  const { max, ticks } = useMemo(() => {
+    const peak = Math.max(0, ...series.map((p) => def.a(p) + (def.b ? def.b(p) : 0)));
+    return niceScale(peak);
+  }, [series, def]);
+
+  const labelEvery = Math.max(1, Math.ceil(series.length / 7));
+  const bColor = def.bTone === "alt" ? "var(--series-alt)" : "var(--color-accent-300)";
+  const hovered = hover !== null ? series[hover] : null;
 
   return (
-    <Card>
-      <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
-        <div className="flex items-start gap-2.5">
-          <Timer className="mt-0.5 h-4 w-4 text-[var(--text-muted)]" />
-          <div>
-            <h2 className="text-sm font-semibold">Recent requests</h2>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">Terminal request outcomes from the selected period.</p>
+    <Panel label="Traffic" className={cn("flex flex-col", className)}>
+      <div className="flex flex-wrap items-stretch border-b border-line" role="tablist" aria-label="Chart metric">
+        {METRIC_KEYS.map((key) => {
+          const active = key === metric;
+          return (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => setMetric(key)}
+              className={cn(
+                "flex min-w-[128px] flex-col items-start gap-0.5 border-r border-line px-4 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500/40",
+                active ? "bg-surface shadow-[inset_0_-2px_0_var(--color-accent-500)]" : "bg-subtle hover:bg-hover",
+              )}
+            >
+              <span className="text-[12px] font-medium text-fg-muted">{METRICS[key].label}</span>
+              <span className={cn("text-[16px] font-semibold tracking-[-0.01em] tabular-nums", active ? "text-fg" : "text-fg-muted")}>
+                {METRICS[key].total(data)}
+              </span>
+            </button>
+          );
+        })}
+        <div className="ml-auto flex items-center gap-3.5 px-4 py-2 text-[12px] text-fg-muted">
+          <LegendSwatch color="var(--color-accent-500)" label={def.legendA} />
+          {def.legendB && <LegendSwatch color={bColor} label={def.legendB} />}
+        </div>
+      </div>
+
+      <div className="flex flex-1 gap-2.5 px-4 pb-3 pt-4">
+        <div className="flex h-[220px] min-w-9 flex-col justify-between text-right text-[11px] tabular-nums text-fg-faint" aria-hidden="true">
+          {ticks.map((t) => (
+            <span key={t} className="-translate-y-1/2 first:translate-y-0 last:translate-y-0">{def.fmt(t)}</span>
+          ))}
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
+          <div className="relative h-[220px]" onMouseLeave={() => setHover(null)}>
+            {[0, 25, 50, 75].map((top) => (
+              <div key={top} className="absolute inset-x-0 border-t border-dashed border-line" style={{ top: `${top}%` }} />
+            ))}
+            <div className="absolute inset-x-0 bottom-0 border-t border-line-strong" />
+            <div className="absolute inset-0 flex items-end gap-[3px]" role="img" aria-label={`${def.label} over the selected period`}>
+              {series.map((p, i) => {
+                const a = def.a(p);
+                const b = def.b ? def.b(p) : 0;
+                return (
+                  <div
+                    key={p.start}
+                    className={cn("flex h-full min-w-[2px] flex-1 flex-col justify-end gap-px", hover !== null && hover !== i && "opacity-60")}
+                    onMouseEnter={() => setHover(i)}
+                  >
+                    {b > 0 && <div className="rounded-t-[2px]" style={{ height: `${(b / max) * 100}%`, background: bColor }} />}
+                    <div className={cn(b > 0 ? "rounded-[1px]" : "rounded-t-[2px]")} style={{ height: `${(a / max) * 100}%`, background: "var(--color-accent-500)" }} />
+                  </div>
+                );
+              })}
+            </div>
+            {hovered && (
+              <ChartTooltip
+                leftPct={((hover! + 0.5) / series.length) * 100}
+                title={formatBucket(hovered.start, series.length > 30 || data.period !== "24h")}
+                rows={[
+                  { label: def.legendA, value: def.fmt(def.a(hovered)), color: "var(--color-accent-500)" },
+                  ...(def.b && def.legendB ? [{ label: def.legendB, value: def.fmt(def.b(hovered)), color: bColor }] : []),
+                ]}
+              />
+            )}
+          </div>
+          <div className="relative h-4 text-[11px] tabular-nums text-fg-faint" aria-hidden="true">
+            {series.map((p, i) =>
+              i % labelEvery === 0 ? (
+                <span key={p.start} className="absolute -translate-x-0" style={{ left: `${(i / series.length) * 100}%` }}>
+                  {p.label}
+                </span>
+              ) : null,
+            )}
           </div>
         </div>
-        <Link to="/usage" className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text)]">
-          Full accounting <ArrowUpRight className="h-3.5 w-3.5" />
-        </Link>
       </div>
-      {recent.length === 0 ? (
-        <EmptyState title="No recent requests." hint="Make a request through the proxy to see it here." />
-      ) : (
-        <>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-xs">
-              <thead>
-                <tr className="border-b border-[var(--border)] text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                  <th className="px-5 py-3 text-left">Status</th>
-                  <th className="px-4 py-3 text-left">Provider / model</th>
-                  <th className="px-4 py-3 text-right">Tokens</th>
-                  <th className="px-4 py-3 text-right">Cost</th>
-                  <th className="px-4 py-3 text-right">Latency</th>
-                  <th className="px-5 py-3 text-right">Time</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {paged.map((row) => {
-                  const provider = providerMap.get(row.provider);
-                  return (
-                    <tr key={row.id} className="transition-colors hover:bg-[var(--bg-subtle)]/60">
-                      <td className="px-5 py-3"><RequestStatusBadge status={row.status} /></td>
-                      <td className="px-4 py-3">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <SmallProviderIcon provider={provider} className="h-7 w-7" />
-                          <div className="min-w-0">
-                            <div className="max-w-md truncate font-mono text-[11px] font-semibold" title={row.model}>{row.model || "Unknown model"}</div>
-                            <div className="mt-0.5 truncate text-[10px] text-[var(--text-muted)]">{provider?.display_name || row.provider}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums">
-                        <div className="font-semibold">{fmtInteger(row.prompt_tokens + row.completion_tokens)}</div>
-                        {(row.cached_tokens > 0 || row.reasoning_tokens > 0) && (
-                          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
-                            {row.cached_tokens > 0 ? `${fmtCompact(row.cached_tokens)} cached` : `${fmtCompact(row.reasoning_tokens)} reasoning`}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium tabular-nums">
-                        {row.pricing_status === "missing" ? "Unpriced" : fmtUSD(row.cost_usd)}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-[var(--text-muted)]">
-                        {fmtMs(row.end_to_end_latency_ms || row.latency_ms)}
-                      </td>
-                      <td className="whitespace-nowrap px-5 py-3 text-right text-[var(--text-muted)]" title={formatDateTime(row.created_at)}>
-                        {relativeTime(row.created_at)}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          <TablePagination page={page} pages={pages} total={total} onPage={setPage} />
-        </>
+
+      {data.busiest && (
+        <div className="border-t border-line bg-subtle px-4 py-2.5 text-[12px] text-fg-muted">
+          Busiest bucket <span className="font-medium text-fg">{data.busiest}</span>
+          {data.summary.cache_hits > 0 && (
+            <>
+              {" "}· <span className="tabular-nums text-fg">{fmtInt(data.summary.cache_hits)}</span> requests answered from the semantic cache
+            </>
+          )}
+        </div>
       )}
-    </Card>
+    </Panel>
   );
 }
 
-function RequestStatusBadge({ status }: { status: UsageTerminalStatus }) {
-  const config: Record<UsageTerminalStatus, { label: string; tone: "success" | "accent" | "warning" | "danger" | "neutral" }> = {
-    success: { label: "Success", tone: "success" },
-    cache_hit: { label: "Cache hit", tone: "accent" },
-    blocked: { label: "Blocked", tone: "warning" },
-    failed: { label: "Failed", tone: "danger" },
-    cancelled: { label: "Cancelled", tone: "neutral" },
-  };
-  const item = config[status] ?? { label: String(status), tone: "neutral" as const };
-  return <Badge tone={item.tone}>{item.label}</Badge>;
-}
-
-function SmallProviderIcon({ provider, className = "h-5 w-5" }: { provider?: ProviderUsage; className?: string }) {
-  const [errored, setErrored] = useState(false);
-  if (!provider || errored || !provider.icon) {
-    const label = provider?.display_name || "?";
-    return (
-      <div
-        className={`flex shrink-0 items-center justify-center rounded-md text-[9px] font-bold text-white ${className}`}
-        style={{ backgroundColor: provider?.color || "var(--color-ink-400)" }}
-        aria-hidden="true"
-      >
-        {label.slice(0, 1).toUpperCase()}
-      </div>
-    );
-  }
+function LegendSwatch({ color, label }: { color: string; label: string }) {
   return (
-    <img
-      src={provider.icon}
-      alt=""
-      onError={() => setErrored(true)}
-      className={`shrink-0 rounded-md object-contain ${className}`}
-    />
+    <span className="inline-flex items-center gap-1.5">
+      <span className="h-2 w-2 rounded-[2px]" style={{ background: color }} aria-hidden="true" />
+      {label}
+    </span>
   );
 }
 
-function fmtCompact(value: number): string {
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return value.toLocaleString();
+function ChartTooltip({ leftPct, title, rows }: { leftPct: number; title: string; rows: { label: string; value: string; color: string }[] }) {
+  const alignRight = leftPct > 70;
+  return (
+    <div
+      className="pointer-events-none absolute top-1 z-10 min-w-36 rounded-xl border border-line bg-surface px-2.5 py-2 text-[12px] shadow-[var(--shadow-pop)]"
+      style={alignRight ? { right: `${100 - leftPct}%`, marginRight: 8 } : { left: `${leftPct}%`, marginLeft: 8 }}
+    >
+      <p className="mb-1 font-medium text-fg">{title}</p>
+      {rows.map((r) => (
+        <p key={r.label} className="flex items-center gap-2 text-fg-muted">
+          <span className="h-2 w-2 rounded-[2px]" style={{ background: r.color }} />
+          {r.label}
+          <span className="ml-auto pl-3 font-medium tabular-nums text-fg">{r.value}</span>
+        </p>
+      ))}
+    </div>
+  );
 }
 
-function fmtInteger(value: number): string {
-  return Math.round(value).toLocaleString();
+// ── Provider health ──────────────────────────────────────────────────────────
+
+const TICK_CLASS: Record<string, string> = {
+  ok: "bg-ok/70",
+  degraded: "bg-warn",
+  down: "bg-bad",
+  idle: "bg-track",
+};
+
+function providerState(p: HealthTimelineProvider): { label: string; tone: "ok" | "warn" | "bad" | "idle" } {
+  if (p.requests === 0) return { label: "Idle", tone: "idle" };
+  const recent = p.buckets.slice(-3).map((b) => b.status);
+  if (recent.includes("down")) return { label: "Down", tone: "bad" };
+  if (recent.includes("degraded")) return { label: p.rate_limited > 0 ? "Rate limited" : "Degraded", tone: "warn" };
+  return { label: "Operational", tone: "ok" };
 }
 
-function fmtUSD(value: number): string {
-  if (value > 0 && value < 0.0001) return "<$0.0001";
-  if (value < 1) return `$${value.toFixed(4)}`;
-  return `$${value.toFixed(2)}`;
+function ProviderHealthCard({ providers, loading }: { providers?: HealthTimelineProvider[]; loading: boolean }) {
+  const rows = (providers ?? []).slice(0, 6);
+  return (
+    <Panel label="Provider health" className="flex flex-col">
+      <PanelHeader title="Provider health" subtitle="Success rate and worst p95 · last 24 hours" action={<PanelLink to="/provider-health">All providers</PanelLink>} />
+      {loading ? (
+        <div className="space-y-3 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-11 w-full" />)}</div>
+      ) : rows.length === 0 ? (
+        <PanelEmpty title="No provider traffic in the last 24 hours" hint="Health strips appear once requests flow through a provider." />
+      ) : (
+        <ul className="divide-y divide-line">
+          {rows.map((p) => {
+            const state = providerState(p);
+            return (
+              <li key={p.provider}>
+                <Link to={`/provider-health/${encodeURIComponent(p.provider)}`} className="block px-4 py-2.5 transition-colors hover:bg-hover">
+                  <div className="flex items-center gap-2.5">
+                    <ProviderLogo icon={p.icon} name={p.display_name} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] font-medium text-fg">{p.display_name}</p>
+                      <p className="truncate font-mono text-[11.5px] text-fg-faint">{p.provider}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className={cn("inline-flex items-center gap-1.5 text-[12px] font-medium", toneText(state.tone))}>
+                        <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
+                        {state.label}
+                      </p>
+                      <p className="text-[11.5px] tabular-nums text-fg-muted">
+                        {p.requests ? fmtPct(p.success_rate, 1) : "—"} · {fmtMs(p.worst_p95_ms)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-2 flex gap-[2px]" role="img" aria-label={`${p.display_name} hourly status, last 24 hours`}>
+                    {p.buckets.map((b) => (
+                      <span key={b.start} className={cn("h-4 min-w-[2px] flex-1 rounded-[1.5px]", TICK_CLASS[b.status] ?? "bg-track")} title={`${formatBucket(b.start, false)} · ${b.status}${b.requests ? ` · ${b.requests} req` : ""}`} />
+                    ))}
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Panel>
+  );
 }
 
-function fmtMs(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "—";
-  if (value < 1000) return `${Math.round(value)}ms`;
-  return `${(value / 1000).toFixed(2)}s`;
+// ── Top models ───────────────────────────────────────────────────────────────
+
+function TopModelsCard({ models, loading, periodText, className }: { models?: ModelUsage[]; loading: boolean; periodText: string; className?: string }) {
+  const rows = (models ?? []).slice(0, 6);
+  const total = (models ?? []).reduce((sum, m) => sum + m.total_requests, 0);
+  return (
+    <Panel label="Top models" className={className}>
+      <PanelHeader title="Top models" subtitle={`Ranked by requests · ${periodText}`} action={<PanelLink to="/usage">Open usage</PanelLink>} />
+      {loading ? (
+        <div className="space-y-2 p-4">{[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
+      ) : rows.length === 0 ? (
+        <PanelEmpty title="No model traffic in this period" />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[620px] text-[12.5px]">
+            <thead>
+              <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                <th className="px-4 py-2 font-medium">Model</th>
+                <th className="px-4 py-2 font-medium">Provider</th>
+                <th className="px-4 py-2 text-right font-medium">Requests</th>
+                <th className="px-4 py-2 text-right font-medium">Tokens</th>
+                <th className="px-4 py-2 text-right font-medium">Cost</th>
+                <th className="w-40 px-4 py-2 font-medium">Share</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {rows.map((m) => {
+                const share = total ? (m.total_requests / total) * 100 : 0;
+                return (
+                  <tr key={`${m.provider}/${m.model}`} className="transition-colors hover:bg-hover">
+                    <td className="max-w-[260px] truncate px-4 py-2 font-mono text-fg" title={m.model}>{m.model || "unknown"}</td>
+                    <td className="px-4 py-2">
+                      <span className="inline-flex items-center gap-2">
+                        <ProviderLogo icon={m.provider_icon} name={m.provider_name || m.provider} size={18} />
+                        <span className="font-mono text-[12px] text-fg-muted">{m.provider}</span>
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right text-fg">{fmtInt(m.total_requests)}</td>
+                    <td className="px-4 py-2 text-right text-fg-muted">{fmtCompact(m.total_tokens)}</td>
+                    <td className="px-4 py-2 text-right text-fg">{m.cost_usd > 0 ? fmtUSD(m.cost_usd) : m.pricing_status === "free" ? "Free" : "—"}</td>
+                    <td className="px-4 py-2">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-track">
+                          <div className="h-full rounded-full bg-accent-500" style={{ width: `${share}%` }} />
+                        </div>
+                        <span className="w-9 text-right text-[11.5px] tabular-nums text-fg-muted">{share.toFixed(share < 10 ? 1 : 0)}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
 }
 
-function fmtPercent(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
+// ── Savings ──────────────────────────────────────────────────────────────────
+
+function SavingsCard({ data }: { data: UsageInsights }) {
+  const sv = data.savings;
+  const gross = data.summary.cost_usd + sv.usd_saved;
+  const compressionTokens = sv.slim_tokens_saved + sv.headroom_tokens_saved;
+  const shaped = sv.caveman_requests + sv.terse_requests + sv.ponytail_requests;
+  const usdRows = [
+    { name: "Semantic cache", detail: `${fmtInt(data.summary.cache_hits)} requests served from cache`, usd: sv.avoided_cost_usd, opacity: 1 },
+    { name: "Input compression", detail: `${fmtCompact(compressionTokens)} prompt tokens removed (RTK + Headroom)`, usd: sv.saved_cost_usd, opacity: 0.45 },
+  ];
+  const usdTotal = usdRows.reduce((sum, r) => sum + r.usd, 0);
+
+  return (
+    <Panel label="Token savings" className="flex flex-col">
+      <PanelHeader title="Token savings" subtitle="Cache and compression before the bill" action={<PanelLink to="/settings">Configure</PanelLink>} />
+      <div className="flex items-baseline gap-2 px-4 pb-1 pt-4">
+        <span className="text-[24px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-fg">{fmtUSD(sv.usd_saved)}</span>
+        <span className="text-[12px] text-fg-muted">
+          saved{gross > 0 ? ` · ${fmtPct(sv.usd_saved / gross, 1)} of gross spend` : ""}
+          {sv.usd_saved_estimate ? " · estimated" : ""}
+        </span>
+      </div>
+      {usdTotal > 0 && (
+        <div className="mx-4 mt-3 flex h-2 gap-0.5 overflow-hidden rounded-full" role="img" aria-label="Savings split by optimizer">
+          {usdRows.map((r) => r.usd > 0 && <span key={r.name} className="bg-accent-500" style={{ width: `${(r.usd / usdTotal) * 100}%`, opacity: r.opacity }} />)}
+        </div>
+      )}
+      <ul className="mt-2 flex-1 pb-2">
+        {usdRows.map((r) => (
+          <li key={r.name} className="flex items-center gap-2.5 px-4 py-2">
+            <span className="h-2 w-2 shrink-0 rounded-[2px] bg-accent-500" style={{ opacity: r.opacity }} aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-medium text-fg">{r.name}</p>
+              <p className="truncate text-[11.5px] text-fg-faint">{r.detail}</p>
+            </div>
+            <span className="text-[13px] font-medium tabular-nums text-fg">{fmtUSD(r.usd)}</span>
+          </li>
+        ))}
+        <li className="flex items-center gap-2.5 px-4 py-2">
+          <span className="h-2 w-2 shrink-0 rounded-[2px] bg-track" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-medium text-fg">Output shaping</p>
+            <p className="truncate text-[11.5px] text-fg-faint">Caveman, Terse and Ponytail · not priced individually</p>
+          </div>
+          <span className="text-[13px] tabular-nums text-fg-muted">{fmtInt(shaped)} req</span>
+        </li>
+      </ul>
+    </Panel>
+  );
 }
 
-function fmtCoverage(value: number | null): string {
-  return value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+// ── Routing chains ───────────────────────────────────────────────────────────
+
+const STEP_OPACITY = [1, 0.6, 0.38, 0.24, 0.16];
+
+function ChainsCard({ chains, loading, periodText, className }: { chains?: ChainUsage[]; loading: boolean; periodText: string; className?: string }) {
+  const rows = (chains ?? []).slice(0, 4);
+  return (
+    <Panel label="Routing chains" className={className}>
+      <PanelHeader title="Routing chains" subtitle={`Where each chain's traffic actually landed · ${periodText}`} action={<PanelLink to="/chains">Manage chains</PanelLink>} />
+      {loading ? (
+        <div className="space-y-3 p-4">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
+      ) : rows.length === 0 ? (
+        <PanelEmpty
+          title="No chains yet"
+          hint="A chain tries models in order, so a rate-limited provider never stops your tools."
+          action={<Link to="/chains/new" className="text-[12px] font-medium text-accent-500 hover:underline">Create a fallback chain</Link>}
+        />
+      ) : (
+        <ul className="divide-y divide-line">
+          {rows.map((c) => {
+            const rotating = /round|random/.test(c.strategy);
+            const sep = rotating ? "·" : "→";
+            return (
+              <li key={c.chain_id}>
+                <Link to={`/chains/${c.chain_id}/edit`} className="flex flex-col gap-2.5 px-4 py-3 transition-colors hover:bg-hover">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-[13px] font-medium text-fg">{c.name}</span>
+                    <span className="inline-flex h-5 items-center rounded-md border border-line px-1.5 text-[11.5px] text-fg-muted">{humanStrategy(c.strategy)}</span>
+                    <span className="ml-auto text-[12px] tabular-nums text-fg-muted">
+                      {c.requests > 0 ? (
+                        <>
+                          {fmtInt(c.requests)} req ·{" "}
+                          <span className={cn(c.fallback_rate >= 0.1 ? "text-warn" : "text-fg")}>{fmtInt(c.fallback_requests)}</span> fell back ({fmtPct(c.fallback_rate, 1)})
+                        </>
+                      ) : (
+                        "No traffic in this period"
+                      )}
+                    </span>
+                  </div>
+                  {c.requests > 0 && (
+                    <div className="flex h-1.5 gap-0.5 overflow-hidden rounded-full bg-track" role="img" aria-label={`${c.name} traffic by step`}>
+                      {c.steps.map((st, i) =>
+                        st.requests > 0 ? (
+                          <span key={`${st.provider}/${st.model}`} className="bg-accent-500" style={{ width: `${st.share * 100}%`, opacity: STEP_OPACITY[Math.min(i, STEP_OPACITY.length - 1)] }} />
+                        ) : null,
+                      )}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+                    {c.steps.map((st, i) => (
+                      <span key={`${st.provider}/${st.model}/${i}`} className="inline-flex items-center gap-1.5">
+                        {i > 0 && <span className="text-fg-faint" aria-hidden="true">{st.is_fallback ? "⤳" : sep}</span>}
+                        <span
+                          className="inline-flex h-6 items-center gap-1.5 rounded-md border border-line bg-subtle px-2"
+                          title={`${st.provider}/${st.model}${st.is_fallback ? " · last-resort fallback" : ""}`}
+                        >
+                          <span className="h-1.5 w-1.5 rounded-[2px] bg-accent-500" style={{ opacity: STEP_OPACITY[Math.min(i, STEP_OPACITY.length - 1)] }} aria-hidden="true" />
+                          <span className="font-mono text-fg">{st.model}</span>
+                          {c.requests > 0 && <span className="tabular-nums text-fg-faint">{fmtPct(st.share, st.share < 0.1 ? 1 : 0)}</span>}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Panel>
+  );
 }
 
-function fmtAxis(value: number, metric: TrendMetric): string {
-  if (metric === "cost") return value >= 1 ? `$${value.toFixed(0)}` : `$${value.toFixed(2)}`;
-  return fmtCompact(value);
+function humanStrategy(s: string): string {
+  const map: Record<string, string> = { priority: "Priority", fallback: "Fallback", round_robin: "Round robin", "round-robin": "Round robin", random: "Random", latency: "Lowest latency", cost: "Lowest cost" };
+  return map[s] ?? (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/[_-]/g, " ") : "Priority");
 }
 
-function fmtTrendValue(value: number, metric: TrendMetric): string {
-  if (metric === "cost") return fmtUSD(value);
-  return fmtInteger(value);
+// ── Budgets / limits ─────────────────────────────────────────────────────────
+
+function usedPct(b: BudgetStatus): number {
+  return Math.max(b.limit_micros > 0 ? b.pct_used : 0, b.limit_tokens > 0 ? b.tokens_pct_used : 0);
 }
 
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+function LimitsCard({ budgets, loading }: { budgets?: BudgetStatus[]; loading: boolean }) {
+  const rows = [...(budgets ?? [])].sort((a, b) => usedPct(b) - usedPct(a)).slice(0, 4);
+  return (
+    <Panel label="Budgets" className="flex flex-col">
+      <PanelHeader title="Budgets" subtitle="Closest to their limit first" action={<PanelLink to="/plans">All budgets</PanelLink>} />
+      {loading ? (
+        <div className="space-y-3 p-4">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-10 w-full" />)}</div>
+      ) : rows.length === 0 ? (
+        <PanelEmpty
+          title="No budgets set"
+          hint="Cap spend or tokens per key with an automatic cutoff."
+          action={<Link to="/plans" className="text-[12px] font-medium text-accent-500 hover:underline">Set a budget</Link>}
+        />
+      ) : (
+        <ul className="divide-y divide-line">
+          {rows.map((b) => {
+            const pct = usedPct(b);
+            const fill = pct >= 100 ? "bg-bad" : pct >= b.alert_pct ? "bg-warn" : "bg-accent-500";
+            const byTokens = b.limit_tokens > 0 && b.tokens_pct_used >= b.pct_used;
+            const detail = byTokens
+              ? `${fmtCompact(b.spent_tokens)} of ${fmtCompact(b.limit_tokens)} tokens`
+              : `${fmtUSD(b.spent_micros / 1e6)} of ${fmtUSD(b.limit_micros / 1e6)}`;
+            return (
+              <li key={b.id} className="flex flex-col gap-1.5 px-4 py-3">
+                <div className="flex items-baseline gap-2">
+                  <span className="truncate font-mono text-[13px] font-medium text-fg">{b.scope_name}</span>
+                  <span className={cn("ml-auto text-[12px] font-medium tabular-nums", pct >= 100 ? "text-bad" : pct >= b.alert_pct ? "text-warn" : "text-fg")}>
+                    {Math.round(pct)}%
+                  </span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-track">
+                  <div className={cn("h-full rounded-full", fill)} style={{ width: `${Math.min(100, pct)}%` }} />
+                </div>
+                <div className="flex justify-between gap-2 text-[11.5px] tabular-nums text-fg-faint">
+                  <span className="truncate">{detail} · {b.period}</span>
+                  <span className="shrink-0">{b.resets_at ? `Resets ${relativeFuture(b.resets_at)}` : "No reset"}</span>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Panel>
+  );
 }
 
-function relativeTime(value: string): string {
-  const timestamp = new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) return "—";
-  const delta = Date.now() - timestamp;
-  if (delta < 60_000) return "just now";
-  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
-  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
-  return `${Math.floor(delta / 86_400_000)}d ago`;
+// ── Recent requests ──────────────────────────────────────────────────────────
+
+const STATUS_STYLE: Record<string, { label: string; className: string }> = {
+  success: { label: "OK", className: "border-line text-fg-muted [&>i]:bg-ok" },
+  cache_hit: { label: "Cache hit", className: "border-line text-fg-muted [&>i]:bg-accent-500" },
+  failed: { label: "Failed", className: "border-transparent bg-bad/10 text-bad [&>i]:bg-bad" },
+  blocked: { label: "Blocked", className: "border-transparent bg-warn/12 text-warn [&>i]:bg-warn" },
+  cancelled: { label: "Cancelled", className: "border-line text-fg-faint [&>i]:bg-fg-faint" },
+};
+
+function RecentRequestsCard({ recent }: { recent: RecentActivity[] }) {
+  return (
+    <Panel label="Recent requests">
+      <PanelHeader title="Recent requests" subtitle="Newest first · refreshes as traffic arrives" action={<PanelLink to="/usage">Open usage</PanelLink>} />
+      {recent.length === 0 ? (
+        <PanelEmpty title="No requests in this period" />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[920px] text-[12.5px]">
+            <thead>
+              <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                <th className="px-4 py-2 font-medium">Time</th>
+                <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium">Model</th>
+                <th className="px-4 py-2 font-medium">Key</th>
+                <th className="px-4 py-2 font-medium">Client</th>
+                <th className="px-4 py-2 text-right font-medium">Latency</th>
+                <th className="px-4 py-2 text-right font-medium">Tokens in → out</th>
+                <th className="px-4 py-2 text-right font-medium">Cost</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {recent.map((r) => {
+                const st = STATUS_STYLE[r.status] ?? STATUS_STYLE.cancelled;
+                return (
+                  <tr key={r.id} className="transition-colors hover:bg-hover">
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-[12px] text-fg-muted" title={new Date(r.created_at).toLocaleString()}>
+                      {formatClock(r.created_at)}
+                    </td>
+                    <td className="px-4 py-2">
+                      <span className={cn("inline-flex h-5 items-center gap-1.5 rounded-md border px-1.5 text-[11.5px] font-medium", st.className)} title={r.error_kind || undefined}>
+                        <i className="h-1.5 w-1.5 rounded-full" aria-hidden="true" />
+                        {r.status === "failed" && r.error_kind ? humanError(r.error_kind) : st.label}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2">
+                      <span className="inline-flex max-w-[300px] items-center gap-2">
+                        <ProviderLogo icon={r.provider_icon} name={r.provider_name || r.provider} size={18} />
+                        <span className="truncate font-mono text-fg" title={`${r.provider}/${r.model}`}>{r.model || "unknown"}</span>
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-[12px] text-fg">{r.api_key_name || <span className="text-fg-faint">—</span>}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-[12px] text-fg-muted">{r.client || "—"}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-fg">{fmtMs(r.latency_ms)}</td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-fg-muted">
+                      {r.prompt_tokens || r.completion_tokens ? `${fmtCompact(r.prompt_tokens)} → ${fmtCompact(r.completion_tokens)}` : "—"}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2 text-right text-fg">{r.cache_hit ? "$0" : r.cost_usd > 0 ? fmtUSD(r.cost_usd) : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function humanError(kind: string): string {
+  const map: Record<string, string> = {
+    rate_limited: "Rate limited",
+    timeout: "Timeout",
+    auth: "Auth error",
+    auth_error: "Auth error",
+    quota_exceeded: "Quota exceeded",
+    provider_5xx: "Upstream 5xx",
+    bad_request: "Bad request",
+    network: "Network error",
+    network_error: "Network error",
+  };
+  return map[kind] ?? kind.replace(/_/g, " ");
+}
+
+// ── First run ────────────────────────────────────────────────────────────────
+
+type SnippetKey = "claude" | "openai" | "curl";
+
+function FirstRun() {
+  const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api.listAccounts(), staleTime: 30_000 });
+  const keys = useQuery({ queryKey: ["keys"], queryFn: () => api.listKeys(), staleTime: 30_000 });
+  const info = useQuery({ queryKey: ["gateway-info"], queryFn: () => api.gatewayInfo(), staleTime: 60_000 });
+  const [snippet, setSnippet] = useState<SnippetKey>("claude");
+  const toast = useToast();
+
+  const accountCount = accounts.data?.accounts.length ?? 0;
+  const keyList = keys.data?.keys ?? [];
+  const keyUsed = keyList.some((k) => !!k.last_used_at);
+  const steps = [accountCount > 0, keyList.length > 0, keyUsed, false];
+  const done = steps.filter(Boolean).length;
+  const current = steps.findIndex((s) => !s);
+
+  const origin = window.location.origin;
+  const snippets: Record<SnippetKey, { label: string; code: string }> = {
+    claude: {
+      label: "Claude Code",
+      code: `export ANTHROPIC_BASE_URL=${origin}\nexport ANTHROPIC_AUTH_TOKEN=<your KeiRouter key>\nclaude`,
+    },
+    openai: {
+      label: "OpenAI SDK",
+      code: `from openai import OpenAI\n\nclient = OpenAI(base_url="${origin}/v1", api_key="<your KeiRouter key>")\nclient.chat.completions.create(model="<model or chain>", messages=[{"role": "user", "content": "ping"}])`,
+    },
+    curl: {
+      label: "curl",
+      code: `curl ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer <your KeiRouter key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "<model or chain>", "messages": [{"role": "user", "content": "ping"}]}'`,
+    },
+  };
+
+  const copySnippet = async () => {
+    try {
+      await navigator.clipboard.writeText(snippets[snippet].code);
+      toast.success("Snippet copied");
+    } catch {
+      toast.error("Couldn't copy", "Your browser blocked clipboard access.");
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <KpiPlaceholder />
+      <div className="grid gap-5 xl:grid-cols-3">
+        <Panel label="Setup" className="xl:col-span-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+            <div>
+              <h2 className="text-[13px] font-semibold text-fg">Finish setting up</h2>
+              <p className="mt-0.5 text-[12px] text-fg-muted">{done} of 4 complete</p>
+            </div>
+            <div className="h-1.5 w-40 overflow-hidden rounded-full bg-track" role="progressbar" aria-valuenow={done * 25} aria-valuemin={0} aria-valuemax={100} aria-label="Setup progress">
+              <div className="h-full bg-accent-500 transition-[width]" style={{ width: `${done * 25}%` }} />
+            </div>
+          </div>
+          <ol className="divide-y divide-line">
+            <SetupStep
+              index={0}
+              current={current}
+              done={steps[0]}
+              title="Connect a provider"
+              body={steps[0] ? `${accountCount} account${accountCount === 1 ? "" : "s"} connected.` : "Add an API key or sign in with OAuth to any of 90+ providers."}
+              action={<SetupAction to="/providers" primary={current === 0}>{steps[0] ? "Manage" : "Connect provider"}</SetupAction>}
+            />
+            <SetupStep
+              index={1}
+              current={current}
+              done={steps[1]}
+              title="Create an API key"
+              body="Each key carries its own budget, rate limit and model access. Your tools use it instead of provider credentials."
+              action={<SetupAction to="/keys" primary={current === 1}>{steps[1] ? "Manage keys" : "Create key"}</SetupAction>}
+            />
+            <SetupStep
+              index={2}
+              current={current}
+              done={steps[2]}
+              title="Point a tool at KeiRouter"
+              body="Paste a snippet, or let KeiRouter write the config for Claude Code, Codex, Cursor and others."
+              action={<SetupAction to="/cli-tools" primary={current === 2}>Auto-configure CLI tools</SetupAction>}
+            >
+              <div className="mt-3 overflow-hidden rounded-xl border border-line">
+                <div className="flex items-center gap-1 border-b border-line bg-subtle p-1.5" role="tablist" aria-label="Snippet">
+                  {(Object.keys(snippets) as SnippetKey[]).map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      role="tab"
+                      aria-selected={snippet === k}
+                      onClick={() => setSnippet(k)}
+                      className={cn(
+                        "h-7 rounded-lg px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+                        snippet === k ? "bg-surface text-fg shadow-[0_0_0_1px_var(--border-strong)]" : "text-fg-muted hover:text-fg",
+                      )}
+                    >
+                      {snippets[k].label}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={copySnippet}
+                    aria-label="Copy snippet"
+                    className="ml-auto flex h-7 w-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <pre className="overflow-x-auto bg-canvas px-3.5 py-3 font-mono text-[12px] leading-relaxed text-fg">{snippets[snippet].code}</pre>
+              </div>
+            </SetupStep>
+            <SetupStep
+              index={3}
+              current={current}
+              done={false}
+              title="Send your first request"
+              body="This page fills in the moment traffic arrives — no refresh needed."
+              action={
+                <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12px] text-fg-muted">
+                  <span className="live-dot h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
+                  Listening on <span className="font-mono">/v1</span>
+                </span>
+              }
+            />
+          </ol>
+        </Panel>
+
+        <div className="flex min-w-0 flex-col gap-5">
+          <Panel label="Gateway">
+            <PanelHeader
+              title="Gateway"
+              subtitle="This instance"
+              action={
+                <span className="inline-flex h-5 items-center gap-1.5 rounded-md border border-line px-1.5 text-[11.5px] font-medium text-fg-muted">
+                  <span className="h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
+                  Running
+                </span>
+              }
+            />
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 px-4 py-3.5 text-[12.5px]">
+              <dt className="text-fg-muted">Endpoint</dt>
+              <dd className="truncate text-right font-mono text-fg">{origin}/v1</dd>
+              <dt className="text-fg-muted">Listening on</dt>
+              <dd className="text-right font-mono text-fg">{info.data?.listen_addr ?? "—"}</dd>
+              <dt className="text-fg-muted">Storage</dt>
+              <dd className="text-right text-fg">{info.data ? (info.data.dialect === "postgres" ? "Postgres" : "SQLite") : "—"}</dd>
+              <dt className="text-fg-muted">Version</dt>
+              <dd className="text-right font-mono text-fg">{info.data?.version ?? "—"}</dd>
+              <dt className="text-fg-muted">Remote access</dt>
+              <dd className="text-right">
+                <Link to="/endpoints" className="text-[12px] font-medium text-accent-500 hover:underline">Cloudflare or Tailscale</Link>
+              </dd>
+            </dl>
+          </Panel>
+          <Panel label="Make it reliable">
+            <PanelHeader title="Make it reliable" subtitle="Worth doing before you depend on it" />
+            <ul className="divide-y divide-line">
+              {[
+                { to: "/chains/new", title: "Create a fallback chain", body: "Keep working when a provider rate-limits." },
+                { to: "/settings", title: "Turn on token savings", body: "Cache and compress prompts before they cost you." },
+                { to: "/plans", title: "Set a budget", body: "Cap spend per key with an automatic cutoff." },
+              ].map((item) => (
+                <li key={item.to}>
+                  <Link to={item.to} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-hover">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[13px] font-medium text-fg">{item.title}</p>
+                      <p className="text-[12px] text-fg-muted">{item.body}</p>
+                    </div>
+                    <ChevronRight className="h-4 w-4 shrink-0 text-fg-faint" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Panel>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SetupStep({
+  index,
+  current,
+  done,
+  title,
+  body,
+  action,
+  children,
+}: {
+  index: number;
+  current: number;
+  done: boolean;
+  title: string;
+  body: string;
+  action?: ReactNode;
+  children?: ReactNode;
+}) {
+  const isCurrent = index === current;
+  return (
+    <li className={cn("flex gap-3.5 px-4 py-4", isCurrent && "bg-subtle")}>
+      <span
+        aria-hidden="true"
+        className={cn(
+          "flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[12px] font-semibold tabular-nums",
+          done ? "bg-ok text-white" : isCurrent ? "border-[1.5px] border-accent-500 text-fg" : "border-[1.5px] border-line-strong text-fg-muted",
+        )}
+      >
+        {done ? <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> : index + 1}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="min-w-[220px] flex-1">
+            <p className={cn("text-[13px]", done ? "text-fg-muted line-through decoration-line-strong" : isCurrent ? "font-semibold text-fg" : "font-medium text-fg")}>
+              {title}
+              <span className="sr-only">{done ? " (done)" : isCurrent ? " (current step)" : ""}</span>
+            </p>
+            <p className="mt-0.5 max-w-xl text-[12px] text-fg-muted">{body}</p>
+          </div>
+          {action}
+        </div>
+        {children}
+      </div>
+    </li>
+  );
+}
+
+function SetupAction({ to, primary, children }: { to: string; primary?: boolean; children: ReactNode }) {
+  return (
+    <Link
+      to={to}
+      className={cn(
+        "inline-flex h-8 shrink-0 items-center rounded-lg px-3 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+        primary ? "bg-primary text-primary-fg hover:opacity-85" : "border border-line-strong bg-surface text-fg hover:bg-hover",
+      )}
+    >
+      {children}
+    </Link>
+  );
+}
+
+function KpiPlaceholder() {
+  return (
+    <Panel label="Key metrics" className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2 xl:grid-cols-5">
+      {["Requests", "Success rate", "Latency p50", "Spend", "Saved by optimizers"].map((label) => (
+        <div key={label} className="flex flex-col gap-1.5 bg-surface px-4 py-3.5 sm:last:col-span-2 xl:last:col-span-1">
+          <span className="text-[12px] font-medium text-fg-muted">{label}</span>
+          <span className="text-[24px] font-semibold leading-none text-fg-faint">—</span>
+          <span className="text-[12px] text-fg-faint">Appears after the first request</span>
+        </div>
+      ))}
+    </Panel>
+  );
+}
+
+// ── Skeleton ─────────────────────────────────────────────────────────────────
+
+function OverviewSkeleton() {
+  return (
+    <div className="space-y-5" aria-busy="true" aria-label="Loading overview">
+      <Skeleton className="h-[104px] w-full rounded-2xl" />
+      <div className="grid gap-5 xl:grid-cols-3">
+        <Skeleton className="h-[340px] rounded-2xl xl:col-span-2" />
+        <Skeleton className="h-[340px] rounded-2xl" />
+      </div>
+      <div className="grid gap-5 xl:grid-cols-3">
+        <Skeleton className="h-[280px] rounded-2xl xl:col-span-2" />
+        <Skeleton className="h-[280px] rounded-2xl" />
+      </div>
+    </div>
+  );
+}
+
+// ── Formatting & maths ───────────────────────────────────────────────────────
+
+function fmtInt(v: number): string {
+  return Math.round(v || 0).toLocaleString("en-US");
+}
+
+function fmtCompact(v: number): string {
+  const n = v || 0;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k`;
+  return Math.round(n).toString();
+}
+
+// Two decimals for anything a person would read as money; more precision only
+// for sub-cent values, so a quiet day shows "$0.42", not "$0.4213".
+function fmtUSD(v: number): string {
+  const n = v || 0;
+  if (n === 0) return "$0.00";
+  if (n < 0.01) return `$${n.toPrecision(2)}`;
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function fmtMs(v: number): string {
+  if (!Number.isFinite(v) || v <= 0) return "—";
+  if (v < 1000) return `${Math.round(v)} ms`;
+  return `${(v / 1000).toFixed(v < 10_000 ? 2 : 1)} s`;
+}
+
+function fmtPct(ratio: number, digits: number): string {
+  return `${(ratio * 100).toFixed(digits)}%`;
+}
+
+function relDelta(cur: number, prev: number | undefined, mode: "flat" | "lower-better" | "higher-better"): { text: string; tone: DeltaTone } | null {
+  if (!prev || !Number.isFinite(prev) || prev <= 0 || !cur) return null;
+  const change = (cur - prev) / prev;
+  const text = `${change >= 0 ? "+" : "−"}${Math.abs(change * 100).toFixed(1)}%`;
+  if (Math.abs(change) < 0.005 || mode === "flat") return { text, tone: "flat" };
+  const better = mode === "lower-better" ? change < 0 : change > 0;
+  return { text, tone: better ? "good" : "bad" };
+}
+
+function ptsDelta(cur: number, prev: number): { text: string; tone: DeltaTone } {
+  const diff = (cur - prev) * 100;
+  const text = `${diff >= 0 ? "+" : "−"}${Math.abs(diff).toFixed(2)} pts`;
+  if (Math.abs(diff) < 0.01) return { text, tone: "flat" };
+  return { text, tone: diff > 0 ? "good" : "bad" };
+}
+
+function absUSDDelta(cur: number, prev: number | undefined): { text: string; tone: DeltaTone } | null {
+  if (prev === undefined || (!prev && !cur)) return null;
+  const diff = cur - prev;
+  const text = `${diff >= 0 ? "+" : "−"}${fmtUSD(Math.abs(diff))}`;
+  return { text, tone: Math.abs(diff) < 0.005 ? "flat" : diff > 0 ? "good" : "bad" };
+}
+
+function deltaClass(tone: DeltaTone): string {
+  return tone === "good" ? "text-ok" : tone === "bad" ? "text-bad" : "text-fg-muted";
+}
+
+function toneText(tone: "ok" | "warn" | "bad" | "idle"): string {
+  return tone === "ok" ? "text-ok" : tone === "warn" ? "text-warn" : tone === "bad" ? "text-bad" : "text-fg-faint";
+}
+
+// niceScale rounds the chart's ceiling up to a 1/2/2.5/5 × 10ⁿ step so the
+// four gridlines land on readable values.
+function niceScale(peak: number): { max: number; ticks: number[] } {
+  if (!(peak > 0)) return { max: 1, ticks: [1, 0.75, 0.5, 0.25, 0] };
+  const rough = peak / 4;
+  const pow = Math.pow(10, Math.floor(Math.log10(rough)));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * pow).find((s) => s >= rough) ?? 10 * pow;
+  const max = step * 4;
+  return { max, ticks: [max, step * 3, step * 2, step, 0] };
+}
+
+function formatBucket(iso: string, withDate: boolean): string {
+  const d = new Date(iso);
+  return withDate
+    ? d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatClock(iso: string): string {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+    : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function relativeFuture(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "now";
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  if (h >= 48) return `in ${Math.round(h / 24)}d`;
+  if (h > 0) return `in ${h}h ${m}m`;
+  return `in ${Math.max(1, m)}m`;
 }

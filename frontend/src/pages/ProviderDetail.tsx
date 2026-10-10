@@ -676,7 +676,7 @@ export function ProviderDetailPage() {
                   </label>
                   <div className="hidden flex-1 sm:block" />
                   <Button variant="ghost" onClick={handleBulkEnable} disabled={bulkBusy}>
-                    <ToggleRight className="h-4 w-4 text-emerald-600" />
+                    <ToggleRight className="h-4 w-4 text-ok" />
                     Enable
                   </Button>
                   <Button variant="ghost" onClick={handleBulkDisable} disabled={bulkBusy}>
@@ -708,7 +708,7 @@ export function ProviderDetailPage() {
                   </label>
                 </div>
               )}
-              <div className="hidden grid-cols-[minmax(0,1fr)_auto_minmax(10rem,0.7fr)_auto] items-center gap-3 border-b border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text-muted)] lg:grid">
+              <div className="hidden grid-cols-[minmax(0,1fr)_auto_minmax(10rem,0.7fr)_auto] items-center gap-3 border-b border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-2 text-[12px] font-medium text-[var(--text-muted)] lg:grid">
                 <span className="pl-6">Account</span>
                 <span>Priority</span>
                 <span>Connection</span>
@@ -834,7 +834,7 @@ export function ProviderDetailPage() {
                       onClick={() => enableModelsMut.mutate([...selectedModelIds])}
                       disabled={enableModelsMut.isPending}
                     >
-                      <ToggleRight className="h-4 w-4 text-emerald-600" />
+                      <ToggleRight className="h-4 w-4 text-ok" />
                       Enable
                     </Button>
                     <Button
@@ -1158,7 +1158,7 @@ function RoutingControls({
   return (
     <div className="max-w-4xl p-5 sm:p-6">
       <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent-100 text-accent-700 dark:bg-accent-800/40 dark:text-accent-200">
+        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-subtle text-fg-muted">
           <Route className="h-4 w-4" />
         </div>
         <div>
@@ -1409,7 +1409,7 @@ function AccountRow({
             title={a.disabled ? "Enable account" : "Disable account"}
             aria-label={a.disabled ? `Enable ${a.label || a.provider}` : `Disable ${a.label || a.provider}`}
           >
-            {a.disabled ? <ToggleLeft className="h-4 w-4" /> : <ToggleRight className="h-4 w-4 text-emerald-600" />}
+            {a.disabled ? <ToggleLeft className="h-4 w-4" /> : <ToggleRight className="h-4 w-4 text-ok" />}
           </button>
           <button
             type="button"
@@ -1425,8 +1425,8 @@ function AccountRow({
 
       {testResult?.status === "error" && testResult.message && (
         <div role="alert" className="ml-6 mt-2 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900/40 dark:bg-red-900/15">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-500 dark:text-red-400" />
-          <p className="break-words text-xs leading-5 text-red-700 dark:text-red-300">{testResult.message}</p>
+          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-bad" />
+          <p className="break-words text-xs leading-5 text-bad">{testResult.message}</p>
         </div>
       )}
 
@@ -1847,11 +1847,11 @@ function BulkResultsView({
         {results.map((r) => (
           <div key={r.index} className="flex items-center gap-3 px-3 py-2 text-xs">
             {r.status === "created" ? (
-              <CheckCircle className="h-4 w-4 shrink-0 text-emerald-500" />
+              <CheckCircle className="h-4 w-4 shrink-0 text-ok" />
             ) : r.status === "skipped" ? (
               <AlertCircle className="h-4 w-4 shrink-0 text-amber-500" />
             ) : (
-              <XCircle className="h-4 w-4 shrink-0 text-red-500" />
+              <XCircle className="h-4 w-4 shrink-0 text-bad" />
             )}
             <span className="w-10 shrink-0 text-[var(--text-muted)]">#{r.index + 1}</span>
             <span className="flex-1 truncate font-medium">{r.label || "(unlabeled)"}</span>
@@ -2125,7 +2125,7 @@ function AddApiKeyModal({
           )}
 
           {checkStatus === "ok" && (
-            <div className="flex items-center gap-2 rounded-lg border border-accent-300 bg-accent-50 px-3 py-2 text-sm text-accent-700 dark:border-accent-700 dark:bg-accent-900/30 dark:text-accent-200">
+            <div className="flex items-center gap-2 rounded-lg border border-ok/30 bg-ok/10 px-3 py-2 text-sm text-ok">
               <CheckCircle className="h-4 w-4 shrink-0" />
               Key is valid
             </div>
@@ -2625,14 +2625,14 @@ function CodexResetCreditsSection({ accountId }: { accountId: string }) {
           <div className="flex flex-col gap-3 rounded-lg bg-[var(--bg-elevated)] p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-5">
               <div>
-                <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">Credits</p>
+                <p className="text-[11.5px] font-medium text-[var(--text-muted)]">Credits</p>
                 <p className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--text)]">
                   {data.usage_data?.unlimited ? "Unlimited" : data.usage_data?.credits_balance || "0"}
                 </p>
               </div>
               <div className="h-8 w-px bg-[var(--border)]" />
               <div>
-                <p className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">Earned resets</p>
+                <p className="text-[11.5px] font-medium text-[var(--text-muted)]">Earned resets</p>
                 <p className="mt-0.5 text-sm font-semibold tabular-nums text-[var(--text)]">{availableCount} available</p>
               </div>
               {soonestExpiry && (
@@ -2773,7 +2773,7 @@ function ModelCell({
               title={disabled ? "Enable model" : "Disable model"}
               aria-label={disabled ? `Enable ${model.name || model.id}` : `Disable ${model.name || model.id}`}
             >
-              {disabled ? <ToggleLeft className="h-4 w-4" /> : <ToggleRight className="h-4 w-4 text-emerald-600" />}
+              {disabled ? <ToggleLeft className="h-4 w-4" /> : <ToggleRight className="h-4 w-4 text-ok" />}
             </button>
           )}
           <button
@@ -2783,7 +2783,7 @@ function ModelCell({
             title="Copy model path"
             aria-label={`Copy model path ${fullModel}`}
           >
-            {copied ? <CheckCircle className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4" />}
+            {copied ? <CheckCircle className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4" />}
           </button>
         </div>
       </div>

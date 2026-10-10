@@ -31,6 +31,7 @@ import {
   Toggle,
   Modal,
 } from "../components/ui";
+import { useConfirm } from "../components/ui/confirm-dialog";
 
 const periodLabels: Record<string, string> = {
   daily: "day",
@@ -110,6 +111,7 @@ function clampAlertPct(value: number): number {
 }
 
 export function PlansPage() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -205,7 +207,7 @@ export function PlansPage() {
 
       <div className="mb-4 flex items-center gap-2.5">
         <ShieldCheck className="h-4 w-4 text-[var(--text-muted)]" />
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-[var(--text-muted)]">
+        <h2 className="text-sm font-medium text-[var(--text-muted)]">
           All plans
         </h2>
         <div className="flex-1 border-t border-[var(--border)]" />
@@ -237,12 +239,12 @@ export function PlansPage() {
               key={p.id}
               plan={p}
               onEdit={() => setEditingId(p.id)}
-              onDelete={() => {
+              onDelete={async () => {
                 if (p.key_count > 0) {
                   toast.error("Cannot delete", `This plan has ${p.key_count} key(s) assigned. Reassign them first.`);
                   return;
                 }
-                if (confirm(`Delete plan "${p.name}"?`)) {
+                if (await confirm({ title: `Delete plan “${p.name}”?`, tone: "danger" })) {
                   remove.mutate(p.id);
                 }
               }}
@@ -280,7 +282,7 @@ function OverviewStat({
         <Icon className="h-5 w-5" strokeWidth={2} />
       </div>
       <div className="min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">{label}</p>
+        <p className="text-[12px] font-medium text-[var(--text-muted)]">{label}</p>
         <p className="mt-0.5 flex items-baseline gap-1.5">
           <span className="text-2xl font-semibold tabular-nums text-[var(--text)]">{value}</span>
           {hint && <span className="truncate text-xs text-[var(--text-muted)]">{hint}</span>}
@@ -304,7 +306,7 @@ function LimitStat({
   const unlimited = value === null;
   return (
     <div className="min-w-0">
-      <dt className="truncate text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+      <dt className="truncate text-[11.5px] font-medium text-[var(--text-muted)]">
         {label}
       </dt>
       <dd className={`mt-0.5 truncate font-mono text-sm ${unlimited ? "text-[var(--text-muted)]" : "font-medium text-[var(--text)]"}`}>
@@ -317,7 +319,7 @@ function LimitStat({
 
 function SectionLabel({ icon: Icon, children }: { icon: LucideIcon; children: React.ReactNode }) {
   return (
-    <div className="mb-2.5 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+    <div className="mb-2.5 flex items-center gap-1.5 text-[12px] font-medium text-[var(--text-muted)]">
       <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={2} />
       {children}
     </div>
@@ -345,7 +347,7 @@ function PlanRow({
       {/* Header */}
       <div className="flex items-start justify-between gap-3 px-5 pt-5 pb-4">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-secondary-100 text-secondary-700 dark:bg-secondary-800/40 dark:text-secondary-200">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-line bg-subtle text-fg-muted">
             <Wallet className="h-5 w-5" strokeWidth={2} />
           </div>
           <div className="min-w-0">

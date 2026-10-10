@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Search, X, AlertTriangle, Plus, MessageSquare, Database, ImageIcon, Mic, Volume2, Globe, Link2 } from "lucide-react";
-import { api, type Provider, type Account } from "../lib/api";
+import { AlertTriangle, ChevronRight, Plus, Search, X } from "lucide-react";
+import { api, type Account, type HealthTimelineProvider, type Provider } from "../lib/api";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
-import { Card, CardHeader, Badge, Spinner, EmptyState, StatusDot, Button, Modal, Field, Input, Select, ErrorBanner } from "../components/ui";
+import { ProviderLogo } from "../components/ProviderLogo";
+import { Badge, Button, ErrorBanner, Field, Input, Modal, Select, Skeleton } from "../components/ui";
 import { useToast } from "../components/Toast";
 
 
@@ -99,24 +101,67 @@ function sortByPopularity<T extends { id: string; pinned?: boolean }>(list: T[])
   });
 }
 
-// kindFilters are the service-kind filter chips shown above the provider grid.
+// kindFilters narrow the page by what a provider can serve.
 const kindFilters = [
-  { id: "all", label: "All", icon: Boxes },
-  { id: "llm", label: "Chat", icon: MessageSquare },
-  { id: "embedding", label: "Embeddings", icon: Database },
-  { id: "image", label: "Image", icon: ImageIcon },
-  { id: "stt", label: "STT", icon: Mic },
-  { id: "tts", label: "TTS", icon: Volume2 },
-  { id: "search", label: "Search", icon: Globe },
-  { id: "fetch", label: "Fetch", icon: Link2 },
+  { id: "all", label: "All" },
+  { id: "llm", label: "Chat" },
+  { id: "embedding", label: "Embeddings" },
+  { id: "image", label: "Image" },
+  { id: "stt", label: "Speech-to-text" },
+  { id: "tts", label: "Text-to-speech" },
+  { id: "search", label: "Search" },
+  { id: "fetch", label: "Fetch" },
 ];
+
+type CatalogGroup = "custom" | "subscription" | "api" | "free" | "media" | "retrieval";
+
+// Catalog groups follow how people actually connect: their own endpoint, a
+// subscription they sign in to, a paid API key, something free/local, or a
+// non-chat capability.
+const GROUPS: { id: CatalogGroup; title: string; hint: string }[] = [
+  { id: "custom", title: "Custom endpoints", hint: "Any OpenAI- or Anthropic-compatible server, isolated per instance." },
+  { id: "subscription", title: "Sign in with a plan", hint: "Use an existing subscription through OAuth or device login — no API key." },
+  { id: "api", title: "Model APIs", hint: "Pay-as-you-go providers authenticated with an API key." },
+  { id: "free", title: "Free & local", hint: "No credentials needed: local runtimes and free tiers." },
+  { id: "media", title: "Media & speech", hint: "Image, video, speech-to-text and text-to-speech." },
+  { id: "retrieval", title: "Search, fetch & embeddings", hint: "Web search, page fetching and vector embeddings." },
+];
+
+function groupOf(p: Provider): CatalogGroup {
+  if (p.custom || p.id.startsWith("custom-")) return "custom";
+  if (p.auth_kind === "none") return "free";
+  if (p.auth_kind === "oauth") return "subscription";
+  if (p.service_kinds.includes("llm")) return "api";
+  if (p.service_kinds.some((k) => k === "image" || k === "tts" || k === "stt" || k === "video")) return "media";
+  return "retrieval";
+}
 
 export function ProvidersPage() {
   const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.providers() });
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api.listAccounts() });
+  const timeline = useQuery({
+    queryKey: ["health-timeline", "24h"],
+    queryFn: () => api.healthTimeline("24h", 24),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
   const [filter, setFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [customOpen, setCustomOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // "/" focuses search, the convention in most developer dashboards.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      searchRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   const accountsByProvider = useMemo(() => {
     const map = new Map<string, Account[]>();
@@ -128,80 +173,82 @@ export function ProvidersPage() {
     return map;
   }, [accounts.data]);
 
+  const healthByProvider = useMemo(
+    () => new Map((timeline.data?.providers ?? []).map((h) => [h.provider, h])),
+    [timeline.data],
+  );
+
   const visible = useMemo(() => {
     const all = providers.data?.providers ?? [];
+    const q = searchQuery.trim().toLowerCase();
     return all
       .filter((p) => !p.hidden)
       .filter((p) => filter === "all" || p.service_kinds.includes(filter))
-      .filter((p) => {
-        if (!searchQuery.trim()) return true;
-        const q = searchQuery.toLowerCase();
-        return (
-          p.display_name.toLowerCase().includes(q) ||
-          p.id.toLowerCase().includes(q) ||
-          p.alias.toLowerCase().includes(q)
-        );
-      });
+      .filter((p) => !q || p.display_name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || p.alias.toLowerCase().includes(q));
   }, [providers.data, filter, searchQuery]);
 
   const connected = sortByPopularity(visible.filter((p) => accountsByProvider.has(p.id)));
   const available = sortByPopularity(visible.filter((p) => !accountsByProvider.has(p.id)));
+  const grouped = GROUPS.map((g) => ({ ...g, items: available.filter((p) => groupOf(p) === g.id) })).filter((g) => g.items.length > 0);
+  const totalVisible = (providers.data?.providers ?? []).filter((p) => !p.hidden).length;
 
   return (
     <>
       <PageHeader
         title="Providers"
-        icon={Boxes}
-        description="Connect and manage AI providers to power your routing."
-      />
-
-      {/* Unified toolbar: filters + search + action */}
-      <div className="mb-6 space-y-3">
-        {/* Row 1: Search + New custom provider */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search providers…"
-              className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] py-2.5 pl-10 pr-10 text-sm placeholder:text-[var(--text-muted)] focus:border-accent-400 focus:outline-none focus:ring-2 focus:ring-accent-400/40"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--text-muted)] hover:bg-ink-100 hover:text-[var(--text)] dark:hover:bg-ink-800"
-                aria-label="Clear search"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-          <Button variant="primary" className="gap-2 shrink-0" onClick={() => setCustomOpen(true)}>
-            <Plus className="h-4 w-4" />
+        description={
+          providers.data
+            ? `${accountsByProvider.size} connected · ${totalVisible - accountsByProvider.size} more available. Each provider can hold several accounts; KeiRouter rotates and fails over between them.`
+            : "Connect the upstreams KeiRouter routes to."
+        }
+        action={
+          <Button variant="secondary" onClick={() => setCustomOpen(true)}>
+            <Plus />
             New custom provider
           </Button>
-        </div>
+        }
+      />
 
-        {/* Row 2: Filter chips */}
-        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filter by service type">
+      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div className="relative lg:w-80">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} />
+          <input
+            ref={searchRef}
+            type="search"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search 90+ providers"
+            aria-label="Search providers"
+            className="h-9 w-full rounded-lg border border-line bg-surface pl-9 pr-16 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25"
+          />
+          {searchQuery ? (
+            <button
+              type="button"
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg"
+              aria-label="Clear search"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          ) : (
+            <kbd className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 rounded border border-line bg-subtle px-1.5 font-mono text-[10.5px] text-fg-faint">/</kbd>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Filter by capability">
           {kindFilters.map((k) => {
-            const Icon = k.icon;
             const active = filter === k.id;
             return (
               <button
                 key={k.id}
-                role="tab"
-                aria-selected={active}
+                type="button"
+                role="radio"
+                aria-checked={active}
                 onClick={() => setFilter(k.id)}
-                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 ${
-                  active
-                    ? "border-accent-300 bg-accent-50 text-accent-700 shadow-sm dark:border-accent-700 dark:bg-accent-900/30 dark:text-accent-300"
-                    : "border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]"
-                }`}
+                className={cn(
+                  "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+                  active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+                )}
               >
-                <Icon className="h-3.5 w-3.5" />
                 {k.label}
               </button>
             );
@@ -209,58 +256,173 @@ export function ProvidersPage() {
         </div>
       </div>
 
-
       {providers.isLoading ? (
-        <Spinner />
+        <div className="space-y-5">
+          <Skeleton className="h-48 w-full rounded-2xl" />
+          <Skeleton className="h-72 w-full rounded-2xl" />
+        </div>
+      ) : providers.isError ? (
+        <ErrorBanner message="Couldn't load providers. Is the backend running?" />
       ) : (
-        <div className="space-y-6">
-          <Card>
-            <CardHeader
-              title="Connected providers"
-              description="These providers have accounts and are ready to use."
-              action={<Badge tone="accent">{connected.length}</Badge>}
-            />
-            {!connected.length ? (
-              <EmptyState
-                title={searchQuery ? `No connected providers match "${searchQuery}"` : "No connected providers yet"}
-                hint={searchQuery ? "Try a different search term." : "Pick a provider below to add your first account."}
-              />
-            ) : (
-              <div className="grid grid-cols-2 gap-px overflow-hidden rounded-b-2xl bg-[var(--border)] sm:grid-cols-3 lg:grid-cols-4">
-                {connected.map((p) => (
-                  <ProviderCard
-                    key={p.id}
-                    provider={p}
-                    accountCount={accountsByProvider.get(p.id)?.length ?? 0}
-                  />
-                ))}
+        <div className="space-y-8">
+          <section aria-labelledby="connected-heading">
+            <div className="mb-2.5 flex items-baseline justify-between">
+              <h2 id="connected-heading" className="text-[14px] font-semibold text-fg">Connected</h2>
+              <span className="text-[12px] tabular-nums text-fg-faint">{connected.length}</span>
+            </div>
+            {connected.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-10 text-center">
+                <p className="text-[13px] font-medium text-fg">{searchQuery || filter !== "all" ? "No connected provider matches" : "No providers connected yet"}</p>
+                <p className="mt-1 text-[12.5px] text-fg-muted">
+                  {searchQuery || filter !== "all" ? "Clear the search or filter to see all of them." : "Pick one below — most take an API key, some let you sign in with an existing plan."}
+                </p>
               </div>
+            ) : (
+              <ConnectedTable providers={connected} accountsByProvider={accountsByProvider} healthByProvider={healthByProvider} />
             )}
-          </Card>
+          </section>
 
-          <Card>
-            <CardHeader
-              title="Available providers"
-              description="Add new providers to expand your routing options."
-              action={<Badge tone="neutral">{available.length}</Badge>}
-            />
-            {!available.length ? (
-              <EmptyState
-                title={searchQuery ? `No providers match "${searchQuery}"` : "No providers for this capability"}
-              />
-            ) : (
-              <div className="grid grid-cols-2 gap-px overflow-hidden rounded-b-2xl bg-[var(--border)] sm:grid-cols-3 lg:grid-cols-4">
-                {available.map((p) => (
-                  <ProviderCard key={p.id} provider={p} accountCount={0} />
-                ))}
-              </div>
-            )}
-          </Card>
+          {grouped.length === 0 ? (
+            <div className="rounded-2xl border border-line bg-surface px-6 py-10 text-center text-[13px] text-fg-muted">
+              No other providers match{searchQuery ? ` “${searchQuery}”` : " this capability"}.
+            </div>
+          ) : (
+            grouped.map((g) => (
+              <section key={g.id} aria-labelledby={`group-${g.id}`}>
+                <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
+                  <div className="flex items-baseline gap-2.5">
+                    <h2 id={`group-${g.id}`} className="text-[14px] font-semibold text-fg">{g.title}</h2>
+                    <span className="text-[12px] tabular-nums text-fg-faint">{g.items.length}</span>
+                  </div>
+                  <p className="text-[12.5px] text-fg-muted">{g.hint}</p>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+                  {g.items.map((p) => (
+                    <CatalogCard key={p.id} provider={p} />
+                  ))}
+                </div>
+              </section>
+            ))
+          )}
         </div>
       )}
 
       <CreateCustomProviderModal open={customOpen} onClose={() => setCustomOpen(false)} />
     </>
+  );
+}
+
+function ConnectedTable({
+  providers,
+  accountsByProvider,
+  healthByProvider,
+}: {
+  providers: Provider[];
+  accountsByProvider: Map<string, Account[]>;
+  healthByProvider: Map<string, HealthTimelineProvider>;
+}) {
+  const navigate = useNavigate();
+  return (
+    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] text-[13px]">
+          <thead>
+            <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+              <th className="px-4 py-2 font-medium">Provider</th>
+              <th className="px-4 py-2 font-medium">Accounts</th>
+              <th className="px-4 py-2 font-medium">Last 24 hours</th>
+              <th className="px-4 py-2 text-right font-medium">Requests</th>
+              <th className="px-4 py-2 text-right font-medium">Success</th>
+              <th className="px-4 py-2 text-right font-medium">Worst p95</th>
+              <th className="w-8 px-2 py-2" aria-hidden="true" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {providers.map((p) => {
+              const accs = accountsByProvider.get(p.id) ?? [];
+              const attention = accs.filter((a) => a.needs_reconnect).length;
+              const paused = accs.filter((a) => a.disabled).length;
+              const h = healthByProvider.get(p.id);
+              return (
+                <tr key={p.id} className="cursor-pointer transition-colors hover:bg-hover" onClick={() => navigate(`/providers/${p.id}`)}>
+                  <td className="px-4 py-2.5">
+                    <Link to={`/providers/${p.id}`} className="flex items-center gap-2.5 focus:outline-none focus-visible:underline" onClick={(e) => e.stopPropagation()}>
+                      <ProviderLogo icon={p.icon} name={p.display_name} size={24} />
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-fg">{p.display_name}</span>
+                        <span className="block truncate font-mono text-[11.5px] text-fg-faint">{p.id}</span>
+                      </span>
+                    </Link>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2.5">
+                    <span className="tabular-nums text-fg">{accs.length}</span>
+                    {attention > 0 && <span className="ml-2"><Badge tone="warning">{attention} need{attention === 1 ? "s" : ""} reconnect</Badge></span>}
+                    {attention === 0 && paused > 0 && <span className="ml-1.5 text-[12px] text-fg-faint">· {paused} paused</span>}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {h ? (
+                      <div className="flex w-44 gap-[2px]" role="img" aria-label={`${p.display_name} hourly status, last 24 hours`}>
+                        {h.buckets.map((b) => (
+                          <span key={b.start} className={cn("h-3.5 min-w-[2px] flex-1 rounded-[1.5px]", TICK_CLASS[b.status] ?? "bg-track")} />
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-[12px] text-fg-faint">No traffic</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-fg">{h ? h.requests.toLocaleString("en-US") : "—"}</td>
+                  <td className={cn("px-4 py-2.5 text-right", h && h.requests ? (h.success_rate >= 0.99 ? "text-fg" : h.success_rate >= 0.95 ? "text-warn" : "text-bad") : "text-fg-faint")}>
+                    {h && h.requests ? `${(h.success_rate * 100).toFixed(1)}%` : "—"}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-fg-muted">{h && h.worst_p95_ms ? fmtLatency(h.worst_p95_ms) : "—"}</td>
+                  <td className="px-2 py-2.5 text-fg-faint" aria-hidden="true">
+                    <ChevronRight className="h-4 w-4" />
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const TICK_CLASS: Record<string, string> = { ok: "bg-ok/70", degraded: "bg-warn", down: "bg-bad", idle: "bg-track" };
+
+function fmtLatency(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+function CatalogCard({ provider: p }: { provider: Provider }) {
+  const tag = p.deprecated
+    ? { label: "Unofficial", tone: "warning" as const, title: p.notice || "Uses an unofficial client API; the account may be restricted." }
+    : !p.drivable
+      ? { label: "Coming soon", tone: "neutral" as const, title: "Listed for discovery; routing is not available yet." }
+      : p.auth_kind === "none"
+        ? { label: "Free", tone: "success" as const, title: "No credentials required." }
+        : null;
+  return (
+    <Link
+      to={`/providers/${p.id}`}
+      aria-label={`Connect ${p.display_name}`}
+      className="group flex items-center gap-3 rounded-2xl border border-line bg-surface px-3 py-2.5 transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+    >
+      <ProviderLogo icon={p.icon} name={p.display_name} size={28} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium text-fg">{p.display_name}</span>
+        <span className="block truncate font-mono text-[11.5px] text-fg-faint">{p.id}</span>
+      </span>
+      {tag && (
+        <span title={tag.title}>
+          <Badge tone={tag.tone}>
+            {p.deprecated && <AlertTriangle className="h-3 w-3" />}
+            {tag.label}
+          </Badge>
+        </span>
+      )}
+      <span className="hidden text-[12px] font-medium text-accent-500 group-hover:inline dark:text-accent-400">Connect</span>
+    </Link>
   );
 }
 
@@ -313,7 +475,7 @@ function CreateCustomProviderModal({ open, onClose }: { open: boolean; onClose: 
       subtitle="A dedicated instance of an OpenAI- or Anthropic-compatible endpoint. Each instance is isolated with its own base URL, accounts, and models."
     >
       <form
-        className="space-y-4 px-6 py-5"
+        className="space-y-4 px-5 py-4"
         onSubmit={(e) => {
           e.preventDefault();
           if (canSubmit) create.mutate();
@@ -375,72 +537,5 @@ function CreateCustomProviderModal({ open, onClose }: { open: boolean; onClose: 
         </div>
       </form>
     </Modal>
-  );
-}
-
-function ProviderCard({ provider: p, accountCount }: { provider: Provider; accountCount: number }) {
-  const navigate = useNavigate();
-  const connected = accountCount > 0;
-
-  return (
-    <button
-      type="button"
-      onClick={() => navigate(`/providers/${p.id}`)}
-      aria-label={`Open ${p.display_name}`}
-      className="group relative flex h-full w-full flex-col items-start gap-3 rounded-none bg-[var(--bg-elevated)] p-5 text-left transition-colors hover:bg-ink-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-400/60 dark:hover:bg-ink-800/40"
-    >
-      <div className="flex w-full items-start justify-between gap-2">
-        <ProviderIcon provider={p} />
-        {connected ? (
-          <span className="inline-flex items-center gap-1.5 rounded-md bg-accent-100 px-2 py-0.5 text-xs font-medium text-accent-700 dark:bg-accent-800/40 dark:text-accent-200">
-            <StatusDot tone="success" />
-            Connected
-          </span>
-        ) : p.deprecated ? (
-          <Badge tone="warning" title={p.notice || "Account may be restricted"}>
-            <AlertTriangle className="mr-1 h-3 w-3" />
-            unofficial
-          </Badge>
-        ) : !p.drivable ? (
-          <Badge tone="neutral">soon</Badge>
-        ) : p.auth_kind === "none" ? (
-          <Badge tone="accent">free</Badge>
-        ) : null}
-      </div>
-
-      <div className="min-w-0">
-        <p className="truncate text-sm font-semibold">{p.display_name}</p>
-        <p className="mt-0.5 truncate font-mono text-xs text-[var(--text-muted)]">{p.id}</p>
-      </div>
-
-      <p className="mt-auto text-xs text-[var(--text-muted)]">
-        {connected
-          ? `${accountCount} ${accountCount === 1 ? "account" : "accounts"}`
-          : "Connect"}
-      </p>
-    </button>
-  );
-}
-
-// ProviderIcon renders the provider PNG with a colored fallback initial.
-function ProviderIcon({ provider: p }: { provider: Provider }) {
-  const [errored, setErrored] = useState(false);
-  if (errored || !p.icon) {
-    return (
-      <div
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white"
-        style={{ backgroundColor: p.color || "var(--text-muted)" }}
-      >
-        {p.display_name.slice(0, 1).toUpperCase()}
-      </div>
-    );
-  }
-  return (
-    <img
-      src={p.icon}
-      alt={p.display_name}
-      onError={() => setErrored(true)}
-      className="h-10 w-10 shrink-0 rounded-xl object-contain"
-    />
   );
 }

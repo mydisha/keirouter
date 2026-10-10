@@ -26,7 +26,7 @@ const categoryMeta: Record<
   "bug fixes": {
     icon: Bug,
     label: "Bug Fixes",
-    className: "text-red-600 dark:text-red-400",
+    className: "text-bad",
   },
   features: {
     icon: Sparkles,
@@ -178,7 +178,7 @@ export function ChangelogMarkdown({
                     <div className="mb-1 flex items-center gap-1.5">
                       <Icon className={`h-3.5 w-3.5 ${meta.className}`} />
                       <span
-                        className={`text-xs font-semibold uppercase tracking-wider ${meta.className}`}
+                        className={`text-xs font-medium ${meta.className}`}
                       >
                         {meta.label}
                       </span>

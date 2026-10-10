@@ -180,7 +180,7 @@ function SummaryCards({ summary }: { summary: HealthSummary }) {
         {/* Distribution bar + legend */}
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex items-baseline justify-between">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
+            <span className="text-xs font-medium text-[var(--text-muted)]">
               Provider Health
             </span>
             <span className="text-sm font-semibold tabular-nums">{total} total</span>
@@ -226,7 +226,7 @@ function CompactStat({ label, value, tone = "muted" }: { label: string; value: s
   const color = tone === "warning" ? "text-[color:var(--color-warning)]" : tone === "danger" ? "text-[color:var(--color-danger)]" : "text-[var(--text)]";
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</div>
+      <div className="text-[11.5px] font-medium text-[var(--text-muted)]">{label}</div>
       <div className={`mt-0.5 text-lg font-semibold tabular-nums ${color}`}>{value}</div>
     </div>
   );
@@ -240,7 +240,7 @@ function MetricPill({ label, value, tone = "muted" }: { label: string; value: st
     "text-[var(--text)]";
   return (
     <div className="flex items-baseline gap-1.5">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)]">{label}</span>
+      <span className="text-[12px] font-medium text-[var(--text-muted)]">{label}</span>
       <span className={`text-sm font-semibold tabular-nums ${color}`}>{value}</span>
     </div>
   );

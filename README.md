@@ -103,7 +103,7 @@ Grab whichever path matches what's already on your machine — no need to instal
 |---|---|---|
 | **Homebrew** | macOS or Linux with Homebrew | The fastest way to a prebuilt binary |
 | **Windows** | Windows 10/11 with PowerShell | Prebuilt binary, no Go/Node |
-| **From source** | Go 1.24+ and Node.js 20+ | Local hacking / latest `main` |
+| **From source** | Go 1.24+ and Node.js 20.19+ | Local hacking / latest `main` |
 | **Docker** | Just Docker | Clean, isolated runs |
 | **Docker Compose** | Docker + Docker Compose | VPS / production / Coolify |
 
@@ -125,7 +125,7 @@ keirouter tray         # or run in background with system tray icon
 <details>
 <summary><strong>Option B — One-line from source</strong> · for the tinkerers</summary>
 
-Needs **Go 1.24+** and **Node.js 20+**. No cloning, no `.env`, no config wrangling:
+Needs **Go 1.24+** and **Node.js 20.19+**. No cloning, no `.env`, no config wrangling:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mydisha/keirouter/main/scripts/quickstart.sh | bash

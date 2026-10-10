@@ -86,7 +86,7 @@ export function KeyPortalPage() {
 
             <form onSubmit={handleLogin} className="space-y-5 text-left">
               <div className="space-y-1.5">
-                <label className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
+                <label className="text-xs font-medium text-[var(--text-muted)]">
                   Identifier
                 </label>
                 <div className="relative">
@@ -267,7 +267,7 @@ function OverviewSection({ d }: { d: KeyUsageData }) {
         <div className="lg:col-span-5">
           <Card className="h-full p-7 md:p-8 flex flex-col">
             <div className="mb-6 flex items-center justify-between">
-              <h2 className="text-xs font-semibold tracking-widest text-[var(--text-muted)] uppercase">Allocations</h2>
+              <h2 className="text-xs font-medium text-[var(--text-muted)]">Allocations</h2>
               {d.budgets && d.budgets.length > 0 && (
                 <Badge tone={d.budgets.some((b) => b.alert) ? "danger" : "neutral"}>
                   {d.budgets.length} limit{d.budgets.length === 1 ? "" : "s"}
@@ -281,7 +281,7 @@ function OverviewSection({ d }: { d: KeyUsageData }) {
                   <div key={i}>
                     <div className="mb-5 flex items-center justify-between">
                       <div className="flex items-center gap-3">
-                        <span className={`h-2.5 w-2.5 rounded-full ${b.alert ? "bg-[color:var(--color-danger)] shadow-[0_0_10px_var(--color-danger)]" : "bg-accent-500 shadow-[0_0_10px_var(--color-accent-500)]"}`} />
+                        <span className={`h-2.5 w-2.5 rounded-full ${b.alert ? "bg-[color:var(--color-danger)]" : "bg-accent-500"}`} />
                         <h3 className="text-xl font-display font-semibold tracking-tight text-[var(--text)]">
                           {b.period === "total" ? "All-Time" : b.period.charAt(0).toUpperCase() + b.period.slice(1)} Limit
                         </h3>
@@ -318,7 +318,7 @@ function OverviewSection({ d }: { d: KeyUsageData }) {
         {/* KPI cards */}
         <div className="lg:col-span-7">
           <div className="mb-3 flex items-center justify-between px-1">
-            <h2 className="text-xs font-semibold tracking-widest text-[var(--text-muted)] uppercase">Period Summary</h2>
+            <h2 className="text-xs font-medium text-[var(--text-muted)]">Period Summary</h2>
             <span className="text-xs text-[var(--text-muted)]">{activeDays} active day{activeDays === 1 ? "" : "s"}</span>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -370,7 +370,7 @@ function TrendSection({ daily, days }: { daily: NonNullable<KeyUsageData["daily"
       <Card className="p-6 md:p-7">
         <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-xs font-medium uppercase tracking-widest text-[var(--text-muted)]">{days}-day total</p>
+            <p className="text-xs font-medium text-[var(--text-muted)]">{days}-day total</p>
             <p className="mt-1 text-2xl font-display font-semibold tabular-nums tracking-tight text-[var(--text)]">{headline}</p>
           </div>
           {metric === "tokens" && (
@@ -457,7 +457,7 @@ function RecentRequestsSection({ recent, days: _days }: { recent: PortalRecentRe
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-[var(--bg-subtle)]/50 border-b border-[var(--border)]">
-              <tr className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+              <tr className="text-[12px] text-[var(--text-muted)]">
                 <th className="px-4 py-3 text-left font-semibold">Model</th>
                 <th className="px-4 py-3 text-right font-semibold">
                   <span className="inline-flex items-center justify-end gap-1">
@@ -572,7 +572,7 @@ function OptBadge({ name, detail }: { name: string; detail?: string }) {
   const style = styles[name] || "bg-[var(--bg-subtle)] text-[var(--text-muted)]";
   return (
     <span
-      className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider ${style}`}
+      className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[11.5px] font-medium ${style}`}
       title={detail || name}
     >
       {name}
@@ -631,7 +631,7 @@ function InsightsSection({ d }: { d: KeyUsageData }) {
                 </ResponsiveContainer>
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                   <span className="text-lg font-display font-semibold tabular-nums text-[var(--text)]">{formatTokens(totalTokens)}</span>
-                  <span className="text-[10px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Tokens</span>
+                  <span className="text-[11.5px] font-medium text-[var(--text-muted)]">Tokens</span>
                 </div>
               </div>
               <div className="flex-1 space-y-4">
@@ -684,7 +684,7 @@ function ModelSection({ models }: { models: NonNullable<KeyUsageData["models"]> 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-[var(--bg-subtle)]/50 border-b border-[var(--border)]">
-              <tr className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
+              <tr className="text-[12px] text-[var(--text-muted)]">
                 <th className="px-6 py-4 text-left font-semibold">Model</th>
                 <th className="px-6 py-4 text-left font-semibold w-[26%]">Requests</th>
                 <th className="px-6 py-4 text-right font-semibold">Input</th>
@@ -762,7 +762,7 @@ function PlaygroundSection({
       <Card className="p-6 md:p-8">
         <div className="space-y-6">
           <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">Model</label>
+            <label className="mb-2 block text-xs font-medium text-[var(--text-muted)]">Model</label>
             <div className="relative">
               <select
                 value={selectedModel}
@@ -776,7 +776,7 @@ function PlaygroundSection({
           </div>
 
           <div>
-            <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">Prompt</label>
+            <label className="mb-2 block text-xs font-medium text-[var(--text-muted)]">Prompt</label>
             <textarea
               value={testPrompt}
               onChange={(e) => setTestPrompt(e.target.value)}
@@ -812,7 +812,7 @@ function PlaygroundSection({
           {testResponse && (
             <div className="mt-2 space-y-3">
               <div className="flex items-center justify-between">
-                <h4 className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">Response</h4>
+                <h4 className="text-xs font-medium text-[var(--text-muted)]">Response</h4>
                 {testResponse.error && <Badge tone="danger">Error</Badge>}
               </div>
               <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4 text-sm">
@@ -845,7 +845,7 @@ function SectionTitle({ title, icon, count }: { title: string; icon?: React.Reac
   return (
     <div className="flex items-center gap-2.5 pl-1">
       {icon && <div className="text-[var(--text-muted)]">{icon}</div>}
-      <h2 className="text-sm font-semibold tracking-widest text-[var(--text-muted)] uppercase">{title}</h2>
+      <h2 className="text-sm font-medium text-[var(--text-muted)]">{title}</h2>
       {count != null && (
         <span className="rounded-full bg-[var(--bg-subtle)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text-muted)] tabular-nums">{count}</span>
       )}
@@ -884,7 +884,7 @@ function KpiCard({
         <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)]/60 text-[var(--text-muted)]" style={accent ? { color, borderColor: color + "40" } : undefined}>
           <Icon size={16} strokeWidth={2} />
         </span>
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">{label}</p>
+        <p className="text-[12px] font-medium text-[var(--text-muted)]">{label}</p>
       </div>
       <div className="mt-3">
         <p className={`text-3xl font-display font-semibold tracking-tight tabular-nums ${accent ? "text-accent-600 dark:text-accent-400" : "text-[var(--text)]"}`}>{value}</p>
@@ -914,8 +914,8 @@ function BudgetProgress({ label, used, limit, pct, alert, remaining, format }: {
   const safePct = Math.min(Math.max(pct, 0), 100);
   const isWarning = safePct > 80 && !alert;
   const barColor = alert
-    ? "bg-[color:var(--color-danger)] shadow-[0_0_10px_var(--color-danger)]"
-    : isWarning ? "bg-[color:var(--color-warning)] shadow-[0_0_10px_var(--color-warning)]" : "bg-accent-500 shadow-[0_0_10px_var(--color-accent-500)]";
+    ? "bg-[color:var(--color-danger)]"
+    : isWarning ? "bg-[color:var(--color-warning)]" : "bg-accent-500";
   return (
     <div>
       <div className="mb-2.5 flex items-end justify-between">
@@ -956,7 +956,7 @@ function CompositionRow({ color, label, value, pct }: { color: string; label: st
 function Highlight({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
     <div>
-      <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">{label}</p>
+      <p className="text-[12px] font-medium text-[var(--text-muted)]">{label}</p>
       <p className="mt-1.5 text-2xl font-display font-semibold tabular-nums tracking-tight text-[var(--text)]">{value}</p>
       <p className="mt-0.5 text-xs text-[var(--text-muted)]">{sub}</p>
     </div>
@@ -1001,7 +1001,7 @@ function ProviderIcon({ provider, className }: { provider: string; className?: s
   const sizeClass = className || "h-10 w-10";
   if (errored) {
     return (
-      <div className={`flex shrink-0 items-center justify-center rounded-xl bg-[var(--bg-elevated)] border border-[var(--border)] shadow-sm text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider ${sizeClass}`}>
+      <div className={`flex shrink-0 items-center justify-center rounded-xl bg-[var(--bg-elevated)] border border-[var(--border)] shadow-sm text-[12px] font-medium text-[var(--text-muted)] ${sizeClass}`}>
         {provider.slice(0, 2)}
       </div>
     );

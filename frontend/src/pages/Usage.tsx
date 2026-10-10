@@ -44,6 +44,7 @@ import {
   type UsageSource,
   type UsageTerminalStatus,
 } from "../lib/api";
+import { REPORT_PERIODS } from "../lib/periods";
 import { PageHeader } from "../components/Layout";
 import {
   Badge,
@@ -62,12 +63,7 @@ import { HealthStatusBadge } from "../components/HealthBadge";
 import { useToast } from "../components/Toast";
 import { TokenSavingsBreakdown } from "../components/SavingsBreakdown";
 
-const PERIODS = [
-  { value: "today", label: "Today" },
-  { value: "24h", label: "24h" },
-  { value: "week", label: "7D" },
-  { value: "month", label: "30D" },
-];
+const PERIODS = REPORT_PERIODS.map((p) => ({ ...p }));
 
 const HEALTH_RANGE: Record<string, string> = {
   today: "24h",
@@ -79,7 +75,7 @@ const HEALTH_RANGE: Record<string, string> = {
 const USAGE_REFRESH_DEBOUNCE_MS = 8_000;
 
 export function UsagePage() {
-  const [period, setPeriod] = useState("today");
+  const [period, setPeriod] = useState<string>("today");
   const queryClient = useQueryClient();
   const toast = useToast();
   const refreshTimer = useRef<number | null>(null);
@@ -301,7 +297,7 @@ function PricingCoverageNotice({ summary }: { summary: UsageInsights["summary"] 
 		>
 			<summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
 				{hasCaution ? (
-					<AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+					<AlertTriangle className="h-4 w-4 shrink-0 text-warn" />
 				) : (
 					<Info className="h-4 w-4 shrink-0 text-[var(--text-muted)]" />
 				)}
@@ -337,7 +333,7 @@ function PricingCoverageNotice({ summary }: { summary: UsageInsights["summary"] 
 function CoveragePill({ label, ratio }: { label: string; ratio: number | null }) {
 	return (
 		<div className="min-w-16 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1 text-right">
-			<div className="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">{label}</div>
+			<div className="text-[9px] font-medium text-[var(--text-muted)]">{label}</div>
 			<div className="text-xs font-semibold tabular-nums">{fmtRatio(ratio)}</div>
 		</div>
 	);
@@ -360,39 +356,25 @@ function SummaryCard({
 	items: Array<{ label: string; value: string; tone?: "good" }>;
 	tone?: MetricTone;
 }) {
-	const tones: Record<MetricTone, { icon: string; background: string }> = {
-		accent: {
-			icon: "text-secondary-600 dark:text-secondary-300",
-			background: "bg-secondary-50 ring-secondary-200/70 dark:bg-secondary-950/30 dark:ring-secondary-900/60",
-		},
-		success: {
-			icon: "text-emerald-600 dark:text-emerald-300",
-			background: "bg-emerald-50 ring-emerald-200/70 dark:bg-emerald-950/30 dark:ring-emerald-900/60",
-		},
-		warning: {
-			icon: "text-amber-700 dark:text-amber-300",
-			background: "bg-amber-50 ring-amber-200/70 dark:bg-amber-950/30 dark:ring-amber-900/60",
-		},
-	};
-	const colors = tones[tone];
+	// The icon is a quiet glyph; only a warning tone keeps colour because it
+	// carries meaning.
+	const iconClass = tone === "warning" ? "text-warn" : "text-fg-faint";
 
 	return (
-		<Card className="p-5">
-			<div className="flex items-center gap-2">
-				<span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ${colors.background}`}>
-					<Icon className={`h-4 w-4 ${colors.icon}`} />
-				</span>
-				<span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{title}</span>
+		<Card className="px-4 py-3.5">
+			<div className="flex items-center gap-1.5">
+				<Icon className={`h-3.5 w-3.5 ${iconClass}`} strokeWidth={1.75} aria-hidden="true" />
+				<span className="text-[12px] font-medium text-fg-muted">{title}</span>
 			</div>
-			<div className="mt-4 flex items-baseline gap-2">
-				<span className="text-3xl font-semibold tracking-tight tabular-nums text-[var(--text)]">{primary}</span>
+			<div className="mt-2 flex items-baseline gap-2">
+				<span className="text-[24px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-[var(--text)]">{primary}</span>
 				<span className="text-xs text-[var(--text-muted)]">{primaryLabel}</span>
 			</div>
 			<div className="mt-4 grid grid-cols-3 gap-3 border-t border-[var(--border)] pt-3">
 				{items.map((item) => (
 					<div key={item.label} className="min-w-0">
-						<div className={`truncate text-xs font-semibold tabular-nums sm:text-sm ${item.tone === "good" ? "text-emerald-600 dark:text-emerald-300" : "text-[var(--text)]"}`}>{item.value}</div>
-						<div className="mt-0.5 text-[9px] font-medium uppercase tracking-wider text-[var(--text-muted)]">{item.label}</div>
+						<div className={`truncate text-xs font-semibold tabular-nums sm:text-sm ${item.tone === "good" ? "text-ok" : "text-[var(--text)]"}`}>{item.value}</div>
+						<div className="mt-0.5 text-[9px] font-medium text-[var(--text-muted)]">{item.label}</div>
 					</div>
 				))}
 			</div>
@@ -475,7 +457,7 @@ function UsageTrendCard({ series, busiest }: { series: SeriesPoint[]; busiest: s
                   borderRadius: 10,
                   boxShadow: "var(--shadow-card)",
                 }}
-                formatter={(value: number) => [formatTrendValue(metric, Number(value)), config.label]}
+                formatter={(value) => [formatTrendValue(metric, Number(value)), config.label]}
                 labelStyle={{ color: "var(--text-muted)", marginBottom: 4 }}
               />
               <Area
@@ -611,7 +593,7 @@ function ProviderHealthOverview({
             <div className="overflow-x-auto">
               <table className="w-full min-w-[860px] text-xs">
                 <thead>
-                  <tr className="border-b border-[var(--border)] text-left text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  <tr className="border-b border-[var(--border)] text-left text-[11.5px] font-medium text-[var(--text-muted)]">
                     <th className="px-4 py-2.5">Provider</th>
                     <th className="px-4 py-2.5">Status</th>
                     <th className="px-4 py-2.5 text-right">Success</th>
@@ -666,15 +648,15 @@ function HealthSummaryItem({
   tone?: "muted" | "good" | "warn" | "bad";
 }) {
   const color = tone === "good"
-    ? "text-emerald-600 dark:text-emerald-300"
+    ? "text-ok"
     : tone === "warn"
-      ? "text-amber-600 dark:text-amber-300"
+      ? "text-warn"
       : tone === "bad"
-        ? "text-red-600 dark:text-red-300"
+        ? "text-bad"
         : "text-[var(--text)]";
 	return (
 		<div className="min-w-24 px-3 py-1">
-			<div className="text-[9px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">{label}</div>
+			<div className="text-[9px] font-medium text-[var(--text-muted)]">{label}</div>
 			<div className={`mt-0.5 text-base font-semibold tabular-nums ${color}`}>{typeof value === "number" ? fmtInteger(value) : value}</div>
     </div>
   );
@@ -698,7 +680,7 @@ function ProviderBreakdown({ providers }: { providers: ProviderUsage[] }) {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1080px] text-xs">
             <thead>
-              <tr className="border-b border-[var(--border)] text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+              <tr className="border-b border-[var(--border)] text-[11.5px] font-medium text-[var(--text-muted)]">
                 <th className="px-4 py-3 text-left">Provider</th>
                 <th className="px-4 py-3 text-right">Requests</th>
                 <th className="px-4 py-3 text-right">Input classes</th>
@@ -734,7 +716,7 @@ function ProviderBreakdown({ providers }: { providers: ProviderUsage[] }) {
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
                     <div className="font-semibold">{fmtUSD(provider.cost_usd)}</div>
-                    <div className="text-[10px] text-emerald-600 dark:text-emerald-300">{fmtUSD(provider.saved_cost_usd + provider.avoided_cost_usd)} saved</div>
+                    <div className="text-[10px] text-ok">{fmtUSD(provider.saved_cost_usd + provider.avoided_cost_usd)} saved</div>
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
                     <div>{fmtMs(provider.avg_latency_ms)}</div>
@@ -835,7 +817,7 @@ function ModelUsageTable({ models, loading, error }: { models: ModelUsage[]; loa
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1120px] text-xs">
               <thead>
-                <tr className="border-b border-[var(--border)] text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                <tr className="border-b border-[var(--border)] text-[11.5px] font-medium text-[var(--text-muted)]">
                   <SortableHeader label="Provider / model" sortKey="model" active={sortKey} direction={sortDirection} onSort={toggleSort} />
                   <SortableHeader label="Requests" sortKey="requests" active={sortKey} direction={sortDirection} onSort={toggleSort} align="right" />
                   <SortableHeader label="Tokens" sortKey="tokens" active={sortKey} direction={sortDirection} onSort={toggleSort} align="right" />
@@ -852,7 +834,7 @@ function ModelUsageTable({ models, loading, error }: { models: ModelUsage[]; loa
                         <ProviderIcon provider={model.provider} src={model.provider_icon} color={model.provider_color} className="h-8 w-8" />
                         <div className="min-w-0">
                           <div className="max-w-sm truncate font-mono text-[11px] font-semibold" title={model.model}>{model.model}</div>
-                          <div className="truncate text-[9px] uppercase tracking-wider text-[var(--text-muted)]">{model.provider_name || model.provider}</div>
+                          <div className="truncate text-[9px] text-[var(--text-muted)]">{model.provider_name || model.provider}</div>
                         </div>
                       </div>
                     </td>
@@ -867,7 +849,7 @@ function ModelUsageTable({ models, loading, error }: { models: ModelUsage[]; loa
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       <div className="font-semibold">{model.pricing_status === "missing" ? "Unpriced" : fmtUSD(model.cost_usd)}</div>
-                      <div className="text-[10px] text-emerald-600 dark:text-emerald-300">{fmtUSD(model.saved_cost_usd + model.avoided_cost_usd)} saved</div>
+                      <div className="text-[10px] text-ok">{fmtUSD(model.saved_cost_usd + model.avoided_cost_usd)} saved</div>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums">
                       <div>{fmtMs(model.avg_latency_ms)}</div>
@@ -888,7 +870,7 @@ function ModelUsageTable({ models, loading, error }: { models: ModelUsage[]; loa
                         {fmtInteger(model.legacy_usage_requests)} legacy · {fmtInteger(model.backfilled_requests)} backfilled
                       </div>
                       {model.pricing_mixed ? (
-                        <div className="mt-1 text-[9px] font-semibold text-amber-700 dark:text-amber-300">Multiple immutable snapshots</div>
+                        <div className="mt-1 text-[9px] font-semibold text-warn">Multiple immutable snapshots</div>
                       ) : (
                         <>
                           <div className="mt-1 max-w-xs truncate font-mono text-[9px] text-[var(--text-muted)]" title={model.pricing_key || undefined}>{model.pricing_key || "No pricing key"}</div>
@@ -969,7 +951,7 @@ function RecentRequests({ records }: { records: RecentActivity[] }) {
             <div className="overflow-x-auto">
               <table className="w-full min-w-[1060px] text-xs">
                 <thead>
-                  <tr className="border-b border-[var(--border)] text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  <tr className="border-b border-[var(--border)] text-[11.5px] font-medium text-[var(--text-muted)]">
                     <th className="px-4 py-3 text-left">Status</th>
                     <th className="px-4 py-3 text-left">Provider / model</th>
                     <th className="px-4 py-3 text-right">Input</th>
@@ -997,7 +979,7 @@ function RecentRequests({ records }: { records: RecentActivity[] }) {
                           <ProviderIcon provider={record.provider} src={record.provider_icon} color={record.provider_color} className="h-8 w-8" />
                           <div className="min-w-0">
                             <div className="max-w-sm truncate font-mono text-[11px] font-semibold" title={record.model}>{record.model || "—"}</div>
-                            <div className="truncate text-[9px] uppercase tracking-wider text-[var(--text-muted)]">{record.provider_name || record.provider}</div>
+                            <div className="truncate text-[9px] text-[var(--text-muted)]">{record.provider_name || record.provider}</div>
                           </div>
                         </div>
                       </td>
@@ -1424,7 +1406,7 @@ function DetailSummaryStrip({ items }: { items: { label: string; value: string; 
     <div className="grid overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--border)] sm:grid-cols-3 sm:gap-px">
       {items.map((item) => (
         <div key={item.label} className="border-b border-[var(--border)] bg-[var(--bg-elevated)] px-4 py-3 last:border-b-0 sm:border-b-0">
-          <div className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{item.label}</div>
+          <div className="text-[9px] font-medium text-[var(--text-muted)]">{item.label}</div>
           <div className="mt-1 text-lg font-semibold tabular-nums tracking-tight text-[var(--text)]">{item.value}</div>
           <div className="mt-0.5 truncate text-[10px] text-[var(--text-muted)]" title={item.hint}>{item.hint}</div>
         </div>
@@ -1502,7 +1484,7 @@ function TokenBreakdown({
   return (
     <div className={className}>
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">{label}</span>
+        <span className="text-[11.5px] font-medium text-[var(--text-muted)]">{label}</span>
         <span className="text-lg font-semibold tabular-nums text-[var(--text)]">{value}</span>
       </div>
       <div className="mt-2 divide-y divide-[var(--border)]">
@@ -1524,8 +1506,8 @@ function DetailValueRow({ label, value }: { label: string; value: string }) {
 function DetailMiniMetric({ label, value, tone = "normal" }: { label: string; value: string; tone?: "normal" | "good" }) {
   return (
     <div className="min-w-0 bg-[var(--bg-subtle)] px-3 py-2.5">
-      <div className="truncate text-[9px] font-semibold uppercase tracking-wider text-[var(--text-muted)]" title={label}>{label}</div>
-      <div className={`mt-1 truncate text-xs font-semibold tabular-nums ${tone === "good" ? "text-emerald-600 dark:text-emerald-300" : "text-[var(--text)]"}`} title={value}>{value}</div>
+      <div className="truncate text-[9px] font-medium text-[var(--text-muted)]" title={label}>{label}</div>
+      <div className={`mt-1 truncate text-xs font-semibold tabular-nums ${tone === "good" ? "text-ok" : "text-[var(--text)]"}`} title={value}>{value}</div>
     </div>
   );
 }
@@ -1534,7 +1516,7 @@ function BreakdownUnavailable({ label, value, message }: { label: string; value:
   return (
     <div className="rounded-lg bg-[var(--bg-subtle)] px-4 py-3">
       <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">{label}</span>
+        <span className="text-[11.5px] font-medium text-[var(--text-muted)]">{label}</span>
         <span className="text-sm font-semibold tabular-nums text-[var(--text)]">{value}</span>
       </div>
       <p className="mt-2 text-[10px] leading-4 text-[var(--text-muted)]">{message}</p>

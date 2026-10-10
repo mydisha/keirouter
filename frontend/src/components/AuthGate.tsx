@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { WifiOff } from "lucide-react";
 import { api, fetchPortalBranding } from "../lib/api";
 import { Card, Button, Input, Field, Spinner } from "./ui";
+import { BrandMark } from "./BrandMark";
 
 // AuthGate gates the dashboard behind a login, and surfaces a one-time
 // onboarding step that nudges the operator off the default password.
@@ -56,8 +57,17 @@ function AuthGateLogo({ className }: { className?: string }) {
     staleTime: 5 * 60_000,
     retry: false,
   });
-  const src = data?.logo_url || "/keirouter-logo.png";
-  return <img src={src} alt={data?.name || "KeiRouter"} className={className} />;
+  if (data?.logo_url) {
+    return <img src={data.logo_url} alt={data.name || "KeiRouter"} className={className} />;
+  }
+  // Built-in identity: the mark plus the configured name as text, so the
+  // login screen matches the sidebar instead of a raster wordmark.
+  return (
+    <span className="inline-flex items-center gap-2.5">
+      <BrandMark size={26} />
+      <span className="text-[16px] font-semibold tracking-[-0.01em] text-fg">{data?.name || "KeiRouter"}</span>
+    </span>
+  );
 }
 
 function AuthGateName() {
@@ -150,7 +160,7 @@ function OnboardingScreen() {
   return (
     <div className="flex h-full items-center justify-center px-4">
       <Card className="w-full max-w-md p-8 shadow-[var(--shadow-pop)]">
-        <AuthGateLogo className="mb-4 h-16 object-contain" />
+        <div className="mb-5"><AuthGateLogo className="h-16 object-contain" /></div>
         <h1 className="text-lg font-semibold tracking-tight">Welcome to <AuthGateName /></h1>
         <p className="mt-2 text-sm text-[var(--text-muted)]">
           You're signed in with the default password. Set a new one to secure your dashboard.

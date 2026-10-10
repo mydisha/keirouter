@@ -120,6 +120,11 @@ type Event struct {
 	Client    string
 	Status    string
 	ErrorKind string
+	// ChainID is the routing chain that resolved the request ("" when the
+	// client targeted provider/model directly); FallbackCount is how many
+	// attempts failed over before the terminal one.
+	ChainID       string
+	FallbackCount int
 
 	Usage           core.Usage
 	UsageSource     string // provider | estimated | cache | none
@@ -217,6 +222,7 @@ func (m *Meter) Record(ctx context.Context, ev Event) (int64, error) {
 		ID: uuid.NewString(), RequestID: ev.RequestID,
 		TenantID: ev.TenantID, ProjectID: ev.ProjectID, APIKeyID: ev.APIKeyID,
 		Provider: ev.Provider, Model: ev.Model, AccountID: ev.AccountID, Client: ev.Client,
+		ChainID: ev.ChainID, FallbackCount: ev.FallbackCount,
 		Status: status, ErrorKind: ev.ErrorKind, UsageSource: usageSource,
 		PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens,
 		CachedTokens: u.CachedTokens, CacheWriteTokens: u.CacheWriteTokens,

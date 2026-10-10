@@ -16,7 +16,7 @@ type BrandingSettings struct {
 	LogoURL      string `json:"logo_url"`      // URL to logo image (SVG/PNG). Empty = default logo.
 	FaviconURL   string `json:"favicon_url"`   // URL to favicon (PNG/ICO). Empty = default favicon.
 	Tagline      string `json:"tagline"`       // Optional short tagline shown on portal login.
-	ColorPalette string `json:"color_palette"` // Color palette identifier (e.g. "sage-terra", "ocean", "midnight").
+	ColorPalette string `json:"color_palette"` // Color palette identifier (e.g. "kei", "sage-terra", "ocean").
 }
 
 func defaultBrandingSettings() BrandingSettings {
@@ -25,7 +25,7 @@ func defaultBrandingSettings() BrandingSettings {
 		LogoURL:      "",
 		FaviconURL:   "",
 		Tagline:      "",
-		ColorPalette: "sage-terra",
+		ColorPalette: "kei",
 	}
 }
 

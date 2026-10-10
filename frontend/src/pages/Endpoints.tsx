@@ -175,9 +175,9 @@ function EndpointRow({
     <div className="px-4 py-4 sm:px-6">
       <div className="flex items-center gap-2.5">
         {icon ?? (
-          <Server className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+          <Server className="h-3.5 w-3.5 text-ok" />
         )}
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+        <p className="text-[12px] font-medium text-[var(--text-muted)]">
           {label}
         </p>
       </div>
@@ -683,8 +683,8 @@ function TunnelDot({
     ? reachable === true
       ? "bg-green-500"
       : reachable === false
-        ? "bg-red-500"
-        : "bg-amber-500 animate-pulse"
+        ? "bg-bad"
+        : "bg-warn animate-pulse"
     : "bg-ink-300 dark:bg-ink-600";
   return <span className={`block h-2 w-2 rounded-full ${color}`} />;
 }

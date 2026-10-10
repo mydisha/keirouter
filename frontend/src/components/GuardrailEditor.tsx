@@ -405,7 +405,7 @@ function ToxicitySection({
                       type="button"
                       onClick={() => toggleCat(t)}
                       className={`min-h-10 rounded-lg border px-3 py-2 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50 ${on
-                          ? "bg-rose-500/10 border-rose-500/40 text-rose-600 dark:text-rose-300"
+                          ? "bg-rose-500/10 border-rose-500/40 text-bad"
                           : "bg-white/5 border-white/10 text-gray-600 dark:text-gray-300"
                         }`}
                     >
@@ -587,7 +587,7 @@ function TestPanel({ config }: { config: GuardrailPolicyConfig }) {
           <Button onClick={run} disabled={!text.trim() || running}>
             {running ? "Running..." : "Run test"}
           </Button>
-          {err && <span className="text-xs text-red-500">{err}</span>}
+          {err && <span className="text-xs text-bad">{err}</span>}
         </div>
         {result && (
           <div className="space-y-2 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-3 text-xs">

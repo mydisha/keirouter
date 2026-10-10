@@ -152,7 +152,7 @@ export function ProxyPoolsPage() {
                 {selected.size > 0 && (
                   <>
                     <button onClick={() => { [...selected].forEach((id) => toggleActive.mutate({ id, is_active: true })); toast.success("Pools activated", `${selected.size} pool${selected.size !== 1 ? "s" : ""} enabled for upstream routing.`); }}
-                      className="flex h-8 items-center gap-1 rounded-lg border border-emerald-500/30 px-2 text-xs text-emerald-500 dark:text-emerald-400 hover:bg-emerald-500/10">
+                      className="flex h-8 items-center gap-1 rounded-lg border border-emerald-500/30 px-2 text-xs text-ok hover:bg-emerald-500/10">
                       <ToggleRight className="h-3.5 w-3.5" /> Activate
                     </button>
                     <button onClick={() => { [...selected].forEach((id) => toggleActive.mutate({ id, is_active: false })); toast.success("Pools deactivated", `${selected.size} pool${selected.size !== 1 ? "s" : ""} disabled. Traffic will bypass them.`); }}
@@ -160,7 +160,7 @@ export function ProxyPoolsPage() {
                       <ToggleLeft className="h-3.5 w-3.5" /> Deactivate
                     </button>
                     <button onClick={() => { [...selected].forEach((id) => remove.mutate(id)); setSelected(new Set()); }}
-                      className="flex h-8 items-center gap-1 rounded-lg border border-red-500/30 px-2 text-xs text-red-500 dark:text-red-400 hover:bg-red-500/10">
+                      className="flex h-8 items-center gap-1 rounded-lg border border-red-500/30 px-2 text-xs text-bad hover:bg-red-500/10">
                       <Trash2 className="h-3.5 w-3.5" /> Delete
                     </button>
                     <button onClick={() => setSelected(new Set())}
@@ -245,7 +245,7 @@ function PoolRow({ pool, selected, onSelect, onEdit, onDelete, onTest, onToggle,
           {pool.no_proxy && <span>no-proxy: {pool.no_proxy}</span>}
           {pool.last_tested && <span>tested {relTime(pool.last_tested)}</span>}
           {pool.last_error && (
-            <span className={pool.test_status === "testing" ? "text-amber-600 dark:text-amber-400" : "text-red-500 dark:text-red-400"}>
+            <span className={pool.test_status === "testing" ? "text-warn" : "text-bad"}>
               {pool.last_error}
             </span>
           )}
@@ -258,7 +258,7 @@ function PoolRow({ pool, selected, onSelect, onEdit, onDelete, onTest, onToggle,
         <button onClick={onToggle} disabled={pool.test_status === "testing"}
           className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-50"
           title={pool.test_status === "testing" ? "Waiting for relay readiness" : pool.is_active ? "Deactivate" : "Activate"}>
-          {pool.is_active ? <ToggleRight className="h-4 w-4 text-emerald-500 dark:text-emerald-400" /> : <ToggleLeft className="h-4 w-4" />}
+          {pool.is_active ? <ToggleRight className="h-4 w-4 text-ok" /> : <ToggleLeft className="h-4 w-4" />}
         </button>
         <button onClick={onTest} disabled={testing || pool.test_status === "testing"}
           className="rounded-lg p-1.5 text-[var(--text-muted)] hover:bg-[var(--bg-elevated)] hover:text-[var(--text)]" title="Test">
@@ -521,9 +521,9 @@ function BatchImport({ onClose }: { onClose: () => void }) {
             {results.map((r) => (
               <div key={r.index} className="flex items-center gap-3 px-3 py-2 text-xs">
                 {r.status === "created" ? (
-                  <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
+                  <CheckCircle2 className="h-4 w-4 shrink-0 text-ok" />
                 ) : (
-                  <XCircle className="h-4 w-4 shrink-0 text-red-500" />
+                  <XCircle className="h-4 w-4 shrink-0 text-bad" />
                 )}
                 <span className="flex-1 truncate font-medium">{r.label}</span>
                 {r.error && <span className="truncate text-[var(--text-muted)]" title={r.error}>{r.error}</span>}

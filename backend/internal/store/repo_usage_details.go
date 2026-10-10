@@ -11,6 +11,7 @@ import (
 // provenance for the request detail drawer.
 type AccurateRecentRecord struct {
 	ID, RequestID, Provider, Model, Status, ErrorKind, UsageSource string
+	APIKeyID, AccountID, Client                                    string
 	PromptTokens, CompletionTokens, CachedTokens, CacheWriteTokens int
 	ReasoningTokens                                                int
 	CostNanos, InputCostNanos, CachedCostNanos                     int64
@@ -38,6 +39,7 @@ func (r *UsageRepo) RecentAccurate(ctx context.Context, tenantID string, since t
 	}
 	q := r.db.rebind(`
 		SELECT id, request_id, provider, model, status, error_kind, usage_source,
+			COALESCE(api_key_id,''), COALESCE(account_id,''), COALESCE(client,''),
 			prompt_tokens, completion_tokens, cached_tokens, cache_write_tokens, reasoning_tokens,
 			cost_nanos, input_cost_nanos, cached_cost_nanos, cache_write_cost_nanos,
 			output_cost_nanos, reasoning_cost_nanos, avoided_cost_nanos, saved_cost_nanos,
@@ -63,6 +65,7 @@ func (r *UsageRepo) RecentAccurate(ctx context.Context, tenantID string, since t
 		var createdAt string
 		if err := rows.Scan(
 			&rec.ID, &rec.RequestID, &rec.Provider, &rec.Model, &rec.Status, &rec.ErrorKind, &rec.UsageSource,
+			&rec.APIKeyID, &rec.AccountID, &rec.Client,
 			&rec.PromptTokens, &rec.CompletionTokens, &rec.CachedTokens, &rec.CacheWriteTokens, &rec.ReasoningTokens,
 			&rec.CostNanos, &rec.InputCostNanos, &rec.CachedCostNanos, &rec.CacheWriteCostNanos,
 			&rec.OutputCostNanos, &rec.ReasoningCostNanos, &rec.AvoidedCostNanos, &rec.SavedCostNanos,
@@ -93,7 +96,7 @@ func (r *UsageRepo) RecentAccurate(ctx context.Context, tenantID string, since t
 type AccurateTimeBucket struct {
 	Bucket                                           int
 	Requests, Failed, PromptTokens, CompletionTokens int64
-	CostNanos                                        int64
+	CostNanos, SavedNanos, CacheHits, AvgLatencyMS   int64
 }
 
 func (r *UsageRepo) TimelineAccurate(ctx context.Context, tenantID string, since, to time.Time, buckets int) ([]AccurateTimeBucket, error) {
@@ -113,7 +116,10 @@ func (r *UsageRepo) TimelineAccurate(ctx context.Context, tenantID string, since
 		SELECT CAST((%s-%s)/? AS INTEGER), COUNT(*),
 			COALESCE(SUM(CASE WHEN status NOT IN ('success','cache_hit') THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0),
-			COALESCE(SUM(cost_nanos),0)
+			COALESCE(SUM(cost_nanos),0),
+			COALESCE(SUM(saved_cost_nanos),0)+COALESCE(SUM(avoided_cost_nanos),0),
+			COALESCE(SUM(cache_hit),0),
+			COALESCE(CAST(AVG(CASE WHEN end_to_end_latency_ms>0 AND status IN ('success','cache_hit') THEN end_to_end_latency_ms END) AS INTEGER),0)
 		FROM usage_records
 		WHERE tenant_id=? AND created_at>=? AND created_at<=?
 		GROUP BY 1 ORDER BY 1`, epochCreated, epochSince))
@@ -125,7 +131,7 @@ func (r *UsageRepo) TimelineAccurate(ctx context.Context, tenantID string, since
 	var out []AccurateTimeBucket
 	for rows.Next() {
 		var b AccurateTimeBucket
-		if err := rows.Scan(&b.Bucket, &b.Requests, &b.Failed, &b.PromptTokens, &b.CompletionTokens, &b.CostNanos); err != nil {
+		if err := rows.Scan(&b.Bucket, &b.Requests, &b.Failed, &b.PromptTokens, &b.CompletionTokens, &b.CostNanos, &b.SavedNanos, &b.CacheHits, &b.AvgLatencyMS); err != nil {
 			return nil, err
 		}
 		if b.Bucket >= 0 && b.Bucket < buckets {

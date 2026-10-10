@@ -124,7 +124,7 @@ function KilocodeIdle({ onStart }: { onStart: () => void }) {
         to enter on the KiloCode website.
       </p>
       <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-3">
+        <h3 className="text-xs font-medium text-[var(--text-muted)] mb-3">
           How it works
         </h3>
         <ol className="space-y-2.5">

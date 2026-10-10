@@ -114,6 +114,11 @@ type RequestMetadata struct {
 	// (empty for direct provider/model targeting). Used by the guardrails
 	// resolver for chain-scoped policy lookup.
 	ChainID string
+	// FallbackCount is how many upstream attempts failed over to a later
+	// target before the terminal attempt. The pipeline increments it at each
+	// fallback so the persisted usage row records whether the first choice
+	// served the request.
+	FallbackCount int
 	// ContextAffinityKey is a privacy-safe, stable conversation/session key used
 	// to keep account routing and provider-side session/cache IDs sticky across
 	// fallback and follow-up requests.

@@ -33,6 +33,7 @@ import {
   TabBar,
   Toggle,
 } from "../components/ui";
+import { useConfirm } from "../components/ui/confirm-dialog";
 
 type Tab = "general" | "models" | "guardrails";
 
@@ -119,7 +120,7 @@ export function KeyDetailPage() {
 
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-secondary-200/70 bg-secondary-50 text-secondary-700 shadow-sm dark:border-secondary-900/60 dark:bg-secondary-950/30 dark:text-secondary-200">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-line bg-subtle text-fg-muted">
             <KeyRound className="h-5 w-5" />
           </div>
           <div className="min-w-0">
@@ -133,7 +134,7 @@ export function KeyDetailPage() {
               className="group mt-1 inline-flex min-h-8 max-w-full items-center gap-2 rounded-lg text-sm text-[var(--text-muted)] transition-colors hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
             >
               <span className="truncate font-mono">{key.display}</span>
-              {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5 opacity-60 group-hover:opacity-100" />}
+              {copied ? <Check className="h-3.5 w-3.5 text-ok" /> : <Copy className="h-3.5 w-3.5 opacity-60 group-hover:opacity-100" />}
             </button>
           </div>
         </div>
@@ -155,7 +156,7 @@ export function KeyDetailPage() {
 function InfoItem({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
   return (
     <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
-      <dt className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</dt>
+      <dt className="text-[12px] font-medium text-[var(--text-muted)]">{label}</dt>
       <dd className={`mt-1.5 break-words text-sm font-medium text-[var(--text)] ${mono ? "font-mono text-xs" : ""}`}>{value}</dd>
     </div>
   );
@@ -239,7 +240,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
         {!editing ? (
           <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
             <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-secondary-100 text-secondary-700 dark:bg-secondary-900/40 dark:text-secondary-200">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line bg-subtle text-fg-muted">
                 <Cpu className="h-4 w-4" />
               </div>
               <div className="min-w-0">
@@ -275,7 +276,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                 <Badge tone={models.length > 0 ? "warning" : "neutral"}>{models.length} selected</Badge>
               </div>
               <ModelMultiSelect value={models} onChange={setModels} />
-              {models.length === 0 && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">Select at least one model, or cancel to keep current access.</p>}
+              {models.length === 0 && <p className="mt-2 text-xs text-warn">Select at least one model, or cancel to keep current access.</p>}
             </div>
             <div className="flex flex-col-reverse gap-2 border-t border-[var(--border)] pt-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -310,6 +311,7 @@ function enabledDetectors(config: GuardrailPolicyConfig | undefined) {
 }
 
 function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
   const policies = useQuery({
@@ -394,7 +396,7 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
           ) : (
             <div className="flex items-center gap-2">
               {existing && (
-                <Button variant="danger" onClick={() => { if (confirm("Remove this per-key override? The key will inherit upstream policies.")) remove.mutate(); }} disabled={remove.isPending}>Remove</Button>
+                <Button variant="danger" onClick={async () => { if (await confirm({ title: "Remove this per-key override?", description: "The key will inherit upstream policies.", confirmLabel: "Remove", tone: "danger" })) remove.mutate(); }} disabled={remove.isPending}>Remove</Button>
               )}
               <Button onClick={() => save.mutate()} disabled={save.isPending || !dirty}>
                 <Save className="h-4 w-4" />
@@ -405,7 +407,7 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
         />
         <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
           <div className="flex items-center gap-3">
-            <div className={`h-2.5 w-2.5 rounded-full ${existing && enabled ? "bg-emerald-500" : "bg-ink-300 dark:bg-ink-600"}`} />
+            <div className={`h-2.5 w-2.5 rounded-full ${existing && enabled ? "bg-ok" : "bg-ink-300 dark:bg-ink-600"}`} />
             <div>
               <p className="text-sm font-semibold">{existing ? (enabled ? "Override active" : "Override paused") : editing ? "New override" : "Inherited policy"}</p>
               <p className="mt-0.5 text-xs text-[var(--text-muted)]">{existing ? "Changes here take priority for this API key." : editing ? "Configure detectors, test the policy, then save." : "Global, provider, model, and chain policies continue to apply."}</p>
@@ -428,7 +430,7 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
           {effective.isLoading ? (
             <Spinner />
           ) : effective.isError ? (
-            <p className="text-sm text-red-600 dark:text-red-400">Unable to load the effective policy.</p>
+            <p className="text-sm text-bad">Unable to load the effective policy.</p>
           ) : (
             <div className="space-y-4">
               <div className="flex flex-wrap items-center gap-2">

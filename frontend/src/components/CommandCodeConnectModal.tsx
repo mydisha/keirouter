@@ -57,7 +57,7 @@ export function CommandCodeConnectModal({ onClose }: { onClose: () => void }) {
       >
         <div className="flex items-center justify-between border-b border-[var(--border)] px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent-100 text-accent-700 dark:bg-accent-800/40 dark:text-accent-200">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-line bg-subtle text-fg-muted">
               <FileUp className="h-[18px] w-[18px]" />
             </div>
             <h2 id="commandcode-modal-title" className="text-base font-semibold tracking-tight">Connect Command Code</h2>
@@ -82,7 +82,7 @@ export function CommandCodeConnectModal({ onClose }: { onClose: () => void }) {
               </p>
 
               <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-3">
+                <h3 className="text-xs font-medium text-[var(--text-muted)] mb-3">
                   Option A: CLI token
                 </h3>
                 <ol className="space-y-2.5">
@@ -102,7 +102,7 @@ export function CommandCodeConnectModal({ onClose }: { onClose: () => void }) {
               </div>
 
               <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-                <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-3">
+                <h3 className="text-xs font-medium text-[var(--text-muted)] mb-3">
                   Option B: API key
                 </h3>
                 <ol className="space-y-2.5">

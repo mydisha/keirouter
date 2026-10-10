@@ -1,13 +1,19 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { fileURLToPath, URL } from "node:url";
 
-const BACKEND = "http://127.0.0.1:20180";
+// KEIROUTER_BACKEND lets a second dev stack run side by side (e.g. against a
+// throwaway backend on another port) without editing this file.
+const BACKEND = process.env.KEIROUTER_BACKEND ?? "http://127.0.0.1:20180";
 
 // During development the dashboard talks to the Go backend on :20180.
 // In production the built assets are served by the backend itself.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
+  },
   server: {
     host: "127.0.0.1",
     port: 5180,
@@ -66,10 +72,13 @@ export default defineConfig({
         // Split heavy, rarely-changing vendor libs into their own chunks so the
         // browser caches them across deploys and they load only with the pages
         // that import them (for example, recharts -> chart pages).
-        manualChunks: {
-          react: ["react", "react-dom", "react-router-dom"],
-          query: ["@tanstack/react-query"],
-          recharts: ["recharts"],
+        manualChunks(id: string) {
+          if (!id.includes("node_modules")) return undefined;
+          if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(id)) return "react";
+          if (id.includes("@tanstack/react-query")) return "query";
+          if (/[\\/]node_modules[\\/](radix-ui|@radix-ui|@floating-ui)[\\/]/.test(id)) return "radix";
+          if (/[\\/]node_modules[\\/](recharts|d3-[^\\/]+|victory-vendor)[\\/]/.test(id)) return "recharts";
+          return undefined;
         },
       },
     },

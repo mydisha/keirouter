@@ -37,7 +37,7 @@ function fmtMs(v?: number) {
 
 function emptyState() {
   return (
-    <div className="flex h-full items-center justify-center text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
+    <div className="flex h-full items-center justify-center text-xs font-medium text-[var(--text-muted)]">
       No data
     </div>
   );
@@ -57,7 +57,7 @@ export function RequestVolumeChart({ data }: { data: HealthSnapshot[] }) {
         <CartesianGrid vertical={false} stroke="var(--border)" opacity={0.3} />
         <XAxis dataKey="bucket_start" tickFormatter={fmtTime} tick={axisTick} tickLine={false} axisLine={false} dy={10} />
         <YAxis tick={axisTick} tickLine={false} axisLine={false} width={50} />
-        <Tooltip contentStyle={tooltipStyle} labelFormatter={fmtTime} />
+        <Tooltip contentStyle={tooltipStyle} labelFormatter={(t) => fmtTime(String(t))} />
         <Area type="monotone" dataKey="request_count" name="Requests" stroke="var(--color-chart-1)" strokeWidth={2} fill="url(#reqFill)" />
       </AreaChart>
     </ResponsiveContainer>
@@ -82,7 +82,7 @@ export function ErrorRateChart({ data }: { data: HealthSnapshot[] }) {
         <CartesianGrid vertical={false} stroke="var(--border)" opacity={0.3} />
         <XAxis dataKey="bucket_start" tickFormatter={fmtTime} tick={axisTick} tickLine={false} axisLine={false} dy={10} />
         <YAxis tick={axisTick} tickLine={false} axisLine={false} width={40} tickFormatter={(v: number) => `${v}%`} />
-        <Tooltip contentStyle={tooltipStyle} labelFormatter={fmtTime} formatter={(v: number) => [`${v.toFixed(1)}%`, "Error rate"]} />
+        <Tooltip contentStyle={tooltipStyle} labelFormatter={(t) => fmtTime(String(t))} formatter={(v) => [`${Number(v).toFixed(1)}%`, "Error rate"]} />
         <Area type="monotone" dataKey="error_rate" stroke="var(--color-danger)" strokeWidth={2} fill="url(#errFill)" />
       </AreaChart>
     </ResponsiveContainer>
@@ -97,7 +97,7 @@ export function LatencyChart({ data }: { data: HealthSnapshot[] }) {
         <CartesianGrid vertical={false} stroke="var(--border)" opacity={0.3} />
         <XAxis dataKey="bucket_start" tickFormatter={fmtTime} tick={axisTick} tickLine={false} axisLine={false} dy={10} />
         <YAxis tick={axisTick} tickLine={false} axisLine={false} width={50} tickFormatter={fmtMs} />
-        <Tooltip contentStyle={tooltipStyle} labelFormatter={fmtTime} formatter={(v: number) => [fmtMs(v), ""]} />
+        <Tooltip contentStyle={tooltipStyle} labelFormatter={(t) => fmtTime(String(t))} formatter={(v) => [fmtMs(Number(v)), ""]} />
         <Line type="monotone" dataKey="latency_p50_ms" name="p50" stroke="var(--color-chart-3)" strokeWidth={1.5} dot={false} />
         <Line type="monotone" dataKey="latency_p95_ms" name="p95" stroke="var(--color-warning)" strokeWidth={2} dot={false} />
         <Line type="monotone" dataKey="latency_p99_ms" name="p99" stroke="var(--color-danger)" strokeWidth={1.5} dot={false} />
@@ -120,7 +120,7 @@ export function TTFTChart({ data }: { data: HealthSnapshot[] }) {
         <CartesianGrid vertical={false} stroke="var(--border)" opacity={0.3} />
         <XAxis dataKey="bucket_start" tickFormatter={fmtTime} tick={axisTick} tickLine={false} axisLine={false} dy={10} />
         <YAxis tick={axisTick} tickLine={false} axisLine={false} width={50} tickFormatter={fmtMs} />
-        <Tooltip contentStyle={tooltipStyle} labelFormatter={fmtTime} formatter={(v: number) => [fmtMs(v), "TTFT p95"]} />
+        <Tooltip contentStyle={tooltipStyle} labelFormatter={(t) => fmtTime(String(t))} formatter={(v) => [fmtMs(Number(v)), "TTFT p95"]} />
         <Area type="monotone" dataKey="ttft_p95_ms" stroke="var(--color-chart-2)" strokeWidth={2} fill="url(#ttftFill)" />
       </AreaChart>
     </ResponsiveContainer>
@@ -135,7 +135,7 @@ export function FallbackChart({ data }: { data: HealthSnapshot[] }) {
         <CartesianGrid vertical={false} stroke="var(--border)" opacity={0.3} />
         <XAxis dataKey="bucket_start" tickFormatter={fmtTime} tick={axisTick} tickLine={false} axisLine={false} dy={10} />
         <YAxis tick={axisTick} tickLine={false} axisLine={false} width={40} />
-        <Tooltip contentStyle={tooltipStyle} labelFormatter={fmtTime} />
+        <Tooltip contentStyle={tooltipStyle} labelFormatter={(t) => fmtTime(String(t))} />
         <Bar dataKey="fallback_count" name="Fallbacks" fill="var(--color-secondary-500)" radius={[3, 3, 0, 0]} />
       </BarChart>
     </ResponsiveContainer>

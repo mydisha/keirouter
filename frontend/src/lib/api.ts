@@ -219,6 +219,7 @@ export interface APIKey {
   plan_id: string;
   plan_name?: string;
   created_at: string;
+  last_used_at?: string | null;
   allowed_models?: string[];
 }
 
@@ -352,6 +353,8 @@ export interface BudgetStatus {
   pct_used: number;
   tokens_pct_used: number;
   period_start: string;
+  /** When the budget window resets; null for "total" budgets. */
+  resets_at: string | null;
 }
 
 export interface UsageSummary {
@@ -402,6 +405,13 @@ export interface ProviderUsage {
 export interface RecentActivity {
   id: string;
   request_id: string;
+  api_key_id: string;
+  /** Resolved key name; empty when the key was deleted or the request was unauthenticated. */
+  api_key_name: string;
+  account_id: string;
+  account_label: string;
+  /** Calling client detected from the request (e.g. "claude-code"). */
+  client: string;
   provider: string;
   provider_name: string;
   provider_color: string;
@@ -547,6 +557,55 @@ export interface SeriesPoint {
   prompt_tokens: number;
   completion_tokens: number;
   cost_usd: number;
+  /** Optimizer savings (input compression + semantic-cache avoided cost). */
+  saved_usd: number;
+  cache_hits: number;
+  /** Mean end-to-end latency of successful requests in the bucket. */
+  avg_latency_ms: number;
+}
+
+/** One chain step's share of the chain's traffic, from persisted usage rows. */
+export interface ChainStepUsage {
+  position: number;
+  provider: string;
+  model: string;
+  /** True for the chain's configured last-resort fallback model. */
+  is_fallback: boolean;
+  requests: number;
+  share: number;
+  success_rate: number;
+  cost_usd: number;
+}
+
+export interface ChainUsage {
+  chain_id: string;
+  name: string;
+  strategy: string;
+  requests: number;
+  success_rate: number;
+  /** Requests that reached their serving target only after failing over. */
+  fallback_requests: number;
+  fallback_rate: number;
+  cost_usd: number;
+  steps: ChainStepUsage[];
+  /** Targets that served traffic but are no longer steps of the chain. */
+  other_targets: { provider: string; model: string; requests: number; share: number }[];
+}
+
+/** Headline rollup of the equal-length window immediately before the period. */
+export interface PreviousPeriodSummary {
+  since: string;
+  until: string;
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  success_rate: number;
+  total_tokens: number;
+  cost_usd: number;
+  usd_saved: number;
+  cache_hits: number;
+  avg_latency_ms: number;
+  p50_latency_ms: number;
 }
 
 export interface UsageInsightsSummary {
@@ -565,6 +624,8 @@ export interface UsageInsightsSummary {
   cache_hits: number;
   success_rate: number;
   avg_latency_ms: number;
+  p50_latency_ms: number;
+  p95_latency_ms: number;
   avg_ttft_ms: number;
   pricing_eligible_requests: number;
   priced_requests: number;
@@ -586,6 +647,7 @@ export interface UsageInsights {
   since: string;
   generated_at: string;
   summary: UsageInsightsSummary;
+  previous: PreviousPeriodSummary;
   savings: TokenSavings;
   providers: ProviderUsage[];
   recent: RecentActivity[];
@@ -1183,7 +1245,7 @@ export interface PortalRecentRequest {
 export async function fetchPortalBranding(): Promise<BrandingSettings> {
   const resp = await fetch("/v1/portal/branding");
   if (!resp.ok) {
-    return { name: "KeiRouter", logo_url: "", favicon_url: "", tagline: "", color_palette: "sage-terra" };
+    return { name: "KeiRouter", logo_url: "", favicon_url: "", tagline: "", color_palette: "kei" };
   }
   return resp.json();
 }
@@ -1353,8 +1415,14 @@ export const api = {
   deleteBudget: (id: string) => request<void>("DELETE", `/budgets/${id}`),
 
   usage: (period: string) => request<UsageSummary>("GET", `/usage?period=${period}&tz=${browserTZ()}`),
-  usageInsights: (period: string) =>
-    request<UsageInsights>("GET", `/usage/insights?period=${period}&tz=${browserTZ()}`),
+  usageInsights: (period: string, opts: { limit?: number; buckets?: number } = {}) => {
+    const qs = new URLSearchParams({ period, tz: browserTZ() });
+    if (opts.limit) qs.set("limit", String(opts.limit));
+    if (opts.buckets) qs.set("buckets", String(opts.buckets));
+    return request<UsageInsights>("GET", `/usage/insights?${qs.toString()}`);
+  },
+  chainUsage: (period: string) =>
+    request<{ period: string; since: string; chains: ChainUsage[] }>("GET", `/usage/chains?period=${period}&tz=${browserTZ()}`),
   modelUsage: (period: string) =>
     request<ModelUsageResponse>("GET", `/usage/models?period=${period}&tz=${browserTZ()}`),
 
@@ -1659,6 +1727,11 @@ export const api = {
       `/health/overview?range=${encodeURIComponent(range)}${status ? `&status=${encodeURIComponent(status)}` : ""}`,
     ),
 
+  healthTimeline: (range = "24h", buckets = 24) =>
+    request<HealthTimeline>("GET", `/health/timeline?range=${encodeURIComponent(range)}&buckets=${buckets}`),
+
+  gatewayInfo: () => request<GatewayInfo>("GET", "/gateway/info"),
+
   healthProviderDetail: (provider: string, range = "24h") =>
     request<HealthProviderDetail>(
       "GET",
@@ -1697,6 +1770,50 @@ export const api = {
 };
 
 // ---- Provider health types ----
+
+export type HealthTimelineStatus = "ok" | "degraded" | "down" | "idle";
+
+export interface HealthTimelineBucket {
+  start: string;
+  requests: number;
+  failures: number;
+  rate_limited: number;
+  p95_ms: number;
+  status: HealthTimelineStatus;
+}
+
+export interface HealthTimelineProvider {
+  provider: string;
+  display_name: string;
+  color: string;
+  icon: string;
+  requests: number;
+  failures: number;
+  fallbacks: number;
+  rate_limited: number;
+  success_rate: number;
+  worst_p95_ms: number;
+  buckets: HealthTimelineBucket[];
+}
+
+export interface HealthTimeline {
+  since: string;
+  until: string;
+  bucket_seconds: number;
+  providers: HealthTimelineProvider[];
+}
+
+export interface GatewayInfo {
+  name: string;
+  version: string;
+  uptime_s: number;
+  started_at: string;
+  listen_addr: string;
+  dialect: "sqlite" | "postgres" | string;
+  go_version: string;
+  os: string;
+  arch: string;
+}
 
 export type HealthStatus = "healthy" | "degraded" | "unhealthy" | "unknown" | "disabled";
 

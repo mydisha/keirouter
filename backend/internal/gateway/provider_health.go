@@ -17,6 +17,7 @@ import (
 // same admin auth + loopback middleware.
 func (s *Server) mountProviderHealth(r chi.Router) {
 	r.Get("/health/overview", s.adminHealthOverview)
+	r.Get("/health/timeline", s.adminHealthTimeline)
 	r.Get("/health/providers/{provider}", s.adminHealthProviderDetail)
 	r.Get("/health/models", s.adminHealthModels)
 	r.Get("/health/chains", s.adminHealthChains)

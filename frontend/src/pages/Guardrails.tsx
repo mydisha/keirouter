@@ -45,6 +45,7 @@ import {
   EmptyState,
   Spinner,
 } from "../components/ui";
+import { useConfirm } from "../components/ui/confirm-dialog";
 
 type Tab = "global" | "providers" | "models" | "chains" | "apikeys" | "logs";
 
@@ -152,7 +153,7 @@ function TenantFlagsCard() {
               Use this for GDPR / data-residency setups where prompt content must never leave
               the KeiRouter process.
               {!allow && (
-                <span className="block mt-1 text-rose-600 dark:text-rose-300 font-medium">
+                <span className="block mt-1 text-bad font-medium">
                   External engines disabled — all detector traffic stays inside this container.
                 </span>
               )}
@@ -278,7 +279,7 @@ function ImportModal({ onClose }: { onClose: () => void }) {
             )}
             {result.skipped.length > 0 && (
               <div>
-                <div className="font-medium mb-1 text-rose-600 dark:text-rose-300">
+                <div className="font-medium mb-1 text-bad">
                   Skipped ({result.skipped.length})
                 </div>
                 <ul className="space-y-0.5 text-[var(--text-muted)]">
@@ -311,6 +312,7 @@ function ImportModal({ onClose }: { onClose: () => void }) {
 }
 
 function ScopeTab({ scope }: { scope: GuardrailScope }) {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
   const policies = useQuery({
@@ -366,7 +368,7 @@ function ScopeTab({ scope }: { scope: GuardrailScope }) {
                 qc.invalidateQueries({ queryKey: ["guardrails"] });
               }}
               onDelete={async () => {
-                if (!confirm(`Delete policy "${p.name}"?`)) return;
+                if (!(await confirm({ title: `Delete policy “${p.name}”?`, description: "Scopes using it fall back to the next policy up the chain.", tone: "danger" }))) return;
                 await api.deleteGuardrail(p.id);
                 qc.invalidateQueries({ queryKey: ["guardrails"] });
                 toast.success("Policy deleted");
@@ -737,7 +739,7 @@ function LogsTab() {
               onClick={() => setLiveOn((v) => !v)}
               className={`text-xs px-2 py-1 rounded border inline-flex items-center gap-1.5 ${
                 liveOn
-                  ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-300"
+                  ? "bg-emerald-500/10 border-emerald-500/40 text-ok"
                   : "bg-white/5 border-white/10 text-gray-600 dark:text-gray-300"
               }`}
               title={
@@ -928,7 +930,7 @@ function FindingsDetails({
                 <td className="py-1 pr-3">{(f.score * 100).toFixed(0)}%</td>
                 <td className="py-1 pr-3 font-mono">
                   {f.original ? (
-                    <code className="rounded bg-rose-500/10 px-1.5 py-0.5 text-rose-700 dark:text-rose-300">
+                    <code className="rounded bg-rose-500/10 px-1.5 py-0.5 text-bad">
                       {f.original}
                     </code>
                   ) : (
@@ -937,7 +939,7 @@ function FindingsDetails({
                 </td>
                 <td className="py-1 pr-3 font-mono">
                   {f.redacted ? (
-                    <code className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-emerald-700 dark:text-emerald-300">
+                    <code className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-ok">
                       {f.redacted}
                     </code>
                   ) : (

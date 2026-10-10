@@ -2,10 +2,13 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
+import "@fontsource-variable/geist";
+import "@fontsource-variable/geist-mono";
 import "./index.css";
 import { App } from "./App";
 import { APIError } from "./lib/api";
 import { ToastProvider } from "./components/Toast";
+import { ConfirmProvider } from "./components/ui/confirm-dialog";
 import { ThemeProvider } from "./components/ThemeProvider";
 
 // shouldRetry retries transient failures (timeouts, 5xx, network errors) but
@@ -46,7 +49,9 @@ createRoot(document.getElementById("root")!).render(
       <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <ToastProvider>
-            <App />
+            <ConfirmProvider>
+              <App />
+            </ConfirmProvider>
           </ToastProvider>
         </BrowserRouter>
       </QueryClientProvider>

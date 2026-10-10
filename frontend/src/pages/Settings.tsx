@@ -826,7 +826,7 @@ function ProxySettings({
                 {testing ? "Testing…" : "Test proxy URL"}
               </Button>
               {testResult && (
-                <span className={`text-xs ${testResult.ok ? "text-green-600 dark:text-green-400" : "text-[color:var(--color-danger)]"}`}>
+                <span className={`text-xs ${testResult.ok ? "text-ok" : "text-[color:var(--color-danger)]"}`}>
                   {testResult.text}
                 </span>
               )}
@@ -1104,7 +1104,7 @@ function BrandingTab() {
 
         {/* Color palette */}
         <ColorPaletteField
-          value={local.color_palette || "sage-terra"}
+          value={local.color_palette || "kei"}
           onChange={(id) => {
             update({ color_palette: id });
             // Live preview: apply palette immediately to <html>
@@ -1436,7 +1436,7 @@ function ForeignImportSettings() {
             <div className="space-y-4">
               {/* Per-table row counts from the uploaded file */}
               <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
-                <p className="mb-2 text-xs font-semibold uppercase text-[var(--text-muted)]">Detected in file</p>
+                <p className="mb-2 text-[12.5px] font-medium text-[var(--text-muted)]">Detected in file</p>
                 <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-[var(--text)]">
                   {analyze.providerConnections != null && <span>{analyze.providerConnections} providers/accounts</span>}
                   {analyze.providerNodes != null && <span>{analyze.providerNodes} custom nodes</span>}
@@ -1449,7 +1449,7 @@ function ForeignImportSettings() {
 
               {/* Section checkboxes */}
               <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase text-[var(--text-muted)]">Sections to import</p>
+                <p className="text-[12.5px] font-medium text-[var(--text-muted)]">Sections to import</p>
                 <label className="flex items-start gap-2 text-xs text-[var(--text)]">
                   <input type="checkbox" checked={sqliteOptions.usage} onChange={(e) => setSection("usage", e.target.checked)} className="mt-0.5" />
                   <span>Usage records <span className="text-[var(--text-muted)]">— token usage, costs, model stats</span></span>
@@ -1482,7 +1482,7 @@ function ForeignImportSettings() {
 
               {/* Mode radio */}
               <div className="space-y-2">
-                <p className="text-xs font-semibold uppercase text-[var(--text-muted)]">Import mode</p>
+                <p className="text-[12.5px] font-medium text-[var(--text-muted)]">Import mode</p>
                 <label className="flex items-start gap-2 text-xs text-[var(--text)]">
                   <input type="radio" name="n9mode" value="merge" checked={sqliteOptions.mode === "merge"} onChange={() => setSqliteOptions((o) => ({ ...o, mode: "merge" }))} className="mt-0.5" />
                   <span>Merge <span className="text-[var(--text-muted)]">— add new rows, skip existing (safe, repeatable)</span></span>
@@ -1493,7 +1493,7 @@ function ForeignImportSettings() {
                 </label>
                 <label className="flex items-start gap-2 text-xs text-[var(--text)]">
                   <input type="radio" name="n9mode" value="wipe" checked={sqliteOptions.mode === "wipe"} onChange={() => setSqliteOptions((o) => ({ ...o, mode: "wipe" }))} className="mt-0.5" />
-                  <span>Wipe &amp; replace <span className="text-[var(--text-muted)] font-medium text-red-500">— DESTROYS all selected data including KeiRouter-native rows</span></span>
+                  <span>Wipe &amp; replace <span className="text-[var(--text-muted)] font-medium text-bad">— DESTROYS all selected data including KeiRouter-native rows</span></span>
                 </label>
                 {sqliteOptions.mode === "wipe" && (
                   <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[11px] text-red-700 dark:border-red-800 dark:bg-red-900/20 dark:text-red-300">
@@ -1564,7 +1564,7 @@ function ForeignImportSettings() {
 function Stat({ label, value, muted }: { label: string; value: number; muted?: boolean }) {
   return (
     <div>
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">{label}</span>{" "}
+      <span className="text-[11.5px] font-medium text-[var(--text-muted)]">{label}</span>{" "}
       <span className={`font-mono text-sm ${muted ? "text-[var(--text-muted)]" : "text-[var(--text)]"}`}>{value}</span>
     </div>
   );
@@ -1917,9 +1917,9 @@ function DatabaseSettings() {
                     <div
                       className={`h-full transition-all duration-300 ${
                         exportStrength.tone === "strong"
-                          ? "bg-accent-500"
+                          ? "bg-ok"
                           : exportStrength.tone === "ok"
-                            ? "bg-amber-500"
+                            ? "bg-warn"
                             : exportStrength.tone === "weak"
                               ? "bg-[color:var(--color-danger)]"
                               : "bg-transparent"
@@ -2111,13 +2111,13 @@ function UpdatesSettings() {
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                <p className="text-[11.5px] font-medium text-[var(--text-muted)]">
                   Current
                 </p>
                 <p className="font-mono text-sm">{data.current}</p>
               </div>
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                <p className="text-[11.5px] font-medium text-[var(--text-muted)]">
                   Latest
                 </p>
                 <p className="font-mono text-sm">{data.latest || "—"}</p>
@@ -2140,7 +2140,7 @@ function UpdatesSettings() {
             {data.update_available && data.changelog && (
               <div>
                 <div className="mb-1 flex items-center justify-between">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  <p className="text-[11.5px] font-medium text-[var(--text-muted)]">
                     Changelog{publishedLabel ? ` · ${publishedLabel}` : ""}
                   </p>
                   {data.html_url && (

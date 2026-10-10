@@ -116,7 +116,7 @@ export function TokenSavingsBreakdown({ savings, totalRequests, insights, period
           className="flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-2 px-5 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-400/60"
         >
           <span className="flex min-w-[180px] items-center gap-2">
-            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">
+            <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-emerald-500/15 text-ok">
               <Scissors className="h-3.5 w-3.5" />
             </span>
             <span>
@@ -138,18 +138,18 @@ export function TokenSavingsBreakdown({ savings, totalRequests, insights, period
       </div>
 
       {expanded && <div className="border-t border-[var(--border)] p-5">
-        <div className="mb-4 flex flex-wrap items-center gap-2 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+        <div className="mb-4 flex flex-wrap items-center gap-2 text-[11.5px] font-medium text-[var(--text-muted)]">
           {badges.map((badge) => (
             <span key={badge.label} className="flex items-center gap-1.5 rounded-full border border-[var(--border)] px-2 py-1">
               <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: badge.color }} />
               {badge.label} {badge.pct}%
             </span>
           ))}
-          {savings.usd_saved_estimate && <span className="rounded-full border border-amber-300/60 px-2 py-1 text-amber-700 dark:text-amber-300">Estimated value</span>}
+          {savings.usd_saved_estimate && <span className="rounded-full border border-amber-300/60 px-2 py-1 text-warn">Estimated value</span>}
         </div>
         {/* Rules */}
         <div>
-          <div className="mb-3 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+          <div className="mb-3 flex items-center gap-1.5 text-[11.5px] font-medium text-[var(--text-muted)]">
             <FileText className="h-3 w-3" /> Compression Rules
           </div>
           {rules.length === 0 ? (
@@ -178,7 +178,7 @@ export function TokenSavingsBreakdown({ savings, totalRequests, insights, period
                     </div>
                   </div>
                   <div className="w-20 text-right text-xs font-semibold tabular-nums text-[var(--text)]">{fmtBytes(r.bytes_saved)}</div>
-                  <div className="hidden w-16 text-right text-[10px] font-medium tabular-nums uppercase text-[var(--text-muted)] sm:block">{fmtNum(r.tokens_saved)} tok</div>
+                  <div className="hidden w-16 text-right text-[10px] font-medium tabular-nums text-[var(--text-muted)] sm:block">{fmtNum(r.tokens_saved)} tok</div>
                   <div className="w-10 text-right text-[10px] font-medium tabular-nums text-[var(--text-muted)]">{r.count}×</div>
                 </div>
               ))}
@@ -191,14 +191,14 @@ export function TokenSavingsBreakdown({ savings, totalRequests, insights, period
           <div className="mt-5 flex flex-wrap gap-2">
             {headroomTokensSaved > 0 && (
               <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)]/50 px-3 py-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Headroom</span>
+                <span className="text-[11.5px] font-medium text-[var(--text-muted)]">Headroom</span>
                 <span className="text-sm font-medium tabular-nums text-[var(--text)]">{fmtNum(headroomTokensSaved)}</span>
                 <span className="text-[10px] text-[var(--text-muted)]">tokens</span>
               </div>
             )}
             {ponytailRequests > 0 && (
               <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)]/50 px-3 py-2">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Ponytail</span>
+                <span className="text-[11.5px] font-medium text-[var(--text-muted)]">Ponytail</span>
                 <span className="text-sm font-medium tabular-nums text-[var(--text)]">{fmtNum(ponytailRequests)}</span>
                 <span className="text-[10px] text-[var(--text-muted)]">requests</span>
               </div>
@@ -221,7 +221,7 @@ function ClientBreakdown({ clients }: { clients: ClientSaving[] }) {
   const maxTokens = Math.max(...sorted.map((c) => c.tokens_saved), 1);
   return (
     <div className="mt-6 border-t border-[var(--border)] pt-5">
-      <div className="mb-3 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">
+      <div className="mb-3 text-[11.5px] font-medium text-[var(--text-muted)]">
         Savings by Client
       </div>
       <div className="grid gap-2.5 sm:grid-cols-2">
@@ -231,7 +231,7 @@ function ClientBreakdown({ clients }: { clients: ClientSaving[] }) {
             <div className="min-w-0 flex-1">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-xs font-semibold text-[var(--text)]" title={prettyClient(c.client)}>{prettyClient(c.client)}</span>
-                <span className="shrink-0 text-xs font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">{fmtUSD(c.usd_saved)}</span>
+                <span className="shrink-0 text-xs font-semibold tabular-nums text-ok">{fmtUSD(c.usd_saved)}</span>
               </div>
               <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]">
                 <div

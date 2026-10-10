@@ -138,6 +138,11 @@ type UsageRecord struct {
 	Model     string
 	AccountID string
 	Client    string // detected calling tool (claude-code, codex, ...) or "unknown"
+	// ChainID is the routing chain that resolved the request; empty for direct
+	// provider/model requests. FallbackCount > 0 means the first-choice target
+	// failed and a later chain step served (or terminally failed) the request.
+	ChainID       string
+	FallbackCount int
 	Status    string // success | cache_hit | blocked | failed | cancelled
 	ErrorKind string
 

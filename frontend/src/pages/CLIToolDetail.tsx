@@ -130,7 +130,7 @@ export function CLIToolDetailPage() {
           <div className="flex items-start gap-3 px-6 py-4">
             <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
             <div className="flex-1">
-              <p className="text-sm font-medium text-amber-700 dark:text-amber-400">
+              <p className="text-sm font-medium text-warn">
                 {tool.name} CLI not detected locally
               </p>
               <p className="mt-1 text-xs text-[var(--text-muted)]">
@@ -271,7 +271,7 @@ export function CLIToolDetailPage() {
 
           {/* Success/error feedback */}
           {configureMut.isSuccess && (
-            <p className="text-xs text-emerald-600 dark:text-emerald-400">
+            <p className="text-xs text-ok">
               ✓ Configured successfully — restart {tool.name} to pick up changes.
             </p>
           )}
@@ -281,7 +281,7 @@ export function CLIToolDetailPage() {
             </p>
           )}
           {removeMut.isSuccess && (
-            <p className="text-xs text-emerald-600 dark:text-emerald-400">
+            <p className="text-xs text-ok">
               ✓ Config removed.
             </p>
           )}
@@ -380,7 +380,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <Button variant="ghost" onClick={copy} className="px-2">
       {copied ? (
-        <Check className="h-4 w-4 text-emerald-500" />
+        <Check className="h-4 w-4 text-ok" />
       ) : (
         <Copy className="h-4 w-4" />
       )}

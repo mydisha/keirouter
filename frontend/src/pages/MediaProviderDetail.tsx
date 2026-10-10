@@ -348,7 +348,7 @@ function AccountRow({ account: a, onRemove, onToggle }: { account: Account; onRe
     <div className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-2.5">
       <div className="flex items-center gap-3">
         <button onClick={onToggle} className="text-[var(--text-muted)] hover:text-[var(--text)]">
-          {a.disabled ? <ToggleLeft className="h-5 w-5 text-[var(--text-muted)]" /> : <ToggleRight className="h-5 w-5 text-green-500 dark:text-green-400" />}
+          {a.disabled ? <ToggleLeft className="h-5 w-5 text-[var(--text-muted)]" /> : <ToggleRight className="h-5 w-5 text-ok" />}
         </button>
         <div>
           <span className="text-sm font-medium">{a.label || a.provider}</span>
@@ -778,7 +778,7 @@ function CopyButton({ text }: { text: string }) {
   };
   return (
     <Button variant="ghost" onClick={copy} className="px-2">
-      {copied ? <Check className="h-4 w-4 text-green-500 dark:text-green-400" /> : <Copy className="h-4 w-4" />}
+      {copied ? <Check className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4" />}
     </Button>
   );
 }

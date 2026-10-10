@@ -27,9 +27,9 @@ type LogLevel = "DEBUG" | "INFO" | "WARN" | "ERROR" | "LOG";
 const LEVEL_TEXT: Record<LogLevel, string> = {
   DEBUG: "text-purple-700 dark:text-purple-300",
   INFO: "text-blue-700 dark:text-blue-300",
-  WARN: "text-amber-700 dark:text-amber-300",
-  ERROR: "text-red-700 dark:text-red-300",
-  LOG: "text-emerald-700 dark:text-emerald-300",
+  WARN: "text-warn",
+  ERROR: "text-bad",
+  LOG: "text-ok",
 };
 
 // Badge background — visible but not loud

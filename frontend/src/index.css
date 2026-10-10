@@ -1,102 +1,94 @@
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400;1,9..40,500&display=swap");
 @import "tailwindcss";
+@import "tw-animate-css";
 
 /*
-  KeiRouter design system — warm professional.
+  KeiRouter design system — "precision instrument".
 
-  A warm, approachable palette built on stone neutrals with an olive-green
-  accent. DM Sans for soft geometric warmth, JetBrains Mono for code.
-  Inspired by Notion and Raycast's inviting feel, tuned for a developer
-  infrastructure dashboard.
+  Cool neutral greys carry the interface; colour only ever means something.
+  Primary actions are monochrome (ink on light, paper on dark). The brand
+  accent (blue by default, swappable through the white-label palette system)
+  is reserved for data, links, focus and active state. Green / amber / red
+  are status only. Geist for UI, Geist Mono for every identifier (models,
+  keys, chains, endpoints) and tabular figures for every number.
 
-  Supports light and dark modes. Toggle via ThemeProvider (class-based).
-  The `.dark` class on <html> activates the dark palette.
+  ── Radius scale (overrides Tailwind defaults) ─────────────────────
+    rounded-md   (4px)  — chips, kbd, tiny badges
+    rounded-lg   (6px)  — buttons, inputs, selects, menu items
+    rounded-xl   (7px)  — segmented controls, tabs
+    rounded-2xl  (8px)  — cards, modals, popovers
+    rounded-full        — dots, avatars, toggles
 
-  ── Radius scale ──────────────────────────────────────────────────
-    rounded-lg   (8px)  — small: badges, dropdown items, tooltips
-    rounded-xl   (12px) — medium: buttons, inputs, selects, tabs
-    rounded-2xl  (16px) — large: cards, modals, sidebars, containers
-    rounded-full        — circles, pills, toggle switches
+  ── Typography ─────────────────────────────────────────────────────
+    text-[11px]/xs — captions, axis labels, meta
+    text-[13px]    — dense UI: tables, lists, controls
+    text-sm (14px) — body copy, descriptions
+    text-base      — card titles in roomy layouts
+    text-[22px]    — page titles
+    text-2xl       — hero metrics
 
-  ── Typography scale ──────────────────────────────────────────────
-    text-xs   (12px) — captions, meta labels, timestamps
-    text-sm   (14px) — body text, descriptions, secondary content
-    text-base (16px) — primary content, card titles
-    text-lg   (18px) — section headings
-    text-xl   (20px) — page subheadings
-    text-2xl  (24px) — stat values, hero metrics
-    text-3xl  (30px) — page titles (rare)
+  ── Elevation ──────────────────────────────────────────────────────
+    Borders do the work. shadow-card is a hairline lift; shadow-pop and
+    shadow-float are for menus and dialogs only.
 
-  ── Spacing rhythm ────────────────────────────────────────────────
-    1.5 / p-1.5 — tight: icon + label pairs
-    2   / p-2   — compact: inline elements
-    3   / p-3   — default: form fields, list items
-    4   / p-4   — comfortable: card content
-    6   / p-6   — generous: section separation
-    8   / p-8   — spacious: page-level sections
-
-  ── Shadow elevation ──────────────────────────────────────────────
-    shadow-card  — resting cards, subtle lift
-    shadow-pop   — dropdowns, popovers, elevated panels
-    shadow-float — modals, toasts, floating overlays
-
-  ── Z-index layers ────────────────────────────────────────────────
-    z-10  — sticky headers, below content
-    z-50  — dropdowns, modals, sidebars
-    z-60  — toasts (above everything)
+  ── Z-index ────────────────────────────────────────────────────────
+    z-10 sticky headers · z-50 overlays · z-60 toasts
 */
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
-  /* ── Accent: warm olive-green — earthy, grounded, clearly green but not cold. */
-  --color-accent-50: #f4f5f0;
-  --color-accent-100: #e2e5d8;
-  --color-accent-200: #c5cab2;
-  --color-accent-300: #a3ab87;
-  --color-accent-400: #848d66;
-  --color-accent-500: #6a7450;
-  --color-accent-600: #5d6745;
-  --color-accent-700: #4b5338;
-  --color-accent-800: #3a412d;
-  --color-accent-900: #2c3224;
+  /* ── Accent: brand blue. Runtime palettes (BrandingContext) overwrite these
+        shade variables on <html>, so everything keyed off accent-* follows
+        the white-label palette. */
+  --color-accent-50: #edf4fe;
+  --color-accent-100: #d8e7fd;
+  --color-accent-200: #b0d0fa;
+  --color-accent-300: #85b6f7;
+  --color-accent-400: #3a8ef2;
+  --color-accent-500: #0a72ef;
+  --color-accent-600: #095bb9;
+  --color-accent-700: #07438a;
+  --color-accent-800: #052f60;
+  --color-accent-900: #042144;
 
-  /* ── Secondary: Terracotta — for important CTAs, notifications, active states. */
-  --color-secondary-50: #fdf5f2;
-  --color-secondary-100: #fae7df;
-  --color-secondary-200: #f3cab7;
-  --color-secondary-300: #e9aa8d;
-  --color-secondary-400: #dc8660;
-  --color-secondary-500: #c3603a;
-  --color-secondary-600: #9e4b2d;
-  --color-secondary-700: #7e3921;
-  --color-secondary-800: #622d1a;
-  --color-secondary-900: #4e2517;
+  /* ── Secondary: brand orange (the dot in the logo). Kept for brand marks and
+        legacy call sites; not used for UI chrome in new components. */
+  --color-secondary-50: #fef4ee;
+  --color-secondary-100: #fde5d6;
+  --color-secondary-200: #fac7aa;
+  --color-secondary-300: #f5a173;
+  --color-secondary-400: #f0844b;
+  --color-secondary-500: #ec6a2c;
+  --color-secondary-600: #c9531c;
+  --color-secondary-700: #a03f15;
+  --color-secondary-800: #7c3213;
+  --color-secondary-900: #612911;
 
-  /* ── Neutrals: warm stone — never pure black/white, always inviting. */
-  --color-ink-50: #faf9f7;
-  --color-ink-100: #f3f2ee;
-  --color-ink-200: #e8e7e1;
-  --color-ink-300: #d5d3cb;
-  --color-ink-400: #a8a59a;
-  --color-ink-500: #656259;
-  --color-ink-600: #5e5b52;
-  --color-ink-700: #43413a;
-  --color-ink-800: #2d2b27;
-  --color-ink-900: #1c1b18;
-  --color-ink-950: #121110;
+  /* ── Neutrals: cool zinc. */
+  --color-ink-50: #fafafb;
+  --color-ink-100: #f4f4f5;
+  --color-ink-200: #e7e7ea;
+  --color-ink-300: #d6d6db;
+  --color-ink-400: #a1a1aa;
+  --color-ink-500: #73737d;
+  --color-ink-600: #5f5f69;
+  --color-ink-700: #3f3f46;
+  --color-ink-800: #27272a;
+  --color-ink-900: #18181b;
+  --color-ink-950: #0d0d0f;
 
-  /* ── Semantic — warm, grounded. */
-  --color-success: #5a7a5e;
-  --color-warning: #b08a3e;
-  --color-danger: #a84844;
-  --color-info: #5b8fa8;
+  /* ── Semantic status. */
+  --color-success: #1e8a4c;
+  --color-warning: #a85b06;
+  --color-danger: #c2362b;
+  --color-info: #0a72ef;
 
-  /* ── Chart / data visualization palette. */
-  --color-chart-1: #4a7a6f;
-  --color-chart-2: #8fb5a8;
-  --color-chart-3: #b08a3e;
-  --color-chart-4: #a84844;
-  --color-chart-5: #6a7450;
+  /* ── Chart palette: accent first, then a lightness-separated orange so
+        two-series charts survive colour-vision deficiency. */
+  --color-chart-1: #0a72ef;
+  --color-chart-2: #84b6f7;
+  --color-chart-3: #ea7a3a;
+  --color-chart-4: #c2362b;
+  --color-chart-5: #73737d;
 
   /* ── Brand colors for CLI tools / providers. */
   --color-brand-claude: #d97706;
@@ -116,60 +108,98 @@
   --color-brand-kimchi: #FF521D;
   --color-brand-gemini: #4285F4;
 
-  /* ── Typography. */
-  --font-sans: "DM Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* ── Typography (self-hosted via @fontsource, works offline). */
+  --font-sans: "Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "Geist Mono Variable", "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
-  /* ── Radius. */
-  --radius-card: 0.75rem;
+  /* ── Radius: tighter than Tailwind's defaults. */
+  --radius-md: 0.25rem;
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.4375rem;
+  --radius-2xl: 0.5rem;
+  --radius-3xl: 0.75rem;
+  --radius-card: 0.5rem;
+}
+
+/* Semantic surface tokens as utilities: bg-surface, border-line, text-fg-muted… */
+@theme inline {
+  --color-canvas: var(--bg);
+  --color-surface: var(--bg-elevated);
+  --color-subtle: var(--bg-subtle);
+  --color-hover: var(--bg-hover);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-fg: var(--text);
+  --color-fg-muted: var(--text-muted);
+  --color-fg-faint: var(--text-faint);
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-fg);
+  --color-track: var(--track);
+  --color-ok: var(--status-ok);
+  --color-warn: var(--status-warn);
+  --color-bad: var(--status-bad);
 }
 
 :root {
-  /* Warm cream canvas — slightly warmer than pure off-white. */
   color-scheme: light;
 
-  --bg: #faf9f7;
+  --bg: #f6f6f7;
   --bg-elevated: #ffffff;
-  --bg-subtle: var(--color-ink-100);
-  --border: var(--color-ink-200);
-  --border-strong: var(--color-ink-300);
-  --text: var(--color-ink-800);
-  --text-muted: var(--color-ink-500);
+  --bg-subtle: #fafafb;
+  --bg-hover: #f2f2f4;
+  --border: #e7e7ea;
+  --border-strong: #d6d6db;
+  --text: #17171a;
+  --text-muted: #5f5f69;
+  --text-faint: #73737d;
+  --primary: #17171a;
+  --primary-fg: #ffffff;
+  --track: #ececef;
+  --status-ok: #1e8a4c;
+  --status-warn: #a85b06;
+  --status-bad: #c2362b;
+  --series-alt: #ea7a3a;
 
-  /* Warm shadows — the shadow color has a warm undertone, not cold grey. */
-  --shadow-card: 0 1px 2px rgba(30, 28, 22, 0.05), 0 1px 3px rgba(30, 28, 22, 0.07);
-  --shadow-pop: 0 4px 12px rgba(30, 28, 22, 0.09), 0 2px 4px rgba(30, 28, 22, 0.05);
-  --shadow-float: 0 12px 32px rgba(30, 28, 22, 0.13), 0 4px 8px rgba(30, 28, 22, 0.06);
+  --shadow-card: 0 1px 2px rgba(16, 16, 20, 0.04);
+  --shadow-pop: 0 0 0 1px rgba(16, 16, 20, 0.04), 0 6px 16px -4px rgba(16, 16, 20, 0.1);
+  --shadow-float: 0 0 0 1px rgba(16, 16, 20, 0.05), 0 18px 40px -12px rgba(16, 16, 20, 0.22);
 
-  /* Transition durations. */
   --duration-fast: 100ms;
   --duration-normal: 150ms;
   --duration-slow: 250ms;
 }
 
-/*
-  Dark mode — deep warm charcoal, not pure black. Keeps the earthy,
-  grounded identity while being easy on the eyes in low light.
-*/
 .dark {
   color-scheme: dark;
 
-  --bg: #161514;
-  --bg-elevated: #1e1d1b;
-  --bg-subtle: #252422;
-  --border: #302e2b;
-  --border-strong: #3d3b37;
-  --text: #e8e6e1;
-  --text-muted: #8a867e;
+  --bg: #0d0d0f;
+  --bg-elevated: #141417;
+  --bg-subtle: #18181c;
+  --bg-hover: #1d1d22;
+  --border: #25252b;
+  --border-strong: #34343b;
+  --text: #ededf0;
+  --text-muted: #a1a1ab;
+  --text-faint: #8a8a94;
+  --primary: #ededf0;
+  --primary-fg: #0d0d0f;
+  --track: #24242a;
+  --status-ok: #3fb872;
+  --status-warn: #e3a347;
+  --status-bad: #f0675b;
+  --series-alt: #f08a4b;
 
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.2), 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.2);
-  --shadow-float: 0 12px 32px rgba(0, 0, 0, 0.4), 0 4px 8px rgba(0, 0, 0, 0.25);
+  --color-success: #3fb872;
+  --color-warning: #e3a347;
+  --color-danger: #f0675b;
+
+  --shadow-card: none;
+  --shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 8px 24px -6px rgba(0, 0, 0, 0.6);
+  --shadow-float: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 24px 48px -12px rgba(0, 0, 0, 0.7);
 }
 
-/* Dark scrollbar. */
 .dark * {
-  scrollbar-color: #3d3b37 transparent;
+  scrollbar-color: #34343b transparent;
 }
 
 html,
@@ -177,19 +207,35 @@ body {
   background-color: var(--bg);
   color: var(--text);
   font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Display heading — DM Sans 600 with tight tracking. The warmth comes from
-   the typeface itself, not from a serif treatment. */
+/* Display heading — tight tracking, no decoration. */
 .font-display {
   font-family: var(--font-sans);
   font-weight: 600;
   letter-spacing: -0.02em;
 }
 
-/* Thin, warm scrollbars. */
+/* Every number in the dashboard lines up. */
+.tabular-nums,
+table td,
+table th {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Live indicator pulse (status dots on streaming data). */
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+.live-dot {
+  animation: live-pulse 1.8s ease-in-out infinite;
+}
+
+/* Thin scrollbars. */
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-ink-300) transparent;

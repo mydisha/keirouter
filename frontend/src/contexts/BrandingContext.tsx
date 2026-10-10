@@ -9,7 +9,7 @@ const DEFAULT_BRANDING: BrandingSettings = {
   logo_url: "",
   favicon_url: "",
   tagline: "",
-  color_palette: "sage-terra",
+  color_palette: "kei",
 };
 
 interface BrandingContextValue {
@@ -57,7 +57,7 @@ export function AdminBrandingProvider({ children }: { children: ReactNode }) {
     }
     // Apply color palette as CSS custom properties on <html>
     const root = document.documentElement;
-    const paletteId = branding.color_palette || "sage-terra";
+    const paletteId = branding.color_palette || "kei";
     const scales = getPaletteScales(paletteId);
     applyShadeScale(root, "accent", scales.accent);
     applyShadeScale(root, "secondary", scales.secondary);
@@ -99,7 +99,7 @@ export function PortalBrandingProvider({ children }: { children: ReactNode }) {
     }
     // Apply color palette as CSS custom properties on <html>
     const root = document.documentElement;
-    const paletteId = branding.color_palette || "sage-terra";
+    const paletteId = branding.color_palette || "kei";
     const scales = getPaletteScales(paletteId);
     applyShadeScale(root, "accent", scales.accent);
     applyShadeScale(root, "secondary", scales.secondary);

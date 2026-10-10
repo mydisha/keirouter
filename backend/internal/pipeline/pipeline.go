@@ -385,6 +385,7 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 				p.metrics.RecordFallback(string(pe.Kind))
 			}
 			fellBack = true
+			req.Metadata.FallbackCount++
 			p.log.Warn("chat attempt failed, falling back",
 				"provider", attempt.Target.Provider, "model", attempt.Target.Model, "kind", pe.Kind)
 			attempt = nextAttempt
@@ -706,6 +707,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 						p.metrics.RecordFallback(string(pe.Kind))
 					}
 					fellBack = true
+					req.Metadata.FallbackCount++
 					p.log.Warn("direct stream attempt failed, falling back",
 						"provider", attempt.Target.Provider, "model", attempt.Target.Model, "kind", pe.Kind)
 					attempt = nextAttempt
@@ -810,6 +812,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 				p.metrics.RecordFallback(string(pe.Kind))
 			}
 			fellBack = true
+			req.Metadata.FallbackCount++
 			p.log.Warn("stream attempt failed, falling back",
 				"provider", attempt.Target.Provider, "model", attempt.Target.Model, "kind", pe.Kind)
 			attempt = nextAttempt
@@ -842,6 +845,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 				p.metrics.RecordFallback(string(pe.Kind))
 			}
 			fellBack = true
+			req.Metadata.FallbackCount++
 			p.log.Warn("stream rejected before output, falling back",
 				"provider", attempt.Target.Provider, "model", attempt.Target.Model, "kind", pe.Kind)
 			attempt = nextAttempt
@@ -1670,6 +1674,8 @@ func (p *Pipeline) recordOutcomeWithTTFT(ctx context.Context, meta core.RequestM
 		Model:           attempt.Target.Model,
 		AccountID:       attempt.Account.ID,
 		Client:          meta.ClientKind,
+		ChainID:         meta.ChainID,
+		FallbackCount:   meta.FallbackCount,
 		Status:          status,
 		ErrorKind:       errorKind,
 		Usage:           usage,

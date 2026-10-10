@@ -39,13 +39,25 @@ func sinceForPeriod(period, tz string) time.Time {
 		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
 	case "24h":
 		return time.Now().UTC().Add(-24 * time.Hour)
-	case "week":
+	case "week", "7d":
 		return now.AddDate(0, 0, -7).UTC()
+	case "30d":
+		return now.AddDate(0, 0, -30).UTC()
+	case "90d":
+		return now.AddDate(0, 0, -90).UTC()
 	case "month", "":
 		return now.AddDate(0, -1, 0).UTC()
 	default:
 		return now.AddDate(0, 0, -30).UTC()
 	}
+}
+
+// optionalTime renders a zero time as JSON null instead of 0001-01-01.
+func optionalTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC()
 }
 
 // ---- usage insights ---------------------------------------------------------

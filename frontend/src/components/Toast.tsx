@@ -106,17 +106,17 @@ const toneMeta: Record<
 > = {
   success: {
     icon: CheckCircle2,
-    iconClass: "text-emerald-600 dark:text-emerald-400",
+    iconClass: "text-ok",
     bg: "bg-emerald-50 dark:bg-emerald-950",
     border: "border-emerald-200 dark:border-emerald-800/60",
-    progressClass: "bg-emerald-500",
+    progressClass: "bg-ok",
   },
   error: {
     icon: AlertCircle,
-    iconClass: "text-red-600 dark:text-red-400",
+    iconClass: "text-bad",
     bg: "bg-red-50 dark:bg-red-950",
     border: "border-red-200 dark:border-red-800/60",
-    progressClass: "bg-red-500",
+    progressClass: "bg-bad",
   },
   info: {
     icon: Info,
