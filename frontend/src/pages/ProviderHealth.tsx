@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { ArrowLeft, Lightbulb, Play, RefreshCw } from "lucide-react";
@@ -25,14 +25,7 @@ import {
   useClientPagination,
 } from "../components/ui";
 import { HealthStatusBadge, HealthScoreRing, fmtIssue } from "../components/HealthBadge";
-import {
-  ErrorBreakdownChart,
-  ErrorRateChart,
-  FallbackChart,
-  LatencyChart,
-  RequestVolumeChart,
-  TTFTChart,
-} from "../components/HealthCharts";
+import { ErrorTypeBreakdown, HealthTrends } from "../components/HealthCharts";
 import { useToast } from "../components/Toast";
 
 // "Live" is the telemetry service's rolling window; every longer range is
@@ -673,89 +666,30 @@ function ProviderDetail({ provider }: { provider: string }) {
       )}
 
 
-      <TrendCharts snapshots={d.snapshots ?? []} />
+      <HealthTrends snapshots={d.snapshots ?? []} range={range} />
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card>
-          <div className="border-b border-[var(--border)] px-4 py-3">
-            <h2 className="text-sm font-semibold">Error Breakdown</h2>
+        <ErrorTypeBreakdown breakdown={d.error_breakdown} />
+        <section aria-label="Manual probe" className="rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+          <div className="border-b border-line px-4 py-3">
+            <h2 className="text-[13px] font-semibold text-fg">Run a probe</h2>
+            <p className="mt-0.5 text-[12px] text-fg-muted">Send one synthetic request now to check this provider. The result lands in the probe history.</p>
           </div>
-          {Object.keys(d.error_breakdown).length === 0 ? (
-            <EmptyState title="No errors in this window." />
-          ) : (
-            <div className="px-4 py-3 space-y-2">
-              {Object.entries(d.error_breakdown)
-                .sort((a, b) => b[1] - a[1])
-                .map(([k, v]) => (
-                  <div key={k} className="flex items-center justify-between text-sm">
-                    <span className="text-[var(--text-muted)]">{fmtIssue(k)}</span>
-                    <span className="tabular-nums font-medium">{v}</span>
-                  </div>
-                ))}
-            </div>
-          )}
-        </Card>
-        <Card>
-          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-            <h2 className="text-sm font-semibold">Manual Probe</h2>
+          <div className="px-4 py-4">
             <ManualProbeInline provider={provider} models={d.models.map((m) => m.model).filter(Boolean)} />
           </div>
-          <div className="px-4 py-3 text-sm text-[var(--text-muted)]">
-            Run a synthetic probe to test this provider now. Result appears in probe history.
-          </div>
-        </Card>
+        </section>
       </div>
 
-      <div className="mt-4">
-        <h2 className="mb-2 text-sm font-semibold">Models</h2>
+      <div className="mt-6">
+        <h2 className="mb-2 text-[14px] font-semibold text-fg">Models</h2>
         <ModelTable query={detail} />
       </div>
     </div>
   );
 }
 
-function TrendCharts({ snapshots }: { snapshots: import("../lib/api").HealthSnapshot[] }) {
-  if (!snapshots.length) {
-    return (
-      <Card className="mt-4">
-        <EmptyState title="No trend data yet." hint="Snapshots appear after traffic flows through this provider." />
-      </Card>
-    );
-  }
-  return (
-    <div className="mt-4 grid gap-4 lg:grid-cols-2">
-      <ChartCard title="Request Volume">
-        <RequestVolumeChart data={snapshots} />
-      </ChartCard>
-      <ChartCard title="Error Rate">
-        <ErrorRateChart data={snapshots} />
-      </ChartCard>
-      <ChartCard title="Latency p50 / p95 / p99">
-        <LatencyChart data={snapshots} />
-      </ChartCard>
-      <ChartCard title="TTFT p95">
-        <TTFTChart data={snapshots} />
-      </ChartCard>
-      <ChartCard title="Fallbacks">
-        <FallbackChart data={snapshots} />
-      </ChartCard>
-      <ChartCard title="Error Type Breakdown">
-        <ErrorBreakdownChart data={snapshots} />
-      </ChartCard>
-    </div>
-  );
-}
 
-function ChartCard({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <Card>
-      <div className="border-b border-[var(--border)] px-4 py-3">
-        <h2 className="text-sm font-semibold">{title}</h2>
-      </div>
-      <div className="h-56 p-3">{children}</div>
-    </Card>
-  );
-}
 
 function BackLink() {
   return (
@@ -800,14 +734,14 @@ function ManualProbeInline({ provider, models }: { provider: string; models: str
     }
   };
   return (
-    <div className="flex items-center gap-2">
-      <select value={model} onChange={(e) => setModel(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-xs">
+    <div className="flex flex-wrap items-center gap-2">
+      <select value={model} onChange={(e) => setModel(e.target.value)} aria-label="Model to probe" className="h-9 min-w-0 flex-1 rounded-lg border border-line bg-surface px-2.5 font-mono text-[12.5px] text-fg focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25">
         {models.map((m) => <option key={m} value={m}>{m}</option>)}
       </select>
       <button
         onClick={run}
         disabled={running || !model}
-        className="inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-accent-700 disabled:opacity-50"
+        className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-[13px] font-medium text-primary-fg transition-opacity hover:opacity-85 disabled:opacity-50"
       >
         {running ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
         Run Probe

@@ -1,27 +1,41 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useCallback, useEffect, useMemo, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, Copy, Check, ToggleLeft, ToggleRight, ArrowLeft, ArrowRight, Trash2, Wallet, Wrench, DollarSign, Gauge, Link2, Activity, Ban, ListFilter, Search, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  Copy,
+  KeyRound,
+  Link2,
+  MoreHorizontal,
+  Plus,
+  Search,
+  Settings2,
+  Trash2,
+  X,
+} from "lucide-react";
 import { api, type APIKey, type CreatedKey, type Plan } from "../lib/api";
 import { microsToUSD, formatTokens } from "../lib/format";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
-import { formatTokenLimit, FormattedTokenInput, ModelMultiSelect } from "../components/ModelSelect";
+import { formatTokenLimit, ModelMultiSelect } from "../components/ModelSelect";
 import {
-  Card,
-  CardHeader,
   Button,
   Input,
   Select,
-  Field,
   Badge,
-  Spinner,
+  Skeleton,
   Toggle,
   Modal,
+  ErrorBanner,
   TablePagination,
   useClientPagination,
 } from "../components/ui";
 import { useConfirm } from "../components/ui/confirm-dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 
 const budgetPeriods = [
   { value: "daily", label: "Daily" },
@@ -30,237 +44,149 @@ const budgetPeriods = [
   { value: "total", label: "All time" },
 ];
 
+type StatusFilter = "all" | "active" | "inactive";
+type SortKey = "created_desc" | "created_asc" | "name_asc" | "name_desc";
+
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "active", label: "Active" },
+  { value: "inactive", label: "Disabled" },
+];
+
 type KeySummary = {
   total: number;
   active: number;
   disabled: number;
   restricted: number;
+  usedRecently: number;
+  neverUsed: number;
 };
 
+const DAY_MS = 86_400_000;
+
+function usedAt(iso?: string | null): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  // Go's zero time ("0001-01-01…") parses to a negative epoch: treat as never.
+  return Number.isFinite(t) && t > 0 ? t : null;
+}
+
 function getKeySummary(keys: APIKey[] = []): KeySummary {
+  const now = Date.now();
   return keys.reduce(
     (acc, key) => {
       acc.total += 1;
       if (key.disabled) acc.disabled += 1;
       else acc.active += 1;
       if ((key.allowed_models ?? []).length > 0) acc.restricted += 1;
+      const t = usedAt(key.last_used_at);
+      if (t === null) acc.neverUsed += 1;
+      else if (now - t < DAY_MS) acc.usedRecently += 1;
       return acc;
     },
-    { total: 0, active: 0, disabled: 0, restricted: 0 },
+    { total: 0, active: 0, disabled: 0, restricted: 0, usedRecently: 0, neverUsed: 0 },
   );
 }
 
-function StatusPill({ disabled }: { disabled: boolean }) {
-  if (disabled) {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-1 py-0.5 text-[11px] font-medium text-[var(--text-muted)]">
-        <span className="relative flex h-1.5 w-1.5">
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-bad opacity-60"></span>
-        </span>
-        Inactive
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1.5 px-1 py-0.5 text-[11px] font-medium text-ok">
-      <span className="h-1.5 w-1.5 rounded-full bg-ok" />
-      Active
-    </span>
-  );
+// relativeTime renders "3 min ago" style labels for last-used timestamps.
+function relativeTime(iso?: string | null): string {
+  const t = usedAt(iso);
+  if (t === null) return "Never";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 45) return "Just now";
+  const m = s / 60;
+  if (m < 60) return `${Math.max(1, Math.round(m))} min ago`;
+  const h = m / 60;
+  if (h < 24) return `${Math.round(h)} h ago`;
+  const d = h / 24;
+  if (d < 30) return `${Math.round(d)} d ago`;
+  return new Date(t).toLocaleDateString();
 }
 
-function SummaryItem({
-  icon: Icon,
-  label,
-  value,
-  tone = "default",
-}: {
-  icon: typeof KeyRound;
-  label: string;
-  value: number;
-  tone?: "default" | "danger" | "warning";
-}) {
-  const iconTone =
-    tone === "danger"
-      ? "text-bad"
-      : tone === "warning"
-        ? "text-warn"
-        : "text-secondary-600 dark:text-secondary-300";
-  return (
-    <div className="flex min-w-0 items-center gap-3 px-4 py-3 sm:px-5">
-      <Icon className={`h-4 w-4 shrink-0 ${iconTone}`} strokeWidth={2} />
-      <div className="min-w-0">
-        <p className="truncate text-[12px] font-medium text-[var(--text-muted)]">{label}</p>
-        <p className="mt-0.5 text-lg font-semibold leading-none tabular-nums text-[var(--text)]">{value}</p>
-      </div>
-    </div>
-  );
+function portalUrlFor(id: string) {
+  return `${window.location.origin}/portal?id=${id}`;
 }
 
-function KeyCopyButton({
-  icon,
-  label,
-  value,
-  copiedMessage,
-  className = "",
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  copiedMessage: string;
-  className?: string;
-}) {
+function useCopy() {
   const toast = useToast();
-
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        navigator.clipboard.writeText(value).then(
-          () => toast.success(label, copiedMessage),
-          () => toast.error("Copy failed", "Your browser blocked clipboard access."),
-        );
-      }}
-      className={`group inline-flex min-h-10 min-w-0 items-center gap-2 rounded-lg px-2 text-left text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50 ${className}`}
-    >
-      <span className="shrink-0">{icon}</span>
-      <span className="min-w-0 truncate font-mono text-[11px] font-medium">
-        {value}
-      </span>
-      <Copy className="h-3.5 w-3.5 shrink-0 opacity-60 transition-opacity group-hover:opacity-100" />
-    </button>
+  return useCallback(
+    (value: string, title: string, description?: string) =>
+      navigator.clipboard.writeText(value).then(
+        () => {
+          toast.success(title, description);
+          return true;
+        },
+        () => {
+          toast.error("Copy failed", "Your browser blocked clipboard access.");
+          return false;
+        },
+      ),
+    [toast],
   );
 }
 
-function KeyEmptyState({ onCreate }: { onCreate: () => void }) {
-  return (
-    <div className="px-6 py-14">
-      <div className="mx-auto max-w-md text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl border border-line bg-subtle text-fg-muted">
-          <KeyRound className="h-5 w-5" />
-        </div>
-        <h3 className="mt-4 text-base font-semibold tracking-tight text-[var(--text)]">No API keys yet</h3>
-        <p className="mt-2 text-sm leading-relaxed text-[var(--text-muted)]">
-          Create a key for CLI tools, apps, or teammates. Full secrets are shown once, then stored hashed.
-        </p>
-        <div className="mt-5 flex justify-center">
-          <Button onClick={onCreate}>
-            <Plus className="h-4 w-4" />
-            Create first key
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
+// ── Form primitives (match ConnectKit field styling) ─────────────────────────
 
-function KeyRow({
-  apiKey,
-  selected,
-  onSelect,
-  onToggle,
-  onConfigure,
-  onRevoke,
-  togglePending,
+function FormField({
+  label,
+  hint,
+  optional,
+  children,
 }: {
-  apiKey: APIKey;
-  selected: boolean;
-  onSelect: () => void;
-  onToggle: () => void;
-  onConfigure: () => void;
-  onRevoke: () => void;
-  togglePending: boolean;
+  label: string;
+  hint?: ReactNode;
+  optional?: boolean;
+  children: ReactNode;
 }) {
-  const portalUrl = `${window.location.origin}/portal?id=${apiKey.id}`;
-  const modelCount = apiKey.allowed_models?.length ?? 0;
-
   return (
-    <article
-      className={`grid gap-2 px-4 py-3 transition-colors md:grid-cols-[minmax(190px,1.2fr)_minmax(160px,0.9fr)_minmax(120px,0.7fr)_auto] md:items-center md:px-5 ${
-        selected ? "bg-secondary-50/50 dark:bg-secondary-950/20" : "hover:bg-[var(--bg-subtle)]/70"
-      }`}
-    >
-      <div className="flex min-w-0 items-center gap-2">
-        <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg hover:bg-[var(--bg-subtle)]">
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={onSelect}
-            className="h-4 w-4 rounded border-[var(--border)] accent-[var(--color-accent)]"
-            aria-label={`Select ${apiKey.name}`}
-          />
-        </label>
-        <button type="button" onClick={onConfigure} className="group min-w-0 flex-1 rounded-lg py-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50">
-          <div className="flex items-center gap-2">
-            <h3 className="truncate text-sm font-semibold tracking-tight text-[var(--text)] group-hover:text-secondary-700 dark:group-hover:text-secondary-300">{apiKey.name}</h3>
-            <StatusPill disabled={apiKey.disabled} />
-          </div>
-          <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">Created {new Date(apiKey.created_at).toLocaleDateString()}</p>
-        </button>
-      </div>
-
-      <div className="min-w-0 pl-12 md:pl-0">
-        <KeyCopyButton icon={<KeyRound className="h-3 w-3" />} label="Key copied" value={apiKey.display} copiedMessage="Masked key identifier copied." />
-      </div>
-
-      <div className="flex min-w-0 items-center gap-2 pl-12 text-xs md:pl-0">
-        <span className="truncate font-medium text-[var(--text)]">{apiKey.plan_name || "Custom plan"}</span>
-        <span className="text-[var(--text-muted)]">·</span>
-        <span className={modelCount > 0 ? "truncate text-warn" : "truncate text-[var(--text-muted)]"}>
-          {modelCount > 0 ? `${modelCount} model${modelCount > 1 ? "s" : ""}` : "Plan defaults"}
-        </span>
-      </div>
-
-      <div className="flex items-center gap-1 pl-11 md:justify-end md:pl-0">
-        <KeyCopyButton
-          icon={<Link2 className="h-4 w-4" />}
-          label="Portal link copied"
-          value={portalUrl}
-          copiedMessage="Owner usage portal link copied."
-          className="w-10 justify-center px-0 [&_span:nth-child(2)]:hidden [&_svg:last-child]:hidden"
-        />
-        <button
-          type="button"
-          onClick={onToggle}
-          disabled={togglePending}
-          aria-label={apiKey.disabled ? "Enable key" : "Disable key"}
-          className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
-          title={apiKey.disabled ? "Enable key" : "Disable key"}
-        >
-          {apiKey.disabled ? <ToggleLeft className="h-4 w-4" /> : <ToggleRight className="h-4 w-4" />}
-        </button>
-        <button
-          type="button"
-          onClick={onRevoke}
-          aria-label={`Revoke ${apiKey.name}`}
-          className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50"
-          title="Revoke key"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-        <Button variant="ghost" onClick={onConfigure} className="ml-1">
-          Details
-          <ArrowRight className="h-4 w-4" />
-        </Button>
-      </div>
-    </article>
+    <label className="block space-y-1.5">
+      <span className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
+        {label}
+        {optional && <span className="text-[12px] font-normal text-fg-faint">Optional</span>}
+      </span>
+      {children}
+      {hint && <span className="block text-[12px] leading-5 text-fg-muted">{hint}</span>}
+    </label>
   );
 }
+
+/** Token count input that keeps the thousand separators visible while typing. */
+function TokenInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <Input
+      type="text"
+      inputMode="numeric"
+      value={formatTokenLimit(value)}
+      onChange={(e) => onChange(e.target.value.replace(/[^\d]/g, ""))}
+      placeholder={placeholder ? (/^\d+$/.test(placeholder) ? formatTokenLimit(placeholder) : placeholder) : undefined}
+      className="tabular-nums"
+    />
+  );
+}
+
+function DialogFooter({ children }: { children: ReactNode }) {
+  return <div className="flex flex-wrap items-center gap-2 rounded-b-2xl border-t border-line bg-subtle px-5 py-3">{children}</div>;
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 export function KeysPage() {
   const confirm = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
+  const copy = useCopy();
   const navigate = useNavigate();
   const keys = useQuery({ queryKey: ["keys"], queryFn: () => api.listKeys() });
   const access = useQuery({ queryKey: ["access-settings"], queryFn: () => api.accessSettings() });
 
   const [modalOpen, setModalOpen] = useState(false);
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortKey, setSortKey] = useState<"created_desc" | "created_asc" | "name_asc" | "name_desc">("created_desc");
+  const [sortKey, setSortKey] = useState<SortKey>("created_desc");
+
+  const allKeys = keys.data?.keys ?? [];
+  const summary = useMemo(() => getKeySummary(keys.data?.keys ?? []), [keys.data]);
 
   const visibleKeys = useMemo(() => {
     const all = keys.data?.keys ?? [];
@@ -451,15 +377,25 @@ export function KeysPage() {
     onError: (e: Error) => toast.error("Key update failed", e.message),
   });
 
+  const revokeOne = async (k: APIKey) => {
+    if (!(await confirm({ title: `Revoke ${k.name}?`, description: "Tools using this key stop authenticating immediately. This cannot be undone.", confirmLabel: "Revoke", tone: "danger" }))) return;
+    remove.mutate(k.id);
+  };
+
+  const statusCounts: Record<StatusFilter, number> = { all: summary.total, active: summary.active, inactive: summary.disabled };
+  const allVisibleSelected = visibleKeys.length > 0 && visibleKeys.every((k) => selectedIds.has(k.id));
+  const someVisibleSelected = visibleKeys.some((k) => selectedIds.has(k.id));
+  const filtering = searchQuery.trim() !== "" || statusFilter !== "all";
+
   return (
     <>
       <PageHeader
-        title="API Keys"
+        title="API keys"
         icon={KeyRound}
-        description="Manage authentication keys, owner portal links, model access, and spend controls."
+        description="Keys your tools and teammates use to call KeiRouter. Each key carries a plan, an optional model allowlist and its own owner portal."
         action={
           <Button onClick={openModal}>
-            <Plus className="h-4 w-4" />
+            <Plus />
             New key
           </Button>
         }
@@ -468,21 +404,25 @@ export function KeysPage() {
       <Modal
         open={modalOpen}
         onClose={closeModal}
+        maxWidth="max-w-xl"
         title={step === 4 ? "Key created" : "Create API key"}
         subtitle={
           step === 1
-            ? "Name your key so you can identify it later."
+            ? "Step 1 of 3 · Name the key so you can recognise it in usage logs."
             : step === 2
-              ? "Choose a plan or set custom limits."
+              ? "Step 2 of 3 · Choose a plan or set custom limits."
               : step === 3
-                ? "Optionally override plan settings for this key."
+                ? selectedPlanId === "custom"
+                  ? "Step 3 of 3 · Set limits and model access for this key."
+                  : "Step 3 of 3 · Optionally override plan settings for this key."
                 : undefined
         }
       >
-        {step === 1 && <StepName name={name} setName={setName} onNext={() => setStep(2)} />}
+        {step === 1 && <StepName name={name} setName={setName} onNext={() => setStep(2)} onCancel={closeModal} />}
         {step === 2 && (
           <StepPlanSelect
             plans={plans.data?.plans ?? []}
+            loading={plans.isLoading}
             selectedPlanId={selectedPlanId}
             setSelectedPlanId={setSelectedPlanId}
             onBack={() => setStep(1)}
@@ -521,7 +461,7 @@ export function KeysPage() {
             endpointUrl={access.data?.endpoint_url ?? window.location.origin}
             planName={created.plan?.name ?? "Custom"}
             availableModelsText={
-              created.allowed_models && created.allowed_models.length >0
+              created.allowed_models && created.allowed_models.length > 0
                 ? created.allowed_models.join(", ")
                 : selectedPlanId !== "custom"
                   ? (plans.data?.plans ?? []).find((p) => p.id === selectedPlanId)?.allowed_models?.join(", ") || "all models"
@@ -531,129 +471,293 @@ export function KeysPage() {
         )}
       </Modal>
 
-      {(() => {
-        const summary = getKeySummary(keys.data?.keys ?? []);
-        return (
-          <Card className="mb-4 shadow-none">
-            <div className="grid grid-cols-2 divide-x divide-y divide-[var(--border)] sm:grid-cols-4 sm:divide-y-0">
-              <SummaryItem label="Total keys" value={summary.total} icon={KeyRound} />
-              <SummaryItem label="Active" value={summary.active} icon={Activity} />
-              <SummaryItem label="Disabled" value={summary.disabled} icon={Ban} tone="danger" />
-              <SummaryItem label="Restricted" value={summary.restricted} icon={ListFilter} tone="warning" />
+      {keys.isLoading ? (
+        <div className="space-y-4">
+          <Skeleton className="h-[74px] w-full rounded-2xl" />
+          <Skeleton className="h-9 w-full max-w-xl" />
+          <Skeleton className="h-80 w-full rounded-2xl" />
+        </div>
+      ) : keys.isError ? (
+        <ErrorBanner message={`Couldn't load API keys. ${keys.error instanceof Error ? keys.error.message : ""}`.trim()} />
+      ) : allKeys.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+          <p className="text-[14px] font-medium text-fg">No API keys yet</p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
+            Create a key for a CLI tool, app or teammate. The full secret is shown once, then only its hash is stored.
+          </p>
+          <Button className="mt-4" onClick={openModal}>
+            <Plus />
+            Create first key
+          </Button>
+        </div>
+      ) : (
+        <>
+          <section aria-label="Key summary" className="mb-5 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+            <div className="grid grid-cols-2 gap-px bg-line lg:grid-cols-4">
+              <KpiCell label="Total keys" value={summary.total} hint={summary.neverUsed > 0 ? `${summary.neverUsed} never used` : "All have been used"} />
+              <KpiCell label="Active" value={summary.active} hint={`${summary.usedRecently} used in the last 24 hours`} />
+              <KpiCell label="Disabled" value={summary.disabled} hint="Rejected until re-enabled" muted={summary.disabled === 0} />
+              <KpiCell label="Model-restricted" value={summary.restricted} hint="Own model allowlist" muted={summary.restricted === 0} />
             </div>
-          </Card>
-        );
-      })()}
+          </section>
 
-      <Card className="overflow-hidden">
-        <CardHeader
-          title={selectedIds.size > 0 ? `${selectedIds.size} selected` : "Key inventory"}
-          description="Copy identifiers, share owner portals, and control access from one place."
-          action={
-            selectedIds.size > 0 ? (
-              <div className="flex items-center gap-2">
+          <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center">
+            <div className="relative lg:w-80">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search name, key or plan"
+                aria-label="Search keys"
+                className="h-9 w-full rounded-lg border border-line bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25"
+              />
+              {searchQuery && (
                 <button
-                  onClick={clearSelection}
-                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg"
+                  aria-label="Clear search"
                 >
-                  Clear
+                  <X className="h-3.5 w-3.5" />
                 </button>
-                <Button variant="danger" onClick={handleBulkDelete} disabled={bulkRemove.isPending}>
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Revoke {selectedIds.size}
-                </Button>
-              </div>
-            ) : undefined
-          }
-        />
-        {keys.isLoading ? (
-          <Spinner />
-        ) : !keys.data?.keys?.length ? (
-          <KeyEmptyState onCreate={openModal} />
-        ) : (
-          <div>
-            <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-5">
-              <label className="flex min-h-10 cursor-pointer items-center gap-3 rounded-lg pr-3">
-                <input
-                  type="checkbox"
-                  checked={visibleKeys.length >0 && visibleKeys.every((k) => selectedIds.has(k.id))}
-                  onChange={toggleSelectAll}
-                  className="h-4 w-4 rounded border-[var(--border)] accent-[var(--color-accent)]"
-                  aria-label="Select all visible API keys"
-                />
-                <span className="text-xs font-semibold text-[var(--text-muted)]">
-                  Select all <span className="tabular-nums">({visibleKeys.length})</span>
-                </span>
-              </label>
-              <div className="flex flex-1 flex-col gap-2 sm:flex-row lg:max-w-3xl lg:justify-end">
-                <div className="relative min-w-0 flex-1 lg:max-w-sm">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search keys…"
-                    className="min-h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] py-2 pl-9 pr-10 text-sm transition-[border-color,box-shadow] placeholder:text-[var(--text-muted)] hover:border-[var(--border-strong)] focus:border-accent-400 focus:outline-none focus:ring-2 focus:ring-accent-400/30"
-                  />
-                  {searchQuery && (
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Filter by status">
+              {STATUS_FILTERS.map((f) => {
+                const active = statusFilter === f.value;
+                return (
+                  <button
+                    key={f.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setStatusFilter(f.value)}
+                    className={cn(
+                      "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+                      active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+                    )}
+                  >
+                    {f.label}
+                    <span className={cn("tabular-nums", active ? "opacity-70" : "text-fg-faint")}>{statusCounts[f.value]}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="lg:ml-auto">
+              <label className="sr-only" htmlFor="key-sort">Sort keys</label>
+              <Select id="key-sort" className="h-9 w-full sm:w-40" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
+                <option value="created_desc">Newest first</option>
+                <option value="created_asc">Oldest first</option>
+                <option value="name_asc">Name A–Z</option>
+                <option value="name_desc">Name Z–A</option>
+              </Select>
+            </div>
+          </div>
+
+          <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+            <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-line px-4 py-2">
+              {selectedIds.size > 0 ? (
+                <>
+                  <span className="text-[13px] font-medium text-fg">{selectedIds.size} selected</span>
+                  <div className="ml-auto flex items-center gap-1.5">
+                    <Button variant="danger" onClick={handleBulkDelete} disabled={bulkRemove.isPending}>
+                      <Trash2 />
+                      Revoke {selectedIds.size}
+                    </Button>
                     <button
                       type="button"
-                      onClick={() => setSearchQuery("")}
-                      className="absolute right-0 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
-                      aria-label="Clear search"
+                      onClick={clearSelection}
+                      aria-label="Clear selection"
+                      className="flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg"
                     >
                       <X className="h-4 w-4" />
                     </button>
-                  )}
-                </div>
-                <label className="sr-only" htmlFor="key-sort">Sort keys</label>
-                <Select id="key-sort" className="w-full sm:w-40" value={sortKey} onChange={(e) => setSortKey(e.target.value as typeof sortKey)}>
-                  <option value="created_desc">Newest first</option>
-                  <option value="created_asc">Oldest first</option>
-                  <option value="name_asc">Name A–Z</option>
-                  <option value="name_desc">Name Z–A</option>
-                </Select>
-                <label className="sr-only" htmlFor="key-status">Filter by status</label>
-                <Select id="key-status" className="w-full sm:w-32" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
-                  <option value="all">All status</option>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </Select>
-              </div>
+                  </div>
+                </>
+              ) : (
+                <span className="text-[12.5px] text-fg-muted">
+                  {filtering ? `${visibleKeys.length} of ${allKeys.length} keys` : `${allKeys.length} key${allKeys.length === 1 ? "" : "s"}`} · open a key to change its models or guardrails
+                </span>
+              )}
             </div>
-            {visibleKeys.length ===0 ? (
-              <div className="px-6 py-10 text-center text-sm text-[var(--text-muted)]">
-                No keys match your search or filters.
+
+            {visibleKeys.length === 0 ? (
+              <div className="px-6 py-10 text-center">
+                <p className="text-[13px] font-medium text-fg">No keys match</p>
+                <p className="mt-1 text-[12.5px] text-fg-muted">Clear the search or status filter to see every key.</p>
               </div>
             ) : (
-              <div className="divide-y divide-[var(--border)]">
-                {pagination.paged.map((k) => (
-                  <KeyRow
-                    key={k.id}
-                    apiKey={k}
-                    selected={selectedIds.has(k.id)}
-                    onSelect={() => toggleSelect(k.id)}
-                    onToggle={() => toggleDisabled.mutate({ id: k.id, disabled: !k.disabled })}
-                    onConfigure={() => navigate(`/keys/${k.id}`)}
-                    onRevoke={async () => {
-                      if (!(await confirm({ title: `Revoke ${k.name}?`, description: "Tools using this key stop authenticating immediately. This cannot be undone.", confirmLabel: "Revoke", tone: "danger" }))) return;
-                      remove.mutate(k.id);
-                    }}
-                    togglePending={toggleDisabled.isPending}
-                  />
-                ))}
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[920px] text-[13px]">
+                  <thead>
+                    <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                      <th className="w-10 px-4 py-2">
+                        <input
+                          type="checkbox"
+                          checked={allVisibleSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected;
+                          }}
+                          onChange={toggleSelectAll}
+                          className="h-4 w-4 rounded border-line accent-[var(--color-accent-500)]"
+                          aria-label={`Select all ${visibleKeys.length} visible keys`}
+                        />
+                      </th>
+                      <th className="px-2 py-2 font-medium">Name</th>
+                      <th className="px-4 py-2 font-medium">Key</th>
+                      <th className="px-4 py-2 font-medium">Plan</th>
+                      <th className="px-4 py-2 font-medium">Status</th>
+                      <th className="px-4 py-2 font-medium">Last used</th>
+                      <th className="px-4 py-2 font-medium">Created</th>
+                      <th className="w-10 px-2 py-2"><span className="sr-only">Actions</span></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-line">
+                    {pagination.paged.map((k) => (
+                      <KeyRow
+                        key={k.id}
+                        apiKey={k}
+                        selected={selectedIds.has(k.id)}
+                        onSelect={() => toggleSelect(k.id)}
+                        onOpen={() => navigate(`/keys/${k.id}`)}
+                        onToggle={() => toggleDisabled.mutate({ id: k.id, disabled: !k.disabled })}
+                        togglePending={toggleDisabled.isPending && toggleDisabled.variables?.id === k.id}
+                        onCopyKey={() => copy(k.display, "Key copied", "Masked key identifier copied.")}
+                        onCopyPortal={() => copy(portalUrlFor(k.id), "Portal link copied", "Owner usage portal link copied.")}
+                        onRevoke={() => revokeOne(k)}
+                      />
+                    ))}
+                  </tbody>
+                </table>
               </div>
             )}
-            <TablePagination
-              page={pagination.page}
-              pages={pagination.pages}
-              total={pagination.total}
-              onPage={pagination.setPage}
-            />
+            <TablePagination page={pagination.page} pages={pagination.pages} total={pagination.total} onPage={pagination.setPage} />
           </div>
-        )}
-      </Card>
+        </>
+      )}
     </>
+  );
+}
+
+function KpiCell({ label, value, hint, muted }: { label: string; value: number; hint?: string; muted?: boolean }) {
+  return (
+    <div className="bg-surface px-4 py-3">
+      <p className="text-[12px] font-medium text-fg-muted">{label}</p>
+      <p className={cn("mt-1 text-[20px] font-semibold leading-tight tracking-[-0.01em] tabular-nums", muted ? "text-fg-faint" : "text-fg")}>{value.toLocaleString("en-US")}</p>
+      {hint && <p className="mt-0.5 truncate text-[12px] text-fg-faint">{hint}</p>}
+    </div>
+  );
+}
+
+function KeyRow({
+  apiKey: k,
+  selected,
+  onSelect,
+  onOpen,
+  onToggle,
+  togglePending,
+  onCopyKey,
+  onCopyPortal,
+  onRevoke,
+}: {
+  apiKey: APIKey;
+  selected: boolean;
+  onSelect: () => void;
+  onOpen: () => void;
+  onToggle: () => void;
+  togglePending: boolean;
+  onCopyKey: () => void;
+  onCopyPortal: () => void;
+  onRevoke: () => void;
+}) {
+  const modelCount = k.allowed_models?.length ?? 0;
+  const lastUsed = usedAt(k.last_used_at);
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
+
+  return (
+    <tr
+      className={cn("cursor-pointer transition-colors", selected ? "bg-accent-500/5" : "hover:bg-hover", k.disabled && !selected && "text-fg-muted")}
+      onClick={onOpen}
+    >
+      <td className="px-4 py-2.5" onClick={stop}>
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onSelect}
+          className="h-4 w-4 rounded border-line accent-[var(--color-accent-500)]"
+          aria-label={`Select ${k.name}`}
+        />
+      </td>
+      <td className="max-w-[260px] px-2 py-2.5">
+        <Link
+          to={`/keys/${k.id}`}
+          onClick={stop}
+          className={cn("block truncate font-medium hover:underline focus:outline-none focus-visible:underline", k.disabled ? "text-fg-muted" : "text-fg")}
+          title={k.name}
+        >
+          {k.name}
+        </Link>
+      </td>
+      <td className="px-4 py-2.5" onClick={stop}>
+        <button
+          type="button"
+          onClick={onCopyKey}
+          className="group inline-flex max-w-[220px] items-center gap-1.5 rounded-md font-mono text-[12px] text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+          title="Copy masked key"
+        >
+          <span className="truncate">{k.display}</span>
+          <Copy className="h-3.5 w-3.5 shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" strokeWidth={1.75} />
+        </button>
+      </td>
+      <td className="max-w-[220px] px-4 py-2.5">
+        <span className="block truncate text-fg">{k.plan_name || "Custom"}</span>
+        <span className="block truncate text-[12px] text-fg-faint">
+          {modelCount > 0 ? `${modelCount} model${modelCount > 1 ? "s" : ""} allowed` : "Plan model access"}
+        </span>
+      </td>
+      <td className="px-4 py-2.5" onClick={stop}>
+        <span className={cn("inline-flex items-center gap-2", togglePending && "pointer-events-none opacity-50")} aria-label={k.disabled ? `Enable ${k.name}` : `Disable ${k.name}`}>
+          <Toggle checked={!k.disabled} onChange={onToggle} />
+          <span className={cn("text-[12.5px]", k.disabled ? "text-fg-faint" : "text-fg")}>{k.disabled ? "Disabled" : "Active"}</span>
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-2.5" title={lastUsed ? new Date(lastUsed).toLocaleString() : "This key has not authenticated a request yet"}>
+        <span className={lastUsed ? "text-fg" : "text-fg-faint"}>{relativeTime(k.last_used_at)}</span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-2.5 text-fg-muted" title={new Date(k.created_at).toLocaleString()}>
+        {new Date(k.created_at).toLocaleDateString()}
+      </td>
+      <td className="px-2 py-2.5" onClick={stop}>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            aria-label={`Actions for ${k.name}`}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={onOpen}>
+              <Settings2 />
+              Configure
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onCopyKey}>
+              <Copy />
+              Copy masked key
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onCopyPortal}>
+              <Link2 />
+              Copy portal link
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem tone="danger" onSelect={onRevoke}>
+              <Trash2 />
+              Revoke key
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </td>
+    </tr>
   );
 }
 
@@ -663,121 +767,177 @@ function StepName({
   name,
   setName,
   onNext,
+  onCancel,
 }: {
   name: string;
   setName: (v: string) => void;
   onNext: () => void;
+  onCancel: () => void;
 }) {
   return (
-    <div className="space-y-4 px-6 py-5">
-      <Field label="Key name">
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="laptop"
-          autoFocus
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && name.trim()) {
-              e.preventDefault();
-              onNext();
-            }
-          }}
-        />
-      </Field>
-      <div className="flex gap-2 pt-1">
-        <Button className="flex-1" onClick={onNext} disabled={!name.trim()}>
-          Next
-          <ArrowRight className="h-4 w-4" />
-        </Button>
+    <>
+      <div className="px-5 py-4">
+        <FormField label="Key name" hint="Shown in usage logs and on the owner portal. Name it after the person, tool or machine that will use it.">
+          <Input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="laptop"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && name.trim()) {
+                e.preventDefault();
+                onNext();
+              }
+            }}
+          />
+        </FormField>
       </div>
-    </div>
+      <DialogFooter>
+        <div className="flex-1" />
+        <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+        <Button onClick={onNext} disabled={!name.trim()}>
+          Next
+          <ArrowRight />
+        </Button>
+      </DialogFooter>
+    </>
   );
 }
 
 /* ── Step 2: Plan Select ────────────────────────────────────────── */
 
+function planLimitText(p: Plan): string {
+  const parts: string[] = [];
+  if (p.limit_micros > 0) parts.push(`${microsToUSD(p.limit_micros)} / ${p.period}`);
+  if (p.limit_tokens > 0) parts.push(`${formatTokens(p.limit_tokens)} tokens / ${p.period}`);
+  if (parts.length === 0) parts.push("No spend limit");
+  return parts.join(" · ");
+}
+
+function PlanOption({
+  selected,
+  onSelect,
+  title,
+  detail,
+  aside,
+}: {
+  selected: boolean;
+  onSelect: () => void;
+  title: string;
+  detail: ReactNode;
+  aside?: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      className={cn(
+        "flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+        selected ? "border-accent-500 bg-accent-500/5" : "border-line bg-surface hover:border-line-strong hover:bg-hover",
+      )}
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
+          selected ? "border-accent-500" : "border-line-strong",
+        )}
+      >
+        {selected && <span className="h-2 w-2 rounded-full bg-accent-500" />}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium text-fg">{title}</span>
+        <span className="mt-0.5 block text-[12px] leading-5 text-fg-muted">{detail}</span>
+      </span>
+      {aside && <span className="shrink-0 text-[12px] tabular-nums text-fg-faint">{aside}</span>}
+    </button>
+  );
+}
+
 function StepPlanSelect({
   plans,
+  loading,
   selectedPlanId,
   setSelectedPlanId,
   onBack,
   onNext,
 }: {
   plans: Plan[];
+  loading: boolean;
   selectedPlanId: string;
   setSelectedPlanId: (v: string) => void;
   onBack: () => void;
   onNext: () => void;
 }) {
   return (
-    <div className="space-y-4 px-6 py-5">
-      <p className="text-xs text-[var(--text-muted)]">
-        Select a plan to inherit its budget rules, or choose Custom to set everything yourself.
-      </p>
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {plans.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setSelectedPlanId(p.id)}
-            className={`rounded-xl border px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/40 ${
-              selectedPlanId === p.id
-                ? "border-accent-400 bg-accent-500/10"
-                : "border-[var(--border)] bg-[var(--bg-subtle)] hover:bg-[var(--bg)]"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Wallet className="h-4 w-4 text-[var(--text-muted)]" />
-              <span className="text-sm font-medium">{p.name}</span>
-            </div>
-            <div className="mt-1.5 space-y-0.5 text-xs text-[var(--text-muted)]">
-              {p.limit_micros > 0 && <p>{microsToUSD(p.limit_micros)} / {p.period}</p>}
-              {p.limit_tokens > 0 && <p>{formatTokens(p.limit_tokens)} tokens / {p.period}</p>}
-              {p.limit_micros === 0 && p.limit_tokens === 0 && <p>No spend limit</p>}
-              {(p.allowed_models ?? []).length > 0 && <p>{(p.allowed_models ?? []).length} model restriction(s)</p>}
-              <p>{p.key_count} key{p.key_count !== 1 ? "s" : ""}</p>
-            </div>
-          </button>
-        ))}
-
-        {/* Custom option */}
-        <button
-          type="button"
-          onClick={() => setSelectedPlanId("custom")}
-          className={`rounded-xl border border-dashed px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/40 ${
-            selectedPlanId === "custom"
-              ? "border-accent-400 bg-accent-500/10"
-              : "border-[var(--border)] bg-[var(--bg-subtle)] hover:bg-[var(--bg)]"
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            <Wrench className="h-4 w-4 text-[var(--text-muted)]" />
-            <span className="text-sm font-medium">Custom</span>
-          </div>
-          <div className="mt-1.5 text-xs text-[var(--text-muted)]">
-            <p>No preset</p>
-            <p>Set everything yourself</p>
-          </div>
-        </button>
+    <>
+      <div className="px-5 py-4">
+        <p className="mb-3 text-[12.5px] text-fg-muted">
+          A plan sets the key's budget and model access. Pick Custom to configure this key on its own.
+        </p>
+        <div className="max-h-[50vh] space-y-1.5 overflow-y-auto pr-0.5" role="radiogroup" aria-label="Plan">
+          {loading && (
+            <>
+              <Skeleton className="h-14 w-full rounded-lg" />
+              <Skeleton className="h-14 w-full rounded-lg" />
+            </>
+          )}
+          {plans.map((p) => {
+            const restricted = (p.allowed_models ?? []).length;
+            return (
+              <PlanOption
+                key={p.id}
+                selected={selectedPlanId === p.id}
+                onSelect={() => setSelectedPlanId(p.id)}
+                title={p.name}
+                detail={
+                  <>
+                    {planLimitText(p)}
+                    {restricted > 0 && ` · ${restricted} model restriction${restricted === 1 ? "" : "s"}`}
+                  </>
+                }
+                aside={`${p.key_count} key${p.key_count !== 1 ? "s" : ""}`}
+              />
+            );
+          })}
+          <PlanOption
+            selected={selectedPlanId === "custom"}
+            onSelect={() => setSelectedPlanId("custom")}
+            title="Custom"
+            detail="No preset. Set the budget and allowed models for this key yourself."
+          />
+        </div>
       </div>
-
-      <div className="flex gap-2 pt-2 border-t border-[var(--border)]">
+      <DialogFooter>
         <Button variant="ghost" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft />
           Back
         </Button>
         <div className="flex-1" />
         <Button onClick={onNext}>
           Next
-          <ArrowRight className="h-4 w-4" />
+          <ArrowRight />
         </Button>
-      </div>
-    </div>
+      </DialogFooter>
+    </>
   );
 }
 
 /* ── Step 3: Configure (plan details / custom) ──────────────────── */
+
+function SettingRow({ label, description, children }: { label: string; description?: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-3 py-2.5">
+      <div className="min-w-0">
+        <p className="text-[13px] font-medium text-fg">{label}</p>
+        {description && <p className="mt-0.5 text-[12px] leading-5 text-fg-muted">{description}</p>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
 
 function StepConfigure({
   selectedPlanId,
@@ -827,10 +987,10 @@ function StepConfigure({
   if (isCustom) {
     // Full custom config (same as old StepBudget)
     return (
-      <div className="space-y-4 px-6 py-5">
-        <div className="flex gap-3">
-          <div className="flex-1">
-            <Field label="Limit (USD)">
+      <>
+        <div className="space-y-4 px-5 py-4">
+          <div className="grid gap-3 sm:grid-cols-[1fr_1fr_8.5rem]">
+            <FormField label="Limit (USD)" optional>
               <Input
                 type="number"
                 min="0"
@@ -838,57 +998,56 @@ function StepConfigure({
                 value={budgetLimit}
                 onChange={(e) => setBudgetLimit(e.target.value)}
                 placeholder="50.00"
+                className="tabular-nums"
               />
-            </Field>
-          </div>
-          <div className="flex-1">
-            <Field label="Limit (Tokens)">
-              <FormattedTokenInput
-                value={budgetLimitTokens}
-                onChange={setBudgetLimitTokens}
-                placeholder="100000000"
-              />
-            </Field>
-          </div>
-          <div className="w-36">
-            <Field label="Period">
+            </FormField>
+            <FormField label="Limit (tokens)" optional>
+              <TokenInput value={budgetLimitTokens} onChange={setBudgetLimitTokens} placeholder="100000000" />
+            </FormField>
+            <FormField label="Period">
               <Select value={budgetPeriod} onChange={(e) => setBudgetPeriod(e.target.value)}>
                 {budgetPeriods.map((p) => (
                   <option key={p.value} value={p.value}>{p.label}</option>
                 ))}
               </Select>
-            </Field>
+            </FormField>
+          </div>
+
+          <div className="space-y-1.5">
+            <span className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
+              Allowed models
+              <span className="text-[12px] font-normal text-fg-faint">Optional</span>
+            </span>
+            <ModelMultiSelect value={allowedModels} onChange={setAllowedModels} />
+            <span className="block text-[12px] leading-5 text-fg-muted">
+              Leave empty to allow every model. Add custom patterns with a <span className="font-mono">*</span> wildcard, e.g. <span className="font-mono">claude-*</span>.
+            </span>
+          </div>
+
+          <div className="divide-y divide-line rounded-lg border border-line">
+            <SettingRow label="Alert threshold" description="Notify when this share of the budget is used. Applies once a limit is set.">
+              <span className="flex items-center gap-1.5">
+                <Input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={budgetAlertPct}
+                  onChange={(e) => setBudgetAlertPct(parseInt(e.target.value) || 80)}
+                  className="w-20 text-right tabular-nums"
+                  aria-label="Alert threshold percent"
+                />
+                <span className="text-[13px] text-fg-muted">%</span>
+              </span>
+            </SettingRow>
+            <SettingRow label="Hard cutoff" description="Block requests once the budget is used up. Off only sends alerts.">
+              <Toggle checked={budgetHardCutoff} onChange={setBudgetHardCutoff} />
+            </SettingRow>
           </div>
         </div>
 
-        <Field label="Allowed models">
-          <ModelMultiSelect value={allowedModels} onChange={setAllowedModels} />
-          <p className="mt-1 text-[10px] text-[var(--text-muted)]">
-            Select models or add custom patterns with * wildcard (e.g. claude-*)
-          </p>
-        </Field>
-
-        <div className="flex items-end gap-6">
-          <div className="w-40">
-            <Field label="Alert threshold (%)">
-              <Input
-                type="number"
-                min="1"
-                max="100"
-                value={budgetAlertPct}
-                onChange={(e) => setBudgetAlertPct(parseInt(e.target.value) || 80)}
-              />
-            </Field>
-          </div>
-          <div className="flex items-center gap-2 pb-0.5">
-            <Toggle checked={budgetHardCutoff} onChange={setBudgetHardCutoff} />
-            <span className="text-sm">Hard cutoff (block when exhausted)</span>
-          </div>
-        </div>
-
-        <div className="flex gap-2 pt-2 border-t border-[var(--border)]">
+        <DialogFooter>
           <Button variant="ghost" onClick={onBack}>
-            <ArrowLeft className="h-4 w-4" />
+            <ArrowLeft />
             Back
           </Button>
           <div className="flex-1" />
@@ -898,105 +1057,105 @@ function StepConfigure({
           <Button onClick={onCreate} disabled={isPending}>
             {isPending ? "Creating…" : "Create key"}
           </Button>
-        </div>
-      </div>
+        </DialogFooter>
+      </>
     );
   }
 
   // Plan selected — show summary + optional override toggle
   return (
-    <div className="space-y-4 px-6 py-5">
-      {/* Plan summary card */}
-      {selectedPlan && (
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-          <div className="flex items-center gap-2">
-            <Wallet className="h-4 w-4 text-accent-500" />
-            <span className="text-sm font-medium">{selectedPlan.name}</span>
-            <Badge>{selectedPlan.period}</Badge>
-            {selectedPlan.hard_cutoff ? <Badge tone="danger">hard cutoff</Badge> : <Badge tone="neutral">advisory</Badge>}
+    <>
+      <div className="space-y-4 px-5 py-4">
+        {selectedPlan && (
+          <div className="rounded-lg border border-line bg-subtle px-3 py-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[13px] font-medium text-fg">{selectedPlan.name}</span>
+              <Badge>{selectedPlan.period}</Badge>
+              {selectedPlan.hard_cutoff ? <Badge tone="danger">Hard cutoff</Badge> : <Badge tone="neutral">Advisory</Badge>}
+            </div>
+            {selectedPlan.description && <p className="mt-1 text-[12px] leading-5 text-fg-muted">{selectedPlan.description}</p>}
+            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[12px]">
+              <dt className="text-fg-faint">Budget</dt>
+              <dd className="tabular-nums text-fg">
+                {selectedPlan.limit_micros > 0 && microsToUSD(selectedPlan.limit_micros)}
+                {selectedPlan.limit_micros > 0 && selectedPlan.limit_tokens > 0 && " · "}
+                {selectedPlan.limit_tokens > 0 && `${formatTokens(selectedPlan.limit_tokens)} tokens`}
+                {selectedPlan.limit_micros === 0 && selectedPlan.limit_tokens === 0 && "No spend limit"}
+              </dd>
+              <dt className="text-fg-faint">Alert</dt>
+              <dd className="tabular-nums text-fg">At {selectedPlan.alert_pct}%</dd>
+              <dt className="text-fg-faint">Models</dt>
+              <dd className="min-w-0 break-words font-mono text-[11.5px] text-fg">
+                {models.length > 0 ? models.join(", ") : <span className="font-sans text-[12px]">All models</span>}
+              </dd>
+            </dl>
           </div>
-          {selectedPlan.description && (
-            <p className="mt-1 text-xs text-[var(--text-muted)]">{selectedPlan.description}</p>
-          )}
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[var(--text-muted)]">
-            {selectedPlan.limit_micros > 0 && (
-              <span className="flex items-center gap-1"><DollarSign className="h-3 w-3" />{microsToUSD(selectedPlan.limit_micros)}</span>
-            )}
-            {selectedPlan.limit_tokens > 0 && (
-              <span className="flex items-center gap-1"><Gauge className="h-3 w-3" />{formatTokens(selectedPlan.limit_tokens)} tok</span>
-            )}
-            {selectedPlan.limit_micros === 0 && selectedPlan.limit_tokens === 0 && <span>No spend limit</span>}
-            <span>Alert at {selectedPlan.alert_pct}%</span>
-          </div>
-          {models.length > 0 && (
-            <p className="mt-1.5 text-xs text-[var(--text-muted)]">Models: {models.join(", ")}</p>
-          )}
-        </div>
-      )}
+        )}
 
-      {/* Override toggle */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium">Customize for this key</p>
-            <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-              Override plan limits with per-key settings.
-            </p>
-          </div>
-          <Toggle checked={customizePlan} onChange={setCustomizePlan} />
+        <div className="divide-y divide-line rounded-lg border border-line">
+          <SettingRow label="Customize for this key" description="Override the plan's limits or models for this key only.">
+            <Toggle checked={customizePlan} onChange={setCustomizePlan} />
+          </SettingRow>
+          {customizePlan && (
+            <div className="space-y-4 px-3 py-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <FormField label="USD limit" optional>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={budgetLimit}
+                    onChange={(e) => setBudgetLimit(e.target.value)}
+                    placeholder="Leave empty to use plan"
+                    className="tabular-nums"
+                  />
+                </FormField>
+                <FormField label="Token limit" optional>
+                  <TokenInput value={budgetLimitTokens} onChange={setBudgetLimitTokens} placeholder="Leave empty to use plan" />
+                </FormField>
+              </div>
+              <div className="space-y-1.5">
+                <span className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
+                  Allowed models
+                  <span className="text-[12px] font-normal text-fg-faint">Optional</span>
+                </span>
+                <ModelMultiSelect value={allowedModels} onChange={setAllowedModels} />
+                <span className="block text-[12px] leading-5 text-fg-muted">Leave empty to use the plan's model restrictions.</span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Override fields */}
-      {customizePlan && (
-        <div className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <Field label="Override USD limit">
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={budgetLimit}
-                  onChange={(e) => setBudgetLimit(e.target.value)}
-                  placeholder="Leave empty to use plan"
-                />
-              </Field>
-            </div>
-            <div className="flex-1">
-              <Field label="Override token limit">
-                <FormattedTokenInput
-                  value={budgetLimitTokens}
-                  onChange={setBudgetLimitTokens}
-                  placeholder="Leave empty to use plan"
-                />
-              </Field>
-            </div>
-          </div>
-          <Field label="Override allowed models">
-            <ModelMultiSelect value={allowedModels} onChange={setAllowedModels} />
-            <p className="mt-1 text-[10px] text-[var(--text-muted)]">
-              Leave empty to use plan's model restrictions.
-            </p>
-          </Field>
-        </div>
-      )}
-
-      <div className="flex gap-2 pt-2 border-t border-[var(--border)]">
+      <DialogFooter>
         <Button variant="ghost" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft />
           Back
         </Button>
         <div className="flex-1" />
         <Button onClick={onCreate} disabled={isPending}>
           {isPending ? "Creating…" : "Create key"}
         </Button>
-      </div>
-    </div>
+      </DialogFooter>
+    </>
   );
 }
 
 /* ── Step 4: Success / Copy ─────────────────────────────────────── */
+
+function CopyIconButton({ label, onCopy, copied }: { label: string; onCopy: () => void; copied: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      aria-label={label}
+      title={label}
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+    >
+      {copied ? <Check className="h-4 w-4 text-ok" strokeWidth={1.75} /> : <Copy className="h-4 w-4" strokeWidth={1.75} />}
+    </button>
+  );
+}
 
 function StepSuccess({
   created,
@@ -1015,9 +1174,10 @@ function StepSuccess({
   planName: string;
   availableModelsText: string;
 }) {
+  const copy = useCopy();
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedAll, setCopiedAll] = useState(false);
-  const portalUrl = `${window.location.origin}/portal?id=${created.id}`;
+  const portalUrl = portalUrlFor(created.id);
 
   const shareText = [
     "Keirouter",
@@ -1028,88 +1188,98 @@ function StepSuccess({
     `Available model : ${availableModelsText}`,
   ].join("\n");
 
+  const flash = (set: (v: boolean) => void, ms: number) => {
+    set(true);
+    setTimeout(() => set(false), ms);
+  };
+
   return (
-    <div className="space-y-4 px-6 py-5">
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-        <p className="text-xs font-medium text-[var(--text-muted)]">Your new key — copy it now, it won't be shown again.</p>
-        <div className="mt-2 flex items-center gap-2">
-          <code className="flex-1 overflow-x-auto rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 font-mono text-sm">
-            {created.key}
-          </code>
-          <Button
-            onClick={() => {
-              navigator.clipboard.writeText(created.key);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            }}
-          >
-            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copied ? "Copied" : "Copy"}
-          </Button>
+    <>
+      <div className="space-y-4 px-5 py-4">
+        <div role="note" className="flex items-start gap-2.5 rounded-lg border border-warn/30 bg-warn/5 px-3 py-2.5 text-[12.5px] leading-5 text-fg">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} />
+          <span>
+            <span className="font-medium">Copy this key now — you won't see it again.</span> KeiRouter only keeps a hash. If it's lost, revoke the key and create a new one.
+          </span>
+        </div>
+
+        <div className="space-y-1.5">
+          <p className="text-[12.5px] font-medium text-fg">Secret key</p>
+          <div className="flex items-stretch gap-2">
+            <code className="min-w-0 flex-1 select-all break-all rounded-lg border border-line-strong bg-subtle px-3 py-2.5 font-mono text-[13px] leading-5 text-fg">
+              {created.key}
+            </code>
+            <Button
+              className="shrink-0 self-start"
+              onClick={() => {
+                copy(created.key, "Key copied", "Store it somewhere safe — it won't be shown again.").then((ok) => {
+                  if (ok) flash(setCopied, 1500);
+                });
+              }}
+            >
+              {copied ? <Check /> : <Copy />}
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+        </div>
+
+        <dl className="divide-y divide-line rounded-lg border border-line text-[12.5px]">
+          <div className="flex items-center gap-3 px-3 py-2">
+            <dt className="w-24 shrink-0 text-fg-muted">Owner portal</dt>
+            <dd className="flex min-w-0 flex-1 items-center gap-1">
+              <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-fg" title={portalUrl}>{portalUrl}</span>
+              <CopyIconButton
+                label="Copy portal link"
+                copied={copiedUrl}
+                onCopy={() => copy(portalUrl, "Portal link copied", "Share it with the key owner to let them track their usage.").then((ok) => ok && flash(setCopiedUrl, 1500))}
+              />
+            </dd>
+          </div>
+          <div className="flex items-center gap-3 px-3 py-2">
+            <dt className="w-24 shrink-0 text-fg-muted">Plan</dt>
+            <dd className="min-w-0 flex-1 text-fg">{planName}</dd>
+          </div>
+          {created.budget && (
+            <div className="flex items-center gap-3 px-3 py-2">
+              <dt className="w-24 shrink-0 text-fg-muted">Budget</dt>
+              <dd className="min-w-0 flex-1 tabular-nums text-fg">
+                {created.budget.limit_micros > 0 && `$${(created.budget.limit_micros / 1_000_000).toFixed(2)}`}
+                {created.budget.limit_micros > 0 && created.budget.limit_tokens > 0 && " + "}
+                {created.budget.limit_tokens > 0 && `${formatTokenLimit(String(created.budget.limit_tokens))} tokens`}
+                {` / ${created.budget.period}`}
+                {created.budget.hard_cutoff ? " (hard cutoff)" : ""}
+              </dd>
+            </div>
+          )}
+          {created.allowed_models && created.allowed_models.length > 0 && (
+            <div className="flex items-start gap-3 px-3 py-2">
+              <dt className="w-24 shrink-0 text-fg-muted">Allowed models</dt>
+              <dd className="min-w-0 flex-1 break-words font-mono text-[12px] text-fg">{created.allowed_models.join(", ")}</dd>
+            </div>
+          )}
+        </dl>
+
+        <div className="overflow-hidden rounded-lg border border-line">
+          <div className="flex items-center justify-between gap-2 border-b border-line bg-subtle px-3 py-1.5">
+            <p className="text-[12.5px] font-medium text-fg">Setup message</p>
+            <button
+              type="button"
+              onClick={() => copy(shareText, "Setup message copied", "Endpoint, key, portal and plan in one block.").then((ok) => ok && flash(setCopiedAll, 2000))}
+              className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+            >
+              {copiedAll ? <Check className="h-3.5 w-3.5 text-ok" /> : <Copy className="h-3.5 w-3.5" />}
+              {copiedAll ? "Copied" : "Copy all"}
+            </button>
+          </div>
+          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-3 py-2.5 font-mono text-[12px] leading-5 text-fg">{shareText}</pre>
         </div>
       </div>
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-        <p className="text-xs font-medium text-[var(--text-muted)]">Telemetry Portal URL — share this with the key owner to let them track their usage.</p>
-        <div className="mt-2 flex items-center gap-2">
-          <code className="flex-1 overflow-x-auto rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 font-mono text-xs whitespace-nowrap">
-            {portalUrl}
-          </code>
-          <Button
-            onClick={() => {
-              navigator.clipboard.writeText(portalUrl);
-              setCopiedUrl(true);
-              setTimeout(() => setCopiedUrl(false), 1500);
-            }}
-          >
-            {copiedUrl ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copiedUrl ? "Copied" : "Copy"}
-          </Button>
-        </div>
-      </div>
-
-      {created.budget && (
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
-          <p className="text-xs font-medium text-[var(--text-muted)]">Plan attached</p>
-          <p className="mt-0.5 text-sm">
-            {created.budget.limit_micros > 0 && `$${(created.budget.limit_micros / 1_000_000).toFixed(2)}`}
-            {created.budget.limit_micros > 0 && created.budget.limit_tokens > 0 && " + "}
-            {created.budget.limit_tokens > 0 &&
-              `${formatTokenLimit(String(created.budget.limit_tokens))} tokens`}
-            {` / ${created.budget.period}`}
-            {created.budget.hard_cutoff ? " (hard cutoff)" : ""}
-          </p>
-        </div>
-      )}
-
-      {created.allowed_models && created.allowed_models.length > 0 && (
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
-          <p className="text-xs font-medium text-[var(--text-muted)]">Allowed models</p>
-          <p className="mt-0.5 text-sm">{created.allowed_models.join(", ")}</p>
-        </div>
-      )}
-
-      <div className="rounded-xl border border-accent-400/40 bg-accent-500/5 p-4">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-medium text-[var(--text-muted)]">Ready to copy</p>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              navigator.clipboard.writeText(shareText);
-              setCopiedAll(true);
-              setTimeout(() => setCopiedAll(false),2000);
-            }}
-          >
-            {copiedAll ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copiedAll ? "Copied" : "Copy all"}
-          </Button>
-        </div>
-        <pre className="mt-2 overflow-x-auto rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--text)] whitespace-pre-wrap">{shareText}</pre>
-      </div>
-
-      <Button className="w-full" onClick={onClose}>
-        Done
-      </Button>
-    </div>
+      <DialogFooter>
+        <span className="text-[12px] text-fg-faint">{copied ? "Key copied to your clipboard." : "The key disappears when you close this dialog."}</span>
+        <div className="flex-1" />
+        <Button onClick={onClose}>Done</Button>
+      </DialogFooter>
+    </>
   );
 }

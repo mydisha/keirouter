@@ -496,7 +496,7 @@ export function SavingsCardShareButton({
 			title="Download savings card"
 			onClick={handleShare}
         disabled={generating || summary.total_requests === 0}
-        className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-accent-600 px-3 text-xs font-medium text-white shadow-sm transition-all hover:bg-accent-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-accent-500 dark:hover:bg-accent-400"
+        className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-line-strong bg-surface px-3 text-[12.5px] font-medium text-fg transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
       >
         {done ? (
           <>
