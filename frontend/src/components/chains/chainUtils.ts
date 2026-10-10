@@ -28,12 +28,14 @@ export const strategyLabel = (strategy: string) => {
   }
 };
 
+// strategyDescription is the one-line explanation shown under the strategy
+// picker. Keep it short: the route preview shows the actual order.
 export const strategyDescription = (strategy: string) => {
   switch (normalizeChainStrategy(strategy)) {
-    case "round_robin": return "Starts with a different model on each request, then falls through the remaining steps.";
-    case "latency": return "Ranks measured models by response time. Models without probe data remain after measured models.";
-    case "cost": return "Ranks catalogued models by price. Models without pricing remain after priced models.";
-    default: return "Uses the declared order and tries the next model only when the previous one cannot serve the request.";
+    case "round_robin": return "Rotates the first model on each request.";
+    case "latency": return "Fastest measured model first; unmeasured ones after.";
+    case "cost": return "Cheapest priced model first; unpriced ones after.";
+    default: return "Tries models in the order listed.";
   }
 };
 

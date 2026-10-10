@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Command } from "cmdk";
+import { Dialog } from "radix-ui";
 import {
   Activity,
   BarChart3,
@@ -22,6 +23,7 @@ import {
   Plus,
   ReceiptText,
   ScrollText,
+  Search,
   Settings,
   Shield,
   Sparkles,
@@ -369,24 +371,35 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     <Command.Dialog
       open={open}
       onOpenChange={(next) => !next && onClose()}
-      label="Command palette"
+      label="Search pages, providers, keys and chains"
       shouldFilter={false}
       loop
       overlayClassName="fixed inset-0 z-[100] bg-black/45 data-[state=open]:animate-in data-[state=open]:fade-in-0"
       contentClassName="fixed left-1/2 top-[14vh] z-[100] w-[calc(100%-2rem)] max-w-xl -translate-x-1/2 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-float)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.98]"
     >
+      <Dialog.Title className="sr-only">Command palette</Dialog.Title>
+      <Dialog.Description className="sr-only">
+        Type to search. Use the up and down arrow keys to move, Enter to open, Escape to close.
+      </Dialog.Description>
       <div className="flex items-center gap-2.5 border-b border-line px-4">
+        <Search className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
         <Command.Input
           value={query}
           onValueChange={setQuery}
           placeholder="Search pages, providers, keys, chains…"
           className="h-12 flex-1 bg-transparent text-[14px] text-fg placeholder:text-fg-faint focus:outline-none"
+          style={{ outline: "none" }}
         />
         {loading && <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-line-strong border-t-fg-muted" aria-hidden="true" />}
-        <kbd className="shrink-0 rounded border border-line bg-subtle px-1.5 font-mono text-[10.5px] text-fg-faint">esc</kbd>
+        <kbd className="shrink-0 rounded border border-line bg-subtle px-1.5 font-mono text-[10.5px] text-fg-faint" aria-hidden="true">esc</kbd>
       </div>
 
-      <Command.List className="max-h-[min(24rem,60vh)] overflow-y-auto p-1.5">
+      {/* Result count for screen readers; always mounted so changes are read. */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {trimmed ? (loading && resultCount === 0 ? "Searching…" : `${resultCount} result${resultCount === 1 ? "" : "s"}`) : ""}
+      </div>
+
+      <Command.List label="Results" aria-busy={loading || undefined} className="max-h-[min(24rem,60vh)] overflow-y-auto p-1.5">
         <Command.Empty className="px-4 py-10 text-center text-[13px] text-fg-muted">
           {trimmed ? `No results for “${trimmed}”` : "Type to search pages and your data"}
         </Command.Empty>
@@ -426,7 +439,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         )}
       </Command.List>
 
-      <div className="flex items-center gap-4 border-t border-line px-4 py-2 text-[11px] text-fg-faint">
+      <div className="flex items-center gap-4 border-t border-line px-4 py-2 text-[11px] text-fg-faint" aria-hidden="true">
         <Hint keys="↑↓">navigate</Hint>
         <Hint keys="↵">open</Hint>
         <Hint keys="esc">close</Hint>

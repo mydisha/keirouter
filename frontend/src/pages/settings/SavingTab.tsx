@@ -2,8 +2,19 @@ import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { CheckCircle2, ExternalLink, XCircle } from "lucide-react";
 import { api, type EndpointSettings, type HeadroomTestResult } from "../../lib/api";
-import { Button, SegmentedControl, Toggle } from "../../components/ui";
-import { Code, Note, SettingRow, SettingsCard, ToggleRow, UnitInput, inputClass } from "./shared";
+import { Button } from "../../components/ui";
+import {
+  Code,
+  Disclosure,
+  Segmented,
+  SettingRow,
+  SettingsCard,
+  ToggleRow,
+  UnitInput,
+  describedBy,
+  inputClass,
+  rowIds,
+} from "./shared";
 
 // ── Level options ───────────────────────────────────────────────────
 const cavemanOptions = [
@@ -107,7 +118,7 @@ function saverPatch(s: EndpointSettings): Partial<EndpointSettings> {
 // Wide segmented groups (caveman has six levels) scroll instead of
 // overflowing on narrow screens.
 function LevelControl({ children }: { children: React.ReactNode }) {
-  return <div className="max-w-full overflow-x-auto">{children}</div>;
+  return <div className="max-w-full overflow-x-auto p-0.5">{children}</div>;
 }
 
 export function SavingTab({
@@ -135,21 +146,31 @@ export function SavingTab({
     }
   };
 
+  const rtkLevel = rowIds("rtk-level");
+  const cavemanLevel = rowIds("caveman-level");
+  const terseLevel = rowIds("terse-level");
+  const ponytailLevel = rowIds("ponytail-level");
+
   return (
     <div className="space-y-4">
-      <SettingsCard
-        title="Input compression"
-        description="Shrinks what is sent to the model. Saves input tokens."
-      >
-        <ToggleRow
-          label="RTK input compression"
-          description="Shrinks bulky tool output (diffs, greps, listings, build logs) before it reaches the model. Safe by design — never corrupts content."
-        >
-          <Toggle checked={local.rtk_enabled} onChange={(v) => update({ rtk_enabled: v })} />
-        </ToggleRow>
+      <SettingsCard title="Input compression" description="Saves input tokens">
+        <ToggleRow label="RTK input compression"
+          description="Shrinks bulky tool output before it reaches the model."
+          info="Compacts diffs, greps, listings and build logs. Safe by design — it never corrupts content."
+          checked={local.rtk_enabled}
+          onChange={(v) => update({ rtk_enabled: v })}
+        />
         {local.rtk_enabled && (
-          <SettingRow nested label="Source code filter" description={rtkFilterHints[local.rtk_filter_level || "none"]}>
-            <SegmentedControl
+          <SettingRow
+            nested
+            controlId="rtk-level"
+            labelable={false}
+            label="Source code filter"
+            description={rtkFilterHints[local.rtk_filter_level || "none"]}
+          >
+            <Segmented
+              aria-labelledby={rtkLevel.label}
+              aria-describedby={rtkLevel.desc}
               value={local.rtk_filter_level || "none"}
               onChange={(v) => update({ rtk_filter_level: v })}
               options={rtkFilterOptions}
@@ -158,23 +179,25 @@ export function SavingTab({
         )}
       </SettingsCard>
 
-      <SettingsCard
-        title="Output compression"
-        description="Asks the model to answer more briefly. Saves output tokens. Caveman and terse both add a system instruction, so turning one on turns the other off."
-      >
-        <ToggleRow
-          label="Caveman mode"
-          description="Model answers in terse caveman style — keeps all technical substance, drops filler. Cuts output tokens 65–75%."
-        >
-          <Toggle
-            checked={local.caveman_enabled}
-            onChange={(v) => update({ caveman_enabled: v, ...(v ? { terse_enabled: false } : {}) })}
-          />
-        </ToggleRow>
+      <SettingsCard title="Output compression" description="Caveman and terse can't run together">
+        <ToggleRow label="Caveman mode"
+          description="Terse caveman-style answers. Cuts output tokens 65–75%."
+          info="Keeps all technical substance and drops filler. Turning it on turns terse mode off."
+          checked={local.caveman_enabled}
+          onChange={(v) => update({ caveman_enabled: v, ...(v ? { terse_enabled: false } : {}) })}
+        />
         {local.caveman_enabled && (
-          <SettingRow nested label="Compression level" description={cavemanHints[local.caveman_level]}>
+          <SettingRow
+            nested
+            controlId="caveman-level"
+            labelable={false}
+            label="Compression level"
+            description={cavemanHints[local.caveman_level]}
+          >
             <LevelControl>
-              <SegmentedControl
+              <Segmented
+                aria-labelledby={cavemanLevel.label}
+                aria-describedby={cavemanLevel.desc}
                 value={local.caveman_level}
                 onChange={(v) => update({ caveman_level: v })}
                 options={cavemanOptions}
@@ -183,18 +206,23 @@ export function SavingTab({
           </SettingRow>
         )}
 
-        <ToggleRow
-          label="Terse mode"
-          description="KeiRouter's own concise-output instruction. An alternative to caveman."
-        >
-          <Toggle
-            checked={local.terse_enabled}
-            onChange={(v) => update({ terse_enabled: v, ...(v ? { caveman_enabled: false } : {}) })}
-          />
-        </ToggleRow>
+        <ToggleRow label="Terse mode"
+          description="KeiRouter's own concise-output instruction."
+          info="An alternative to caveman. Turning it on turns caveman mode off."
+          checked={local.terse_enabled}
+          onChange={(v) => update({ terse_enabled: v, ...(v ? { caveman_enabled: false } : {}) })}
+        />
         {local.terse_enabled && (
-          <SettingRow nested label="Terse level" description={terseHints[local.terse_level]}>
-            <SegmentedControl
+          <SettingRow
+            nested
+            controlId="terse-level"
+            labelable={false}
+            label="Terse level"
+            description={terseHints[local.terse_level]}
+          >
+            <Segmented
+              aria-labelledby={terseLevel.label}
+              aria-describedby={terseLevel.desc}
               value={local.terse_level}
               onChange={(v) => update({ terse_level: v })}
               options={terseOptions}
@@ -202,20 +230,24 @@ export function SavingTab({
           </SettingRow>
         )}
 
-        <ToggleRow
-          label="Ponytail"
-          description="Adds a lazy-senior-developer system prompt that biases the model toward minimal code. Layers on top of caveman or terse."
-        >
-          <Toggle checked={local.ponytail_enabled} onChange={(v) => saverUpdate({ ponytail_enabled: v })} />
-        </ToggleRow>
+        <ToggleRow label="Ponytail"
+          description="Biases the model toward minimal code changes."
+          info="Adds a lazy-senior-developer system prompt. Layers on top of caveman or terse."
+          checked={local.ponytail_enabled}
+          onChange={(v) => saverUpdate({ ponytail_enabled: v })}
+        />
         {local.ponytail_enabled && (
           <SettingRow
             nested
+            controlId="ponytail-level"
+            labelable={false}
             label="Ponytail level"
             description={ponytailHints[local.ponytail_level]}
             error={saverErrors.ponytail_level}
           >
-            <SegmentedControl
+            <Segmented
+              aria-labelledby={ponytailLevel.label}
+              aria-describedby={describedBy("ponytail-level", { error: saverErrors.ponytail_level })}
               value={local.ponytail_level}
               onChange={(v) => saverUpdate({ ponytail_level: v as "lite" | "full" | "ultra" })}
               options={ponytailOptions}
@@ -224,116 +256,108 @@ export function SavingTab({
         )}
       </SettingsCard>
 
-      <SettingsCard
-        title="Headroom proxy"
-        description="External input compression. Request messages go through a Headroom proxy before they reach the model."
-      >
-        <div className="px-4 py-3.5">
-          <HeadroomAdvisory />
-        </div>
-        <ToggleRow
-          label="Headroom input compression"
-          description="Fail-open — any proxy error leaves the request untouched."
-        >
-          <Toggle checked={local.headroom_enabled} onChange={(v) => saverUpdate({ headroom_enabled: v })} />
-        </ToggleRow>
+      <SettingsCard title="Headroom proxy" description="External input compression">
+        <ToggleRow label="Headroom input compression"
+          description="Fails open — proxy errors leave the request untouched."
+          checked={local.headroom_enabled}
+          onChange={(v) => saverUpdate({ headroom_enabled: v })}
+        />
         {local.headroom_enabled && (
           <>
-            <SettingRow
-              nested
-              label="Proxy URL"
-              description="Base URL of your Headroom proxy."
-              error={saverErrors.headroom_url}
-            >
+            <SettingRow nested controlId="headroom-url" label="Proxy URL" error={saverErrors.headroom_url}>
               <input
+                id="headroom-url"
                 type="text"
-                aria-label="Proxy URL"
-                placeholder="https://headroom.example.com"
+                placeholder="http://localhost:8787"
                 value={local.headroom_url}
                 onChange={(e) => saverUpdate({ headroom_url: e.target.value })}
                 aria-invalid={!!saverErrors.headroom_url}
+                aria-describedby={describedBy("headroom-url", { desc: false, error: saverErrors.headroom_url })}
+                aria-required="true"
                 className={`${inputClass} font-mono sm:w-80`}
               />
             </SettingRow>
-            <ToggleRow nested label="Compress user messages" description="Also send user messages to the proxy for compression.">
-              <Toggle
-                checked={local.headroom_compress_user_messages}
-                onChange={(v) => saverUpdate({ headroom_compress_user_messages: v })}
-              />
-            </ToggleRow>
+            <ToggleRow nested label="Compress user messages"
+              description="Also send user messages to the proxy."
+              checked={local.headroom_compress_user_messages}
+              onChange={(v) => saverUpdate({ headroom_compress_user_messages: v })}
+            />
             <SettingRow
               nested
+              controlId="headroom-timeout"
               label="Timeout"
-              description={`Give up and send the request uncompressed after this long. ${HEADROOM_TIMEOUT_MIN.toLocaleString()}–${HEADROOM_TIMEOUT_MAX.toLocaleString()} ms.`}
+              description={`Send uncompressed after this long. ${HEADROOM_TIMEOUT_MIN.toLocaleString()}–${HEADROOM_TIMEOUT_MAX.toLocaleString()} ms.`}
               error={saverErrors.headroom_timeout_ms}
             >
               <UnitInput
+                id="headroom-timeout"
                 unit="ms"
-                aria-label="Timeout (ms)"
                 min={1000}
                 max={60000}
                 value={Number.isFinite(local.headroom_timeout_ms) ? local.headroom_timeout_ms : ""}
                 onChange={(e) => saverUpdate({ headroom_timeout_ms: e.target.valueAsNumber })}
                 aria-invalid={!!saverErrors.headroom_timeout_ms}
+                aria-describedby={describedBy("headroom-timeout", { error: saverErrors.headroom_timeout_ms })}
               />
             </SettingRow>
             <HeadroomTestConnection url={local.headroom_url} timeoutMs={local.headroom_timeout_ms} />
           </>
         )}
-        <HeadroomInstallHelp />
+        <HeadroomHelp />
       </SettingsCard>
     </div>
   );
 }
 
-// HeadroomAdvisory sets expectations for the Headroom saver: it works best
-// against a fast, local proxy. Large or first-seen ("cold") contexts can take
-// many seconds for the proxy to compress, in which case Headroom fails open
-// (request passes through uncompressed, so it records 0 savings). The instant
-// local savers don't have this caveat.
-function HeadroomAdvisory() {
-  return (
-    <Note>
-      <span className="font-medium text-fg">Best with a fast, local proxy.</span> Headroom runs synchronously before
-      each request. Large or first-seen contexts can take the proxy several seconds to compress (much longer on CPU-only
-      machines). Past the timeout Headroom <span className="font-medium text-fg">fails open</span>: the request goes
-      through uncompressed and records 0 savings. For consistent savings with no external dependency, rely on RTK,
-      caveman/terse and Ponytail — they run instantly in-process.
-    </Note>
-  );
-}
-
-// HeadroomInstallHelp explains how to install and run a local Headroom proxy.
+// HeadroomHelp keeps the advisory and install steps behind "Learn more".
 // Headroom is the open-source headroom-ai proxy; KeiRouter calls its
-// /v1/compress endpoint. Shown inside the Headroom card so operators can get a
-// proxy running before pointing KeiRouter at it.
-function HeadroomInstallHelp() {
+// /v1/compress endpoint. It runs synchronously before each request, so large or
+// first-seen ("cold") contexts can exceed the timeout, in which case Headroom
+// fails open (request passes through uncompressed and records 0 savings).
+function HeadroomHelp() {
   return (
-    <div className="bg-subtle px-4 py-3.5">
-      <p className="text-[13px] font-medium text-fg">Don&apos;t have a Headroom proxy yet?</p>
-      <p className="mt-0.5 text-[12px] leading-5 text-fg-muted">
-        Headroom is a local, open-source compression proxy. The <Code>headroom</Code> CLI ships with the Python package
-        (the npm package is a library only). Install it with pipx, then start it:
-      </p>
-      <pre className="mt-2 overflow-x-auto rounded-lg border border-line bg-surface px-3 py-2 font-mono text-[12px] leading-5 text-fg">
-        <code>{`pipx install "headroom-ai[all]"   # needs Python 3.10+ (or: pip install --user)
+    <div className="px-4 py-3">
+      <Disclosure summary="How Headroom works and how to install it">
+        <div className="space-y-3 text-[12px] leading-5 text-fg-muted">
+          <p>
+            <span className="font-medium text-fg">Best with a fast, local proxy.</span> Headroom runs before each request.
+            Large or first-seen contexts can take several seconds to compress (longer on CPU-only machines). Past the
+            timeout the request goes through uncompressed and records 0 savings. RTK, caveman, terse and Ponytail run
+            instantly in-process.
+          </p>
+          <div>
+            <p>
+              Install the <Code>headroom</Code> CLI from the Python package (the npm package is a library only), then start
+              it:
+            </p>
+            <pre
+              tabIndex={0}
+              aria-label="Headroom install commands"
+              className="mt-2 overflow-x-auto rounded-lg border border-line bg-surface px-3 py-2 font-mono text-[12px] leading-5 text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            >
+              <code>{`pipx install "headroom-ai[all]"   # needs Python 3.10+ (or: pip install --user)
 pipx ensurepath                   # add headroom to PATH, then restart your shell
 headroom proxy --port 8787
 headroom doctor                   # verify it's working`}</code>
-      </pre>
-      <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[12px] text-fg-muted">
-        <span>
-          Then set <span className="font-medium text-fg">Proxy URL</span> to <Code>http://localhost:8787</Code>.
-        </span>
-        <a
-          href="https://github.com/headroomlabs-ai/headroom"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 font-medium text-accent-500 hover:underline dark:text-accent-400"
-        >
-          Installation guide <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} />
-        </a>
-      </div>
+            </pre>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span>
+              Then set <span className="font-medium text-fg">Proxy URL</span> to <Code>http://localhost:8787</Code>.
+            </span>
+            <a
+              href="https://github.com/headroomlabs-ai/headroom"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 font-medium text-link hover:underline"
+            >
+              Headroom installation guide
+              <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+          </div>
+        </div>
+      </Disclosure>
     </div>
   );
 }
@@ -356,14 +380,21 @@ function HeadroomTestConnection({ url, timeoutMs }: { url: string; timeoutMs: nu
       label="Test connection"
       description={
         <>
-          Checks that the proxy at the Proxy URL above responds on <Code>/v1/compress</Code>.
-          {result && (
-            <span className={`mt-1 flex items-center gap-1.5 ${result.ok ? "text-ok" : "text-bad"}`} aria-live="polite">
-              {result.ok ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> : <XCircle className="h-3.5 w-3.5 shrink-0" />}
-              <span className="min-w-0 break-words">{result.message}</span>
-              {result.latency_ms > 0 && <span className="tabular-nums text-fg-muted">({result.latency_ms} ms)</span>}
-            </span>
-          )}
+          Probes <Code>/v1/compress</Code> on the proxy URL.
+          <span role="status" className="block">
+            {result && (
+              <span className={`mt-1 flex items-center gap-1.5 ${result.ok ? "text-ok" : "text-bad"}`}>
+                {result.ok ? (
+                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                ) : (
+                  <XCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                )}
+                <span className="sr-only">{result.ok ? "Connected:" : "Failed:"}</span>
+                <span className="min-w-0 break-words">{result.message}</span>
+                {result.latency_ms > 0 && <span className="tabular-nums text-fg-muted">({result.latency_ms} ms)</span>}
+              </span>
+            )}
+          </span>
         </>
       }
     >

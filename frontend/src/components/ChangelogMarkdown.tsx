@@ -19,50 +19,60 @@ interface ChangelogRelease {
 }
 
 // ── Category metadata ────────────────────────────────────────────────
-const categoryMeta: Record<
-  string,
-  { icon: typeof Bug; label: string; className: string }
-> = {
-  "bug fixes": {
-    icon: Bug,
-    label: "Bug Fixes",
-    className: "text-bad",
-  },
-  features: {
-    icon: Sparkles,
-    label: "Features",
-    className: "text-accent-600 dark:text-accent-400",
-  },
-  performance: {
-    icon: Gauge,
-    label: "Performance",
-    className: "text-accent-600 dark:text-accent-400",
-  },
-  documentation: {
-    icon: BookOpen,
-    label: "Documentation",
-    className: "text-[var(--text-muted)]",
-  },
-  ci: {
-    icon: Wrench,
-    label: "CI",
-    className: "text-[var(--text-muted)]",
-  },
-  refactor: {
-    icon: Package,
-    label: "Refactor",
-    className: "text-[var(--text-muted)]",
-  },
+// Category icons are quiet glyphs; the label carries the meaning.
+const categoryMeta: Record<string, { icon: typeof Bug; label: string }> = {
+  "bug fixes": { icon: Bug, label: "Bug fixes" },
+  features: { icon: Sparkles, label: "Features" },
+  performance: { icon: Gauge, label: "Performance" },
+  documentation: { icon: BookOpen, label: "Documentation" },
+  ci: { icon: Wrench, label: "CI" },
+  refactor: { icon: Package, label: "Refactor" },
 };
 
 function getCategoryMeta(category: string) {
   const key = category.toLowerCase();
+  return categoryMeta[key] ?? { icon: Circle, label: category };
+}
+
+// ── Inline markdown ──────────────────────────────────────────────────
+// Renders `code`, **bold** and [text](https://…) inside an entry as React
+// nodes (never raw HTML). Anything else stays plain text.
+const INLINE_RE = /(`[^`]+`|\*\*[^*]+\*\*|\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g;
+
+function InlineMarkdown({ text }: { text: string }) {
+  const parts = text.split(INLINE_RE);
   return (
-    categoryMeta[key] ?? {
-      icon: Circle,
-      label: category,
-      className: "text-[var(--text-muted)]",
-    }
+    <>
+      {parts.map((part, i) => {
+        if (!part) return null;
+        if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
+          return (
+            <code key={i} className="rounded-md bg-subtle px-1 py-px font-mono text-[12px] text-fg">
+              {part.slice(1, -1)}
+            </code>
+          );
+        }
+        if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+          return <strong key={i} className="font-semibold text-fg">{part.slice(2, -2)}</strong>;
+        }
+        const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
+        if (link) {
+          return (
+            <a
+              key={i}
+              href={link[2]}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="text-link hover:underline"
+            >
+              {link[1]}
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>
+          );
+        }
+        return <span key={i}>{part}</span>;
+      })}
+    </>
   );
 }
 
@@ -138,68 +148,68 @@ function parseChangelog(raw: string): ChangelogRelease[] {
 export function ChangelogMarkdown({
   changelog,
   compact = false,
+  headingLevel = 3,
 }: {
   changelog: string;
   compact?: boolean;
+  /** Level of the per-release heading (category headings are one below). Default 3. */
+  headingLevel?: 2 | 3 | 4;
 }) {
   const releases = parseChangelog(changelog);
+  const ReleaseHeading = `h${headingLevel}` as "h2" | "h3" | "h4";
+  const CategoryHeading = `h${headingLevel + 1}` as "h3" | "h4" | "h5";
 
   if (releases.length === 0) {
     // Fallback: render as plain text if parser found nothing
     return (
-      <p className="whitespace-pre-wrap text-xs leading-relaxed text-[var(--text)]">
+      <p className="whitespace-pre-wrap text-[13px] leading-5 text-fg">
         {changelog}
       </p>
     );
   }
 
   return (
-    <div className={compact ? "space-y-3 text-[var(--text)]" : "space-y-5"}>
+    <div className={compact ? "space-y-4 text-fg" : "space-y-6 text-fg"}>
       {releases.map((rel, releaseIndex) => (
-        <div key={rel.version} className={compact && releaseIndex > 0 ? "border-t border-[var(--border)] pt-3" : undefined}>
+        <section key={rel.version} className={releaseIndex > 0 ? "border-t border-line pt-4" : undefined}>
           {/* Version header */}
-          <div className="mb-2 flex min-w-0 items-center gap-2">
-            <span className="inline-flex shrink-0 items-center rounded-md bg-accent-100 px-2 py-0.5 font-mono text-xs font-semibold text-accent-700 dark:bg-accent-900/40 dark:text-accent-300">
-              v{rel.version}
-            </span>
+          <div className="mb-2.5 flex min-w-0 items-baseline gap-2">
+            <ReleaseHeading className="shrink-0 font-mono text-[13px] font-semibold text-fg">v{rel.version}</ReleaseHeading>
             {rel.date && (
-              <span className="min-w-0 truncate text-xs text-[var(--text-muted)]">{rel.date}</span>
+              <span className="min-w-0 truncate text-[12px] tabular-nums text-fg-muted">{rel.date}</span>
             )}
           </div>
 
           {/* Sections */}
           {rel.sections.length > 0 ? (
-            <div className={compact ? "space-y-2" : "space-y-3"}>
+            <div className={compact ? "space-y-3" : "space-y-4"}>
               {rel.sections.map((sec) => {
                 const meta = getCategoryMeta(sec.category);
                 const Icon = meta.icon;
                 return (
                   <div key={sec.category}>
-                    <div className="mb-1 flex items-center gap-1.5">
-                      <Icon className={`h-3.5 w-3.5 ${meta.className}`} />
-                      <span
-                        className={`text-xs font-medium ${meta.className}`}
-                      >
-                        {meta.label}
-                      </span>
-                    </div>
-                    <ul className={compact ? "space-y-1" : "space-y-1"}>
+                    <CategoryHeading className="mb-1 flex items-center gap-1.5 text-[12.5px] font-semibold text-fg">
+                      <Icon className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                      {meta.label}
+                    </CategoryHeading>
+                    <ul className="space-y-1">
                       {sec.entries.map((entry, i) => (
                         <li
                           key={i}
-                          className="flex min-w-0 items-start gap-1.5 text-xs leading-relaxed text-[var(--text)]"
+                          className="flex min-w-0 items-start gap-2 text-[13px] leading-5 text-fg"
                         >
-                          <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-[var(--text-muted)]" />
+                          <span className="mt-[9px] h-1 w-1 shrink-0 rounded-full bg-fg-faint" aria-hidden="true" />
                           <span className="min-w-0 break-words">
                             {entry.scope && (
-                              <span className="mr-1 inline-flex items-center rounded bg-[var(--bg-subtle)] px-1 py-px font-mono text-[10px] font-medium text-[var(--text-muted)]">
+                              <span className="mr-1.5 inline-flex items-center rounded-md bg-subtle px-1 py-px font-mono text-[11.5px] text-fg-muted">
                                 {entry.scope}
                               </span>
                             )}
-                            {entry.description}
+                            <InlineMarkdown text={entry.description} />
                             {entry.commit && (
-                              <span className="ml-1 whitespace-nowrap font-mono text-[10px] text-[var(--text-muted)]">
-                                ({entry.commit})
+                              <span className="ml-1.5 whitespace-nowrap font-mono text-[11.5px] text-fg-faint">
+                                <span className="sr-only">commit </span>
+                                {entry.commit}
                               </span>
                             )}
                           </span>
@@ -211,11 +221,9 @@ export function ChangelogMarkdown({
               })}
             </div>
           ) : (
-            <p className="text-xs text-[var(--text-muted)] italic">
-              No detailed changes listed.
-            </p>
+            <p className="text-[13px] text-fg-muted">No detailed changes listed.</p>
           )}
-        </div>
+        </section>
       ))}
     </div>
   );

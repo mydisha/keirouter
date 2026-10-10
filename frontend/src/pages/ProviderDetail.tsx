@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -12,6 +12,7 @@ import {
   Clock3,
   Copy,
   Download,
+  Info,
   Layers,
   Loader2,
   MoreHorizontal,
@@ -45,9 +46,49 @@ import { useConfirm } from "../components/ui/confirm-dialog";
 import { ConnectProviderDialog, connectOptions, type ConnectMode } from "../components/connect";
 import { Badge, Button, Skeleton, TablePagination, Toggle, useClientPagination } from "../components/ui";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../components/ui/tooltip";
 
 type Tab = "accounts" | "models" | "routing";
 type TestResult = { status: "testing" | "ok" | "error"; message?: string };
+
+// onRadioKeys gives a role="radiogroup" the arrow-key behaviour of native radios.
+function onRadioKeys(e: ReactKeyboardEvent<HTMLElement>) {
+  if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(e.key)) return;
+  const radios = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]:not([disabled])'));
+  const i = radios.indexOf(document.activeElement as HTMLElement);
+  if (i < 0) return;
+  e.preventDefault();
+  const fwd = e.key === "ArrowRight" || e.key === "ArrowDown";
+  const n = e.key === "Home" ? 0 : e.key === "End" ? radios.length - 1 : (i + (fwd ? 1 : -1) + radios.length) % radios.length;
+  radios[n].focus();
+  radios[n].click();
+}
+
+// InfoTip holds an explanation that would otherwise be a line of hint text.
+function InfoTip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={label}
+            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+          >
+            <Info className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>{children}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+const TABS: { value: Tab; label: string }[] = [
+  { value: "accounts", label: "Accounts" },
+  { value: "models", label: "Models" },
+  { value: "routing", label: "Routing" },
+];
 
 export function ProviderDetailPage() {
   const { id } = useParams();
@@ -96,7 +137,7 @@ export function ProviderDetailPage() {
 
   if (providers.isLoading) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-4" aria-busy="true" aria-label="Loading provider">
         <Skeleton className="h-5 w-40" />
         <Skeleton className="h-20 w-full rounded-2xl" />
         <Skeleton className="h-72 w-full rounded-2xl" />
@@ -105,9 +146,10 @@ export function ProviderDetailPage() {
   }
   if (!provider) {
     return (
-      <div className="rounded-2xl border border-line bg-surface px-6 py-12 text-center">
-        <p className="text-[13px] font-medium text-fg">This provider doesn't exist.</p>
-        <Link to="/providers" className="mt-2 inline-block text-[13px] font-medium text-accent-500 hover:underline">
+      <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+        <h1 className="text-[14px] font-semibold text-fg">Provider not found</h1>
+        <p className="mt-1 text-[13px] text-fg-muted">It may have been deleted.</p>
+        <Link to="/providers" className="mt-3 inline-block rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
           Back to providers
         </Link>
       </div>
@@ -118,8 +160,11 @@ export function ProviderDetailPage() {
   // A no-credentials provider is "enabled" by its first account; after that
   // the action just adds another.
   if (provider.auth_kind === "none" && myAccounts.length > 0) opts.primaryLabel = "Add account";
-  const activeAccounts = myAccounts.filter((a) => !a.disabled).length;
   const routePrefix = provider.alias || provider.id;
+  // The empty accounts state carries its own connect button; showing the
+  // header one too would put two primary actions on screen.
+  const emptyAccountsShown = tab === "accounts" && !accounts.isLoading && myAccounts.length === 0;
+  const hasMenu = opts.alsoApiKey || opts.bulk || !!provider.custom;
 
   const removeProvider = async () => {
     const ok = await confirm({
@@ -131,15 +176,27 @@ export function ProviderDetailPage() {
     if (ok) deleteProvider.mutate();
   };
 
+  const onTabKeys = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) return;
+    const i = TABS.findIndex((t) => t.value === tab);
+    e.preventDefault();
+    const n = e.key === "Home" ? 0 : e.key === "End" ? TABS.length - 1 : (i + (e.key === "ArrowRight" ? 1 : -1) + TABS.length) % TABS.length;
+    setTab(TABS[n].value);
+    document.getElementById(`provider-tab-${TABS[n].value}`)?.focus();
+  };
+  const counts: Partial<Record<Tab, number>> = { accounts: myAccounts.length, models: enabledModels };
+
   return (
     <>
       <nav aria-label="Breadcrumb" className="mb-3 flex items-center gap-1.5 text-[13px] text-fg-muted">
-        <Link to="/providers" className="inline-flex items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40">
-          <ArrowLeft className="h-3.5 w-3.5" />
+        <Link to="/providers" className="inline-flex min-h-6 items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+          <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
           Providers
         </Link>
         <span aria-hidden="true" className="text-fg-faint">/</span>
-        <span className="truncate text-fg">{provider.display_name}</span>
+        <span className="truncate text-fg" aria-current="page">
+          {provider.display_name}
+        </span>
       </nav>
 
       <header className="mb-5 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
@@ -150,53 +207,61 @@ export function ProviderDetailPage() {
               <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{provider.display_name}</h1>
               {provider.custom && <Badge tone="neutral">Custom</Badge>}
               {provider.deprecated && <Badge tone="warning">Unofficial</Badge>}
-              {provider.auth_kind === "none" && <Badge tone="success">No credentials</Badge>}
             </div>
-            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
+            <p className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
               <span className="font-mono text-[12.5px]">{provider.id}</span>
               <Dot />
-              <span>{provider.auth_kind === "none" ? "Public endpoint" : opts.primaryIsSignIn ? "Sign-in" : "API key"}</span>
-              <Dot />
-              <span>
-                {myAccounts.length === 0 ? "No accounts yet" : `${activeAccounts} of ${myAccounts.length} account${myAccounts.length === 1 ? "" : "s"} active`}
-              </span>
-              <Dot />
-              <span>
-                {enabledModels} model{enabledModels === 1 ? "" : "s"} enabled
-              </span>
+              <span>{provider.auth_kind === "none" ? "No credentials" : opts.primaryIsSignIn ? "Sign-in" : "API key"}</span>
+              {provider.custom && provider.base_url && (
+                <>
+                  <Dot />
+                  <span>{provider.dialect === "anthropic" ? "Anthropic-compatible" : "OpenAI-compatible"}</span>
+                  <Dot />
+                  <span className="max-w-[22rem] truncate font-mono text-[12.5px]" title={provider.base_url}>
+                    {provider.base_url}
+                  </span>
+                </>
+              )}
             </p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {opts.alsoApiKey && (
-            <Button variant="secondary" onClick={() => setConnect("api_key")}>
-              <Plus />
-              Add API key
+          {!emptyAccountsShown && (
+            <Button onClick={() => setConnect("primary")}>
+              <Plug aria-hidden="true" />
+              {opts.primaryLabel}
             </Button>
           )}
-          {opts.bulk && (
-            <Button variant="secondary" onClick={() => setConnect("bulk")}>
-              <Layers />
-              {provider.id === "qoder" ? "Import tokens" : "Import keys"}
-            </Button>
-          )}
-          <Button onClick={() => setConnect("primary")}>
-            <Plug />
-            {opts.primaryLabel}
-          </Button>
-          {provider.custom && (
+          {hasMenu && (
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label="More provider actions"
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
               >
-                <MoreHorizontal className="h-4 w-4" />
+                <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem tone="danger" onSelect={removeProvider}>
-                  <Trash2 />
-                  Delete custom provider
-                </DropdownMenuItem>
+                {opts.alsoApiKey && (
+                  <DropdownMenuItem onSelect={() => setConnect("api_key")}>
+                    <Plus />
+                    Add API key
+                  </DropdownMenuItem>
+                )}
+                {opts.bulk && (
+                  <DropdownMenuItem onSelect={() => setConnect("bulk")}>
+                    <Layers />
+                    {provider.id === "qoder" ? "Import tokens" : "Import keys"}
+                  </DropdownMenuItem>
+                )}
+                {provider.custom && (
+                  <>
+                    {(opts.alsoApiKey || opts.bulk) && <DropdownMenuSeparator />}
+                    <DropdownMenuItem tone="danger" onSelect={removeProvider}>
+                      <Trash2 />
+                      Delete custom provider
+                    </DropdownMenuItem>
+                  </>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -205,46 +270,49 @@ export function ProviderDetailPage() {
 
       {provider.deprecated && provider.notice && (
         <div role="note" className="mb-5 flex items-start gap-2.5 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3 text-[13px] leading-5 text-fg">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
           <span>{provider.notice}</span>
         </div>
       )}
 
-      <ProviderSummary provider={provider} health={health} routePrefix={routePrefix} firstModel={modelList.find((m) => !disabledIds.has(m.id))?.id} />
+      <ProviderSummary provider={provider} health={health} />
 
-      <div className="mb-5 mt-6 flex gap-1 border-b border-line" role="tablist" aria-label={`${provider.display_name} sections`}>
-        {(
-          [
-            ["accounts", "Accounts", myAccounts.length],
-            ["models", "Models", enabledModels],
-            ["routing", "Routing", null],
-          ] as [Tab, string, number | null][]
-        ).map(([value, label, count]) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={tab === value}
-            onClick={() => setTab(value)}
-            className={cn(
-              "relative -mb-px inline-flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
-              tab === value ? "text-fg" : "text-fg-muted hover:text-fg",
-            )}
-          >
-            {label}
-            {count != null && <span className="rounded-md bg-subtle px-1.5 text-[11.5px] tabular-nums text-fg-muted">{count}</span>}
-            {tab === value && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
-          </button>
-        ))}
+      <div className="mb-5 mt-6 flex gap-1 overflow-x-auto border-b border-line" role="tablist" aria-label={`${provider.display_name} sections`} onKeyDown={onTabKeys}>
+        {TABS.map(({ value, label }) => {
+          const selected = tab === value;
+          const count = counts[value];
+          return (
+            <button
+              key={value}
+              id={`provider-tab-${value}`}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              aria-controls={`provider-panel-${value}`}
+              tabIndex={selected ? 0 : -1}
+              onClick={() => setTab(value)}
+              className={cn(
+                "relative -mb-px inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                selected ? "text-fg" : "text-fg-muted hover:text-fg",
+              )}
+            >
+              {label}
+              {count != null && <span className="rounded-md bg-subtle px-1.5 text-[11.5px] tabular-nums text-fg-muted">{count}</span>}
+              {selected && <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
+            </button>
+          );
+        })}
       </div>
 
-      {tab === "accounts" && (
-        <AccountsPanel provider={provider} accounts={myAccounts} loading={accounts.isLoading} onConnect={() => setConnect("primary")} connectLabel={opts.primaryLabel} />
-      )}
-      {tab === "models" && (
-        <ModelsPanel provider={provider} models={modelList} loading={models.isLoading} disabledIds={disabledIds} routePrefix={routePrefix} />
-      )}
-      {tab === "routing" && <RoutingPanel providerId={provider.id} accountCount={myAccounts.length} />}
+      <div role="tabpanel" id={`provider-panel-${tab}`} aria-labelledby={`provider-tab-${tab}`}>
+        {tab === "accounts" && (
+          <AccountsPanel provider={provider} accounts={myAccounts} loading={accounts.isLoading} onConnect={() => setConnect("primary")} connectLabel={opts.primaryLabel} />
+        )}
+        {tab === "models" && (
+          <ModelsPanel provider={provider} models={modelList} loading={models.isLoading} disabledIds={disabledIds} routePrefix={routePrefix} />
+        )}
+        {tab === "routing" && <RoutingPanel providerId={provider.id} accountCount={myAccounts.length} />}
+      </div>
 
       {connect && <ConnectProviderDialog provider={provider} oauth={oauth} mode={connect} onClose={() => setConnect(null)} />}
     </>
@@ -263,91 +331,76 @@ function Dot() {
 
 const TICK_CLASS: Record<string, string> = { ok: "bg-ok/70", degraded: "bg-warn", down: "bg-bad", idle: "bg-track" };
 
-function ProviderSummary({
-  provider,
-  health,
-  routePrefix,
-  firstModel,
-}: {
-  provider: Provider;
-  health?: HealthTimelineProvider;
-  routePrefix: string;
-  firstModel?: string;
-}) {
-  const toast = useToast();
-  const example = `${routePrefix}/${firstModel ?? "<model>"}`;
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(example);
-      toast.success("Model name copied", example);
-    } catch {
-      toast.error("Couldn't copy", "Your browser blocked clipboard access.");
-    }
-  };
+function ProviderSummary({ provider, health }: { provider: Provider; health?: HealthTimelineProvider }) {
   const cells = [
-    { label: "Requests · 24h", value: health ? health.requests.toLocaleString("en-US") : "—" },
+    {
+      label: "Requests · 24h",
+      value: health ? health.requests.toLocaleString("en-US") : "—",
+      hint: health && health.fallbacks ? `${health.fallbacks.toLocaleString("en-US")} fell over` : undefined,
+    },
     {
       label: "Success",
       value: health && health.requests ? `${(health.success_rate * 100).toFixed(1)}%` : "—",
       tone: health && health.requests ? (health.success_rate >= 0.99 ? undefined : health.success_rate >= 0.95 ? "warn" : "bad") : undefined,
     },
     { label: "Worst p95", value: health && health.worst_p95_ms ? fmtMs(health.worst_p95_ms) : "—" },
-    { label: "Fell over", value: health ? health.fallbacks.toLocaleString("en-US") : "—", tone: health && health.fallbacks ? "warn" : undefined },
-  ] as { label: string; value: string; tone?: "warn" | "bad" }[];
+  ] as { label: string; value: string; hint?: string; tone?: "warn" | "bad" }[];
+  const badHours = health ? health.buckets.filter((b) => b.status === "degraded" || b.status === "down").length : 0;
 
   return (
-    <section aria-label="Provider summary" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-      <div className="grid grid-cols-2 gap-px bg-line lg:grid-cols-[repeat(4,minmax(0,1fr))_minmax(0,1.6fr)]">
+    <section aria-label="Last 24 hours" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="grid grid-cols-2 gap-px bg-line sm:grid-cols-3 lg:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.6fr)]">
         {cells.map((c) => (
           <div key={c.label} className="bg-surface px-4 py-3">
             <p className="text-[12px] font-medium text-fg-muted">{c.label}</p>
-            <p className={cn("mt-1 text-[18px] font-semibold tracking-[-0.01em] tabular-nums", c.tone === "bad" ? "text-bad" : c.tone === "warn" ? "text-warn" : "text-fg")}>{c.value}</p>
+            <p className={cn("mt-1 text-[18px] font-semibold tracking-[-0.01em] tabular-nums", c.tone === "bad" ? "text-bad" : c.tone === "warn" ? "text-warn" : "text-fg")}>
+              {c.value === "—" ? (
+                <>
+                  <span aria-hidden="true">—</span>
+                  <span className="sr-only">No data</span>
+                </>
+              ) : (
+                c.value
+              )}
+            </p>
+            {c.hint && <p className="mt-0.5 text-[12px] tabular-nums text-warn">{c.hint}</p>}
           </div>
         ))}
-        <div className="col-span-2 flex flex-col justify-center gap-2 bg-surface px-4 py-3 lg:col-span-1">
+        <div className="col-span-2 flex flex-col justify-center gap-2 bg-surface px-4 py-3 sm:col-span-3 lg:col-span-1">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[12px] font-medium text-fg-muted">Health · last 24 hours</p>
-            <Link to={`/provider-health/${encodeURIComponent(provider.id)}`} className="text-[12px] font-medium text-accent-500 hover:underline dark:text-accent-400">
+            <p className="text-[12px] font-medium text-fg-muted">Hourly health</p>
+            <Link
+              to={`/provider-health/${encodeURIComponent(provider.id)}`}
+              className="inline-flex min-h-6 items-center rounded-md text-[12px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              aria-label={`${provider.display_name} health details`}
+            >
               Details
             </Link>
           </div>
-          {health ? (
-            <div className="flex gap-[2px]" role="img" aria-label="Hourly status, last 24 hours">
-              {health.buckets.map((b) => (
-                <span key={b.start} className={cn("h-4 min-w-[2px] flex-1 rounded-[1.5px]", TICK_CLASS[b.status] ?? "bg-track")} />
-              ))}
-            </div>
-          ) : (
-            <p className="text-[12.5px] text-fg-faint">No traffic yet.</p>
-          )}
+          <div>
+            {health ? (
+              <div
+                className="flex gap-[2px]"
+                role="img"
+                aria-label={badHours ? `${badHours} of ${health.buckets.length} hours had errors` : `No errors in ${health.buckets.length} hours`}
+              >
+                {health.buckets.map((b) => (
+                  <span key={b.start} className={cn("h-4 min-w-[2px] flex-1 rounded-[1.5px]", TICK_CLASS[b.status] ?? "bg-track")} />
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12.5px] text-fg-faint">No traffic yet</p>
+            )}
+          </div>
         </div>
-      </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-line bg-subtle px-4 py-2.5 text-[12.5px] text-fg-muted">
-        <span>Route to it with</span>
-        <button
-          type="button"
-          onClick={copy}
-          className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-line bg-surface px-2 py-0.5 font-mono text-[12px] text-fg transition-colors hover:border-line-strong"
-          title="Copy model name"
-        >
-          <span className="truncate">{example}</span>
-          <Copy className="h-3 w-3 shrink-0 text-fg-faint" />
-        </button>
-        <span className="hidden sm:inline">as the model, or add it as a step in a chain.</span>
-        {provider.custom && provider.base_url && (
-          <span className="ml-auto inline-flex min-w-0 items-center gap-1.5">
-            <span className="shrink-0">{provider.dialect === "anthropic" ? "Anthropic-compatible" : "OpenAI-compatible"} ·</span>
-            <span className="truncate font-mono text-[12px] text-fg" title={provider.base_url}>
-              {provider.base_url}
-            </span>
-          </span>
-        )}
       </div>
     </section>
   );
 }
 
 // ── Accounts ─────────────────────────────────────────────────────────────────
+
+const checkboxClass = "h-4 w-4 shrink-0 rounded border-input accent-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
 
 function AccountsPanel({
   provider,
@@ -470,18 +523,17 @@ function AccountsPanel({
   const someOnPage = paged.some((a) => selected.has(a.id));
   const busy = bulkUpdate.isPending || removeMany.isPending;
   const needsReconnect = accounts.filter((a) => a.needs_reconnect).length;
+  const tested = Object.values(tests).filter((t) => t.status !== "testing").length;
 
   if (loading) return <Skeleton className="h-64 w-full rounded-2xl" />;
 
   if (accounts.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-        <p className="text-[14px] font-medium text-fg">No {provider.display_name} accounts yet</p>
-        <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
-          Add one to start routing. With several accounts KeiRouter rotates between them and fails over when one is rate limited.
-        </p>
+        <h2 className="text-[14px] font-semibold text-fg">No accounts yet</h2>
+        <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">Add one to start routing to {provider.display_name}.</p>
         <Button className="mt-4" onClick={onConnect}>
-          <Plug />
+          <Plug aria-hidden="true" />
           {connectLabel}
         </Button>
       </div>
@@ -491,45 +543,38 @@ function AccountsPanel({
   return (
     <div className="space-y-3">
       {needsReconnect > 0 && (
-        <div role="alert" className="flex items-start gap-2.5 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3 text-[13px] leading-5 text-fg">
-          <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-warn" />
+        <div className="flex items-start gap-2.5 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3 text-[13px] leading-5 text-fg">
+          <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
           <span>
-            {needsReconnect} account{needsReconnect === 1 ? " has" : "s have"} a revoked sign-in that can't be refreshed. Remove {needsReconnect === 1 ? "it" : "them"} and connect again.
+            {needsReconnect} account{needsReconnect === 1 ? "'s sign-in was" : "s' sign-ins were"} revoked. Remove {needsReconnect === 1 ? "it" : "them"} and connect again.
           </span>
         </div>
       )}
 
       <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
         <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-line px-4 py-2">
-          <label className="flex items-center gap-2 text-[12.5px] text-fg-muted">
-            <input
-              type="checkbox"
-              aria-label="Select accounts on this page"
-              className="h-4 w-4 rounded border-line accent-[var(--color-accent-500)]"
-              checked={allOnPage}
-              ref={(el) => {
-                if (el) el.indeterminate = someOnPage && !allOnPage;
-              }}
-              onChange={() =>
-                setSelected((prev) => {
-                  const next = new Set(prev);
-                  if (allOnPage) paged.forEach((a) => next.delete(a.id));
-                  else paged.forEach((a) => next.add(a.id));
-                  return next;
-                })
-              }
-            />
-            {selectedList.length > 0 ? <span className="font-medium text-fg">{selectedList.length} selected</span> : <span>{accounts.length} account{accounts.length === 1 ? "" : "s"} · lower priority number is tried first</span>}
-          </label>
+          <p className="text-[12.5px] text-fg-muted" role="status" aria-live="polite">
+            {testingAll ? (
+              <span className="text-fg">
+                Testing {tested} of {accounts.length}…
+              </span>
+            ) : selectedList.length > 0 ? (
+              <span className="font-medium text-fg">{selectedList.length} selected</span>
+            ) : (
+              <span className="tabular-nums">
+                {accounts.length} account{accounts.length === 1 ? "" : "s"}
+              </span>
+            )}
+          </p>
           <div className="ml-auto flex flex-wrap items-center gap-1.5">
             {selectedList.length > 0 ? (
               <>
                 <Button variant="ghost" disabled={busy || !selectedList.some((a) => a.disabled)} onClick={() => bulkUpdate.mutate({ ids: selectedList.filter((a) => a.disabled).map((a) => a.id), disabled: false })}>
-                  <Play />
+                  <Play aria-hidden="true" />
                   Resume
                 </Button>
                 <Button variant="ghost" disabled={busy || !selectedList.some((a) => !a.disabled)} onClick={() => bulkUpdate.mutate({ ids: selectedList.filter((a) => !a.disabled).map((a) => a.id), disabled: true })}>
-                  <Pause />
+                  <Pause aria-hidden="true" />
                   Pause
                 </Button>
                 <Button
@@ -545,53 +590,90 @@ function AccountsPanel({
                     if (ok) removeMany.mutate(selectedList.map((a) => a.id));
                   }}
                 >
-                  <Trash2 />
+                  <Trash2 aria-hidden="true" />
                   Remove
                 </Button>
                 <button
                   type="button"
                   onClick={() => setSelected(new Set())}
                   aria-label="Clear selection"
-                  className="flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
                 >
-                  <X className="h-4 w-4" />
+                  <X className="h-4 w-4" aria-hidden="true" />
                 </button>
               </>
             ) : (
               <Button variant="ghost" onClick={testAll} disabled={testingAll}>
-                {testingAll ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
-                {testingAll ? `Testing ${Object.values(tests).filter((t) => t.status !== "testing").length}/${accounts.length}` : "Test all"}
+                {testingAll ? <Loader2 className="animate-spin" aria-hidden="true" /> : <ShieldCheck aria-hidden="true" />}
+                {testingAll ? "Testing…" : "Test all"}
               </Button>
             )}
           </div>
         </div>
 
-        <ul className="divide-y divide-line">
-          {paged.map((a, i) => (
-            <AccountRow
-              key={a.id}
-              account={a}
-              index={pageStart + i}
-              total={accounts.length}
-              pools={pools.data?.pools ?? []}
-              selected={selected.has(a.id)}
-              test={tests[a.id]}
-              batchTesting={testingAll}
-              onToggleSelect={() =>
-                setSelected((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(a.id)) next.delete(a.id);
-                  else next.add(a.id);
-                  return next;
-                })
-              }
-              onMove={(dir) => move(a.id, dir)}
-              onPatch={(patch) => update.mutate({ id: a.id, patch })}
-              onTest={() => runTest(a.id)}
-              onRemove={() => removeOne(a)}
-            />
-          ))}
-        </ul>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-[13px]">
+            <thead>
+              <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                <th scope="col" className="w-10 py-2 pl-4 pr-1">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all accounts on this page"
+                    className={checkboxClass}
+                    checked={allOnPage}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someOnPage && !allOnPage;
+                    }}
+                    onChange={() =>
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        if (allOnPage) paged.forEach((a) => next.delete(a.id));
+                        else paged.forEach((a) => next.add(a.id));
+                        return next;
+                      })
+                    }
+                  />
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">Account</th>
+                <th scope="col" className="px-3 py-2 font-medium">Status</th>
+                <th scope="col" className="px-3 py-1 font-medium">
+                  <span className="inline-flex items-center gap-0.5">
+                    Priority
+                    <InfoTip label="About priority">Lower numbers are tried first.</InfoTip>
+                  </span>
+                </th>
+                <th scope="col" className="px-3 py-2 font-medium">Enabled</th>
+                <th scope="col" className="w-20 px-3 py-2">
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            {paged.map((a, i) => (
+              <AccountRow
+                key={a.id}
+                account={a}
+                index={pageStart + i}
+                total={accounts.length}
+                pools={pools.data?.pools ?? []}
+                selected={selected.has(a.id)}
+                test={tests[a.id]}
+                batchTesting={testingAll}
+                onToggleSelect={() =>
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(a.id)) next.delete(a.id);
+                    else next.add(a.id);
+                    return next;
+                  })
+                }
+                onMove={(dir) => move(a.id, dir)}
+                onPatch={(patch) => update.mutate({ id: a.id, patch })}
+                onTest={() => runTest(a.id)}
+                onRemove={() => removeOne(a)}
+              />
+            ))}
+          </table>
+        </div>
         {pages > 1 && <TablePagination page={page} pages={pages} total={total} onPage={setPage} />}
       </div>
     </div>
@@ -630,14 +712,19 @@ function AccountRow({
   const [label, setLabel] = useState(a.label);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const labelRef = useRef<HTMLInputElement>(null);
+  const renameRequested = useRef(false);
+  const detailsId = useId();
+  const egressId = useId();
   useEffect(() => setPriority(String(a.priority)), [a.priority]);
   useEffect(() => setLabel(a.label), [a.label]);
   useEffect(() => {
-    if (renaming) labelRef.current?.select();
+    if (renaming) {
+      labelRef.current?.focus();
+      labelRef.current?.select();
+    }
   }, [renaming]);
 
   const supportsQuota = a.provider === "kiro" || a.provider === "qoder";
-  const hasDetails = supportsQuota || a.provider === "codex";
   const quota = useQuery({
     queryKey: ["account-quota", a.id],
     queryFn: () => api.accountQuota(a.id),
@@ -659,57 +746,86 @@ function AccountRow({
     if (label.trim() !== a.label) onPatch({ label: label.trim() });
   };
 
-  return (
-    <li className={cn("px-4 py-3 transition-colors", selected ? "bg-accent-500/5" : "hover:bg-hover/60", a.disabled && "bg-subtle/60")}>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2.5">
-        <div className="flex min-w-[220px] flex-1 items-center gap-3">
-          <input type="checkbox" checked={selected} onChange={onToggleSelect} aria-label={`Select ${name}`} className="h-4 w-4 shrink-0 rounded border-line accent-[var(--color-accent-500)]" />
-          <span
-            className={cn(
-              "h-2 w-2 shrink-0 rounded-full",
-              a.needs_reconnect ? "bg-warn" : a.disabled ? "bg-fg-faint" : test?.status === "error" ? "bg-bad" : "bg-ok",
-            )}
-            role="img"
-            aria-label={a.needs_reconnect ? "Needs reconnect" : a.disabled ? "Paused" : test?.status === "error" ? "Last test failed" : "Active"}
-          />
-          <div className="min-w-0">
-            {renaming ? (
-              <input
-                ref={labelRef}
-                value={label}
-                onChange={(e) => setLabel(e.target.value)}
-                onBlur={commitLabel}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitLabel();
-                  if (e.key === "Escape") {
-                    setLabel(a.label);
-                    setRenaming(false);
-                  }
-                }}
-                aria-label="Account label"
-                className="h-7 w-56 rounded-md border border-accent-500 bg-surface px-2 text-[13px] text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25"
-              />
-            ) : (
-              <button type="button" onClick={() => setRenaming(true)} className="max-w-full truncate text-left text-[13px] font-medium text-fg hover:underline" title="Rename">
-                {name}
-              </button>
-            )}
-            <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] text-fg-muted">
-              <span>{a.auth_kind === "oauth" ? "Signed in" : a.auth_kind === "none" ? "No credentials" : "API key"}</span>
-              {a.disabled && <Badge tone="neutral">Paused</Badge>}
-              {a.needs_reconnect && <Badge tone="warning">Reconnect needed</Badge>}
-              {test?.status === "ok" && <span className="inline-flex items-center gap-1 text-ok"><Check className="h-3 w-3" />Verified</span>}
-              {testing && <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" />Testing</span>}
-              {test?.status === "error" && <span className="text-bad">Test failed</span>}
-            </div>
-          </div>
-        </div>
+  const status: { tone: "ok" | "warn" | "neutral"; text: string } = a.needs_reconnect
+    ? { tone: "warn", text: "Reconnect needed" }
+    : a.disabled
+      ? { tone: "neutral", text: "Paused" }
+      : { tone: "ok", text: "Active" };
+  const rowTone = selected ? "bg-accent-500/5" : a.disabled ? "bg-subtle/60" : "";
+  const cell = "px-3 py-2.5 align-middle";
 
-        <div className="flex items-center gap-1.5" title="Routing priority — lower is tried first">
-          <span className="sr-only">Priority</span>
-          <div className="inline-flex h-8 items-center overflow-hidden rounded-lg border border-line bg-surface">
-            <button type="button" onClick={() => onMove(-1)} disabled={index === 0} aria-label={`Move ${name} up`} className="flex h-full w-7 items-center justify-center text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-30">
-              <ArrowUp className="h-3.5 w-3.5" />
+  return (
+    <tbody className={cn("border-b border-line last:border-b-0", rowTone)}>
+      <tr className={cn("transition-colors", !selected && "hover:bg-hover/60")}>
+        <td className="py-2.5 pl-4 pr-1 align-middle">
+          <input type="checkbox" checked={selected} onChange={onToggleSelect} aria-label={`Select ${name}`} className={checkboxClass} />
+        </td>
+        <td className={cn(cell, "max-w-[280px]")}>
+          {renaming ? (
+            <input
+              ref={labelRef}
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              onBlur={commitLabel}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitLabel();
+                if (e.key === "Escape") {
+                  setLabel(a.label);
+                  setRenaming(false);
+                }
+              }}
+              aria-label={`Label for ${name}`}
+              className="h-8 w-full max-w-56 rounded-lg border border-accent-500 bg-surface px-2 text-[13px] text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            />
+          ) : (
+            <span className="block truncate font-medium text-fg" title={name}>
+              {name}
+            </span>
+          )}
+          <span className="mt-0.5 block truncate text-[12px] text-fg-muted">
+            {a.auth_kind === "oauth" ? "Signed in" : a.auth_kind === "none" ? "No credentials" : "API key"}
+            {pool && (
+              <>
+                {" · via "}
+                <span className={pool.test_status === "error" ? "text-bad" : undefined}>
+                  {pool.name}
+                  {pool.test_status === "error" ? " (failing)" : ""}
+                </span>
+              </>
+            )}
+          </span>
+        </td>
+        <td className={cn(cell, "whitespace-nowrap")}>
+          <span className="inline-flex items-center gap-1.5 text-[12.5px]">
+            <span aria-hidden="true" className={cn("h-1.5 w-1.5 rounded-full", status.tone === "warn" ? "bg-warn" : status.tone === "neutral" ? "bg-fg-faint" : "bg-ok")} />
+            <span className={status.tone === "warn" ? "text-warn" : status.tone === "neutral" ? "text-fg-muted" : "text-fg"}>{status.text}</span>
+          </span>
+          <span className="block text-[12px]" role="status" aria-live="polite">
+            {testing && (
+              <span className="inline-flex items-center gap-1 text-fg-muted">
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                Testing…
+              </span>
+            )}
+            {test?.status === "ok" && (
+              <span className="inline-flex items-center gap-1 text-ok">
+                <Check className="h-3 w-3" aria-hidden="true" />
+                Verified
+              </span>
+            )}
+            {test?.status === "error" && <span className="text-bad">Test failed</span>}
+          </span>
+        </td>
+        <td className={cell}>
+          <div className="inline-flex h-8 items-center overflow-hidden rounded-lg border border-input bg-surface">
+            <button
+              type="button"
+              onClick={() => onMove(-1)}
+              disabled={index === 0}
+              aria-label={`Move ${name} up`}
+              className="flex h-full w-7 items-center justify-center text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500 disabled:opacity-30"
+            >
+              <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
             <input
               value={priority}
@@ -718,81 +834,119 @@ function AccountRow({
               onBlur={commitPriority}
               onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
               aria-label={`Priority for ${name}`}
-              className="h-full w-11 border-x border-line bg-transparent text-center font-mono text-[12.5px] text-fg focus:bg-subtle focus:outline-none"
+              className="h-full w-11 border-x border-input bg-transparent text-center font-mono text-[12.5px] text-fg focus:bg-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
             />
-            <button type="button" onClick={() => onMove(1)} disabled={index === total - 1} aria-label={`Move ${name} down`} className="flex h-full w-7 items-center justify-center text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-30">
-              <ArrowDown className="h-3.5 w-3.5" />
+            <button
+              type="button"
+              onClick={() => onMove(1)}
+              disabled={index === total - 1}
+              aria-label={`Move ${name} down`}
+              className="flex h-full w-7 items-center justify-center text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500 disabled:opacity-30"
+            >
+              <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           </div>
-        </div>
-
-        <select
-          value={a.proxy_pool_id || ""}
-          onChange={(e) => onPatch({ proxy_pool_id: e.target.value })}
-          aria-label={`Egress for ${name}`}
-          className={cn(
-            "h-8 w-48 rounded-lg border border-line bg-surface px-2 text-[12.5px] text-fg focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25",
-            pool?.test_status === "error" && "border-bad/50",
-          )}
-          title={pool ? `Proxy ${pool.test_status === "active" ? "healthy" : pool.test_status === "error" ? "failing" : "untested"}` : "Direct connection"}
-        >
-          <option value="">Direct connection</option>
-          {pools.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-              {!p.is_active ? " (inactive)" : ""}
-            </option>
-          ))}
-        </select>
-
-        <div className="ml-auto flex items-center gap-1">
-          <Toggle checked={!a.disabled} onChange={(on) => onPatch({ disabled: !on })} />
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              aria-label={`Actions for ${name}`}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+        </td>
+        <td className={cell}>
+          <Toggle checked={!a.disabled} onChange={(on) => onPatch({ disabled: !on })} label={`Enable ${name}`} />
+        </td>
+        <td className={cn(cell, "text-right")}>
+          <div className="inline-flex items-center gap-0.5">
+            <button
+              type="button"
+              onClick={() => setDetailsOpen((o) => !o)}
+              aria-expanded={detailsOpen}
+              aria-controls={detailsId}
+              aria-label={`Details for ${name}`}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
             >
-              <MoreHorizontal className="h-4 w-4" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={onTest} disabled={testing || batchTesting}>
-                <ShieldCheck />
-                Test connection
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setRenaming(true)}>
-                <Pencil />
-                Rename
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem tone="danger" onSelect={onRemove}>
-                <Trash2 />
-                Remove account
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </div>
+              <ChevronDown className={cn("h-4 w-4 transition-transform", detailsOpen && "rotate-180")} aria-hidden="true" />
+            </button>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label={`Actions for ${name}`}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              >
+                <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent
+                align="end"
+                onCloseAutoFocus={(e) => {
+                  // Keep focus in the rename field instead of the menu trigger.
+                  if (renameRequested.current) {
+                    e.preventDefault();
+                    renameRequested.current = false;
+                  }
+                }}
+              >
+                <DropdownMenuItem onSelect={onTest} disabled={testing || batchTesting}>
+                  <ShieldCheck />
+                  Test connection
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() => {
+                    renameRequested.current = true;
+                    setRenaming(true);
+                  }}
+                >
+                  <Pencil />
+                  Rename
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem tone="danger" onSelect={onRemove}>
+                  <Trash2 />
+                  Remove account
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </td>
+      </tr>
 
       {test?.status === "error" && test.message && (
-        <p role="alert" className="ml-11 mt-2 flex items-start gap-1.5 break-words text-[12.5px] leading-5 text-bad">
-          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          {test.message}
-        </p>
+        <tr>
+          <td />
+          <td colSpan={5} className="px-3 pb-2.5 pt-0">
+            <p className="flex items-start gap-1.5 break-words text-[12.5px] leading-5 text-bad">
+              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              {test.message}
+            </p>
+          </td>
+        </tr>
       )}
 
-      {hasDetails && (
-        <div className="ml-11 mt-1.5">
-          <button
-            type="button"
-            onClick={() => setDetailsOpen((o) => !o)}
-            aria-expanded={detailsOpen}
-            className="inline-flex items-center gap-1 text-[12.5px] font-medium text-fg-muted hover:text-fg"
-          >
-            {a.provider === "codex" ? "Usage limits & resets" : quota.data?.plan_name || "Plan & usage"}
-            <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", detailsOpen && "rotate-180")} />
-          </button>
+      <tr id={detailsId} hidden={!detailsOpen}>
+        <td />
+        <td colSpan={5} className="px-3 pb-3 pt-0">
           {detailsOpen && (
-            <div className="mt-2">
+            <div className="space-y-2.5">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <label htmlFor={egressId} className="text-[12.5px] font-medium text-fg">
+                  Egress
+                </label>
+                <select
+                  id={egressId}
+                  value={a.proxy_pool_id || ""}
+                  onChange={(e) => onPatch({ proxy_pool_id: e.target.value })}
+                  className={cn(
+                    "h-8 w-56 rounded-lg border bg-surface px-2 text-[12.5px] text-fg focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                    pool?.test_status === "error" ? "border-bad" : "border-input",
+                  )}
+                >
+                  <option value="">Direct connection</option>
+                  {pools.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                      {!p.is_active ? " (inactive)" : ""}
+                    </option>
+                  ))}
+                </select>
+                {pool && (
+                  <span className={cn("text-[12px]", pool.test_status === "error" ? "text-bad" : "text-fg-muted")}>
+                    {pool.test_status === "active" ? "Proxy healthy" : pool.test_status === "error" ? "Proxy failing" : "Proxy untested"}
+                  </span>
+                )}
+              </div>
               {supportsQuota && (
                 <AccountQuotaPanel
                   loading={quota.isFetching}
@@ -807,9 +961,9 @@ function AccountRow({
               {a.provider === "codex" && <CodexResetCreditsSection accountId={a.id} />}
             </div>
           )}
-        </div>
-      )}
-    </li>
+        </td>
+      </tr>
+    </tbody>
   );
 }
 
@@ -833,18 +987,15 @@ function AccountQuotaPanel({
   return (
     <div className="rounded-xl border border-line bg-subtle p-3">
       <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-[13px] font-medium text-fg">{planName || "Plan"}</p>
-          <p className="text-[12px] text-fg-muted">Live allowance reported by this account</p>
-        </div>
-        <button type="button" onClick={onRefresh} disabled={loading || disabled} aria-label="Refresh usage" className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-40">
-          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+        <h3 className="text-[13px] font-medium text-fg">{planName || "Plan"}</h3>
+        <button type="button" onClick={onRefresh} disabled={loading || disabled} aria-label="Refresh usage" className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-40">
+          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} aria-hidden="true" />
         </button>
       </div>
       {disabled ? (
         <p className="mt-2 text-[12.5px] text-fg-muted">Resume the account to refresh its usage.</p>
       ) : loading && quotas.length === 0 ? (
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2" aria-busy="true">
           <Skeleton className="h-14" />
           <Skeleton className="h-14" />
         </div>
@@ -875,7 +1026,7 @@ function QuotaBar({ quota: q }: { quota: UpstreamQuota }) {
         <span className="font-medium text-fg">{label}</span>
         <span className="tabular-nums text-fg">{q.remaining.toLocaleString()} left</span>
       </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-track">
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-track" role="progressbar" aria-label={`${label} used`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={used}>
         <div className={cn("h-full rounded-full", fill)} style={{ width: `${used}%` }} />
       </div>
       <div className="mt-1.5 flex flex-wrap justify-between gap-1 text-[11.5px] tabular-nums text-fg-faint">
@@ -884,7 +1035,7 @@ function QuotaBar({ quota: q }: { quota: UpstreamQuota }) {
         </span>
         {reset && !Number.isNaN(reset.getTime()) && (
           <span className="inline-flex items-center gap-1">
-            <Clock3 className="h-3 w-3" />
+            <Clock3 className="h-3 w-3" aria-hidden="true" />
             Resets {reset.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
           </span>
         )}
@@ -918,15 +1069,15 @@ function CodexResetCreditsSection({ accountId }: { accountId: string }) {
     <div className="rounded-xl border border-line bg-subtle p-3">
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
-          <p className="text-[13px] font-medium text-fg">Codex limits</p>
+          <h3 className="text-[13px] font-medium text-fg">Codex limits</h3>
           {data?.usage_data?.plan_type && <Badge tone={data.usage_data.limit_reached ? "danger" : "neutral"}>{data.usage_data.plan_type}</Badge>}
         </div>
-        <button type="button" onClick={() => details.refetch()} disabled={details.isFetching} aria-label="Refresh Codex usage" className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg disabled:opacity-40">
-          <RefreshCw className={cn("h-4 w-4", details.isFetching && "animate-spin")} />
+        <button type="button" onClick={() => details.refetch()} disabled={details.isFetching} aria-label="Refresh Codex usage" className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-40">
+          <RefreshCw className={cn("h-4 w-4", details.isFetching && "animate-spin")} aria-hidden="true" />
         </button>
       </div>
       {details.isLoading ? (
-        <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="mt-3 grid gap-2 sm:grid-cols-2" aria-busy="true">
           <Skeleton className="h-16" />
           <Skeleton className="h-16" />
         </div>
@@ -959,7 +1110,7 @@ function CodexResetCreditsSection({ accountId }: { accountId: string }) {
                   if (await confirm({ title: "Use a reset credit?", description: "Both usage windows reset now. Earned credits are limited.", confirmLabel: "Reset limits" })) consume.mutate(credits[0]?.id);
                 }}
               >
-                {consume.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                {consume.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
                 Reset limits
               </Button>
             )}
@@ -979,7 +1130,7 @@ function LimitWindow({ label, used, resetAt }: { label: string; used: number; re
         <span className="font-medium text-fg">{label}</span>
         <span className="tabular-nums text-fg">{100 - pct}% left</span>
       </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-track" aria-label={`${label}: ${pct}% used`}>
+      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-track" role="progressbar" aria-label={`${label} used`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct}>
         <div className={cn("h-full rounded-full", fill)} style={{ width: `${pct}%` }} />
       </div>
       <p className="mt-1.5 text-[11.5px] text-fg-faint">{resetAt > 0 ? `Resets ${new Date(resetAt * 1000).toLocaleString()}` : "Reset time unavailable"}</p>
@@ -1049,15 +1200,19 @@ function ModelsPanel({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex h-8 items-center rounded-xl border border-line bg-subtle p-0.5" role="radiogroup" aria-label="Model source">
+        <div className="inline-flex h-8 items-center rounded-xl border border-line bg-subtle p-0.5" role="radiogroup" aria-label="Model source" onKeyDown={onRadioKeys}>
           {(["catalog", "custom"] as const).map((v) => (
             <button
               key={v}
               type="button"
               role="radio"
               aria-checked={view === v}
+              tabIndex={view === v ? 0 : -1}
               onClick={() => setView(v)}
-              className={cn("h-full rounded-lg px-3 text-[12.5px] font-medium", view === v ? "bg-surface text-fg shadow-[0_0_0_1px_var(--border-strong)]" : "text-fg-muted hover:text-fg")}
+              className={cn(
+                "h-full rounded-lg px-3 text-[12.5px] font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                view === v ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
+              )}
             >
               {v === "catalog" ? `Catalog · ${models.length}` : "Custom models"}
             </button>
@@ -1065,7 +1220,7 @@ function ModelsPanel({
         </div>
         {view === "catalog" && provider.custom && (
           <Button variant="secondary" onClick={() => importModels.mutate()} disabled={importModels.isPending}>
-            {importModels.isPending ? <Loader2 className="animate-spin" /> : <Download />}
+            {importModels.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Download aria-hidden="true" />}
             {importModels.isPending ? "Syncing…" : "Sync from /models"}
           </Button>
         )}
@@ -1077,35 +1232,36 @@ function ModelsPanel({
         <Skeleton className="h-72 w-full rounded-2xl" />
       ) : models.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-          <p className="text-[13px] font-medium text-fg">No models in this catalog yet</p>
-          <p className="mt-1 text-[12.5px] text-fg-muted">
-            {provider.custom ? "Sync the endpoint's /models list, or add models under Custom models." : "Add models under Custom models."}
+          <h2 className="text-[14px] font-semibold text-fg">No models yet</h2>
+          <p className="mt-1 text-[13px] text-fg-muted">
+            {provider.custom ? "Sync the endpoint's /models list, or add them under Custom models." : "Add them under Custom models."}
           </p>
         </div>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
           <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
             <div className="relative w-full sm:w-72">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
               <input
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Filter models"
                 aria-label="Filter models"
-                className="h-8 w-full rounded-lg border border-line bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25"
+                className="h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
               />
             </div>
-            <div className="flex gap-1" role="radiogroup" aria-label="Status">
+            <div className="flex gap-1" role="radiogroup" aria-label="Status" onKeyDown={onRadioKeys}>
               {(["all", "enabled", "disabled"] as ModelFilter[]).map((f) => (
                 <button
                   key={f}
                   type="button"
                   role="radio"
                   aria-checked={filter === f}
+                  tabIndex={filter === f ? 0 : -1}
                   onClick={() => setFilter(f)}
                   className={cn(
-                    "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium capitalize",
+                    "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium capitalize focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
                     filter === f ? "border-transparent bg-primary text-primary-fg" : "border-line text-fg-muted hover:text-fg",
                   )}
                 >
@@ -1116,19 +1272,23 @@ function ModelsPanel({
             <div className="ml-auto flex items-center gap-1.5">
               {selected.size > 0 ? (
                 <>
-                  <span className="text-[12.5px] font-medium text-fg">{selected.size} selected</span>
+                  <span className="text-[12.5px] font-medium text-fg" role="status">
+                    {selected.size} selected
+                  </span>
                   <Button variant="ghost" disabled={setDisabled.isPending} onClick={() => setDisabled.mutate({ ids: [...selected], disable: false }, { onSuccess: () => setSelected(new Set()) })}>
                     Enable
                   </Button>
                   <Button variant="ghost" disabled={setDisabled.isPending} onClick={() => setDisabled.mutate({ ids: [...selected], disable: true }, { onSuccess: () => setSelected(new Set()) })}>
                     Disable
                   </Button>
-                  <button type="button" onClick={() => setSelected(new Set())} aria-label="Clear selection" className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg">
-                    <X className="h-4 w-4" />
+                  <button type="button" onClick={() => setSelected(new Set())} aria-label="Clear selection" className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+                    <X className="h-4 w-4" aria-hidden="true" />
                   </button>
                 </>
               ) : (
-                <span className="text-[12.5px] tabular-nums text-fg-faint">{filtered.length} shown</span>
+                <span className="text-[12.5px] tabular-nums text-fg-faint" role="status" aria-live="polite">
+                  {filtered.length} shown
+                </span>
               )}
             </div>
           </div>
@@ -1139,11 +1299,11 @@ function ModelsPanel({
               <table className="w-full min-w-[720px] text-[13px]">
                 <thead>
                   <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
-                    <th className="w-10 px-4 py-2">
+                    <th scope="col" className="w-10 px-4 py-2">
                       <input
                         type="checkbox"
                         aria-label="Select all shown models"
-                        className="h-4 w-4 rounded border-line accent-[var(--color-accent-500)]"
+                        className={checkboxClass}
                         checked={allFiltered}
                         ref={(el) => {
                           if (el) el.indeterminate = someFiltered && !allFiltered;
@@ -1158,10 +1318,10 @@ function ModelsPanel({
                         }
                       />
                     </th>
-                    <th className="px-2 py-2 font-medium">Model</th>
-                    <th className="px-4 py-2 font-medium">Kind</th>
-                    <th className="px-4 py-2 font-medium">Route as</th>
-                    <th className="px-4 py-2 text-right font-medium">Enabled</th>
+                    <th scope="col" className="px-2 py-2 font-medium">Model</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Kind</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Route as</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium">Enabled</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
@@ -1222,7 +1382,7 @@ function ModelRow({
   return (
     <tr className={cn("transition-colors", selected ? "bg-accent-500/5" : "hover:bg-hover/60", disabled && "text-fg-muted")}>
       <td className="px-4 py-2">
-        <input type="checkbox" checked={selected} onChange={onSelect} aria-label={`Select ${m.name || m.id}`} className="h-4 w-4 rounded border-line accent-[var(--color-accent-500)]" />
+        <input type="checkbox" checked={selected} onChange={onSelect} aria-label={`Select ${m.name || m.id}`} className={checkboxClass} />
       </td>
       <td className="max-w-[340px] px-2 py-2">
         <div className="flex items-center gap-2">
@@ -1237,14 +1397,26 @@ function ModelRow({
       </td>
       <td className="px-4 py-2 text-[12.5px] text-fg-muted">{m.kind || "chat"}</td>
       <td className="max-w-[300px] px-4 py-2">
-        <button type="button" onClick={copy} className="group inline-flex max-w-full items-center gap-1.5 font-mono text-[12px] text-fg-muted hover:text-fg" title="Copy model name">
+        <button
+          type="button"
+          onClick={copy}
+          aria-label={`Copy ${route}`}
+          className="group inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-md font-mono text-[12px] text-fg-muted hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+        >
           <span className="truncate">{route}</span>
-          {copied ? <Check className="h-3.5 w-3.5 shrink-0 text-ok" /> : <Copy className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />}
+          {copied ? (
+            <Check className="h-3.5 w-3.5 shrink-0 text-ok" aria-hidden="true" />
+          ) : (
+            <Copy className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden="true" />
+          )}
         </button>
+        <span className="sr-only" role="status">
+          {copied ? "Copied" : ""}
+        </span>
       </td>
       <td className="px-4 py-2 text-right">
-        <span className="inline-flex" aria-label={`${disabled ? "Enable" : "Disable"} ${m.name || m.id}`}>
-          <Toggle checked={!disabled} onChange={onToggle} />
+        <span className="inline-flex">
+          <Toggle checked={!disabled} onChange={onToggle} label={`Enable ${m.name || m.id}`} />
         </span>
       </td>
     </tr>
@@ -1254,10 +1426,10 @@ function ModelRow({
 // ── Routing ──────────────────────────────────────────────────────────────────
 
 const STRATEGIES: { value: string; label: string; body: string }[] = [
-  { value: "inherit", label: "Use the router default", body: "Follow the strategy set in Settings › Routing." },
-  { value: "fill-first", label: "Fill first", body: "Keep using the highest-priority healthy account until it is unavailable, then move down." },
-  { value: "round-robin", label: "Round robin", body: "Rotate across healthy accounts after a fixed number of requests." },
-  { value: "smart-round-robin", label: "Smart round robin", body: "Rotate new sessions, but keep each conversation on the account it started on so provider-side caches stay warm." },
+  { value: "inherit", label: "Router default", body: "Follows Settings › Routing" },
+  { value: "fill-first", label: "Fill first", body: "Top healthy account until it's unavailable" },
+  { value: "round-robin", label: "Round robin", body: "Rotate accounts every few requests" },
+  { value: "smart-round-robin", label: "Smart round robin", body: "Rotate new sessions, keep conversations on one account" },
 ];
 
 function RoutingPanel({ providerId, accountCount }: { providerId: string; accountCount: number }) {
@@ -1306,14 +1478,14 @@ function RoutingForm({
   const rotates = mode === "round-robin" || mode === "smart-round-robin";
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-      <div className="border-b border-line px-5 py-4">
-        <h2 className="text-[14px] font-semibold text-fg">How requests spread across accounts</h2>
-        <p className="mt-0.5 text-[13px] text-fg-muted">
-          Applies only to this provider. {accountCount < 2 && "With a single account every request goes to it; this matters once you add more."}
-        </p>
+    <section aria-labelledby="strategy-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="border-b border-line px-5 py-3">
+        <h2 id="strategy-heading" className="text-[13px] font-semibold text-fg">
+          Account strategy
+        </h2>
+        {accountCount < 2 && <p className="mt-0.5 text-[12px] text-fg-muted">Takes effect with two or more accounts</p>}
       </div>
-      <div className="grid gap-2 p-5 sm:grid-cols-2" role="radiogroup" aria-label="Account strategy">
+      <div className="grid gap-2 p-5 sm:grid-cols-2" role="radiogroup" aria-labelledby="strategy-heading" onKeyDown={onRadioKeys}>
         {STRATEGIES.map((s) => {
           const on = mode === s.value;
           return (
@@ -1322,14 +1494,15 @@ function RoutingForm({
               type="button"
               role="radio"
               aria-checked={on}
+              tabIndex={on ? 0 : -1}
               disabled={saving}
               onClick={() => setMode(s.value)}
               className={cn(
-                "flex items-start gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 disabled:opacity-60",
+                "flex items-start gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-60",
                 on ? "border-accent-500 bg-accent-500/5" : "border-line hover:border-line-strong hover:bg-hover",
               )}
             >
-              <span className={cn("mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border", on ? "border-accent-500" : "border-line-strong")} aria-hidden="true">
+              <span className={cn("mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border", on ? "border-accent-500" : "border-input")} aria-hidden="true">
                 {on && <span className="h-2 w-2 rounded-full bg-accent-500" />}
               </span>
               <span>
@@ -1342,14 +1515,14 @@ function RoutingForm({
       </div>
       {rotates && (
         <div className="grid gap-4 border-t border-line px-5 py-4 sm:grid-cols-2">
-          <NumberSetting label="Requests before rotating" hint="How many requests one account serves before the next takes over." value={sticky} min={1} max={100} onChange={setSticky} disabled={saving} />
+          <NumberSetting label="Requests before rotating" hint="Per account, before the next takes over" value={sticky} min={1} max={100} onChange={setSticky} disabled={saving} />
           {mode === "smart-round-robin" && (
-            <NumberSetting label="Session affinity (hours)" hint="How long a conversation stays pinned to its account." value={ttl} min={1} max={168} onChange={setTtl} disabled={saving} />
+            <NumberSetting label="Session affinity (hours)" hint="How long a conversation stays on its account" value={ttl} min={1} max={168} onChange={setTtl} disabled={saving} />
           )}
         </div>
       )}
       <div className="flex items-center justify-end gap-2 border-t border-line bg-subtle px-5 py-3">
-        <span className="mr-auto text-[12.5px] text-fg-muted" aria-live="polite">
+        <span className="mr-auto text-[12.5px] text-fg-muted" role="status" aria-live="polite">
           {saving ? "Saving…" : dirty ? "Unsaved changes" : "Saved"}
         </span>
         {dirty && !saving && (
@@ -1365,11 +1538,11 @@ function RoutingForm({
           </Button>
         )}
         <Button disabled={!dirty || saving} onClick={() => onSave({ routing_strategy: mode, sticky_limit: sticky, affinity_ttl_minutes: ttl * 60 })}>
-          {saving && <Loader2 className="animate-spin" />}
+          {saving && <Loader2 className="animate-spin" aria-hidden="true" />}
           Save changes
         </Button>
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -1390,20 +1563,27 @@ function NumberSetting({
   onChange: (v: number) => void;
   disabled?: boolean;
 }) {
+  const id = useId();
   return (
-    <label className="block space-y-1.5">
-      <span className="block text-[12.5px] font-medium text-fg">{label}</span>
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="block text-[12.5px] font-medium text-fg">
+        {label}
+      </label>
       <input
+        id={id}
         type="number"
         min={min}
         max={max}
         value={value}
         disabled={disabled}
+        aria-describedby={`${id}-hint`}
         onChange={(e) => onChange(Math.min(max, Math.max(min, parseInt(e.target.value, 10) || min)))}
-        className="h-9 w-32 rounded-lg border border-line bg-surface px-3 font-mono text-[13px] text-fg focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25"
+        className="h-9 w-32 rounded-lg border border-input bg-surface px-3 font-mono text-[13px] text-fg hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-60"
       />
-      <span className="block text-[12px] text-fg-muted">{hint}</span>
-    </label>
+      <p id={`${id}-hint`} className="text-[12px] text-fg-muted">
+        {hint}
+      </p>
+    </div>
   );
 }
 

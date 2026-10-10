@@ -1,9 +1,11 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Sparkles, AlertTriangle, Loader2, CheckCircle, Search, Copy, X } from "lucide-react";
+import { Plus, Pencil, Trash2, Check, Search, Copy, X, MoreHorizontal } from "lucide-react";
 
 import { api, type CustomModel, type CustomModelInput, type Provider } from "../lib/api";
-import { Card, CardHeader, Button, Input, Field, Select, Badge, Modal, EmptyState } from "./ui";
+import { Card, CardHeader, Button, Field, Input, Select, Modal, TablePagination } from "./ui";
+import { useConfirm } from "./ui/confirm-dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { useToast } from "./Toast";
 
 const MODEL_KINDS = ["llm", "embedding", "image", "stt", "tts", "search", "fetch"] as const;
@@ -14,6 +16,7 @@ const MODEL_KINDS = ["llm", "embedding", "image", "stt", "tts", "search", "fetch
 export function CustomModelsSection({ provider }: { provider: Provider }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const providerId = provider.id;
 
   const customModels = useQuery({
@@ -24,7 +27,6 @@ export function CustomModelsSection({ provider }: { provider: Provider }) {
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<CustomModel | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<CustomModel | null>(null);
 
   const models = customModels.data?.models ?? [];
 
@@ -62,7 +64,7 @@ export function CustomModelsSection({ provider }: { provider: Provider }) {
     onSuccess: () => {
       invalidate();
       setModalOpen(false);
-      toast.success("Model added", "The custom model is now available for routing.");
+      toast.success("Model added", "It's available for routing now.");
     },
     onError: (e: Error) => toast.error("Couldn't add model", e.message),
   });
@@ -74,7 +76,7 @@ export function CustomModelsSection({ provider }: { provider: Provider }) {
       invalidate();
       setModalOpen(false);
       setEditing(null);
-      toast.success("Model updated", "Your changes were saved.");
+      toast.success("Model updated");
     },
     onError: (e: Error) => toast.error("Couldn't update model", e.message),
   });
@@ -83,8 +85,7 @@ export function CustomModelsSection({ provider }: { provider: Provider }) {
     mutationFn: (dbId: string) => api.deleteCustomModel(providerId, dbId),
     onSuccess: () => {
       invalidate();
-      setDeleteTarget(null);
-      toast.success("Model removed", "The custom model was deleted.");
+      toast.success("Model removed");
     },
     onError: (e: Error) => toast.error("Couldn't remove model", e.message),
   });
@@ -97,98 +98,100 @@ export function CustomModelsSection({ provider }: { provider: Provider }) {
     setEditing(m);
     setModalOpen(true);
   };
+  const removeModel = async (m: CustomModel) => {
+    const ok = await confirm({
+      title: `Remove ${m.id}?`,
+      description: `Requests for ${provider.alias || provider.id}/${m.id} fail immediately. This can't be undone.`,
+      confirmLabel: "Remove model",
+      tone: "danger",
+    });
+    if (ok) deleteMut.mutate(m.db_id);
+  };
 
   return (
     <Card>
       <CardHeader
-        title="Custom model registry"
-        description="Add fine-tunes and private upstream models that are not included in the provider catalog."
+        title="Custom models"
+        description="Models not in the provider catalog"
         action={
           <Button variant="secondary" onClick={openAdd}>
-            <Plus className="h-4 w-4" />
+            <Plus strokeWidth={1.75} />
             Add custom model
           </Button>
         }
       />
 
       {models.length === 0 ? (
-        <div className="border-t border-[var(--border)] px-6 py-10">
-          <EmptyState
-            title="No custom models registered"
-            hint={`Add a model ID to route it as ${provider.alias || provider.id}/<model>.`}
-          />
+        <div className="px-6 py-10 text-center">
+          <p className="text-[13px] font-medium text-fg">No custom models</p>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
+            Route any upstream model ID as{" "}
+            <span className="font-mono text-[12.5px] text-fg">{provider.alias || provider.id}/&lt;model&gt;</span>.
+          </p>
+          <Button className="mt-4" onClick={openAdd}>
+            <Plus strokeWidth={1.75} />
+            Add custom model
+          </Button>
         </div>
       ) : (
         <>
-          {models.length > 0 && (
-            <div className="flex flex-col gap-3 border-t border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
-              <div className="relative w-full sm:max-w-md">
-                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
-                <Input
-                  aria-label="Search custom models"
-                  placeholder="Search custom models…"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  className="pl-10 pr-10"
-                />
-                {searchQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchQuery("")}
-                    aria-label="Clear custom model search"
-                    className="absolute right-2 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-elevated)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-              <span className="text-sm text-[var(--text-muted)]">
-                {filteredModels.length} of {models.length} {models.length === 1 ? "model" : "models"}
-              </span>
+          <div className="flex flex-col gap-2 border-b border-line px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative w-full sm:max-w-xs">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <Input
+                aria-label="Search custom models"
+                placeholder="Search custom models…"
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                className="h-8 min-h-8 pl-8 pr-8"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  aria-label="Clear search"
+                  className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                >
+                  <X className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                </button>
+              )}
             </div>
-          )}
+            <span className="text-[12px] tabular-nums text-fg-muted" role="status">
+              {filteredModels.length} of {models.length} {models.length === 1 ? "model" : "models"}
+            </span>
+          </div>
           {filteredModels.length === 0 ? (
-            <div className="px-6 py-12 text-center text-sm text-[var(--text-muted)] border-t border-[var(--border)]">
-              No custom models found matching "{searchQuery}"
+            <div className="px-6 py-10 text-center text-[13px] text-fg-muted">
+              No custom models match “{searchQuery}”.
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-px border-t border-[var(--border)] bg-[var(--border)] sm:grid-cols-2 xl:grid-cols-3">
-              {paginatedModels.map((m) => (
-                <CustomModelCell
-                  key={m.db_id}
-                  model={m}
-                  provider={provider}
-                  onEdit={() => openEdit(m)}
-                  onDelete={() => setDeleteTarget(m)}
-                />
-              ))}
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[640px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                    <th scope="col" className="px-4 py-2 font-medium">Model</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Kind</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium">Context</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium">Input / output per 1M</th>
+                    <th scope="col" className="w-24 px-4 py-2"><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {paginatedModels.map((m) => (
+                    <CustomModelRow
+                      key={m.db_id}
+                      model={m}
+                      provider={provider}
+                      onEdit={() => openEdit(m)}
+                      onDelete={() => removeModel(m)}
+                      deleting={deleteMut.isPending && deleteMut.variables === m.db_id}
+                    />
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between rounded-b-2xl border-t border-[var(--border)] bg-[var(--bg-subtle)] px-6 py-3">
-              <span className="text-xs text-[var(--text-muted)]">
-                Showing {(page - 1) * PER_PAGE + 1} to {Math.min(page * PER_PAGE, filteredModels.length)} of {filteredModels.length} models
-              </span>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  className="h-8 px-2 text-xs"
-                  disabled={page === 1}
-                  onClick={() => setPage((p) => p - 1)}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="h-8 px-2 text-xs"
-                  disabled={page === totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
+          <TablePagination page={page} pages={totalPages} total={filteredModels.length} onPage={setPage} label="Custom models pages" />
         </>
       )}
 
@@ -208,131 +211,91 @@ export function CustomModelsSection({ provider }: { provider: Provider }) {
           }
         }}
       />
-
-      {/* Delete confirmation dialog */}
-      <Modal
-        open={!!deleteTarget}
-        onClose={() => { if (!deleteMut.isPending) setDeleteTarget(null); }}
-        title={`Remove custom model "${deleteTarget?.id}"?`}
-        subtitle="This model will no longer be routable."
-        maxWidth="max-w-md"
-      >
-        <div className="space-y-4 px-6 py-5">
-          <div className="flex items-start gap-3 rounded-xl border border-[color:var(--color-danger)]/30 bg-[color:var(--color-danger)]/10 px-3.5 py-3">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-danger)]" strokeWidth={2} />
-            <div className="text-sm leading-snug text-[color:var(--color-danger)]">
-              The model will be unregistered from this provider.
-              <span className="font-semibold"> This action cannot be undone.</span>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="ghost"
-              onClick={() => setDeleteTarget(null)}
-              disabled={deleteMut.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              onClick={() => deleteTarget && deleteMut.mutate(deleteTarget.db_id)}
-              disabled={deleteMut.isPending}
-            >
-              {deleteMut.isPending ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Trash2 className="h-3.5 w-3.5" />
-              )}
-              Remove model
-            </Button>
-          </div>
-        </div>
-      </Modal>
     </Card>
   );
 }
 
-// CustomModelCell renders a single custom model in a hairline grid cell,
-// matching the style of the catalog model list.
-function CustomModelCell({
+// CustomModelRow renders one custom model as a dense table row.
+function CustomModelRow({
   model: m,
   provider,
   onEdit,
   onDelete,
+  deleting,
 }: {
   model: CustomModel;
   provider: Provider;
   onEdit: () => void;
   onDelete: () => void;
+  deleting: boolean;
 }) {
+  const toast = useToast();
   const [copied, setCopied] = useState(false);
   const fullModel = `${provider.alias || provider.id}/${m.id}`;
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(fullModel);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    navigator.clipboard
+      .writeText(fullModel)
+      .then(() => {
+        setCopied(true);
+        toast.success("Copied", fullModel);
+        setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => toast.error("Couldn't copy", "Your browser blocked clipboard access."));
   };
 
+  const hasPrice = m.input_per_m > 0 || m.output_per_m > 0;
+
   return (
-    <article className="group flex min-h-36 flex-col bg-[var(--bg-elevated)] p-4 transition-colors duration-150 hover:bg-[var(--bg-subtle)]">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-subtle text-fg-muted">
-            <Sparkles className="h-4 w-4" />
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge tone="accent">Custom</Badge>
-            <Badge tone="neutral">{m.kind || "Model"}</Badge>
-          </div>
-        </div>
-        <div className="flex items-center gap-1">
+    <tr className={`transition-colors hover:bg-hover ${deleting ? "opacity-50" : ""}`} aria-busy={deleting || undefined}>
+      <td className="max-w-0 px-4 py-2.5">
+        <p className="truncate font-medium text-fg" title={m.name || m.id}>{m.name || m.id}</p>
+        <p className="truncate font-mono text-[12px] text-fg-muted" title={fullModel}>{fullModel}</p>
+      </td>
+      <td className="px-4 py-2.5">
+        <span className="inline-flex h-5 items-center rounded-md border border-line bg-subtle px-1.5 font-mono text-[11.5px] text-fg-muted">
+          {m.kind || "model"}
+        </span>
+      </td>
+      <td className="px-4 py-2.5 text-right tabular-nums text-fg-muted">
+        {m.context_window > 0 ? m.context_window.toLocaleString() : <span className="text-fg-faint">—</span>}
+      </td>
+      <td className="px-4 py-2.5 text-right tabular-nums text-fg-muted">
+        {hasPrice ? `$${m.input_per_m} / $${m.output_per_m}` : <span className="text-fg-faint">—</span>}
+      </td>
+      <td className="px-3 py-2.5">
+        <div className="flex items-center justify-end gap-0.5">
           <button
             type="button"
-            onClick={onEdit}
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
-            title="Edit model"
-            aria-label={`Edit ${m.name || m.id}`}
+            onClick={handleCopy}
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            title="Copy model path"
+            aria-label={`Copy model path ${fullModel}`}
           >
-            <Pencil className="h-4 w-4" />
+            {copied ? <Check className="h-4 w-4 text-ok" strokeWidth={1.75} aria-hidden="true" /> : <Copy className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />}
           </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[color:var(--color-danger)]/10 hover:text-[color:var(--color-danger)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-danger)]/40"
-            title="Remove model"
-            aria-label={`Remove ${m.name || m.id}`}
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              aria-label={`Actions for ${m.name || m.id}`}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            >
+              <MoreHorizontal className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={onEdit}>
+                <Pencil />
+                Edit model
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem tone="danger" onSelect={onDelete} disabled={deleting}>
+                <Trash2 />
+                Remove model
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
-      </div>
-
-      <div className="mt-4 min-w-0 flex-1">
-        <h3 className="truncate text-sm font-semibold" title={m.name || m.id}>{m.name || m.id}</h3>
-        <code className="mt-1.5 block truncate font-mono text-xs text-[var(--text-muted)]" title={fullModel}>
-          {fullModel}
-        </code>
-      </div>
-
-      <div className="mt-3 flex items-center gap-2 border-t border-[var(--border)] pt-2.5">
-        {m.context_window > 0 && (
-          <span className="text-xs text-[var(--text-muted)]">{m.context_window.toLocaleString()} context</span>
-        )}
-        {(m.input_per_m > 0 || m.output_per_m > 0) && (
-          <span className="text-xs text-[var(--text-muted)]">${m.input_per_m}/${m.output_per_m} per M</span>
-        )}
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
-          title="Copy model path"
-          aria-label={`Copy model path ${fullModel}`}
-        >
-          {copied ? <CheckCircle className="h-4 w-4 text-ok" /> : <Copy className="h-4 w-4" />}
-        </button>
-      </div>
-    </article>
+      </td>
+    </tr>
   );
 }
 
@@ -385,76 +348,88 @@ function CustomModelModal({
     });
   };
 
+
   return (
     <Modal
       open={open}
       onClose={onClose}
       title={editing ? "Edit custom model" : "Add custom model"}
-      subtitle="Register a model id the upstream accepts. Pricing and context are optional metadata."
+      subtitle="Only the model ID is required"
     >
-      <div className="space-y-4 px-6 py-5">
-        <Field label="Model ID (required)">
-          <Input
-            value={id}
-            onChange={(e) => setId(e.target.value)}
-            placeholder="e.g. gpt-4o-mini or my-finetune-v1"
-            autoFocus
-          />
-        </Field>
-        <Field label="Display name">
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Friendly label (optional)" />
-        </Field>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Kind">
-            <Select value={kind} onChange={(e) => setKind(e.target.value)}>
-              {MODEL_KINDS.map((k) => (
-                <option key={k} value={k}>
-                  {k}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Field label="Context window">
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          submit();
+        }}
+      >
+        <div className="space-y-4 px-5 py-4">
+          <Field label="Model ID" required hint="Sent to the upstream exactly as typed.">
             <Input
-              type="number"
-              min={0}
-              value={contextWindow}
-              onChange={(e) => setContextWindow(e.target.value)}
-              placeholder="e.g. 128000"
+              value={id}
+              onChange={(e) => setId(e.target.value)}
+              placeholder="e.g. my-finetune-v1"
+              className="font-mono"
+              autoFocus
             />
           </Field>
+          <Field label="Display name" optional>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Friendly label" />
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Kind">
+              <Select value={kind} onChange={(e) => setKind(e.target.value)}>
+                {MODEL_KINDS.map((k) => (
+                  <option key={k} value={k}>
+                    {k}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Context window" optional>
+              <Input
+                type="number"
+                min={0}
+                value={contextWindow}
+                onChange={(e) => setContextWindow(e.target.value)}
+                placeholder="e.g. 128000"
+                className="tabular-nums"
+              />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Input $ per 1M tokens" optional>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={inputPerM}
+                onChange={(e) => setInputPerM(e.target.value)}
+                placeholder="0"
+                className="tabular-nums"
+              />
+            </Field>
+            <Field label="Output $ per 1M tokens" optional>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={outputPerM}
+                onChange={(e) => setOutputPerM(e.target.value)}
+                placeholder="0"
+                className="tabular-nums"
+              />
+            </Field>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Input $/M tokens">
-            <Input
-              type="number"
-              min={0}
-              step="0.01"
-              value={inputPerM}
-              onChange={(e) => setInputPerM(e.target.value)}
-              placeholder="0"
-            />
-          </Field>
-          <Field label="Output $/M tokens">
-            <Input
-              type="number"
-              min={0}
-              step="0.01"
-              value={outputPerM}
-              onChange={(e) => setOutputPerM(e.target.value)}
-              placeholder="0"
-            />
-          </Field>
+        <div className="flex items-center justify-end gap-2 border-t border-line bg-subtle px-5 py-3">
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={!canSubmit}>
+            {editing ? "Save changes" : "Add model"}
+          </Button>
         </div>
-      </div>
-      <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-6 py-4">
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button onClick={submit} disabled={!canSubmit}>
-          {editing ? "Save changes" : "Add model"}
-        </Button>
-      </div>
+      </form>
     </Modal>
   );
 }

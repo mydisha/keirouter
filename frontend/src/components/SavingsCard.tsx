@@ -446,10 +446,13 @@ export function SavingsCardShareButton({
     actualCost,
   };
 
+  const [status, setStatus] = useState("");
+
   const handleShare = useCallback(async () => {
     if (!cardRef.current || generating) return;
     setGenerating(true);
     setDone(false);
+    setStatus("Creating savings card…");
 
     try {
       const dataUrl = await toPng(cardRef.current, {
@@ -464,9 +467,11 @@ export function SavingsCardShareButton({
       link.href = dataUrl;
       link.click();
       setDone(true);
+      setStatus("Savings card downloaded");
       setTimeout(() => setDone(false), 2000);
     } catch (err) {
       console.error("Failed to generate savings card:", err);
+      setStatus("Couldn't create the savings card. Try again.");
     } finally {
       setGenerating(false);
     }
@@ -476,6 +481,7 @@ export function SavingsCardShareButton({
     <>
       {/* Hidden card for image capture */}
       <div
+        aria-hidden="true"
         style={{
           position: "fixed",
           left: "-9999px",
@@ -489,37 +495,36 @@ export function SavingsCardShareButton({
         </div>
       </div>
 
-      {/* Download button */}
-		<button
-			type="button"
-			aria-label={done ? "Savings card downloaded" : generating ? "Generating savings card" : "Download savings card"}
-			title="Download savings card"
-			onClick={handleShare}
+      {/* Download button — a stable name; progress is announced separately. */}
+      <button
+        type="button"
+        aria-label="Download savings card"
+        title="Download savings card as PNG"
+        onClick={handleShare}
         disabled={generating || summary.total_requests === 0}
-        className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-line-strong bg-surface px-3 text-[12.5px] font-medium text-fg transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+        aria-busy={generating || undefined}
+        className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-line-strong bg-surface px-3 text-[12.5px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {done ? (
           <>
-            <Check className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Downloaded!</span>
+            <Check className="h-3.5 w-3.5 text-ok" aria-hidden="true" />
+            <span className="hidden sm:inline">Downloaded</span>
           </>
         ) : generating ? (
           <>
-            <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-            <span className="hidden sm:inline">Generating…</span>
+            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-line-strong border-t-fg-muted" aria-hidden="true" />
+            <span className="hidden sm:inline">Creating…</span>
           </>
         ) : (
           <>
-            <img
-              src="/keirouter-logo.png"
-              alt=""
-              className="h-3.5 w-3.5 object-contain"
-            />
-            <span className="hidden sm:inline">Savings Card</span>
-            <Download className="h-3.5 w-3.5 opacity-70" />
+            <Download className="h-3.5 w-3.5 text-fg-faint" aria-hidden="true" />
+            <span className="hidden sm:inline">Savings card</span>
           </>
         )}
       </button>
+      <span className="sr-only" role="status" aria-live="polite">
+        {status}
+      </span>
     </>
   );
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import type { ClientSaving, TokenSavings, UsageInsights } from "../lib/api";
 import { SavingsCardShareButton } from "./SavingsCard";
 
@@ -97,44 +97,42 @@ export function TokenSavingsBreakdown({ savings, totalRequests, insights, period
   // they are never reconstructed from overlapping optimizer activations.
   const shapers = [
     { label: "Caveman", count: savings.caveman_requests, hint: "Terse output instruction" },
-    { label: "Terse", count: savings.terse_requests, hint: "KeiRouter's concise-output directive" },
+    { label: "Terse", count: savings.terse_requests, hint: "Concise-output directive" },
     { label: "Ponytail", count: savings.ponytail_requests, hint: "Output trimming" },
   ];
   const cells = [
-    { label: "Value saved", value: fmtUSD(savings.usd_saved), hint: savings.usd_saved_estimate ? "Includes estimates" : "From pricing snapshots" },
+    { label: "Value saved", value: fmtUSD(savings.usd_saved), hint: savings.usd_saved_estimate ? "Includes estimates" : "" },
     { label: "Tokens saved", value: fmtNum(savings.total_tokens_saved), hint: `${fmtNum(savings.slim_tokens_saved)} RTK · ${fmtNum(savings.headroom_tokens_saved)} Headroom` },
     { label: "Optimized requests", value: fmtNum(savings.optimized_requests), hint: `${share(savings.optimized_requests)} of all requests` },
-    { label: "Prompt reduced", value: fmtBytes(savings.slim_bytes_saved), hint: `${fmtNum(savings.saved_tokens_per_optimized_request)} tokens per optimized request` },
+    { label: "Prompt reduced", value: fmtBytes(savings.slim_bytes_saved), hint: `${fmtNum(savings.saved_tokens_per_optimized_request)} tokens per request` },
   ];
 
+  const titleId = useId();
   return (
-    <section aria-label="Optimization" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section aria-labelledby={titleId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
-        <div>
-          <h2 className="text-[13px] font-semibold text-fg">Optimization</h2>
-          <p className="mt-0.5 text-[12px] text-fg-muted">What caching, compression and output shaping saved in this period</p>
-        </div>
+        <h2 id={titleId} className="text-[13px] font-semibold text-fg">Optimization</h2>
         <SavingsCardShareButton insights={insights} period={period} />
       </div>
-      <div className="grid grid-cols-2 gap-px border-b border-line bg-line lg:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-px border-b border-line bg-line lg:grid-cols-4">
         {cells.map((c) => (
           <div key={c.label} className="bg-surface px-4 py-3">
-            <p className="text-[12px] font-medium text-fg-muted">{c.label}</p>
-            <p className="mt-1 text-[18px] font-semibold tracking-[-0.01em] tabular-nums text-fg">{c.value}</p>
-            <p className="mt-0.5 truncate text-[12px] text-fg-faint" title={c.hint}>{c.hint}</p>
+            <dt className="text-[12px] font-medium text-fg-muted">{c.label}</dt>
+            <dd className="mt-1 text-[18px] font-semibold tracking-[-0.01em] tabular-nums text-fg">{c.value}</dd>
+            {c.hint && <dd className="mt-0.5 truncate text-[12px] text-fg-faint" title={c.hint}>{c.hint}</dd>}
           </div>
         ))}
-      </div>
+      </dl>
 
       <div className="grid gap-px bg-line lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
         <div className="bg-surface px-4 py-4">
-          <p className="mb-3 text-[12px] font-medium text-fg-muted">Compression rules · by bytes removed</p>
+          <h3 className="mb-3 text-[12px] font-medium text-fg-muted">Compression rules · by bytes removed</h3>
           {rules.length === 0 ? (
             <p className="rounded-xl border border-dashed border-line-strong px-4 py-6 text-center text-[12.5px] text-fg-muted">
               {savings.slim_tokens_saved + savings.headroom_tokens_saved > 0
-                ? "Prompts were compressed, but no per-rule breakdown was recorded for these requests."
+                ? "Prompts were compressed; no per-rule breakdown was recorded."
                 : savings.optimized_requests > 0
-                  ? "Only output shaping was active — no prompt was compressed."
+                  ? "Only output shaping was active."
                   : "No compression rule fired in this period."}
             </p>
           ) : (
@@ -142,7 +140,7 @@ export function TokenSavingsBreakdown({ savings, totalRequests, insights, period
               {rules.map((r) => (
                 <li key={r.rule} className="grid grid-cols-[minmax(0,9rem)_1fr_auto] items-center gap-3 text-[12.5px]">
                   <span className="truncate font-mono text-fg" title={r.rule}>{r.rule}</span>
-                  <span className="h-1.5 overflow-hidden rounded-full bg-track">
+                  <span className="h-1.5 overflow-hidden rounded-full bg-track" aria-hidden="true">
                     <span className="block h-full rounded-full bg-accent-500" style={{ width: `${Math.max(3, (r.bytes_saved / maxBytes) * 100)}%` }} />
                   </span>
                   <span className="whitespace-nowrap text-right tabular-nums text-fg-muted">
@@ -154,7 +152,7 @@ export function TokenSavingsBreakdown({ savings, totalRequests, insights, period
           )}
         </div>
         <div className="bg-surface px-4 py-4">
-          <p className="mb-3 text-[12px] font-medium text-fg-muted">Output shaping · share of requests</p>
+          <h3 className="mb-3 text-[12px] font-medium text-fg-muted">Output shaping · share of requests</h3>
           <ul className="divide-y divide-line">
             {shapers.map((s) => (
               <li key={s.label} className="flex items-baseline justify-between gap-3 py-2 text-[13px] first:pt-0">
@@ -189,7 +187,7 @@ function ClientBreakdown({ clients }: { clients: ClientSaving[] }) {
   const maxTokens = Math.max(...sorted.map((c) => c.tokens_saved), 1);
   return (
     <div className="border-t border-line px-4 py-4">
-      <p className="mb-3 text-[12px] font-medium text-fg-muted">By client</p>
+      <h3 className="mb-3 text-[12px] font-medium text-fg-muted">By client</h3>
       <ul className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
         {sorted.map((c) => (
           <li key={c.client} className="flex items-center gap-3">
@@ -199,11 +197,11 @@ function ClientBreakdown({ clients }: { clients: ClientSaving[] }) {
                 <span className="truncate font-medium text-fg">{prettyClient(c.client)}</span>
                 <span className="shrink-0 tabular-nums text-fg">{fmtUSD(c.usd_saved)}</span>
               </div>
-              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-track">
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-track" aria-hidden="true">
                 <div className="h-full rounded-full bg-accent-500" style={{ width: `${Math.max(3, (c.tokens_saved / maxTokens) * 100)}%` }} />
               </div>
               <p className="mt-1 text-[11.5px] tabular-nums text-fg-faint">
-                {fmtNum(c.tokens_saved)} tokens saved · {fmtNum(c.optimized_requests)} of {fmtNum(c.requests)} requests optimized
+                {fmtNum(c.tokens_saved)} tokens · {fmtNum(c.optimized_requests)} of {fmtNum(c.requests)} requests optimized
               </p>
             </div>
           </li>

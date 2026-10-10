@@ -1,7 +1,8 @@
-import { useMemo } from "react";
+import { useCallback, useId, useMemo, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import { api, type GuardrailScope } from "../lib/api";
-import { Select, Field, Spinner } from "./ui";
+import { Select, Skeleton } from "./ui";
 
 interface Props {
   scope: GuardrailScope;
@@ -28,6 +29,91 @@ export function ScopeIDSelector({ scope, value, onChange }: Props) {
   }
 }
 
+// useScopeTargetLabels resolves a policy's scope_id into a readable name using
+// the same cached queries the selectors use. Queries only run for scopes that
+// are actually present, so a page with only global policies fetches nothing.
+export function useScopeTargetLabels(scopes: Iterable<GuardrailScope>) {
+  const present = new Set(scopes);
+  const providers = useQuery({
+    queryKey: ["providers"],
+    queryFn: () => api.providers(),
+    staleTime: 60_000,
+    enabled: present.has("provider"),
+  });
+  const chains = useQuery({
+    queryKey: ["chains"],
+    queryFn: () => api.listChains(),
+    staleTime: 30_000,
+    enabled: present.has("chain"),
+  });
+  const keys = useQuery({
+    queryKey: ["keys"],
+    queryFn: () => api.listKeys(),
+    staleTime: 30_000,
+    enabled: present.has("apikey"),
+  });
+
+  return useCallback(
+    (scope: GuardrailScope, id: string): string | undefined => {
+      if (!id) return undefined;
+      switch (scope) {
+        case "provider":
+          return providers.data?.providers.find((p) => p.id === id)?.display_name;
+        case "chain":
+          return chains.data?.chains.find((c) => c.id === id)?.name;
+        case "apikey":
+          return keys.data?.keys.find((k) => k.id === id)?.name;
+        default:
+          return undefined;
+      }
+    },
+    [providers.data, chains.data, keys.data],
+  );
+}
+
+// ── Field chrome (matches ConnectKit / Keys form fields) ─────────────────────
+
+type FieldIds = { id: string; "aria-describedby"?: string };
+
+// ScopeField wires the visible label and one-line hint to the control.
+function ScopeField({
+  label,
+  hint,
+  loading,
+  children,
+}: {
+  label: string;
+  hint?: ReactNode;
+  loading?: boolean;
+  children: (ids: FieldIds) => ReactNode;
+}) {
+  const id = useId();
+  const hintId = `${id}-hint`;
+  return (
+    <div className="space-y-1.5" aria-busy={loading || undefined}>
+      <label htmlFor={id} className="block text-[12.5px] font-medium text-fg">
+        {label}
+      </label>
+      {loading ? <Skeleton className="h-9 w-full rounded-lg" /> : children({ id, "aria-describedby": hint ? hintId : undefined })}
+      {hint && (
+        <p id={hintId} className="text-[12px] text-fg-muted">
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function EmptyNotice({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex min-h-9 items-center rounded-lg border border-dashed border-line-strong bg-subtle px-3 py-2 text-[12.5px] text-fg-muted">
+      <span>{children}</span>
+    </div>
+  );
+}
+
+const inlineLink = "font-medium text-link hover:underline";
+
 function ProviderSelector({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const q = useQuery({
     queryKey: ["providers"],
@@ -36,12 +122,10 @@ function ProviderSelector({ value, onChange }: { value: string; onChange: (v: st
   });
   const options = q.data?.providers ?? [];
   return (
-    <Field label="Provider">
-      {q.isLoading ? (
-        <Spinner />
-      ) : (
-        <Select value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">— select a provider —</option>
+    <ScopeField label="Provider" loading={q.isLoading}>
+      {(ids) => (
+        <Select {...ids} required value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">Select a provider</option>
           {options.map((p) => (
             <option key={p.id} value={p.id}>
               {p.display_name} ({p.id})
@@ -49,7 +133,7 @@ function ProviderSelector({ value, onChange }: { value: string; onChange: (v: st
           ))}
         </Select>
       )}
-    </Field>
+    </ScopeField>
   );
 }
 
@@ -61,16 +145,14 @@ function ChainSelector({ value, onChange }: { value: string; onChange: (v: strin
   });
   const options = q.data?.chains ?? [];
   return (
-    <Field label="Chain">
-      {q.isLoading ? (
-        <Spinner />
-      ) : options.length === 0 ? (
-        <div className="text-xs text-[var(--text-muted)]">
-          No chains defined yet. Create a chain on the Chains page first.
-        </div>
+    <ScopeField label="Chain" loading={q.isLoading}>
+      {(ids) => options.length === 0 ? (
+        <EmptyNotice>
+          No chains yet. <Link to="/chains" className={inlineLink}>Create a chain</Link> first.
+        </EmptyNotice>
       ) : (
-        <Select value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">— select a chain —</option>
+        <Select {...ids} required value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">Select a chain</option>
           {options.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -78,7 +160,7 @@ function ChainSelector({ value, onChange }: { value: string; onChange: (v: strin
           ))}
         </Select>
       )}
-    </Field>
+    </ScopeField>
   );
 }
 
@@ -90,16 +172,14 @@ function APIKeySelector({ value, onChange }: { value: string; onChange: (v: stri
   });
   const options = q.data?.keys ?? [];
   return (
-    <Field label="API Key">
-      {q.isLoading ? (
-        <Spinner />
-      ) : options.length === 0 ? (
-        <div className="text-xs text-[var(--text-muted)]">
-          No API keys yet. Create one on the API Keys page first.
-        </div>
+    <ScopeField label="API key" loading={q.isLoading}>
+      {(ids) => options.length === 0 ? (
+        <EmptyNotice>
+          No API keys yet. <Link to="/keys" className={inlineLink}>Create a key</Link> first.
+        </EmptyNotice>
       ) : (
-        <Select value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">— select an API key —</option>
+        <Select {...ids} required value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">Select an API key</option>
           {options.map((k) => (
             <option key={k.id} value={k.id}>
               {k.name} — {k.display}
@@ -107,7 +187,7 @@ function APIKeySelector({ value, onChange }: { value: string; onChange: (v: stri
           ))}
         </Select>
       )}
-    </Field>
+    </ScopeField>
   );
 }
 
@@ -141,12 +221,10 @@ function ModelSelector({ value, onChange }: { value: string; onChange: (v: strin
   const loading = providers.isLoading || queries.some((q) => q.isLoading);
 
   return (
-    <Field label="Model">
-      {loading ? (
-        <Spinner />
-      ) : (
-        <Select value={value} onChange={(e) => onChange(e.target.value)}>
-          <option value="">— select a model —</option>
+    <ScopeField label="Model" hint="Matches this model id on every provider" loading={loading}>
+      {(ids) => (
+        <Select {...ids} required value={value} onChange={(e) => onChange(e.target.value)} className="font-mono">
+          <option value="">Select a model</option>
           {grouped.map((g) =>
             g.models.length === 0 ? null : (
               <optgroup key={g.provider.id} label={g.provider.display_name}>
@@ -160,6 +238,6 @@ function ModelSelector({ value, onChange }: { value: string; onChange: (v: strin
           )}
         </Select>
       )}
-    </Field>
+    </ScopeField>
   );
 }

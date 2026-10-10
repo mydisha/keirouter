@@ -1,11 +1,10 @@
-import { Suspense, useState, useEffect, type ReactNode } from "react";
+import { Suspense, useId, useState, useEffect, type ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import {
   Activity,
   BarChart3,
   Boxes,
-  Check,
   Cpu,
   Gauge,
   Image,
@@ -41,6 +40,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
@@ -114,27 +115,27 @@ const TITLE_BY_PATH: Record<string, string> = {
   "/skills": "Skills",
   "/providers": "Providers",
   "/media": "Media",
-  "/proxy-pools": "Proxy Pools",
+  "/proxy-pools": "Proxy pools",
   "/usage": "Usage",
-  "/plans": "Plans",
-  "/budgets": "Plans",
-  "/quota": "Quota Tracker",
+  "/plans": "Plans & budgets",
+  "/budgets": "Plans & budgets",
+  "/quota": "Quota",
   "/settings": "Settings",
-  "/keys": "API Keys",
+  "/keys": "API keys",
   "/guardrails": "Guardrails",
-  "/provider-health": "Provider Health",
-  "/console": "Console Log",
-  "/cli-tools": "CLI Tools",
+  "/provider-health": "Provider health",
+  "/console": "Console",
+  "/cli-tools": "CLI tools",
   "/system": "System",
 };
 
 const TITLE_BY_PREFIX: [string, string][] = [
   ["/providers/", "Provider"],
-  ["/cli-tools/", "CLI Tool"],
+  ["/cli-tools/", "CLI tool"],
   ["/media/", "Media"],
-  ["/keys/", "API Key"],
+  ["/keys/", "API key"],
   ["/chains/", "Chain"],
-  ["/provider-health/", "Provider Health"],
+  ["/provider-health/", "Provider health"],
 ];
 
 function titleForPath(pathname: string): string {
@@ -197,6 +198,7 @@ export function Layout() {
 
   return (
     <div className="flex h-full bg-canvas">
+      <SkipLink />
       {/* Desktop sidebar — hidden below lg. */}
       <div className="hidden lg:flex">
         <Sidebar />
@@ -204,7 +206,7 @@ export function Layout() {
 
       {/* Mobile navigation drawer. */}
       <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-        <SheetContent side="left" className="w-60 lg:hidden" aria-describedby={undefined}>
+        <SheetContent id={MOBILE_NAV_ID} side="left" className="w-60 lg:hidden" aria-describedby={undefined}>
           <SheetTitle className="sr-only">Navigation</SheetTitle>
           <Sidebar />
         </SheetContent>
@@ -212,8 +214,9 @@ export function Layout() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <RouteProgress />
-        <TopBar onMenuToggle={() => setSidebarOpen(true)} onSearchOpen={() => setPaletteOpen(true)} />
-        <main className="flex-1 overflow-y-auto">
+        <TopBar menuOpen={sidebarOpen} onMenuToggle={() => setSidebarOpen(true)} onSearchOpen={() => setPaletteOpen(true)} />
+        {/* tabIndex -1: the skip link moves focus here; no ring on a landmark. */}
+        <main id="main" tabIndex={-1} className="flex-1 overflow-y-auto" style={{ outline: "none" }}>
           <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
             <Suspense fallback={<PageOutletFallback />}>
               <Outlet />
@@ -227,10 +230,33 @@ export function Layout() {
   );
 }
 
+const MOBILE_NAV_ID = "mobile-navigation";
+
+// SkipLink is the first focusable element: hidden until focused, it jumps
+// keyboard users past the sidebar and top bar (WCAG 2.4.1). Focus is moved in
+// JS so the URL hash (used by some pages) is left untouched.
+function SkipLink() {
+  return (
+    <a
+      href="#main"
+      onClick={(e) => {
+        e.preventDefault();
+        const main = document.getElementById("main");
+        main?.focus();
+        main?.scrollIntoView({ block: "start" });
+      }}
+      className="fixed left-3 top-3 z-[120] -translate-y-[200%] rounded-lg bg-primary px-3 py-2 text-[13px] font-medium text-primary-fg shadow-[var(--shadow-pop)] focus:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+    >
+      Skip to main content
+    </a>
+  );
+}
+
 function PageOutletFallback() {
   return (
-    <div className="flex min-h-[240px] items-center justify-center py-16">
-      <div className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-fg-muted" />
+    <div className="flex min-h-[240px] items-center justify-center py-16" role="status">
+      <div className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-fg-muted" aria-hidden="true" />
+      <span className="sr-only">Loading page</span>
     </div>
   );
 }
@@ -241,7 +267,7 @@ function PageOutletFallback() {
 function RouteProgress() {
   const fetching = useIsFetching();
   if (fetching === 0) return null;
-  return <div className="route-progress" role="progressbar" aria-label="Loading" aria-busy="true" />;
+  return <div className="route-progress" role="progressbar" aria-label="Loading" />;
 }
 
 function useGatewayInfo() {
@@ -262,27 +288,34 @@ function Sidebar() {
   });
   const summary = health.data?.summary;
   const healthTone = summary ? (summary.unhealthy > 0 ? "bad" : summary.degraded > 0 ? "warn" : null) : null;
+  // Sidebar renders twice (desktop + mobile drawer), so heading ids are unique per instance.
+  const navId = useId();
 
   return (
     <aside className="flex h-full w-60 shrink-0 flex-col border-r border-line bg-surface">
       <SidebarBrand />
 
-      <nav aria-label="Main navigation" className="flex-1 overflow-y-auto px-2.5 pb-4 pt-2">
+      <nav aria-label="Primary" className="flex-1 overflow-y-auto px-2.5 pb-4 pt-2">
         {navGroups.map((group, gi) => (
-          <div key={gi} role="group" aria-label={group.heading} className={gi > 0 ? "mt-5" : undefined}>
-            {group.heading && <p className="px-2.5 pb-1.5 text-[11.5px] font-medium text-fg-faint">{group.heading}</p>}
-            <ul className="space-y-px">
+          <div key={gi} className={gi > 0 ? "mt-5" : undefined}>
+            {group.heading && (
+              <h2 id={`${navId}-group-${gi}`} className="px-2.5 pb-1.5 text-[11.5px] font-medium text-fg-faint">
+                {group.heading}
+              </h2>
+            )}
+            <ul className="space-y-px" aria-labelledby={group.heading ? `${navId}-group-${gi}` : undefined}>
               {group.items.map((item) => (
                 <li key={item.to}>
                   <NavLink
                     to={item.to}
                     end={item.end}
+                    aria-current="page"
                     onMouseEnter={() => item.preload && preloadRoute(item.preload)}
                     onFocus={() => item.preload && preloadRoute(item.preload)}
                     onTouchStart={() => item.preload && preloadRoute(item.preload)}
                     className={({ isActive }) =>
                       cn(
-                        "group flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+                        "group flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
                         isActive ? "bg-hover text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
                       )
                     }
@@ -296,7 +329,7 @@ function Sidebar() {
                         />
                         <span className="truncate">{item.label}</span>
                         {item.indicator === "live" && (
-                          <span className="live-dot ml-auto h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
+                          <span className="live-dot ml-auto h-1.5 w-1.5 rounded-full bg-ok" role="img" aria-label="Live" />
                         )}
                         {item.indicator === "health" && healthTone && (
                           <span
@@ -327,7 +360,7 @@ function SidebarBrand() {
   return (
     <Link
       to="/"
-      className="flex h-14 shrink-0 items-center gap-2.5 border-b border-line px-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500/40"
+      className="flex h-14 shrink-0 items-center gap-2.5 border-b border-line px-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
     >
       {branding.logo_url ? (
         <img src={branding.logo_url} alt={name} className="h-7 max-w-[150px] object-contain object-left" />
@@ -347,14 +380,16 @@ function SidebarBrand() {
 function GatewayStatus() {
   const info = useGatewayInfo();
   const data = info.data;
+  // The state is always written out; the dot only repeats it.
+  const label = info.isError ? "Gateway unreachable" : data ? "Gateway running" : "Checking gateway…";
   return (
-    <div className="m-2.5 mt-0 rounded-2xl border border-line bg-subtle px-3 py-2.5">
-      <div className="flex items-center gap-2 text-[12px] font-medium text-fg">
+    <section aria-label="Gateway status" className="m-2.5 mt-0 rounded-2xl border border-line bg-subtle px-3 py-2.5">
+      <div className="flex items-center gap-2 text-[12px] font-medium text-fg" role="status">
         <span
           className={cn("h-1.5 w-1.5 rounded-full", info.isError ? "bg-bad" : data ? "live-dot bg-ok" : "bg-fg-faint")}
           aria-hidden="true"
         />
-        {info.isError ? "Gateway unreachable" : "Gateway running"}
+        {label}
       </div>
       {data && (
         <>
@@ -367,11 +402,11 @@ function GatewayStatus() {
           </div>
         </>
       )}
-    </div>
+    </section>
   );
 }
 
-function TopBar({ onMenuToggle, onSearchOpen }: { onMenuToggle: () => void; onSearchOpen: () => void }) {
+function TopBar({ menuOpen, onMenuToggle, onSearchOpen }: { menuOpen: boolean; onMenuToggle: () => void; onSearchOpen: () => void }) {
   const { branding } = useBranding();
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-4 sm:px-6 lg:px-8">
@@ -379,20 +414,25 @@ function TopBar({ onMenuToggle, onSearchOpen }: { onMenuToggle: () => void; onSe
         type="button"
         onClick={onMenuToggle}
         aria-label="Open navigation"
-        className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40 lg:hidden"
+        aria-expanded={menuOpen}
+        aria-controls={MOBILE_NAV_ID}
+        aria-haspopup="dialog"
+        className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 lg:hidden"
       >
-        <Menu className="h-[18px] w-[18px]" />
+        <Menu className="h-[18px] w-[18px]" aria-hidden="true" />
       </button>
 
+      {/* Name = visible text (WCAG 2.5.3); the shortcut is exposed separately. */}
       <button
         type="button"
         onClick={onSearchOpen}
-        aria-label="Open search (⌘K)"
-        className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-line bg-subtle px-3 text-left text-[13px] text-fg-faint transition-colors hover:border-line-strong sm:max-w-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+        aria-haspopup="dialog"
+        aria-keyshortcuts="Meta+K Control+K"
+        className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-lg border border-input bg-subtle px-3 text-left text-[13px] text-fg-faint transition-colors hover:border-fg-faint sm:max-w-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
       >
-        <Search className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+        <Search className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
         <span className="truncate">Search {branding.name || "KeiRouter"}…</span>
-        <kbd className="ml-auto hidden rounded border border-line bg-surface px-1.5 font-mono text-[10.5px] text-fg-faint sm:inline">⌘K</kbd>
+        <kbd className="ml-auto hidden rounded border border-line bg-surface px-1.5 font-mono text-[10.5px] text-fg-faint sm:inline" aria-hidden="true">⌘K</kbd>
       </button>
 
       <div className="ml-auto flex items-center gap-1.5">
@@ -414,14 +454,15 @@ function AccountMenu() {
   const { theme, setTheme } = useTheme();
   const { branding } = useBranding();
   const initial = (branding.name || "KeiRouter").slice(0, 1).toUpperCase();
+  const themeLabelId = useId();
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        aria-label="Account menu"
-        className="flex h-8 w-8 items-center justify-center rounded-full border border-line bg-subtle text-[12px] font-semibold text-fg transition-colors hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+        aria-label="Account and theme"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-line bg-subtle text-[12px] font-semibold text-fg transition-colors hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
       >
-        {initial}
+        <span aria-hidden="true">{initial}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-52">
         <DropdownMenuLabel>
@@ -429,18 +470,19 @@ function AccountMenu() {
           <span className="block">Dashboard session</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        <DropdownMenuLabel className="pb-1 pt-1">Theme</DropdownMenuLabel>
-        {THEME_OPTIONS.map((opt) => (
-          <DropdownMenuItem key={opt.value} onSelect={() => setTheme(opt.value)}>
-            <opt.icon />
-            {opt.label}
-            {theme === opt.value && <Check className="ml-auto !text-fg" />}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuLabel className="pb-1 pt-1" id={themeLabelId}>Theme</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as Theme)} aria-labelledby={themeLabelId}>
+          {THEME_OPTIONS.map((opt) => (
+            <DropdownMenuRadioItem key={opt.value} value={opt.value}>
+              <opt.icon aria-hidden="true" />
+              {opt.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
           <Link to="/settings">
-            <Settings />
+            <Settings aria-hidden="true" />
             Settings
           </Link>
         </DropdownMenuItem>
@@ -451,7 +493,7 @@ function AccountMenu() {
             qc.invalidateQueries({ queryKey: ["auth-status"] });
           }}
         >
-          <LogOut />
+          <LogOut aria-hidden="true" />
           Sign out
         </DropdownMenuItem>
       </DropdownMenuContent>

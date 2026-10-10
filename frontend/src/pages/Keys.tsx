@@ -1,13 +1,11 @@
-import { useState, useCallback, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useCallback, useEffect, useId, useMemo, type ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  ArrowLeft,
-  ArrowRight,
   Check,
+  ChevronDown,
   Copy,
-  KeyRound,
   Link2,
   MoreHorizontal,
   Plus,
@@ -26,7 +24,6 @@ import {
   Button,
   Input,
   Select,
-  Badge,
   Skeleton,
   Toggle,
   Modal,
@@ -53,16 +50,7 @@ const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
   { value: "inactive", label: "Disabled" },
 ];
 
-type KeySummary = {
-  total: number;
-  active: number;
-  disabled: number;
-  restricted: number;
-  usedRecently: number;
-  neverUsed: number;
-};
-
-const DAY_MS = 86_400_000;
+const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
 
 function usedAt(iso?: string | null): number | null {
   if (!iso) return null;
@@ -71,21 +59,9 @@ function usedAt(iso?: string | null): number | null {
   return Number.isFinite(t) && t > 0 ? t : null;
 }
 
-function getKeySummary(keys: APIKey[] = []): KeySummary {
-  const now = Date.now();
-  return keys.reduce(
-    (acc, key) => {
-      acc.total += 1;
-      if (key.disabled) acc.disabled += 1;
-      else acc.active += 1;
-      if ((key.allowed_models ?? []).length > 0) acc.restricted += 1;
-      const t = usedAt(key.last_used_at);
-      if (t === null) acc.neverUsed += 1;
-      else if (now - t < DAY_MS) acc.usedRecently += 1;
-      return acc;
-    },
-    { total: 0, active: 0, disabled: 0, restricted: 0, usedRecently: 0, neverUsed: 0 },
-  );
+function getStatusCounts(keys: APIKey[] = []): Record<StatusFilter, number> {
+  const disabled = keys.filter((k) => k.disabled).length;
+  return { all: keys.length, active: keys.length - disabled, inactive: disabled };
 }
 
 // relativeTime renders "3 min ago" style labels for last-used timestamps.
@@ -117,7 +93,7 @@ function useCopy() {
           return true;
         },
         () => {
-          toast.error("Copy failed", "Your browser blocked clipboard access.");
+          toast.error("Copy failed", "Your browser blocked clipboard access. Select the text and copy it manually.");
           return false;
         },
       ),
@@ -125,35 +101,64 @@ function useCopy() {
   );
 }
 
+function planLimitText(p: Plan): string {
+  const parts: string[] = [];
+  if (p.limit_micros > 0) parts.push(`${microsToUSD(p.limit_micros)} / ${p.period}`);
+  if (p.limit_tokens > 0) parts.push(`${formatTokens(p.limit_tokens)} tokens / ${p.period}`);
+  if (parts.length === 0) parts.push("No spend limit");
+  return parts.join(" · ");
+}
+
+function planSummary(p: Plan): string {
+  const models = (p.allowed_models ?? []).length;
+  return [
+    planLimitText(p),
+    models > 0 ? `${models} model${models === 1 ? "" : "s"}` : "All models",
+    p.hard_cutoff ? "Hard cutoff" : "Alerts only",
+  ].join(" · ");
+}
+
 // ── Form primitives (match ConnectKit field styling) ─────────────────────────
 
 function FormField({
+  id,
   label,
   hint,
   optional,
+  required,
   children,
 }: {
+  id: string;
   label: string;
   hint?: ReactNode;
   optional?: boolean;
+  required?: boolean;
   children: ReactNode;
 }) {
   return (
-    <label className="block space-y-1.5">
-      <span className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
-        {label}
-        {optional && <span className="text-[12px] font-normal text-fg-faint">Optional</span>}
-      </span>
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <label htmlFor={id} className="text-[12.5px] font-medium text-fg">
+          {label}
+        </label>
+        {optional && <span className="text-[12px] text-fg-faint">Optional</span>}
+        {required && <span className="text-[12px] text-fg-faint">Required</span>}
+      </div>
       {children}
-      {hint && <span className="block text-[12px] leading-5 text-fg-muted">{hint}</span>}
-    </label>
+      {hint && (
+        <p id={`${id}-hint`} className="text-[12px] leading-5 text-fg-muted">
+          {hint}
+        </p>
+      )}
+    </div>
   );
 }
 
 /** Token count input that keeps the thousand separators visible while typing. */
-function TokenInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+function TokenInput({ id, value, onChange, placeholder }: { id: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
     <Input
+      id={id}
       type="text"
       inputMode="numeric"
       value={formatTokenLimit(value)}
@@ -161,6 +166,17 @@ function TokenInput({ value, onChange, placeholder }: { value: string; onChange:
       placeholder={placeholder ? (/^\d+$/.test(placeholder) ? formatTokenLimit(placeholder) : placeholder) : undefined}
       className="tabular-nums"
     />
+  );
+}
+
+function SettingRow({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-3 py-2.5">
+      <span id={id} className="min-w-0 text-[13px] font-medium text-fg">
+        {label}
+      </span>
+      <div className="shrink-0">{children}</div>
+    </div>
   );
 }
 
@@ -176,17 +192,17 @@ export function KeysPage() {
   const toast = useToast();
   const copy = useCopy();
   const navigate = useNavigate();
+  const fid = useId();
   const keys = useQuery({ queryKey: ["keys"], queryFn: () => api.listKeys() });
   const access = useQuery({ queryKey: ["access-settings"], queryFn: () => api.accessSettings() });
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("created_desc");
 
   const allKeys = keys.data?.keys ?? [];
-  const summary = useMemo(() => getKeySummary(keys.data?.keys ?? []), [keys.data]);
+  const statusCounts = useMemo(() => getStatusCounts(keys.data?.keys ?? []), [keys.data]);
 
   const visibleKeys = useMemo(() => {
     const all = keys.data?.keys ?? [];
@@ -226,10 +242,11 @@ export function KeysPage() {
     pagination.setPage(1);
   }, [statusFilter, searchQuery, sortKey]);
 
-  // Step 1 — name
+  // Essentials
   const [name, setName] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // Step 2 — budget
+  // Advanced — limits and models
   const [budgetLimit, setBudgetLimit] = useState("");
   const [budgetLimitTokens, setBudgetLimitTokens] = useState("");
   const [budgetPeriod, setBudgetPeriod] = useState("monthly");
@@ -237,9 +254,14 @@ export function KeysPage() {
   const [budgetHardCutoff, setBudgetHardCutoff] = useState(true);
   const [allowedModels, setAllowedModels] = useState<string[]>([]);
 
-  // Step 3 — result
+  // Result
   const [created, setCreated] = useState<CreatedKey | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Plan selection
+  const plans = useQuery({ queryKey: ["plans"], queryFn: () => api.listPlans() });
+  const [selectedPlanId, setSelectedPlanId] = useState<string>("custom");
+  const [customizePlan, setCustomizePlan] = useState(false);
 
   const openModal = () => {
     setName("");
@@ -251,9 +273,9 @@ export function KeysPage() {
     setBudgetAlertPct(80);
     setBudgetHardCutoff(true);
     setAllowedModels([]);
+    setShowAdvanced(false);
     setCreated(null);
     setCopied(false);
-    setStep(1);
     setModalOpen(true);
   };
 
@@ -264,11 +286,6 @@ export function KeysPage() {
       setCopied(false);
     }
   };
-
-  // Plan selection
-  const plans = useQuery({ queryKey: ["plans"], queryFn: () => api.listPlans() });
-  const [selectedPlanId, setSelectedPlanId] = useState<string>("custom");
-  const [customizePlan, setCustomizePlan] = useState(false);
 
   const create = useMutation({
     mutationFn: () => {
@@ -298,16 +315,9 @@ export function KeysPage() {
       qc.invalidateQueries({ queryKey: ["budget-status"] });
       qc.invalidateQueries({ queryKey: ["plans"] });
       setCreated(data);
-      setStep(4);
-      const planMsg = data.plan ? ` Plan: ${data.plan.name}.` : "";
-      const parts = [];
-      if (data.budget && data.budget.limit_micros > 0) parts.push(`$${(data.budget.limit_micros / 1_000_000).toFixed(2)}`);
-      if (data.budget && data.budget.limit_tokens > 0) parts.push(`${(data.budget.limit_tokens / 1_000_000).toFixed(0)}M tokens`);
-      const budgetMsg = parts.length > 0 ? ` Budget: ${parts.join(" + ")} / ${data.budget?.period}.` : "";
-      const modelMsg = data.allowed_models?.length ? ` Models: ${data.allowed_models.join(", ")}.` : "";
-      toast.success("Key created", `Copy the key below — it won't be shown again.${planMsg}${budgetMsg}${modelMsg}`);
+      toast.success("Key created", "Copy it now. It won't be shown again.");
     },
-    onError: (e: Error) => toast.error("Key creation failed", e.message),
+    onError: (e: Error) => toast.error("Couldn't create key", e.message),
   });
 
   // Multi-select state
@@ -342,9 +352,9 @@ export function KeysPage() {
     onSuccess: (_, ids) => {
       qc.invalidateQueries({ queryKey: ["keys"] });
       clearSelection();
-      toast.success(`${ids.length} key${ids.length > 1 ? "s" : ""} revoked`, "All selected keys have been permanently deleted.");
+      toast.success(`${ids.length} key${ids.length > 1 ? "s" : ""} revoked`, "They can no longer authenticate requests.");
     },
-    onError: (e: Error) => toast.error("Bulk revocation failed", e.message),
+    onError: (e: Error) => toast.error("Couldn't revoke keys", e.message),
   });
 
   const handleBulkDelete = async () => {
@@ -358,9 +368,9 @@ export function KeysPage() {
     mutationFn: (id: string) => api.deleteKey(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["keys"] });
-      toast.success("Key revoked", "The key has been permanently deleted and can no longer authenticate requests.");
+      toast.success("Key revoked", "It can no longer authenticate requests.");
     },
-    onError: (e: Error) => toast.error("Revocation failed", e.message),
+    onError: (e: Error) => toast.error("Couldn't revoke key", e.message),
   });
 
   const toggleDisabled = useMutation({
@@ -369,12 +379,10 @@ export function KeysPage() {
       qc.invalidateQueries({ queryKey: ["keys"] });
       toast.success(
         data.disabled ? "Key disabled" : "Key enabled",
-        data.disabled
-          ? "Requests using this key will be rejected until re-enabled."
-          : "This key can now authenticate requests again.",
+        data.disabled ? "Requests using this key are rejected." : "This key can authenticate requests again.",
       );
     },
-    onError: (e: Error) => toast.error("Key update failed", e.message),
+    onError: (e: Error) => toast.error("Couldn't update key", e.message),
   });
 
   const revokeOne = async (k: APIKey) => {
@@ -382,77 +390,197 @@ export function KeysPage() {
     remove.mutate(k.id);
   };
 
-  const statusCounts: Record<StatusFilter, number> = { all: summary.total, active: summary.active, inactive: summary.disabled };
   const allVisibleSelected = visibleKeys.length > 0 && visibleKeys.every((k) => selectedIds.has(k.id));
   const someVisibleSelected = visibleKeys.some((k) => selectedIds.has(k.id));
   const filtering = searchQuery.trim() !== "" || statusFilter !== "all";
+  const isEmpty = !keys.isLoading && !keys.isError && allKeys.length === 0;
+
+  // ── Create form ────────────────────────────────────────────────────────────
+  const planList = plans.data?.plans ?? [];
+  const isCustom = selectedPlanId === "custom";
+  const selectedPlan = planList.find((p) => p.id === selectedPlanId);
+  const ids = {
+    name: `${fid}-name`,
+    plan: `${fid}-plan`,
+    advanced: `${fid}-advanced`,
+    usd: `${fid}-usd`,
+    tokens: `${fid}-tokens`,
+    period: `${fid}-period`,
+    models: `${fid}-models`,
+    alert: `${fid}-alert`,
+    cutoff: `${fid}-cutoff`,
+    override: `${fid}-override`,
+  };
+
+  const createForm = (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (name.trim() && !create.isPending) create.mutate();
+      }}
+    >
+      <div className="space-y-4 px-5 py-4">
+        <FormField id={ids.name} label="Name" required>
+          <Input
+            id={ids.name}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. laptop, ci-runner, alice"
+            required
+            aria-required="true"
+            autoFocus
+          />
+        </FormField>
+
+        <FormField
+          id={ids.plan}
+          label="Plan"
+          hint={isCustom ? "No plan. Set limits under Advanced." : selectedPlan ? planSummary(selectedPlan) : undefined}
+        >
+          <Select
+            id={ids.plan}
+            value={selectedPlanId}
+            onChange={(e) => setSelectedPlanId(e.target.value)}
+            disabled={plans.isLoading}
+            aria-describedby={isCustom || selectedPlan ? `${ids.plan}-hint` : undefined}
+          >
+            <option value="custom">Custom</option>
+            {plans.isLoading && <option disabled>Loading plans…</option>}
+            {planList.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        </FormField>
+
+        <div className="rounded-lg border border-line">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            aria-expanded={showAdvanced}
+            aria-controls={ids.advanced}
+            className={cn(
+              "flex min-h-10 w-full items-center justify-between gap-2 rounded-lg px-3 text-left text-[13px] font-medium text-fg transition-colors hover:bg-hover",
+              FOCUS_RING,
+            )}
+          >
+            <span>
+              Advanced <span className="font-normal text-fg-muted">· limits and models</span>
+            </span>
+            <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showAdvanced && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+
+          {showAdvanced && (
+            <div id={ids.advanced} className="space-y-4 border-t border-line px-3 py-3">
+              {!isCustom && (
+                <div className="-mx-3 -mt-3 border-b border-line">
+                  <SettingRow id={ids.override} label="Override plan for this key">
+                    <Toggle checked={customizePlan} onChange={setCustomizePlan} aria-labelledby={ids.override} />
+                  </SettingRow>
+                </div>
+              )}
+
+              {(isCustom || customizePlan) && (
+                <>
+                  <div className={cn("grid gap-3", isCustom ? "sm:grid-cols-[1fr_1fr_8.5rem]" : "sm:grid-cols-2")}>
+                    <FormField id={ids.usd} label="Limit (USD)" optional>
+                      <Input
+                        id={ids.usd}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={budgetLimit}
+                        onChange={(e) => setBudgetLimit(e.target.value)}
+                        placeholder={isCustom ? "50.00" : "Plan default"}
+                        className="tabular-nums"
+                      />
+                    </FormField>
+                    <FormField id={ids.tokens} label="Limit (tokens)" optional>
+                      <TokenInput id={ids.tokens} value={budgetLimitTokens} onChange={setBudgetLimitTokens} placeholder={isCustom ? "100000000" : "Plan default"} />
+                    </FormField>
+                    {isCustom && (
+                      <FormField id={ids.period} label="Period">
+                        <Select id={ids.period} value={budgetPeriod} onChange={(e) => setBudgetPeriod(e.target.value)}>
+                          {budgetPeriods.map((p) => (
+                            <option key={p.value} value={p.value}>{p.label}</option>
+                          ))}
+                        </Select>
+                      </FormField>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5" role="group" aria-labelledby={ids.models} aria-describedby={`${ids.models}-hint`}>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span id={ids.models} className="text-[12.5px] font-medium text-fg">Allowed models</span>
+                      <span className="text-[12px] text-fg-faint">Optional</span>
+                    </div>
+                    <ModelMultiSelect value={allowedModels} onChange={setAllowedModels} aria-labelledby={ids.models} />
+                    <p id={`${ids.models}-hint`} className="text-[12px] leading-5 text-fg-muted">
+                      {isCustom ? (
+                        <>Empty allows every model. <span className="font-mono">*</span> matches many, e.g. <span className="font-mono">claude-*</span>.</>
+                      ) : (
+                        "Empty keeps the plan's models."
+                      )}
+                    </p>
+                  </div>
+
+                  {isCustom && (
+                    <div className="divide-y divide-line rounded-lg border border-line">
+                      <SettingRow id={ids.alert} label="Alert at">
+                        <span className="flex items-center gap-1.5">
+                          <Input
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={budgetAlertPct}
+                            onChange={(e) => setBudgetAlertPct(parseInt(e.target.value) || 80)}
+                            className="w-20 text-right tabular-nums"
+                            aria-labelledby={ids.alert}
+                            aria-describedby={`${ids.alert}-unit`}
+                          />
+                          <span id={`${ids.alert}-unit`} className="text-[13px] text-fg-muted">% of budget</span>
+                        </span>
+                      </SettingRow>
+                      <SettingRow id={ids.cutoff} label="Block requests when the budget is used up">
+                        <Toggle checked={budgetHardCutoff} onChange={setBudgetHardCutoff} aria-labelledby={ids.cutoff} />
+                      </SettingRow>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <DialogFooter>
+        <div className="flex-1" />
+        <Button type="button" variant="ghost" onClick={closeModal}>Cancel</Button>
+        <Button type="submit" disabled={!name.trim() || create.isPending}>
+          {create.isPending ? "Creating…" : "Create key"}
+        </Button>
+      </DialogFooter>
+    </form>
+  );
 
   return (
     <>
       <PageHeader
         title="API keys"
-        icon={KeyRound}
-        description="Keys your tools and teammates use to call KeiRouter. Each key carries a plan, an optional model allowlist and its own owner portal."
+        description="Keys your tools and teammates use to call KeiRouter."
         action={
-          <Button onClick={openModal}>
-            <Plus />
-            New key
-          </Button>
+          isEmpty ? undefined : (
+            <Button onClick={openModal}>
+              <Plus aria-hidden="true" />
+              New key
+            </Button>
+          )
         }
       />
 
-      <Modal
-        open={modalOpen}
-        onClose={closeModal}
-        maxWidth="max-w-xl"
-        title={step === 4 ? "Key created" : "Create API key"}
-        subtitle={
-          step === 1
-            ? "Step 1 of 3 · Name the key so you can recognise it in usage logs."
-            : step === 2
-              ? "Step 2 of 3 · Choose a plan or set custom limits."
-              : step === 3
-                ? selectedPlanId === "custom"
-                  ? "Step 3 of 3 · Set limits and model access for this key."
-                  : "Step 3 of 3 · Optionally override plan settings for this key."
-                : undefined
-        }
-      >
-        {step === 1 && <StepName name={name} setName={setName} onNext={() => setStep(2)} onCancel={closeModal} />}
-        {step === 2 && (
-          <StepPlanSelect
-            plans={plans.data?.plans ?? []}
-            loading={plans.isLoading}
-            selectedPlanId={selectedPlanId}
-            setSelectedPlanId={setSelectedPlanId}
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
-          />
-        )}
-        {step === 3 && (
-          <StepConfigure
-            selectedPlanId={selectedPlanId}
-            plans={plans.data?.plans ?? []}
-            customizePlan={customizePlan}
-            setCustomizePlan={setCustomizePlan}
-            budgetLimit={budgetLimit}
-            setBudgetLimit={setBudgetLimit}
-            budgetLimitTokens={budgetLimitTokens}
-            setBudgetLimitTokens={setBudgetLimitTokens}
-            budgetPeriod={budgetPeriod}
-            setBudgetPeriod={setBudgetPeriod}
-            budgetAlertPct={budgetAlertPct}
-            setBudgetAlertPct={setBudgetAlertPct}
-            budgetHardCutoff={budgetHardCutoff}
-            setBudgetHardCutoff={setBudgetHardCutoff}
-            allowedModels={allowedModels}
-            setAllowedModels={setAllowedModels}
-            onBack={() => setStep(2)}
-            onCreate={() => create.mutate()}
-            isPending={create.isPending}
-          />
-        )}
-        {step === 4 && created && (
+      <Modal open={modalOpen} onClose={closeModal} maxWidth="max-w-lg" title={created ? "Key created" : "Create API key"}>
+        {created ? (
           <StepSuccess
             created={created}
             copied={copied}
@@ -468,58 +596,56 @@ export function KeysPage() {
                   : "all models"
             }
           />
+        ) : (
+          createForm
         )}
       </Modal>
 
       {keys.isLoading ? (
-        <div className="space-y-4">
-          <Skeleton className="h-[74px] w-full rounded-2xl" />
-          <Skeleton className="h-9 w-full max-w-xl" />
+        <div className="space-y-3" aria-busy="true" aria-label="Loading API keys">
+          <Skeleton className="h-12 w-full rounded-2xl" />
           <Skeleton className="h-80 w-full rounded-2xl" />
         </div>
       ) : keys.isError ? (
-        <ErrorBanner message={`Couldn't load API keys. ${keys.error instanceof Error ? keys.error.message : ""}`.trim()} />
+        <div className="space-y-3">
+          <ErrorBanner message={`Couldn't load API keys. ${keys.error instanceof Error ? keys.error.message : ""}`.trim()} />
+          <Button variant="secondary" onClick={() => keys.refetch()}>Retry</Button>
+        </div>
       ) : allKeys.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-          <p className="text-[14px] font-medium text-fg">No API keys yet</p>
-          <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
-            Create a key for a CLI tool, app or teammate. The full secret is shown once, then only its hash is stored.
-          </p>
+          <h2 className="text-[14px] font-semibold text-fg">No API keys yet</h2>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">Create a key for each tool, app or teammate that calls KeiRouter.</p>
           <Button className="mt-4" onClick={openModal}>
-            <Plus />
-            Create first key
+            <Plus aria-hidden="true" />
+            Create key
           </Button>
         </div>
       ) : (
-        <>
-          <section aria-label="Key summary" className="mb-5 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-            <div className="grid grid-cols-2 gap-px bg-line lg:grid-cols-4">
-              <KpiCell label="Total keys" value={summary.total} hint={summary.neverUsed > 0 ? `${summary.neverUsed} never used` : "All have been used"} />
-              <KpiCell label="Active" value={summary.active} hint={`${summary.usedRecently} used in the last 24 hours`} />
-              <KpiCell label="Disabled" value={summary.disabled} hint="Rejected until re-enabled" muted={summary.disabled === 0} />
-              <KpiCell label="Model-restricted" value={summary.restricted} hint="Own model allowlist" muted={summary.restricted === 0} />
-            </div>
-          </section>
+        <section aria-labelledby={`${fid}-list`} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+          <h2 id={`${fid}-list`} className="sr-only">Keys</h2>
 
-          <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center">
-            <div className="relative lg:w-80">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} />
+          <div className="flex flex-col gap-2 border-b border-line px-4 py-3 lg:flex-row lg:items-center">
+            <div className="relative lg:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
               <input
                 type="search"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search name, key or plan"
                 aria-label="Search keys"
-                className="h-9 w-full rounded-lg border border-line bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25"
+                className={cn(
+                  "h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500",
+                  FOCUS_RING,
+                )}
               />
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery("")}
-                  className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg"
+                  className={cn("absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg", FOCUS_RING)}
                   aria-label="Clear search"
                 >
-                  <X className="h-3.5 w-3.5" />
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
               )}
             </div>
@@ -534,19 +660,23 @@ export function KeysPage() {
                     aria-checked={active}
                     onClick={() => setStatusFilter(f.value)}
                     className={cn(
-                      "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+                      "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors",
+                      FOCUS_RING,
                       active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
                     )}
                   >
                     {f.label}
-                    <span className={cn("tabular-nums", active ? "opacity-70" : "text-fg-faint")}>{statusCounts[f.value]}</span>
+                    <span className={cn("font-normal tabular-nums", !active && "text-fg-faint")}>{statusCounts[f.value]}</span>
                   </button>
                 );
               })}
             </div>
-            <div className="lg:ml-auto">
-              <label className="sr-only" htmlFor="key-sort">Sort keys</label>
-              <Select id="key-sort" className="h-9 w-full sm:w-40" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
+            <div className="flex items-center gap-3 lg:ml-auto">
+              <span role="status" className="text-[12.5px] tabular-nums text-fg-muted">
+                {filtering ? `${visibleKeys.length} of ${allKeys.length}` : ""}
+              </span>
+              <label className="sr-only" htmlFor={`${fid}-sort`}>Sort keys</label>
+              <Select id={`${fid}-sort`} className="h-9 w-full sm:w-40" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
                 <option value="created_desc">Newest first</option>
                 <option value="created_asc">Oldest first</option>
                 <option value="name_asc">Name A–Z</option>
@@ -555,98 +685,91 @@ export function KeysPage() {
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-            <div className="flex min-h-12 flex-wrap items-center gap-2 border-b border-line px-4 py-2">
-              {selectedIds.size > 0 ? (
-                <>
-                  <span className="text-[13px] font-medium text-fg">{selectedIds.size} selected</span>
-                  <div className="ml-auto flex items-center gap-1.5">
-                    <Button variant="danger" onClick={handleBulkDelete} disabled={bulkRemove.isPending}>
-                      <Trash2 />
-                      Revoke {selectedIds.size}
-                    </Button>
-                    <button
-                      type="button"
-                      onClick={clearSelection}
-                      aria-label="Clear selection"
-                      className="flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  </div>
-                </>
-              ) : (
-                <span className="text-[12.5px] text-fg-muted">
-                  {filtering ? `${visibleKeys.length} of ${allKeys.length} keys` : `${allKeys.length} key${allKeys.length === 1 ? "" : "s"}`} · open a key to change its models or guardrails
-                </span>
-              )}
+          <p role="status" className="sr-only">
+            {selectedIds.size > 0 ? `${selectedIds.size} key${selectedIds.size === 1 ? "" : "s"} selected` : ""}
+          </p>
+          {selectedIds.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-b border-line bg-subtle px-4 py-2">
+              <span className="text-[13px] font-medium tabular-nums text-fg">{selectedIds.size} selected</span>
+              <div className="ml-auto flex items-center gap-1.5">
+                <Button variant="danger" onClick={handleBulkDelete} disabled={bulkRemove.isPending}>
+                  <Trash2 aria-hidden="true" />
+                  Revoke {selectedIds.size}
+                </Button>
+                <button
+                  type="button"
+                  onClick={clearSelection}
+                  aria-label="Clear selection"
+                  className={cn("flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg", FOCUS_RING)}
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
             </div>
+          )}
 
-            {visibleKeys.length === 0 ? (
-              <div className="px-6 py-10 text-center">
-                <p className="text-[13px] font-medium text-fg">No keys match</p>
-                <p className="mt-1 text-[12.5px] text-fg-muted">Clear the search or status filter to see every key.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[920px] text-[13px]">
-                  <thead>
-                    <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
-                      <th className="w-10 px-4 py-2">
-                        <input
-                          type="checkbox"
-                          checked={allVisibleSelected}
-                          ref={(el) => {
-                            if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected;
-                          }}
-                          onChange={toggleSelectAll}
-                          className="h-4 w-4 rounded border-line accent-[var(--color-accent-500)]"
-                          aria-label={`Select all ${visibleKeys.length} visible keys`}
-                        />
-                      </th>
-                      <th className="px-2 py-2 font-medium">Name</th>
-                      <th className="px-4 py-2 font-medium">Key</th>
-                      <th className="px-4 py-2 font-medium">Plan</th>
-                      <th className="px-4 py-2 font-medium">Status</th>
-                      <th className="px-4 py-2 font-medium">Last used</th>
-                      <th className="px-4 py-2 font-medium">Created</th>
-                      <th className="w-10 px-2 py-2"><span className="sr-only">Actions</span></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-line">
-                    {pagination.paged.map((k) => (
-                      <KeyRow
-                        key={k.id}
-                        apiKey={k}
-                        selected={selectedIds.has(k.id)}
-                        onSelect={() => toggleSelect(k.id)}
-                        onOpen={() => navigate(`/keys/${k.id}`)}
-                        onToggle={() => toggleDisabled.mutate({ id: k.id, disabled: !k.disabled })}
-                        togglePending={toggleDisabled.isPending && toggleDisabled.variables?.id === k.id}
-                        onCopyKey={() => copy(k.display, "Key copied", "Masked key identifier copied.")}
-                        onCopyPortal={() => copy(portalUrlFor(k.id), "Portal link copied", "Owner usage portal link copied.")}
-                        onRevoke={() => revokeOne(k)}
+          {visibleKeys.length === 0 ? (
+            <div className="px-6 py-10 text-center">
+              <h3 className="text-[13px] font-semibold text-fg">No keys match</h3>
+              <Button
+                variant="ghost"
+                className="mt-3"
+                onClick={() => {
+                  setSearchQuery("");
+                  setStatusFilter("all");
+                }}
+              >
+                Clear filters
+              </Button>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                    <th scope="col" className="w-10 px-4 py-2">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        ref={(el) => {
+                          if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected;
+                        }}
+                        onChange={toggleSelectAll}
+                        className="h-4 w-4 rounded border-input accent-accent-500"
+                        aria-label={`Select all ${visibleKeys.length} shown keys`}
                       />
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <TablePagination page={pagination.page} pages={pagination.pages} total={pagination.total} onPage={pagination.setPage} />
-          </div>
-        </>
+                    </th>
+                    <th scope="col" className="px-2 py-2 font-medium">Name</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Plan</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Status</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Last used</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Created</th>
+                    <th scope="col" className="w-10 px-2 py-2"><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {pagination.paged.map((k) => (
+                    <KeyRow
+                      key={k.id}
+                      apiKey={k}
+                      selected={selectedIds.has(k.id)}
+                      onSelect={() => toggleSelect(k.id)}
+                      onOpen={() => navigate(`/keys/${k.id}`)}
+                      onToggle={() => toggleDisabled.mutate({ id: k.id, disabled: !k.disabled })}
+                      togglePending={toggleDisabled.isPending && toggleDisabled.variables?.id === k.id}
+                      onCopyKey={() => copy(k.display, "Masked key copied")}
+                      onCopyPortal={() => copy(portalUrlFor(k.id), "Portal link copied")}
+                      onRevoke={() => revokeOne(k)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <TablePagination page={pagination.page} pages={pagination.pages} total={pagination.total} onPage={pagination.setPage} />
+        </section>
       )}
     </>
-  );
-}
-
-function KpiCell({ label, value, hint, muted }: { label: string; value: number; hint?: string; muted?: boolean }) {
-  return (
-    <div className="bg-surface px-4 py-3">
-      <p className="text-[12px] font-medium text-fg-muted">{label}</p>
-      <p className={cn("mt-1 text-[20px] font-semibold leading-tight tracking-[-0.01em] tabular-nums", muted ? "text-fg-faint" : "text-fg")}>{value.toLocaleString("en-US")}</p>
-      {hint && <p className="mt-0.5 truncate text-[12px] text-fg-faint">{hint}</p>}
-    </div>
   );
 }
 
@@ -676,54 +799,45 @@ function KeyRow({
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   return (
-    <tr
-      className={cn("cursor-pointer transition-colors", selected ? "bg-accent-500/5" : "hover:bg-hover", k.disabled && !selected && "text-fg-muted")}
-      onClick={onOpen}
-    >
+    <tr className={cn("cursor-pointer transition-colors", selected ? "bg-accent-500/5" : "hover:bg-hover")} onClick={onOpen}>
       <td className="px-4 py-2.5" onClick={stop}>
         <input
           type="checkbox"
           checked={selected}
           onChange={onSelect}
-          className="h-4 w-4 rounded border-line accent-[var(--color-accent-500)]"
+          className="h-4 w-4 rounded border-input accent-accent-500"
           aria-label={`Select ${k.name}`}
         />
       </td>
-      <td className="max-w-[260px] px-2 py-2.5">
+      <td className="max-w-[300px] px-2 py-2.5">
         <Link
           to={`/keys/${k.id}`}
           onClick={stop}
-          className={cn("block truncate font-medium hover:underline focus:outline-none focus-visible:underline", k.disabled ? "text-fg-muted" : "text-fg")}
+          className={cn("block truncate rounded-sm font-medium hover:underline", FOCUS_RING, k.disabled ? "text-fg-muted" : "text-fg")}
           title={k.name}
         >
           {k.name}
         </Link>
-      </td>
-      <td className="px-4 py-2.5" onClick={stop}>
-        <button
-          type="button"
-          onClick={onCopyKey}
-          className="group inline-flex max-w-[220px] items-center gap-1.5 rounded-md font-mono text-[12px] text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
-          title="Copy masked key"
-        >
-          <span className="truncate">{k.display}</span>
-          <Copy className="h-3.5 w-3.5 shrink-0 text-fg-faint opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" strokeWidth={1.75} />
-        </button>
+        <span className="block truncate font-mono text-[12px] text-fg-faint">{k.display}</span>
       </td>
       <td className="max-w-[220px] px-4 py-2.5">
         <span className="block truncate text-fg">{k.plan_name || "Custom"}</span>
-        <span className="block truncate text-[12px] text-fg-faint">
-          {modelCount > 0 ? `${modelCount} model${modelCount > 1 ? "s" : ""} allowed` : "Plan model access"}
-        </span>
+        {modelCount > 0 && (
+          <span className="block truncate text-[12px] text-fg-muted">
+            {modelCount} model{modelCount > 1 ? "s" : ""}
+          </span>
+        )}
       </td>
       <td className="px-4 py-2.5" onClick={stop}>
-        <span className={cn("inline-flex items-center gap-2", togglePending && "pointer-events-none opacity-50")} aria-label={k.disabled ? `Enable ${k.name}` : `Disable ${k.name}`}>
-          <Toggle checked={!k.disabled} onChange={onToggle} />
-          <span className={cn("text-[12.5px]", k.disabled ? "text-fg-faint" : "text-fg")}>{k.disabled ? "Disabled" : "Active"}</span>
+        <span className="inline-flex items-center gap-2">
+          <Toggle checked={!k.disabled} onChange={onToggle} disabled={togglePending} label={`${k.name} active`} />
+          <span className={cn("text-[12.5px]", k.disabled ? "text-fg-muted" : "text-fg")} aria-hidden="true">
+            {k.disabled ? "Disabled" : "Active"}
+          </span>
         </span>
       </td>
-      <td className="whitespace-nowrap px-4 py-2.5" title={lastUsed ? new Date(lastUsed).toLocaleString() : "This key has not authenticated a request yet"}>
-        <span className={lastUsed ? "text-fg" : "text-fg-faint"}>{relativeTime(k.last_used_at)}</span>
+      <td className="whitespace-nowrap px-4 py-2.5" title={lastUsed ? new Date(lastUsed).toLocaleString() : undefined}>
+        <span className={lastUsed ? "text-fg" : "text-fg-muted"}>{relativeTime(k.last_used_at)}</span>
       </td>
       <td className="whitespace-nowrap px-4 py-2.5 text-fg-muted" title={new Date(k.created_at).toLocaleString()}>
         {new Date(k.created_at).toLocaleDateString()}
@@ -732,26 +846,26 @@ function KeyRow({
         <DropdownMenu>
           <DropdownMenuTrigger
             aria-label={`Actions for ${k.name}`}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+            className={cn("flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg", FOCUS_RING)}
           >
-            <MoreHorizontal className="h-4 w-4" />
+            <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onSelect={onOpen}>
-              <Settings2 />
+              <Settings2 aria-hidden="true" />
               Configure
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={onCopyKey}>
-              <Copy />
+              <Copy aria-hidden="true" />
               Copy masked key
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={onCopyPortal}>
-              <Link2 />
+              <Link2 aria-hidden="true" />
               Copy portal link
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem tone="danger" onSelect={onRevoke}>
-              <Trash2 />
+              <Trash2 aria-hidden="true" />
               Revoke key
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -761,401 +875,7 @@ function KeyRow({
   );
 }
 
-/* ── Step 1: Name ───────────────────────────────────────────────── */
-
-function StepName({
-  name,
-  setName,
-  onNext,
-  onCancel,
-}: {
-  name: string;
-  setName: (v: string) => void;
-  onNext: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <>
-      <div className="px-5 py-4">
-        <FormField label="Key name" hint="Shown in usage logs and on the owner portal. Name it after the person, tool or machine that will use it.">
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="laptop"
-            autoFocus
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && name.trim()) {
-                e.preventDefault();
-                onNext();
-              }
-            }}
-          />
-        </FormField>
-      </div>
-      <DialogFooter>
-        <div className="flex-1" />
-        <Button variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button onClick={onNext} disabled={!name.trim()}>
-          Next
-          <ArrowRight />
-        </Button>
-      </DialogFooter>
-    </>
-  );
-}
-
-/* ── Step 2: Plan Select ────────────────────────────────────────── */
-
-function planLimitText(p: Plan): string {
-  const parts: string[] = [];
-  if (p.limit_micros > 0) parts.push(`${microsToUSD(p.limit_micros)} / ${p.period}`);
-  if (p.limit_tokens > 0) parts.push(`${formatTokens(p.limit_tokens)} tokens / ${p.period}`);
-  if (parts.length === 0) parts.push("No spend limit");
-  return parts.join(" · ");
-}
-
-function PlanOption({
-  selected,
-  onSelect,
-  title,
-  detail,
-  aside,
-}: {
-  selected: boolean;
-  onSelect: () => void;
-  title: string;
-  detail: ReactNode;
-  aside?: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={selected}
-      onClick={onSelect}
-      className={cn(
-        "flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
-        selected ? "border-accent-500 bg-accent-500/5" : "border-line bg-surface hover:border-line-strong hover:bg-hover",
-      )}
-    >
-      <span
-        aria-hidden="true"
-        className={cn(
-          "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
-          selected ? "border-accent-500" : "border-line-strong",
-        )}
-      >
-        {selected && <span className="h-2 w-2 rounded-full bg-accent-500" />}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-medium text-fg">{title}</span>
-        <span className="mt-0.5 block text-[12px] leading-5 text-fg-muted">{detail}</span>
-      </span>
-      {aside && <span className="shrink-0 text-[12px] tabular-nums text-fg-faint">{aside}</span>}
-    </button>
-  );
-}
-
-function StepPlanSelect({
-  plans,
-  loading,
-  selectedPlanId,
-  setSelectedPlanId,
-  onBack,
-  onNext,
-}: {
-  plans: Plan[];
-  loading: boolean;
-  selectedPlanId: string;
-  setSelectedPlanId: (v: string) => void;
-  onBack: () => void;
-  onNext: () => void;
-}) {
-  return (
-    <>
-      <div className="px-5 py-4">
-        <p className="mb-3 text-[12.5px] text-fg-muted">
-          A plan sets the key's budget and model access. Pick Custom to configure this key on its own.
-        </p>
-        <div className="max-h-[50vh] space-y-1.5 overflow-y-auto pr-0.5" role="radiogroup" aria-label="Plan">
-          {loading && (
-            <>
-              <Skeleton className="h-14 w-full rounded-lg" />
-              <Skeleton className="h-14 w-full rounded-lg" />
-            </>
-          )}
-          {plans.map((p) => {
-            const restricted = (p.allowed_models ?? []).length;
-            return (
-              <PlanOption
-                key={p.id}
-                selected={selectedPlanId === p.id}
-                onSelect={() => setSelectedPlanId(p.id)}
-                title={p.name}
-                detail={
-                  <>
-                    {planLimitText(p)}
-                    {restricted > 0 && ` · ${restricted} model restriction${restricted === 1 ? "" : "s"}`}
-                  </>
-                }
-                aside={`${p.key_count} key${p.key_count !== 1 ? "s" : ""}`}
-              />
-            );
-          })}
-          <PlanOption
-            selected={selectedPlanId === "custom"}
-            onSelect={() => setSelectedPlanId("custom")}
-            title="Custom"
-            detail="No preset. Set the budget and allowed models for this key yourself."
-          />
-        </div>
-      </div>
-      <DialogFooter>
-        <Button variant="ghost" onClick={onBack}>
-          <ArrowLeft />
-          Back
-        </Button>
-        <div className="flex-1" />
-        <Button onClick={onNext}>
-          Next
-          <ArrowRight />
-        </Button>
-      </DialogFooter>
-    </>
-  );
-}
-
-/* ── Step 3: Configure (plan details / custom) ──────────────────── */
-
-function SettingRow({ label, description, children }: { label: string; description?: string; children: ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-4 px-3 py-2.5">
-      <div className="min-w-0">
-        <p className="text-[13px] font-medium text-fg">{label}</p>
-        {description && <p className="mt-0.5 text-[12px] leading-5 text-fg-muted">{description}</p>}
-      </div>
-      <div className="shrink-0">{children}</div>
-    </div>
-  );
-}
-
-function StepConfigure({
-  selectedPlanId,
-  plans,
-  customizePlan,
-  setCustomizePlan,
-  budgetLimit,
-  setBudgetLimit,
-  budgetLimitTokens,
-  setBudgetLimitTokens,
-  budgetPeriod,
-  setBudgetPeriod,
-  budgetAlertPct,
-  setBudgetAlertPct,
-  budgetHardCutoff,
-  setBudgetHardCutoff,
-  allowedModels,
-  setAllowedModels,
-  onBack,
-  onCreate,
-  isPending,
-}: {
-  selectedPlanId: string;
-  plans: Plan[];
-  customizePlan: boolean;
-  setCustomizePlan: (v: boolean) => void;
-  budgetLimit: string;
-  setBudgetLimit: (v: string) => void;
-  budgetLimitTokens: string;
-  setBudgetLimitTokens: (v: string) => void;
-  budgetPeriod: string;
-  setBudgetPeriod: (v: string) => void;
-  budgetAlertPct: number;
-  setBudgetAlertPct: (v: number) => void;
-  budgetHardCutoff: boolean;
-  setBudgetHardCutoff: (v: boolean) => void;
-  allowedModels: string[];
-  setAllowedModels: (v: string[]) => void;
-  onBack: () => void;
-  onCreate: () => void;
-  isPending: boolean;
-}) {
-  const isCustom = selectedPlanId === "custom";
-  const selectedPlan = plans.find((p) => p.id === selectedPlanId);
-  const models = selectedPlan?.allowed_models ?? [];
-
-  if (isCustom) {
-    // Full custom config (same as old StepBudget)
-    return (
-      <>
-        <div className="space-y-4 px-5 py-4">
-          <div className="grid gap-3 sm:grid-cols-[1fr_1fr_8.5rem]">
-            <FormField label="Limit (USD)" optional>
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={budgetLimit}
-                onChange={(e) => setBudgetLimit(e.target.value)}
-                placeholder="50.00"
-                className="tabular-nums"
-              />
-            </FormField>
-            <FormField label="Limit (tokens)" optional>
-              <TokenInput value={budgetLimitTokens} onChange={setBudgetLimitTokens} placeholder="100000000" />
-            </FormField>
-            <FormField label="Period">
-              <Select value={budgetPeriod} onChange={(e) => setBudgetPeriod(e.target.value)}>
-                {budgetPeriods.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </Select>
-            </FormField>
-          </div>
-
-          <div className="space-y-1.5">
-            <span className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
-              Allowed models
-              <span className="text-[12px] font-normal text-fg-faint">Optional</span>
-            </span>
-            <ModelMultiSelect value={allowedModels} onChange={setAllowedModels} />
-            <span className="block text-[12px] leading-5 text-fg-muted">
-              Leave empty to allow every model. Add custom patterns with a <span className="font-mono">*</span> wildcard, e.g. <span className="font-mono">claude-*</span>.
-            </span>
-          </div>
-
-          <div className="divide-y divide-line rounded-lg border border-line">
-            <SettingRow label="Alert threshold" description="Notify when this share of the budget is used. Applies once a limit is set.">
-              <span className="flex items-center gap-1.5">
-                <Input
-                  type="number"
-                  min="1"
-                  max="100"
-                  value={budgetAlertPct}
-                  onChange={(e) => setBudgetAlertPct(parseInt(e.target.value) || 80)}
-                  className="w-20 text-right tabular-nums"
-                  aria-label="Alert threshold percent"
-                />
-                <span className="text-[13px] text-fg-muted">%</span>
-              </span>
-            </SettingRow>
-            <SettingRow label="Hard cutoff" description="Block requests once the budget is used up. Off only sends alerts.">
-              <Toggle checked={budgetHardCutoff} onChange={setBudgetHardCutoff} />
-            </SettingRow>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="ghost" onClick={onBack}>
-            <ArrowLeft />
-            Back
-          </Button>
-          <div className="flex-1" />
-          <Button variant="ghost" onClick={onCreate} disabled={isPending}>
-            {isPending ? "Creating…" : "Skip budget"}
-          </Button>
-          <Button onClick={onCreate} disabled={isPending}>
-            {isPending ? "Creating…" : "Create key"}
-          </Button>
-        </DialogFooter>
-      </>
-    );
-  }
-
-  // Plan selected — show summary + optional override toggle
-  return (
-    <>
-      <div className="space-y-4 px-5 py-4">
-        {selectedPlan && (
-          <div className="rounded-lg border border-line bg-subtle px-3 py-2.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-[13px] font-medium text-fg">{selectedPlan.name}</span>
-              <Badge>{selectedPlan.period}</Badge>
-              {selectedPlan.hard_cutoff ? <Badge tone="danger">Hard cutoff</Badge> : <Badge tone="neutral">Advisory</Badge>}
-            </div>
-            {selectedPlan.description && <p className="mt-1 text-[12px] leading-5 text-fg-muted">{selectedPlan.description}</p>}
-            <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[12px]">
-              <dt className="text-fg-faint">Budget</dt>
-              <dd className="tabular-nums text-fg">
-                {selectedPlan.limit_micros > 0 && microsToUSD(selectedPlan.limit_micros)}
-                {selectedPlan.limit_micros > 0 && selectedPlan.limit_tokens > 0 && " · "}
-                {selectedPlan.limit_tokens > 0 && `${formatTokens(selectedPlan.limit_tokens)} tokens`}
-                {selectedPlan.limit_micros === 0 && selectedPlan.limit_tokens === 0 && "No spend limit"}
-              </dd>
-              <dt className="text-fg-faint">Alert</dt>
-              <dd className="tabular-nums text-fg">At {selectedPlan.alert_pct}%</dd>
-              <dt className="text-fg-faint">Models</dt>
-              <dd className="min-w-0 break-words font-mono text-[11.5px] text-fg">
-                {models.length > 0 ? models.join(", ") : <span className="font-sans text-[12px]">All models</span>}
-              </dd>
-            </dl>
-          </div>
-        )}
-
-        <div className="divide-y divide-line rounded-lg border border-line">
-          <SettingRow label="Customize for this key" description="Override the plan's limits or models for this key only.">
-            <Toggle checked={customizePlan} onChange={setCustomizePlan} />
-          </SettingRow>
-          {customizePlan && (
-            <div className="space-y-4 px-3 py-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <FormField label="USD limit" optional>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={budgetLimit}
-                    onChange={(e) => setBudgetLimit(e.target.value)}
-                    placeholder="Leave empty to use plan"
-                    className="tabular-nums"
-                  />
-                </FormField>
-                <FormField label="Token limit" optional>
-                  <TokenInput value={budgetLimitTokens} onChange={setBudgetLimitTokens} placeholder="Leave empty to use plan" />
-                </FormField>
-              </div>
-              <div className="space-y-1.5">
-                <span className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
-                  Allowed models
-                  <span className="text-[12px] font-normal text-fg-faint">Optional</span>
-                </span>
-                <ModelMultiSelect value={allowedModels} onChange={setAllowedModels} />
-                <span className="block text-[12px] leading-5 text-fg-muted">Leave empty to use the plan's model restrictions.</span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <DialogFooter>
-        <Button variant="ghost" onClick={onBack}>
-          <ArrowLeft />
-          Back
-        </Button>
-        <div className="flex-1" />
-        <Button onClick={onCreate} disabled={isPending}>
-          {isPending ? "Creating…" : "Create key"}
-        </Button>
-      </DialogFooter>
-    </>
-  );
-}
-
-/* ── Step 4: Success / Copy ─────────────────────────────────────── */
-
-function CopyIconButton({ label, onCopy, copied }: { label: string; onCopy: () => void; copied: boolean }) {
-  return (
-    <button
-      type="button"
-      onClick={onCopy}
-      aria-label={label}
-      title={label}
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
-    >
-      {copied ? <Check className="h-4 w-4 text-ok" strokeWidth={1.75} /> : <Copy className="h-4 w-4" strokeWidth={1.75} />}
-    </button>
-  );
-}
+/* ── Created: one-time secret reveal ─────────────────────────────── */
 
 function StepSuccess({
   created,
@@ -1175,8 +895,11 @@ function StepSuccess({
   availableModelsText: string;
 }) {
   const copy = useCopy();
+  const uid = useId();
+  const [justCopied, setJustCopied] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedAll, setCopiedAll] = useState(false);
+  const [showSetup, setShowSetup] = useState(false);
   const portalUrl = portalUrlFor(created.id);
 
   const shareText = [
@@ -1193,46 +916,69 @@ function StepSuccess({
     setTimeout(() => set(false), ms);
   };
 
+  const secretLabelId = `${uid}-secret`;
+  const warnId = `${uid}-warn`;
+  const setupId = `${uid}-setup`;
+
   return (
     <>
       <div className="space-y-4 px-5 py-4">
-        <div role="note" className="flex items-start gap-2.5 rounded-lg border border-warn/30 bg-warn/5 px-3 py-2.5 text-[12.5px] leading-5 text-fg">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} />
-          <span>
-            <span className="font-medium">Copy this key now — you won't see it again.</span> KeiRouter only keeps a hash. If it's lost, revoke the key and create a new one.
-          </span>
-        </div>
+        <div className="space-y-2">
+          <div className="flex items-start gap-2 text-[13px] text-fg" id={warnId}>
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+            <p>
+              <span className="font-medium">Copy this key now.</span> <span className="text-fg-muted">It won't be shown again.</span>
+            </p>
+          </div>
 
-        <div className="space-y-1.5">
-          <p className="text-[12.5px] font-medium text-fg">Secret key</p>
-          <div className="flex items-stretch gap-2">
-            <code className="min-w-0 flex-1 select-all break-all rounded-lg border border-line-strong bg-subtle px-3 py-2.5 font-mono text-[13px] leading-5 text-fg">
+          <p id={secretLabelId} className="sr-only">Secret key</p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+            <code
+              aria-labelledby={secretLabelId}
+              className="min-w-0 flex-1 select-all break-all rounded-lg border border-line-strong bg-subtle px-3 py-2.5 font-mono text-[13px] leading-5 text-fg"
+            >
               {created.key}
             </code>
             <Button
-              className="shrink-0 self-start"
+              className="shrink-0 sm:self-start"
+              aria-describedby={warnId}
               onClick={() => {
-                copy(created.key, "Key copied", "Store it somewhere safe — it won't be shown again.").then((ok) => {
-                  if (ok) flash(setCopied, 1500);
+                copy(created.key, "Key copied", "Store it somewhere safe.").then((ok) => {
+                  if (!ok) return;
+                  setCopied(true);
+                  flash(setJustCopied, 1500);
                 });
               }}
             >
-              {copied ? <Check /> : <Copy />}
-              {copied ? "Copied" : "Copy"}
+              {justCopied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+              {justCopied ? "Copied" : "Copy key"}
             </Button>
           </div>
+
+          <p role="status" className="min-h-5 text-[12.5px]">
+            {copied && (
+              <span className="inline-flex items-center gap-1.5 text-ok">
+                <Check className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
+                Key copied to your clipboard.
+              </span>
+            )}
+          </p>
         </div>
 
         <dl className="divide-y divide-line rounded-lg border border-line text-[12.5px]">
-          <div className="flex items-center gap-3 px-3 py-2">
+          <div className="flex items-center gap-3 px-3 py-1.5">
             <dt className="w-24 shrink-0 text-fg-muted">Owner portal</dt>
             <dd className="flex min-w-0 flex-1 items-center gap-1">
               <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-fg" title={portalUrl}>{portalUrl}</span>
-              <CopyIconButton
-                label="Copy portal link"
-                copied={copiedUrl}
-                onCopy={() => copy(portalUrl, "Portal link copied", "Share it with the key owner to let them track their usage.").then((ok) => ok && flash(setCopiedUrl, 1500))}
-              />
+              <button
+                type="button"
+                onClick={() => copy(portalUrl, "Portal link copied", "Share it with the key owner.").then((ok) => ok && flash(setCopiedUrl, 1500))}
+                aria-label="Copy portal link"
+                title="Copy portal link"
+                className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-fg-faint transition-colors hover:bg-hover hover:text-fg", FOCUS_RING)}
+              >
+                {copiedUrl ? <Check className="h-4 w-4 text-ok" strokeWidth={1.75} aria-hidden="true" /> : <Copy className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />}
+              </button>
             </dd>
           </div>
           <div className="flex items-center gap-3 px-3 py-2">
@@ -1247,38 +993,50 @@ function StepSuccess({
                 {created.budget.limit_micros > 0 && created.budget.limit_tokens > 0 && " + "}
                 {created.budget.limit_tokens > 0 && `${formatTokenLimit(String(created.budget.limit_tokens))} tokens`}
                 {` / ${created.budget.period}`}
-                {created.budget.hard_cutoff ? " (hard cutoff)" : ""}
+                {created.budget.hard_cutoff ? " · hard cutoff" : ""}
               </dd>
             </div>
           )}
           {created.allowed_models && created.allowed_models.length > 0 && (
             <div className="flex items-start gap-3 px-3 py-2">
-              <dt className="w-24 shrink-0 text-fg-muted">Allowed models</dt>
+              <dt className="w-24 shrink-0 text-fg-muted">Models</dt>
               <dd className="min-w-0 flex-1 break-words font-mono text-[12px] text-fg">{created.allowed_models.join(", ")}</dd>
             </div>
           )}
         </dl>
 
-        <div className="overflow-hidden rounded-lg border border-line">
-          <div className="flex items-center justify-between gap-2 border-b border-line bg-subtle px-3 py-1.5">
-            <p className="text-[12.5px] font-medium text-fg">Setup message</p>
+        <div className="rounded-lg border border-line">
+          <div className="flex items-center justify-between gap-2 px-3 py-1.5">
             <button
               type="button"
-              onClick={() => copy(shareText, "Setup message copied", "Endpoint, key, portal and plan in one block.").then((ok) => ok && flash(setCopiedAll, 2000))}
-              className="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+              onClick={() => setShowSetup((v) => !v)}
+              aria-expanded={showSetup}
+              aria-controls={setupId}
+              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-md text-[12.5px] font-medium text-fg hover:underline", FOCUS_RING)}
             >
-              {copiedAll ? <Check className="h-3.5 w-3.5 text-ok" /> : <Copy className="h-3.5 w-3.5" />}
-              {copiedAll ? "Copied" : "Copy all"}
+              <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showSetup && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+              Setup message
+            </button>
+            <button
+              type="button"
+              onClick={() => copy(shareText, "Setup message copied", "Endpoint, key, portal and plan.").then((ok) => ok && flash(setCopiedAll, 2000))}
+              className={cn("inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-[12.5px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg", FOCUS_RING)}
+            >
+              {copiedAll ? <Check className="h-3.5 w-3.5 text-ok" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+              {copiedAll ? "Copied" : "Copy setup message"}
             </button>
           </div>
-          <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all px-3 py-2.5 font-mono text-[12px] leading-5 text-fg">{shareText}</pre>
+          {showSetup && (
+            <pre id={setupId} className="max-h-48 overflow-auto whitespace-pre-wrap break-all border-t border-line px-3 py-2.5 font-mono text-[12px] leading-5 text-fg">
+              {shareText}
+            </pre>
+          )}
         </div>
       </div>
 
       <DialogFooter>
-        <span className="text-[12px] text-fg-faint">{copied ? "Key copied to your clipboard." : "The key disappears when you close this dialog."}</span>
         <div className="flex-1" />
-        <Button onClick={onClose}>Done</Button>
+        <Button variant="secondary" onClick={onClose}>Done</Button>
       </DialogFooter>
     </>
   );

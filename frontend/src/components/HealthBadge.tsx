@@ -10,44 +10,42 @@ const STATUS_LABEL: Record<HealthStatus, string> = {
 
 // fmtIssue converts a snake_case issue/error-type label to a human-readable
 // phrase. Known issues get explicit friendly names; unknown ones fall back to
-// Title Case with spaces.
+// sentence case with spaces.
 const ISSUE_LABELS: Record<string, string> = {
-  rate_limited: "Rate Limited",
-  auth_error: "Auth Error",
-  quota_exceeded: "Quota Exceeded",
+  rate_limited: "Rate limited",
+  auth_error: "Auth error",
+  quota_exceeded: "Quota exceeded",
   timeout: "Timeout",
   provider_5xx: "Provider 5xx",
-  bad_request: "Bad Request",
-  network_error: "Network Error",
-  unsupported_model_or_capability: "Unsupported Model",
-  unknown_error: "Unknown Error",
-  high_latency: "High Latency",
-  fallback_spike: "Fallback Spike",
+  bad_request: "Bad request",
+  network_error: "Network error",
+  unsupported_model_or_capability: "Unsupported model",
+  unknown_error: "Unknown error",
+  high_latency: "High latency",
+  fallback_spike: "Fallback spike",
 };
 
 export function fmtIssue(issue?: string): string {
   if (!issue) return "";
   if (ISSUE_LABELS[issue]) return ISSUE_LABELS[issue];
-  return issue
-    .split("_")
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(" ");
+  const words = issue.split("_").filter(Boolean).join(" ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
 const STATUS_TONE: Record<HealthStatus, string> = {
   healthy: "bg-ok/10 text-ok",
-  degraded: "bg-[color:var(--color-warning)]/15 text-[color:var(--color-warning)]",
-  unhealthy: "bg-[color:var(--color-danger)]/15 text-[color:var(--color-danger)]",
-  unknown: "bg-ink-100 text-ink-500 dark:bg-ink-800 dark:text-ink-400",
-  disabled: "bg-ink-100 text-ink-500 dark:bg-ink-800 dark:text-ink-400",
+  degraded: "bg-warn/12 text-warn",
+  unhealthy: "bg-bad/10 text-bad",
+  unknown: "bg-subtle text-fg-muted",
+  disabled: "bg-subtle text-fg-muted",
 };
 
 const STATUS_DOT: Record<HealthStatus, string> = {
   healthy: "bg-ok",
-  degraded: "bg-[color:var(--color-warning)]",
-  unhealthy: "bg-[color:var(--color-danger)]",
-  unknown: "bg-ink-400",
-  disabled: "bg-ink-400",
+  degraded: "bg-warn",
+  unhealthy: "bg-bad",
+  unknown: "bg-fg-faint",
+  disabled: "bg-fg-faint",
 };
 
 export function HealthStatusBadge({ status, issue }: { status: HealthStatus; issue?: string }) {
@@ -56,13 +54,12 @@ export function HealthStatusBadge({ status, issue }: { status: HealthStatus; iss
       className={`inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium ${STATUS_TONE[status]}`}
       title={issue || STATUS_LABEL[status]}
     >
-      <span className={`inline-block h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`} />
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${STATUS_DOT[status]}`} aria-hidden="true" />
       {STATUS_LABEL[status]}
     </span>
   );
 }
 
-// HealthScoreRing renders a compact circular gauge for the 0-100 score.
 // HealthScoreRing shows the 0–100 health score as a compact number with a
 // short bar; colour carries meaning only below the healthy threshold.
 export function HealthScoreRing({ score }: { score: number; size?: number }) {

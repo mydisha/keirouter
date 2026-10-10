@@ -1,5 +1,6 @@
 import type { ComponentProps } from "react";
 import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
+import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Radix-backed menu: keyboard navigation, typeahead, focus return and
@@ -8,6 +9,7 @@ import { cn } from "@/lib/utils";
 export const DropdownMenu = DropdownMenuPrimitive.Root;
 export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
 export const DropdownMenuGroup = DropdownMenuPrimitive.Group;
+export const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;
 
 export function DropdownMenuContent({
   className,
@@ -55,4 +57,35 @@ export function DropdownMenuLabel({ className, ...props }: ComponentProps<typeof
 
 export function DropdownMenuSeparator({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.Separator>) {
   return <DropdownMenuPrimitive.Separator className={cn("-mx-1 my-1 h-px bg-line", className)} {...props} />;
+}
+
+const choiceItem = cn(
+  "flex h-8 cursor-pointer select-none items-center gap-2 rounded-lg px-2 outline-none transition-colors",
+  "data-[highlighted]:bg-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+  "[&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-fg-faint",
+);
+
+// DropdownMenuRadioItem is a single choice inside <DropdownMenuRadioGroup>
+// (role="menuitemradio" + aria-checked, check mark shown when selected).
+export function DropdownMenuRadioItem({ className, children, ...props }: ComponentProps<typeof DropdownMenuPrimitive.RadioItem>) {
+  return (
+    <DropdownMenuPrimitive.RadioItem className={cn(choiceItem, className)} {...props}>
+      {children}
+      <DropdownMenuPrimitive.ItemIndicator className="ml-auto inline-flex">
+        <Check className="!text-fg" aria-hidden="true" />
+      </DropdownMenuPrimitive.ItemIndicator>
+    </DropdownMenuPrimitive.RadioItem>
+  );
+}
+
+// DropdownMenuCheckboxItem is an on/off item (role="menuitemcheckbox").
+export function DropdownMenuCheckboxItem({ className, children, ...props }: ComponentProps<typeof DropdownMenuPrimitive.CheckboxItem>) {
+  return (
+    <DropdownMenuPrimitive.CheckboxItem className={cn(choiceItem, className)} {...props}>
+      {children}
+      <DropdownMenuPrimitive.ItemIndicator className="ml-auto inline-flex">
+        <Check className="!text-fg" aria-hidden="true" />
+      </DropdownMenuPrimitive.ItemIndicator>
+    </DropdownMenuPrimitive.CheckboxItem>
+  );
 }

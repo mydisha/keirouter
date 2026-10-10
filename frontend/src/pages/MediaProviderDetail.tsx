@@ -1,4 +1,14 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
+import {
+  cloneElement,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -32,7 +42,6 @@ import {
   ErrorBanner,
   Input,
   Modal,
-  SegmentedControl,
   Select,
   Skeleton,
   TablePagination,
@@ -40,6 +49,7 @@ import {
   useClientPagination,
 } from "../components/ui";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
+import { Segmented } from "./settings/shared";
 
 type Tab = "accounts" | "models" | "playground";
 type Capability = "embedding" | "image" | "tts" | "stt" | "search" | "fetch";
@@ -109,7 +119,7 @@ export function MediaProviderDetailPage() {
 
   if (providers.isLoading) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-4" aria-busy="true" aria-label="Loading provider">
         <Skeleton className="h-5 w-40" />
         <Skeleton className="h-14 w-full rounded-2xl" />
         <Skeleton className="h-64 w-full rounded-2xl" />
@@ -119,9 +129,9 @@ export function MediaProviderDetailPage() {
 
   if (!provider) {
     return (
-      <div className="rounded-2xl border border-line bg-surface px-6 py-12 text-center">
-        <p className="text-[13px] font-medium text-fg">This provider doesn't exist.</p>
-        <Link to={`/media/${kind}`} className="mt-2 inline-block text-[13px] font-medium text-accent-500 hover:underline dark:text-accent-400">
+      <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+        <h1 className="text-[14px] font-medium text-fg">This provider doesn&apos;t exist</h1>
+        <Link to={`/media/${kind}`} className="mt-2 inline-block text-[13px] font-medium text-link hover:underline">
           Back to {meta.label.toLowerCase()}
         </Link>
       </div>
@@ -130,7 +140,6 @@ export function MediaProviderDetailPage() {
 
   const isNoAuth = provider.auth_kind === "none" || provider.auth_modes.includes("none");
   const connectLabel = isNoAuth ? "Connect" : "Add account";
-  const activeAccounts = myAccounts.filter((a) => !a.disabled).length;
   const canPlay = provider.drivable && myAccounts.length > 0;
 
   const removeOne = async (a: Account) => {
@@ -149,15 +158,38 @@ export function MediaProviderDetailPage() {
     ["playground", "Playground", null],
   ];
 
+  const onTabKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const i = tabs.findIndex(([v]) => v === tab);
+    const n = tabs.length;
+    const next =
+      event.key === "Home" ? 0 : event.key === "End" ? n - 1 : (i + (event.key === "ArrowRight" ? 1 : -1) + n) % n;
+    const value = tabs[next][0];
+    setTab(value);
+    document.getElementById(`media-tab-${value}`)?.focus();
+  };
+
   return (
     <>
-      <nav aria-label="Breadcrumb" className="mb-3 flex items-center gap-1.5 text-[13px] text-fg-muted">
-        <Link to={`/media/${kind}`} className="inline-flex items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40">
-          <ArrowLeft className="h-3.5 w-3.5" />
-          {meta.label}
-        </Link>
-        <span aria-hidden="true" className="text-fg-faint">/</span>
-        <span className="truncate text-fg">{provider.display_name}</span>
+      <nav aria-label="Breadcrumb" className="mb-3 text-[13px] text-fg-muted">
+        <ol className="flex items-center gap-1.5">
+          <li>
+            <Link
+              to={`/media/${kind}`}
+              className="inline-flex min-h-6 items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+              {meta.label}
+            </Link>
+          </li>
+          <li aria-hidden="true" className="text-fg-faint">
+            /
+          </li>
+          <li className="truncate text-fg" aria-current="page">
+            {provider.display_name}
+          </li>
+        </ol>
       </nav>
 
       <header className="mb-5 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
@@ -167,24 +199,12 @@ export function MediaProviderDetailPage() {
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{provider.display_name}</h1>
               {!provider.drivable && <Badge tone="neutral">Coming soon</Badge>}
-              {isNoAuth && <Badge tone="success">No credentials</Badge>}
+              {isNoAuth && <Badge tone="neutral">No credentials</Badge>}
             </div>
             <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
               <span className="font-mono text-[12.5px]">{provider.id}</span>
               <Dot />
               <span>{meta.label}</span>
-              <Dot />
-              <span>
-                {myAccounts.length === 0 ? "No accounts yet" : `${activeAccounts} of ${myAccounts.length} account${myAccounts.length === 1 ? "" : "s"} active`}
-              </span>
-              {showModels && (
-                <>
-                  <Dot />
-                  <span>
-                    {modelList.length} model{modelList.length === 1 ? "" : "s"}
-                  </span>
-                </>
-              )}
             </p>
           </div>
         </div>
@@ -194,41 +214,54 @@ export function MediaProviderDetailPage() {
               href={provider.api_key_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+              className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
             >
               Get API key
-              <ExternalLink className="h-4 w-4 text-fg-faint" strokeWidth={1.75} />
+              <ExternalLink className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <span className="sr-only">(opens in a new tab)</span>
             </a>
           )}
           {provider.drivable && (
             <Button onClick={() => setAddOpen(true)}>
-              <Plug />
+              <Plug aria-hidden="true" />
               {connectLabel}
             </Button>
           )}
         </div>
       </header>
 
-      <div className="mb-5 flex gap-1 border-b border-line" role="tablist" aria-label={`${provider.display_name} sections`}>
-        {tabs.map(([value, label, count]) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={tab === value}
-            onClick={() => setTab(value)}
-            className={cn(
-              "relative -mb-px inline-flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
-              tab === value ? "text-fg" : "text-fg-muted hover:text-fg",
-            )}
-          >
-            {label}
-            {count != null && <span className="rounded-md bg-subtle px-1.5 text-[11.5px] tabular-nums text-fg-muted">{count}</span>}
-            {tab === value && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
-          </button>
-        ))}
+      <div
+        className="mb-5 flex gap-1 overflow-x-auto border-b border-line"
+        role="tablist"
+        aria-label={`${provider.display_name} sections`}
+        onKeyDown={onTabKeyDown}
+      >
+        {tabs.map(([value, label, count]) => {
+          const on = tab === value;
+          return (
+            <button
+              key={value}
+              id={`media-tab-${value}`}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              aria-controls="media-tab-panel"
+              tabIndex={on ? 0 : -1}
+              onClick={() => setTab(value)}
+              className={cn(
+                "relative -mb-px inline-flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                on ? "text-fg" : "text-fg-muted hover:text-fg",
+              )}
+            >
+              {label}
+              {count != null && <span className="rounded-md bg-subtle px-1.5 text-[11.5px] tabular-nums text-fg-muted">{count}</span>}
+              {on && <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
+            </button>
+          );
+        })}
       </div>
 
+      <div id="media-tab-panel" role="tabpanel" aria-labelledby={`media-tab-${tab}`}>
       {tab === "accounts" && (
         <AccountsPanel
           provider={provider}
@@ -246,20 +279,23 @@ export function MediaProviderDetailPage() {
           <Playground provider={provider} initial={metaKind} models={modelList} />
         ) : (
           <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-            <p className="text-[14px] font-medium text-fg">{provider.drivable ? "Connect an account to use the playground" : "The playground isn't available yet"}</p>
+            <h2 className="text-[14px] font-medium text-fg">
+              {provider.drivable ? "Connect an account to use the playground" : "The playground isn't available yet"}
+            </h2>
             <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
               {provider.drivable
-                ? `Requests are sent through KeiRouter using one of your ${provider.display_name} accounts, so at least one is needed.`
-                : `Routing to ${provider.display_name} is not supported yet, so there is nothing to try.`}
+                ? `Test requests run through one of your ${provider.display_name} accounts.`
+                : `Routing to ${provider.display_name} isn't supported yet.`}
             </p>
             {provider.drivable && (
-              <Button className="mt-4" onClick={() => setAddOpen(true)}>
-                <Plug />
+              <Button variant="secondary" className="mt-4" onClick={() => setAddOpen(true)}>
+                <Plug aria-hidden="true" />
                 {connectLabel}
               </Button>
             )}
           </div>
         ))}
+      </div>
 
       {provider.drivable && <AddAccountDialog provider={provider} open={addOpen} onClose={() => setAddOpen(false)} />}
     </>
@@ -276,21 +312,46 @@ function Dot() {
 
 // ── Form primitives ─────────────────────────────────────────────────────────
 
-function FormField({ label, optional, hint, children }: { label: string; optional?: boolean; hint?: ReactNode; children: ReactNode }) {
+// FormField labels its single child control (id + aria-describedby are
+// attached automatically) and marks required/optional fields in text.
+function FormField({
+  label,
+  optional,
+  required,
+  hint,
+  children,
+}: {
+  label: string;
+  optional?: boolean;
+  required?: boolean;
+  hint?: ReactNode;
+  children: ReactElement<Record<string, unknown>>;
+}) {
+  const id = useId();
+  const hintId = `${id}-hint`;
   return (
-    <label className="block space-y-1.5">
-      <span className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
         {label}
         {optional && <span className="text-[12px] font-normal text-fg-faint">Optional</span>}
-      </span>
-      {children}
-      {hint && <span className="block text-[12px] leading-5 text-fg-muted">{hint}</span>}
-    </label>
+        {required && <span className="text-[12px] font-normal text-fg-faint">Required</span>}
+      </label>
+      {cloneElement(children, {
+        id,
+        ...(hint ? { "aria-describedby": hintId } : {}),
+        ...(required ? { "aria-required": true } : {}),
+      })}
+      {hint && (
+        <p id={hintId} className="text-[12px] leading-5 text-fg-muted">
+          {hint}
+        </p>
+      )}
+    </div>
   );
 }
 
 const textareaClass =
-  "w-full rounded-lg border border-line bg-surface px-3 py-2 text-[13px] leading-5 text-fg placeholder:text-fg-faint transition-colors hover:border-line-strong focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25";
+  "w-full rounded-lg border border-input bg-surface px-3 py-2 text-[13px] leading-5 text-fg placeholder:text-fg-faint transition-colors hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
 
 function hostOf(url: string): string {
   try {
@@ -368,7 +429,7 @@ function AddAccountDialog({ provider, open, onClose }: { provider: Provider; ope
       open={open}
       onClose={onClose}
       title={isNoAuth ? `Connect ${provider.display_name}` : `Add ${provider.display_name} account`}
-      subtitle={isNoAuth ? "No credentials needed — this creates an account so KeiRouter can route to it." : "The key is encrypted at rest and never shown again."}
+      subtitle={isNoAuth ? "No credentials needed." : "The key is encrypted and never shown again."}
     >
       <form
         onSubmit={(e) => {
@@ -380,11 +441,13 @@ function AddAccountDialog({ provider, open, onClose }: { provider: Provider; ope
           {!isNoAuth && (
             <FormField
               label="API key"
+              required
               hint={provider.api_key_url ? (
                 <>
                   Create one at{" "}
-                  <a href={provider.api_key_url} target="_blank" rel="noopener noreferrer" className="font-medium text-accent-500 hover:underline dark:text-accent-400">
+                  <a href={provider.api_key_url} target="_blank" rel="noopener noreferrer" className="rounded-sm font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
                     {hostOf(provider.api_key_url)}
+                    <span className="sr-only"> (opens in a new tab)</span>
                   </a>
                   .
                 </>
@@ -393,28 +456,28 @@ function AddAccountDialog({ provider, open, onClose }: { provider: Provider; ope
               <Input value={form.apiKey} onChange={set("apiKey")} placeholder="sk-..." type="password" autoComplete="off" className="font-mono" />
             </FormField>
           )}
-          <FormField label="Label" optional hint="Shown in routing and usage, e.g. the team or person who owns the key.">
+          <FormField label="Label" optional hint="Shown in routing and usage.">
             <Input value={form.label} onChange={set("label")} placeholder="my-key" />
           </FormField>
           {isCloudflare && (
-            <FormField label="Account ID">
+            <FormField label="Account ID" required>
               <Input value={form.accountID} onChange={set("accountID")} placeholder="abc123def456..." className="font-mono" />
             </FormField>
           )}
           {isAzure ? (
             <div className="space-y-3.5 rounded-xl border border-line bg-subtle p-3.5">
-              <FormField label="Azure endpoint">
+              <FormField label="Azure endpoint" required>
                 <Input value={form.azureEndpoint} onChange={set("azureEndpoint")} placeholder="https://resource.openai.azure.com" className="font-mono" />
               </FormField>
               <div className="grid gap-3.5 sm:grid-cols-2">
-                <FormField label="Deployment">
+                <FormField label="Deployment" required>
                   <Input value={form.azureDeployment} onChange={set("azureDeployment")} placeholder="gpt-4o" className="font-mono" />
                 </FormField>
-                <FormField label="API version">
+                <FormField label="API version" optional>
                   <Input value={form.azureAPIVersion} onChange={set("azureAPIVersion")} placeholder="2024-10-01-preview" className="font-mono" />
                 </FormField>
               </div>
-              <FormField label="Organization">
+              <FormField label="Organization" optional>
                 <Input value={form.azureOrganization} onChange={set("azureOrganization")} placeholder="org_..." className="font-mono" />
               </FormField>
             </div>
@@ -427,8 +490,13 @@ function AddAccountDialog({ provider, open, onClose }: { provider: Provider; ope
               </Select>
             </FormField>
           ) : (
-            <FormField label="Base URL" optional={!requiresBaseURL} hint="Only needed for custom or self-hosted endpoints.">
-              <Input value={form.baseURL} onChange={set("baseURL")} placeholder="for custom endpoints" className="font-mono" />
+            <FormField
+              label="Base URL"
+              optional={!requiresBaseURL}
+              required={requiresBaseURL}
+              hint={requiresBaseURL ? undefined : "Only for custom or self-hosted endpoints."}
+            >
+              <Input value={form.baseURL} onChange={set("baseURL")} placeholder="https://…" className="font-mono" />
             </FormField>
           )}
           {error && <ErrorBanner message={error} />}
@@ -438,7 +506,7 @@ function AddAccountDialog({ provider, open, onClose }: { provider: Provider; ope
             Cancel
           </Button>
           <Button type="submit" disabled={create.isPending || !canSubmit}>
-            {create.isPending && <Loader2 className="animate-spin" />}
+            {create.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
             {create.isPending ? "Adding…" : isNoAuth ? "Connect" : "Add account"}
           </Button>
         </div>
@@ -471,15 +539,15 @@ function AccountsPanel({
   if (accounts.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-        <p className="text-[14px] font-medium text-fg">No {provider.display_name} accounts yet</p>
+        <h2 className="text-[14px] font-medium text-fg">No {provider.display_name} accounts yet</h2>
         <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
           {provider.drivable
-            ? "Add one to start routing. With several accounts KeiRouter rotates between them and fails over when one is rate limited."
-            : "Routing to this provider is not available yet, so accounts can't be added."}
+            ? "Add an account to start routing requests here."
+            : "Routing to this provider isn't available yet, so accounts can't be added."}
         </p>
         {provider.drivable && (
-          <Button className="mt-4" onClick={onConnect}>
-            <Plug />
+          <Button variant="secondary" className="mt-4" onClick={onConnect}>
+            <Plug aria-hidden="true" />
             {connectLabel}
           </Button>
         )}
@@ -489,40 +557,35 @@ function AccountsPanel({
 
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-      <div className="flex min-h-11 items-center border-b border-line px-4 py-2 text-[12.5px] text-fg-muted">
-        {accounts.length} account{accounts.length === 1 ? "" : "s"} · paused accounts receive no traffic
-      </div>
-      <ul className="divide-y divide-line">
+      <ul className="divide-y divide-line" aria-label={`${provider.display_name} accounts`}>
         {accounts.map((a) => {
           const name = a.label || a.provider;
           return (
             <li key={a.id} className={cn("flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-hover/60", a.disabled && "bg-subtle/60")}>
               <span
                 className={cn("h-2 w-2 shrink-0 rounded-full", a.needs_reconnect ? "bg-warn" : a.disabled ? "bg-fg-faint" : "bg-ok")}
-                role="img"
-                aria-label={a.needs_reconnect ? "Needs reconnect" : a.disabled ? "Paused" : "Active"}
+                aria-hidden="true"
               />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13px] font-medium text-fg">{name}</p>
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] text-fg-muted">
                   <span>{a.auth_kind === "oauth" ? "Signed in" : a.auth_kind === "none" ? "No credentials" : "API key"}</span>
-                  {a.disabled && <Badge tone="neutral">Paused</Badge>}
+                  {a.disabled && <Badge tone="neutral">Paused · no traffic</Badge>}
                   {a.needs_reconnect && <Badge tone="warning">Reconnect needed</Badge>}
+                  {!a.disabled && !a.needs_reconnect && <span className="sr-only">Active</span>}
                 </div>
               </div>
-              <span className="inline-flex" aria-label={`${a.disabled ? "Resume" : "Pause"} ${name}`}>
-                <Toggle checked={!a.disabled} onChange={() => onToggle(a)} />
-              </span>
+              <Toggle checked={!a.disabled} onChange={() => onToggle(a)} label={`Route traffic to ${name}`} />
               <DropdownMenu>
                 <DropdownMenuTrigger
                   aria-label={`Actions for ${name}`}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
                 >
-                  <MoreHorizontal className="h-4 w-4" />
+                  <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem tone="danger" onSelect={() => onRemove(a)}>
-                    <Trash2 />
+                    <Trash2 aria-hidden="true" />
                     Remove account
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -559,8 +622,10 @@ function ModelsPanel({ provider, models, loading, label }: { provider: Provider;
   if (models.length === 0) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-        <p className="text-[13px] font-medium text-fg">No models listed</p>
-        <p className="mt-1 text-[12.5px] text-fg-muted">{provider.display_name} doesn't publish a {label.toLowerCase()} model catalog. You can still route by model id.</p>
+        <h2 className="text-[13px] font-medium text-fg">No models listed</h2>
+        <p className="mt-1 text-[12.5px] text-fg-muted">
+          {provider.display_name} has no {label.toLowerCase()} model catalog. You can still route by model id.
+        </p>
       </div>
     );
   }
@@ -569,17 +634,17 @@ function ModelsPanel({ provider, models, loading, label }: { provider: Provider;
     <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
         <div className="relative w-full sm:w-72">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} />
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
           <input
             type="search"
-            aria-label="Search media models"
+            aria-label={`Filter ${provider.display_name} models`}
             placeholder="Filter models"
             value={modelSearchQuery}
             onChange={(event) => setModelSearchQuery(event.target.value)}
-            className="h-8 w-full rounded-lg border border-line bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25"
+            className="h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
           />
         </div>
-        <span className="ml-auto text-[12.5px] tabular-nums text-fg-faint">
+        <span className="ml-auto text-[12.5px] tabular-nums text-fg-muted" role="status">
           {filteredModels.length === models.length ? `${models.length} models` : `${filteredModels.length} of ${models.length} shown`}
         </span>
       </div>
@@ -587,12 +652,13 @@ function ModelsPanel({ provider, models, loading, label }: { provider: Provider;
         <p className="px-6 py-10 text-center text-[13px] text-fg-muted">No models match “{modelSearchQuery}”.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[600px] text-[13px]">
+          <table className="w-full min-w-[560px] text-[13px]">
+            <caption className="sr-only">{provider.display_name} models</caption>
             <thead>
               <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
-                <th className="px-4 py-2 font-medium">Model</th>
-                <th className="px-4 py-2 font-medium">Kind</th>
-                <th className="px-4 py-2 font-medium">Route as</th>
+                <th scope="col" className="px-4 py-2 font-medium">Model</th>
+                <th scope="col" className="px-4 py-2 font-medium">Kind</th>
+                <th scope="col" className="px-4 py-2 font-medium">Route as</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
@@ -625,13 +691,26 @@ function ModelRow({ model: m, route }: { model: ProviderModel; route: string }) 
     <tr className="transition-colors hover:bg-hover/60">
       <td className="max-w-[340px] px-4 py-2">
         <p className="truncate font-medium text-fg" title={m.name || m.id}>{m.name || m.id}</p>
-        {m.name && m.name !== m.id && <p className="truncate font-mono text-[11.5px] text-fg-faint">{m.id}</p>}
+        {m.name && m.name !== m.id && <p className="truncate font-mono text-[11.5px] text-fg-muted">{m.id}</p>}
       </td>
       <td className="px-4 py-2 text-[12.5px] text-fg-muted">{m.kind || "—"}</td>
       <td className="max-w-[320px] px-4 py-2">
-        <button type="button" onClick={copy} className="group inline-flex max-w-full items-center gap-1.5 font-mono text-[12px] text-fg-muted hover:text-fg" title="Copy model name">
+        <button
+          type="button"
+          onClick={copy}
+          aria-label={`Copy ${route}`}
+          title="Copy model name"
+          className="group inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-md font-mono text-[12px] text-fg-muted hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+        >
           <span className="truncate">{route}</span>
-          {copied ? <Check className="h-3.5 w-3.5 shrink-0 text-ok" /> : <Copy className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />}
+          {copied ? (
+            <Check className="h-3.5 w-3.5 shrink-0 text-ok" aria-hidden="true" />
+          ) : (
+            <Copy
+              className="h-3.5 w-3.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+              aria-hidden="true"
+            />
+          )}
         </button>
       </td>
     </tr>
@@ -656,11 +735,16 @@ function Playground({ provider, initial, models }: { provider: Provider; initial
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         {options.length > 1 ? (
-          <SegmentedControl value={cap} onChange={setCap} options={options.map((c) => ({ value: c, label: kindMeta[c].short }))} />
+          <Segmented
+            aria-label="Capability to try"
+            value={cap}
+            onChange={setCap}
+            options={options.map((c) => ({ value: c, label: kindMeta[c].short }))}
+          />
         ) : (
-          <p className="text-[13px] font-medium text-fg">{kindMeta[cap].label}</p>
+          <span />
         )}
-        <p className="text-[12.5px] text-fg-muted">Requests go through KeiRouter's local endpoint and count toward usage.</p>
+        <p className="text-[12.5px] text-fg-muted">Requests count toward usage.</p>
       </div>
       {cap === "embedding" && <EmbeddingPlayground key={cap} provider={provider} models={models} />}
       {cap === "image" && <ImagePlayground key={cap} provider={provider} models={models} />}
@@ -697,7 +781,6 @@ function fmtMs(ms: number): string {
 
 function PlaygroundLayout({
   title,
-  description,
   form,
   action,
   state,
@@ -706,7 +789,6 @@ function PlaygroundLayout({
   children,
 }: {
   title: string;
-  description: string;
   form: ReactNode;
   action: ReactNode;
   state: RunState<unknown>;
@@ -715,31 +797,36 @@ function PlaygroundLayout({
   children: ReactNode;
 }) {
   const done = state.ms !== null;
+  const baseId = useId();
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-      <section className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <section aria-labelledby={`${baseId}-request`} className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
         <div className="border-b border-line px-4 py-3">
-          <h2 className="text-[13px] font-semibold text-fg">{title}</h2>
-          <p className="text-[12px] text-fg-muted">{description}</p>
+          <h2 id={`${baseId}-request`} className="text-[13px] font-semibold text-fg">{title}</h2>
         </div>
         <div className="flex-1 space-y-3.5 px-4 py-4">{form}</div>
         <div className="flex items-center gap-2 border-t border-line bg-subtle px-4 py-3">{action}</div>
       </section>
 
-      <section className="flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]" aria-live="polite">
+      <section
+        aria-labelledby={`${baseId}-response`}
+        aria-busy={state.loading || undefined}
+        className="flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
+      >
         <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
-          <h2 className="text-[13px] font-semibold text-fg">Response</h2>
-          <div className="flex items-center gap-2 text-[12px] text-fg-muted">
+          <h2 id={`${baseId}-response`} className="text-[13px] font-semibold text-fg">Response</h2>
+          <div className="flex items-center gap-2 text-[12px] text-fg-muted" role="status">
             {state.loading && (
               <span className="inline-flex items-center gap-1.5">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                 Waiting for the provider
               </span>
             )}
             {done && (state.error ? <Badge tone="danger">Failed</Badge> : <Badge tone="success">Success</Badge>)}
             {done && (
-              <span className="inline-flex items-center gap-1 tabular-nums" title="Request time">
-                <Clock3 className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} />
+              <span className="inline-flex items-center gap-1 tabular-nums">
+                <Clock3 className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                <span className="sr-only">in</span>
                 {fmtMs(state.ms!)}
               </span>
             )}
@@ -758,7 +845,7 @@ function PlaygroundLayout({
             children
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center">
-              <Icon className="h-4 w-4 text-fg-faint" strokeWidth={1.75} />
+              <Icon className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
               <p className="max-w-xs text-[12.5px] text-fg-muted">{idleHint}</p>
             </div>
           )}
@@ -771,7 +858,7 @@ function PlaygroundLayout({
 function RunButton({ onClick, disabled, loading, idle, busy }: { onClick: () => void; disabled: boolean; loading: boolean; idle: string; busy: string }) {
   return (
     <Button onClick={onClick} disabled={disabled}>
-      {loading ? <Loader2 className="animate-spin" /> : <Play />}
+      {loading ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Play aria-hidden="true" />}
       {loading ? busy : idle}
     </Button>
   );
@@ -780,7 +867,11 @@ function RunButton({ onClick, disabled, loading, idle, busy }: { onClick: () => 
 function JsonBlock({ value, limit }: { value: unknown; limit?: number }) {
   const text = JSON.stringify(value, null, 2);
   return (
-    <pre className="max-h-[420px] flex-1 overflow-auto rounded-lg border border-line bg-subtle p-3 font-mono text-[12px] leading-5 text-fg">
+    <pre
+      tabIndex={0}
+      aria-label="Response JSON"
+      className="max-h-[420px] flex-1 overflow-auto rounded-lg border border-line bg-subtle p-3 font-mono text-[12px] leading-5 text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+    >
       {limit ? text.slice(0, limit) : text}
     </pre>
   );
@@ -814,8 +905,8 @@ function CopyButton({ text, label }: { text: string; label: string }) {
     }
   };
   return (
-    <Button variant="ghost" onClick={copy} aria-label={label} title={label} className="px-2">
-      {copied ? <Check className="text-ok" /> : <Copy />}
+    <Button variant="ghost" onClick={copy} aria-label={label} title={label} className="min-w-9 px-2">
+      {copied ? <Check className="text-ok" aria-hidden="true" /> : <Copy aria-hidden="true" />}
     </Button>
   );
 }
@@ -849,7 +940,6 @@ function EmbeddingPlayground({ provider, models }: { provider: Provider; models:
   return (
     <PlaygroundLayout
       title="Embeddings"
-      description="Send text and get embedding vectors."
       icon={Boxes}
       idleHint="Run a request to see the returned vectors."
       state={state}
@@ -911,7 +1001,6 @@ function ImagePlayground({ provider, models }: { provider: Provider; models: Mod
   return (
     <PlaygroundLayout
       title="Image generation"
-      description="Generate images from text prompts."
       icon={Image}
       idleHint="Generated images appear here."
       state={state}
@@ -938,10 +1027,10 @@ function ImagePlayground({ provider, models }: { provider: Provider; models: Mod
     >
       {state.result ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3">
-          <img src={state.result} alt="Generated" className="max-h-[420px] max-w-full rounded-lg border border-line object-contain" />
-          <a href={state.result} download="image.png" className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-accent-500 hover:underline dark:text-accent-400">
-            <Download className="h-3.5 w-3.5" />
-            Download
+          <img src={state.result} alt="Generated image" className="max-h-[420px] max-w-full rounded-lg border border-line object-contain" />
+          <a href={state.result} download="image.png" className="inline-flex min-h-6 items-center gap-1.5 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            Download image
           </a>
         </div>
       ) : (
@@ -979,7 +1068,6 @@ function TtsPlayground({ provider, models }: { provider: Provider; models: Model
   return (
     <PlaygroundLayout
       title="Text-to-speech"
-      description="Convert text to audio."
       icon={AudioLines}
       idleHint="Synthesized audio plays here."
       state={state}
@@ -1002,10 +1090,10 @@ function TtsPlayground({ provider, models }: { provider: Provider; models: Model
     >
       {state.result && (
         <div className="flex flex-1 flex-col justify-center gap-3">
-          <audio controls src={state.result} className="w-full" />
-          <a href={state.result} download="speech.mp3" className="inline-flex items-center gap-1.5 self-start text-[12.5px] font-medium text-accent-500 hover:underline dark:text-accent-400">
-            <Download className="h-3.5 w-3.5" />
-            Download
+          <audio controls src={state.result} className="w-full" aria-label="Synthesized speech" />
+          <a href={state.result} download="speech.mp3" className="inline-flex min-h-6 items-center gap-1.5 self-start rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            Download audio
           </a>
         </div>
       )}
@@ -1038,7 +1126,6 @@ function SttPlayground({ provider, models }: { provider: Provider; models: Model
   return (
     <PlaygroundLayout
       title="Speech-to-text"
-      description="Transcribe audio files."
       icon={Mic}
       idleHint="The transcript appears here."
       state={state}
@@ -1047,14 +1134,35 @@ function SttPlayground({ provider, models }: { provider: Provider; models: Model
           <FormField label="Model">
             <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={provider.id} className="font-mono" />
           </FormField>
-          <FormField label="Audio file" hint="Any format the provider accepts, e.g. mp3, wav, m4a or webm.">
-            <span className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-dashed border-line-strong bg-surface px-3 text-[13px] transition-colors hover:bg-hover focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500/25">
-              <FileAudio className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} />
-              <span className={cn("min-w-0 flex-1 truncate", file ? "text-fg" : "text-fg-faint")}>{file ? file.name : "Choose an audio file"}</span>
-              {file && <span className="shrink-0 text-[12px] tabular-nums text-fg-faint">{(file.size / 1024).toFixed(0)} KB</span>}
-              <input type="file" accept="audio/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="sr-only" />
+          <div className="space-y-1.5">
+            <span id="stt-file-label" className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
+              Audio file
+              <span className="text-[12px] font-normal text-fg-faint">Required</span>
             </span>
-          </FormField>
+            <label className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-dashed border-input bg-surface px-3 text-[13px] transition-colors hover:bg-hover focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500">
+              <FileAudio className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <span className={cn("min-w-0 flex-1 truncate", file ? "text-fg" : "text-fg-muted")} aria-hidden="true">
+                {file ? file.name : "Choose an audio file"}
+              </span>
+              {file && (
+                <span className="shrink-0 text-[12px] tabular-nums text-fg-muted" aria-hidden="true">
+                  {(file.size / 1024).toFixed(0)} KB
+                </span>
+              )}
+              <input
+                type="file"
+                accept="audio/*"
+                aria-labelledby="stt-file-label"
+                aria-describedby="stt-file-hint"
+                aria-required="true"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                className="sr-only"
+              />
+            </label>
+            <p id="stt-file-hint" className="text-[12px] leading-5 text-fg-muted">
+              mp3, wav, m4a, webm or any format the provider accepts.
+            </p>
+          </div>
         </>
       }
       action={<RunButton onClick={submit} disabled={state.loading || !file} loading={state.loading} idle="Transcribe" busy="Transcribing…" />}
@@ -1096,7 +1204,6 @@ function SearchPlayground({ provider }: { provider: Provider }) {
   return (
     <PlaygroundLayout
       title="Web search"
-      description="Search the web."
       icon={Search}
       idleHint="Search results appear here as JSON."
       state={state}
@@ -1133,7 +1240,6 @@ function FetchPlayground({ provider }: { provider: Provider }) {
   return (
     <PlaygroundLayout
       title="Web fetch"
-      description="Fetch and extract web page content."
       icon={Globe}
       idleHint="Extracted page content appears here as JSON."
       state={state}

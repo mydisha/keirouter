@@ -16,19 +16,21 @@ export function ModelCapabilityIcons({
       {capabilities.vision && (
         <span
           title="Vision — supports image input"
-          aria-label="Vision — supports image input"
-          className="inline-flex h-6 w-6 items-center justify-center rounded-md bg-[color:var(--color-info)]/12 text-[color:var(--color-info)] dark:bg-[color:var(--color-info)]/20"
+          role="img"
+          aria-label="Vision: supports image input"
+          className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-line bg-subtle text-fg-muted"
         >
-          <Eye size={size} aria-hidden="true" />
+          <Eye size={size} strokeWidth={1.75} aria-hidden="true" />
         </span>
       )}
       {capabilities.reasoning && (
         <span
           title="Reasoning — supports extended thinking"
-          aria-label="Reasoning — supports extended thinking"
+          role="img"
+          aria-label="Reasoning: supports extended thinking"
           className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-line bg-subtle text-fg-muted"
         >
-          <Brain size={size} aria-hidden="true" />
+          <Brain size={size} strokeWidth={1.75} aria-hidden="true" />
         </span>
       )}
     </span>

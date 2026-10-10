@@ -55,14 +55,14 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               <AlertDialog.Description className="sr-only">Confirm this action</AlertDialog.Description>
             )}
             <div className="mt-5 flex justify-end gap-2">
-              <AlertDialog.Cancel className="inline-flex h-9 items-center rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40">
+              <AlertDialog.Cancel className="inline-flex h-9 items-center rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
                 {options?.cancelLabel ?? "Cancel"}
               </AlertDialog.Cancel>
               <AlertDialog.Action
                 onClick={() => settle(true)}
                 className={cn(
-                  "inline-flex h-9 items-center rounded-lg px-3 text-[13px] font-medium transition-opacity hover:opacity-85 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg-elevated)]",
-                  danger ? "bg-bad text-white focus-visible:ring-bad/50" : "bg-primary text-primary-fg focus-visible:ring-accent-500/40",
+                  "inline-flex h-9 items-center rounded-lg px-3 text-[13px] font-medium transition-opacity hover:opacity-85 focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
+                  danger ? "bg-bad text-white dark:text-canvas focus-visible:ring-bad" : "bg-primary text-primary-fg focus-visible:ring-accent-500",
                 )}
               >
                 {options?.confirmLabel ?? (danger ? "Delete" : "Confirm")}

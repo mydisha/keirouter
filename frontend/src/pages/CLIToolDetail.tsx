@@ -1,20 +1,17 @@
-import { useState } from "react";
+import { useId, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, Copy, Check, Settings, Play, RotateCcw,
-  CheckCircle2, XCircle, CircleDot, Loader2,
-  ChevronDown, ChevronUp, TerminalSquare, KeyRound, Globe, Cpu,
+  ArrowLeft, Copy, Check, ChevronRight, Loader2, RotateCcw, FileCog, AlertTriangle,
 } from "lucide-react";
 import { api } from "../lib/api";
-import { brandColor } from "../lib/brand-colors";
 import { useToast } from "../components/Toast";
-import {
-  Card, SectionHeader, Button, Input, Select, Field,
-  Spinner, EmptyState,
-} from "../components/ui";
+import { ProviderLogo } from "../components/ProviderLogo";
+import { useConfirm } from "../components/ui/confirm-dialog";
+import { Button, Input, Select, Skeleton } from "../components/ui";
+import { cn } from "@/lib/utils";
 
-// Tool metadata — descriptions, images, install commands. Colors from brand-colors.ts.
+// Tool metadata — descriptions, logos, install commands.
 const toolMeta: Record<string, { description: string; image: string; installCmd?: string }> = {
   claude:       { description: "Anthropic's CLI coding agent", image: "/providers/claude.png", installCmd: "npm install -g @anthropic-ai/claude-code" },
   codex:        { description: "OpenAI Codex CLI", image: "/providers/codex.png", installCmd: "npm install -g @openai/codex" },
@@ -29,10 +26,13 @@ const toolMeta: Record<string, { description: string; image: string; installCmd?
   jcode:        { description: "jcode coding agent", image: "/providers/jcode.png", installCmd: "npm install -g jcode" },
 };
 
+const CUSTOM_KEY = "__custom__";
+
 export function CLIToolDetailPage() {
   const { toolId } = useParams<{ toolId: string }>();
   const qc = useQueryClient();
   const toast = useToast();
+  const askConfirm = useConfirm();
 
   const tools = useQuery({
     queryKey: ["cli-tools"],
@@ -50,9 +50,12 @@ export function CLIToolDetailPage() {
   // Form state
   const [baseUrl, setBaseUrl] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [customKey, setCustomKey] = useState("");
   const [model, setModel] = useState("");
-  const [showInstall, setShowInstall] = useState(false);
-  const [showSnippet, setShowSnippet] = useState(false);
+
+  // The key that is written / shown in the snippet. "Custom…" in the key
+  // picker switches to a free-text field without losing the selection.
+  const effectiveKey = apiKey === CUSTOM_KEY ? customKey : apiKey;
 
   // Initialize base URL when data loads
   const initializedKey = `${tools.data?.base_url}-${toolId}`;
@@ -67,7 +70,7 @@ export function CLIToolDetailPage() {
     mutationFn: () =>
       api.cliToolConfigure(toolId!, {
         base_url: baseUrl,
-        api_key: apiKey || "sk_keirouter",
+        api_key: effectiveKey || "sk_keirouter",
         models: model ? [model] : undefined,
       }),
     onSuccess: () => {
@@ -86,305 +89,584 @@ export function CLIToolDetailPage() {
     onError: (e: Error) => toast.error("Config removal failed", e.message),
   });
 
-  if (tools.isLoading) return <Spinner />;
+  const snippetWithVars = (tool?.snippet ?? "")
+    .replace(/http:\/\/localhost:\d+\/v1/g, baseUrl ? `${baseUrl.replace(/\/+$/, "")}/v1` : "http://localhost:20180/v1")
+    .replace(/sk_keirouter/g, effectiveKey || "sk_keirouter");
+  const files = useMemo(() => splitSnippet(snippetWithVars), [snippetWithVars]);
+  const envVars = useMemo(() => extractEnvVars(files), [files]);
 
-  if (!tool) {
+  if (tools.isLoading) {
     return (
-      <div className="space-y-4">
-        <Link to="/cli-tools" className="flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
-          <ArrowLeft className="h-4 w-4" /> Back to CLI Tools
-        </Link>
-        <EmptyState title="Tool not found" />
+      <div className="space-y-4" aria-busy="true" aria-label="Loading CLI tool">
+        <Skeleton className="h-5 w-40" />
+        <div className="flex items-center gap-3">
+          <Skeleton className="h-10 w-10 rounded-lg" />
+          <div className="space-y-2">
+            <Skeleton className="h-5 w-48" />
+            <Skeleton className="h-3.5 w-72" />
+          </div>
+        </div>
+        <Skeleton className="h-96 w-full rounded-2xl" />
       </div>
     );
   }
 
-  const snippetWithVars = tool.snippet
-    .replace(/http:\/\/localhost:\d+\/v1/g, baseUrl ? `${baseUrl.replace(/\/+$/, "")}/v1` : "http://localhost:20180/v1")
-    .replace(/sk_keirouter/g, apiKey || "sk_keirouter");
+  if (!tool) {
+    return (
+      <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+        <h1 className="text-[14px] font-medium text-fg">This CLI tool doesn&apos;t exist</h1>
+        <Link to="/cli-tools" className="mt-2 inline-block text-[13px] font-medium text-link hover:underline">
+          Back to CLI tools
+        </Link>
+      </div>
+    );
+  }
+
+  const configTarget = tool.config_path || "its config file";
+
+  const applyConfig = async () => {
+    const ok = await askConfirm({
+      title: `Write ${tool.name} config?`,
+      description: (
+        <>
+          KeiRouter writes the endpoint, key{model ? " and model" : ""} into{" "}
+          <span className="font-mono text-[12px] text-fg">{configTarget}</span>. Existing provider settings in that file are
+          replaced. Restart {tool.name} afterwards to pick up the change.
+        </>
+      ),
+      confirmLabel: "Write config",
+    });
+    if (ok) configureMut.mutate();
+  };
+
+  const resetConfig = async () => {
+    const ok = await askConfirm({
+      title: `Disconnect ${tool.name}?`,
+      description: `The KeiRouter settings are removed from ${configTarget}, so ${tool.name} goes back to its default endpoint. Requests stop routing through KeiRouter.`,
+      confirmLabel: "Remove config",
+      tone: "danger",
+    });
+    if (ok) removeMut.mutate();
+  };
+
+  const status = tool.configured
+    ? { dot: "bg-ok", label: "Connected" }
+    : tool.installed
+      ? { dot: "bg-warn", label: "Not configured" }
+      : { dot: "bg-fg-faint", label: "Not installed" };
+
+  const keyList = keys.data?.keys ?? [];
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <Link to="/cli-tools" className="mb-3 flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
-          <ArrowLeft className="h-4 w-4" /> Back to CLI Tools
-        </Link>
-        <div className="flex items-center gap-3">
-          <ToolIcon id={toolId!} />
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold">{tool.name}</h1>
-              <StatusBadge installed={tool.installed} configured={tool.configured} />
-            </div>
-            <p className="text-sm text-[var(--text-muted)]">
-              {meta?.description ?? tool.instructions}
-            </p>
+    <>
+      <nav aria-label="Breadcrumb" className="mb-3 text-[13px] text-fg-muted">
+        <ol className="flex items-center gap-1.5">
+          <li>
+            <Link
+              to="/cli-tools"
+              className="inline-flex min-h-6 items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+              CLI tools
+            </Link>
+          </li>
+          <li aria-hidden="true" className="text-fg-faint">
+            /
+          </li>
+          <li className="truncate text-fg" aria-current="page">
+            {tool.name}
+          </li>
+        </ol>
+      </nav>
+
+      <header className="mb-5 flex min-w-0 items-center gap-3">
+        <ProviderLogo icon={meta?.image} name={tool.name} size={40} className="rounded-lg" />
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{tool.name}</h1>
+            <span className="inline-flex items-center gap-1.5 text-[12.5px] text-fg-muted">
+              <span className={cn("h-1.5 w-1.5 rounded-full", status.dot)} aria-hidden="true" />
+              {status.label}
+            </span>
           </div>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
+            <span>{meta?.description ?? tool.dialect}</span>
+            {meta?.description && (
+              <>
+                <span aria-hidden="true" className="text-fg-faint">
+                  ·
+                </span>
+                <span className="font-mono text-[12.5px]">{tool.dialect}</span>
+              </>
+            )}
+          </p>
         </div>
-      </div>
+      </header>
 
-      {/* Not installed warning */}
-      {!tool.installed && (
-        <Card className="border-amber-500/30 bg-amber-500/5 dark:border-amber-500/20 dark:bg-amber-500/10">
-          <div className="flex items-start gap-3 px-6 py-4">
-            <XCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
-            <div className="flex-1">
-              <p className="text-sm font-medium text-warn">
-                {tool.name} CLI not detected locally
+      <ol className="max-w-3xl divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        {/* 1. Install */}
+        <Step n={1} title={`Install ${tool.name}`}>
+          {tool.installed ? (
+            <p className="flex items-center gap-1.5 text-[13px] text-fg-muted">
+              <Check className="h-3.5 w-3.5 text-ok" aria-hidden="true" />
+              Detected on this machine.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              <p className="flex items-start gap-1.5 text-[13px] leading-5 text-fg">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+                <span>Not detected here. Install it, or set it up by hand in step 4.</span>
               </p>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">
-                You can still copy the config snippet below, or install the CLI first.
-              </p>
-              {meta?.installCmd && (
-                <div className="mt-2">
-                  <button
-                    onClick={() => setShowInstall(!showInstall)}
-                    className="flex items-center gap-1 text-xs font-medium text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300"
-                  >
-                    {showInstall ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                    How to install
-                  </button>
-                  {showInstall && (
-                    <pre className="mt-2 rounded-lg bg-[var(--bg-subtle)] p-3 font-mono text-xs">
-                      {meta.installCmd}
-                    </pre>
-                  )}
-                </div>
-              )}
+              {meta?.installCmd && <CodeWell code={meta.installCmd} label="Shell" copyLabel="install command" />}
             </div>
-          </div>
-        </Card>
-      )}
+          )}
+        </Step>
 
-      {/* Config form */}
-      <Card>
-        <SectionHeader
-          title="Configuration"
-          description="Set the endpoint, API key, and model for this tool."
-          icon={Settings}
-        />
-        <div className="space-y-4 px-6 pb-6">
-          {/* Endpoint */}
-          <Field label="Endpoint URL">
-            <div className="flex items-center gap-2">
-              <Globe className="h-4 w-4 shrink-0 text-[var(--text-muted)]" />
+        {/* 2. Connection settings */}
+        <Step n={2} title="Choose endpoint and key">
+          <div className="max-w-xl space-y-4">
+            <FieldRow
+              id="cli-endpoint"
+              label="Endpoint URL"
+              required
+              hint={
+                <>
+                  Gateway: <span className="font-mono">{tools.data?.base_url ?? "—"}</span>
+                </>
+              }
+            >
               <Input
+                id="cli-endpoint"
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
                 placeholder="http://localhost:20180"
-                className="flex-1 font-mono"
+                className="font-mono"
+                aria-required="true"
+                aria-describedby="cli-endpoint-hint"
               />
-            </div>
-            <p className="mt-1 text-[10px] text-[var(--text-muted)]">
-              Current: <span className="font-mono">{tools.data?.base_url ?? "—"}</span>
-            </p>
-          </Field>
+            </FieldRow>
 
-          {/* API Key */}
-          <Field label="API Key">
-            <div className="flex items-center gap-2">
-              <KeyRound className="h-4 w-4 shrink-0 text-[var(--text-muted)]" />
-              {keys.data?.keys && keys.data.keys.length > 0 ? (
-                <Select
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  className="flex-1"
-                >
+            <FieldRow id="cli-key" label="API key" hint="Use a dedicated key so you can revoke it on its own.">
+              {keyList.length > 0 ? (
+                <Select id="cli-key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} aria-describedby="cli-key-hint">
                   <option value="">sk_keirouter (default)</option>
-                  {keys.data.keys.filter((k) => !k.disabled).map((k) => (
+                  {keyList.filter((k) => !k.disabled).map((k) => (
                     <option key={k.id} value={k.display}>
                       {k.name || k.display}
                     </option>
                   ))}
-                  <option value="__custom__">Custom…</option>
+                  <option value={CUSTOM_KEY}>Custom…</option>
                 </Select>
               ) : (
                 <Input
+                  id="cli-key"
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   placeholder="sk_keirouter"
                   type="password"
-                  className="flex-1"
+                  className="font-mono"
+                  aria-describedby="cli-key-hint"
                 />
               )}
-            </div>
-            {apiKey === "__custom__" && (
-              <Input
-                value=""
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Enter custom API key"
-                type="password"
-                className="mt-2 ml-6 max-w-md"
-              />
-            )}
-          </Field>
+              {apiKey === CUSTOM_KEY && (
+                <Input
+                  value={customKey}
+                  onChange={(e) => setCustomKey(e.target.value)}
+                  placeholder="Enter custom API key"
+                  aria-label="Custom API key"
+                  type="password"
+                  className="mt-2 font-mono"
+                  autoFocus
+                />
+              )}
+            </FieldRow>
 
-          {/* Model */}
-          <Field label="Default model (optional)">
-            <div className="flex items-center gap-2">
-              <Cpu className="h-4 w-4 shrink-0 text-[var(--text-muted)]" />
+            <FieldRow id="cli-model" label="Default model" optional hint="Leave empty to pick a model inside the tool.">
               <Input
+                id="cli-model"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 placeholder="provider/model-id or chain:my-chain"
-                className="flex-1 font-mono"
+                className="font-mono"
+                aria-describedby="cli-model-hint"
               />
-            </div>
-          </Field>
+            </FieldRow>
+          </div>
+        </Step>
 
-          {/* Action buttons */}
-          <div className="flex items-center gap-2 pt-2">
-            <Button
-              onClick={() => configureMut.mutate()}
-              disabled={configureMut.isPending || !baseUrl}
-            >
-              {configureMut.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Play className="h-4 w-4" />
-              )}
-              Apply
+        {/* 3. Apply */}
+        <Step
+          n={3}
+          title="Write the config"
+          description={
+            tool.config_path ? (
+              <>
+                Updates <span className="break-all font-mono text-[12px] text-fg">{tool.config_path}</span>
+              </>
+            ) : (
+              "Updates the tool's config file on this machine."
+            )
+          }
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Button onClick={applyConfig} disabled={configureMut.isPending || !baseUrl}>
+              {configureMut.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <FileCog aria-hidden="true" />}
+              {tool.configured ? "Rewrite config" : "Write config"}
             </Button>
             {tool.configured && (
-              <Button
-                variant="ghost"
-                onClick={() => removeMut.mutate()}
-                disabled={removeMut.isPending}
-              >
-                {removeMut.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RotateCcw className="h-4 w-4" />
-                )}
-                Reset
+              <Button variant="danger" onClick={resetConfig} disabled={removeMut.isPending}>
+                {removeMut.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RotateCcw aria-hidden="true" />}
+                Remove config
               </Button>
             )}
-            <Button
-              variant="ghost"
-              onClick={() => setShowSnippet(!showSnippet)}
-            >
-              <TerminalSquare className="h-4 w-4" />
-              {showSnippet ? "Hide" : "Show"} snippet
-            </Button>
           </div>
 
-          {/* Success/error feedback */}
-          {configureMut.isSuccess && (
-            <p className="text-xs text-ok">
-              ✓ Configured successfully — restart {tool.name} to pick up changes.
-            </p>
-          )}
+          <div role="status" className="empty:hidden">
+            {configureMut.isSuccess && (
+              <p className="mt-3 flex items-center gap-1.5 text-[12.5px] text-ok">
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                Configured. Restart {tool.name} to pick up the change.
+              </p>
+            )}
+            {removeMut.isSuccess && (
+              <p className="mt-3 flex items-center gap-1.5 text-[12.5px] text-ok">
+                <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                Config removed.
+              </p>
+            )}
+          </div>
           {configureMut.isError && (
-            <p className="text-xs text-[color:var(--color-danger)]">
-              ✗ {(configureMut.error as Error)?.message}
+            <p role="alert" className="mt-3 flex items-start gap-1.5 text-[12.5px] text-bad">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span className="break-words">{(configureMut.error as Error)?.message}</span>
             </p>
           )}
-          {removeMut.isSuccess && (
-            <p className="text-xs text-ok">
-              ✓ Config removed.
-            </p>
-          )}
-        </div>
-      </Card>
+        </Step>
 
-      {/* Snippet preview */}
-      {showSnippet && (
-        <Card>
-          <SectionHeader
-            title="Config snippet"
-            description={tool.instructions}
-            icon={TerminalSquare}
-            iconTone="neutral"
-            action={<CopyButton text={snippetWithVars} />}
-          />
-          <div className="px-6 pb-6">
-            <pre className="overflow-x-auto rounded-lg bg-[var(--bg-subtle)] p-4 font-mono text-xs leading-relaxed">
-              {snippetWithVars}
-            </pre>
-          </div>
-        </Card>
-      )}
+        {/* 4. Manual */}
+        <li className="px-4 py-4 sm:px-5">
+          <details className="group" open={!tool.installed}>
+            <summary className="flex cursor-pointer list-none items-start gap-3 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [&::-webkit-details-marker]:hidden">
+              <StepNumber n={4} />
+              <h2 className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] font-semibold leading-5 text-fg">
+                <span className="sr-only">Step 4: </span>
+                Or set it up by hand
+                <ChevronRight
+                  className="h-3.5 w-3.5 text-fg-faint transition-transform group-open:rotate-90"
+                  strokeWidth={1.75}
+                  aria-hidden="true"
+                />
+              </h2>
+            </summary>
+            <div className="mt-3 space-y-4 pl-8">
+              {tool.instructions && <p className="text-[12.5px] leading-5 text-fg-muted">{tool.instructions}</p>}
+              <SnippetWell files={files} fullText={snippetWithVars} />
+              {envVars.length > 0 && <EnvTable vars={envVars} />}
+            </div>
+          </details>
+        </li>
+      </ol>
+    </>
+  );
+}
 
-      {/* Config path info */}
-      {tool.config_path && (
-        <Card className="px-6 py-4">
-          <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-            <TerminalSquare className="h-3.5 w-3.5" />
-            <span>Config path:</span>
-            <span className="font-mono">{tool.config_path}</span>
-          </div>
-        </Card>
+// ── Layout pieces ────────────────────────────────────────────────────────────
+
+function StepNumber({ n }: { n: number }) {
+  return (
+    <span
+      className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-line-strong font-mono text-[11px] text-fg-muted"
+      aria-hidden="true"
+    >
+      {n}
+    </span>
+  );
+}
+
+function Step({ n, title, description, children }: { n: number; title: string; description?: ReactNode; children: ReactNode }) {
+  return (
+    <li className="flex gap-3 px-4 py-4 sm:px-5">
+      <StepNumber n={n} />
+      <div className="min-w-0 flex-1">
+        <h2 className="text-[13px] font-semibold leading-5 text-fg">
+          <span className="sr-only">Step {n}: </span>
+          {title}
+        </h2>
+        {description && <p className="mt-0.5 text-[12.5px] leading-5 text-fg-muted">{description}</p>}
+        <div className="mt-3">{children}</div>
+      </div>
+    </li>
+  );
+}
+
+function FieldRow({
+  id,
+  label,
+  hint,
+  optional,
+  required,
+  children,
+}: {
+  id: string;
+  label: string;
+  hint?: ReactNode;
+  optional?: boolean;
+  required?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
+        {label}
+        {optional && <span className="text-[12px] font-normal text-fg-faint">Optional</span>}
+        {required && <span className="text-[12px] font-normal text-fg-faint">Required</span>}
+      </label>
+      {children}
+      {hint && (
+        <p id={`${id}-hint`} className="text-[12px] leading-5 text-fg-muted">
+          {hint}
+        </p>
       )}
     </div>
   );
 }
 
-function ToolIcon({ id }: { id: string }) {
-  const [errored, setErrored] = useState(false);
-  const meta = toolMeta[id];
-  if (errored || !meta?.image) {
-    return (
-      <div
-        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-lg font-bold text-white"
-        style={{ backgroundColor: brandColor(id) }}
-      >
-        {id.slice(0, 2).toUpperCase()}
+// ── Snippets ─────────────────────────────────────────────────────────────────
+
+interface SnippetFile {
+  path: string;
+  notes: string[];
+  body: string;
+}
+
+// splitSnippet turns the backend's multi-file snippet ("# ~/path" header lines
+// followed by file contents) into one entry per file. A fully commented file
+// (e.g. Codex's optional auth.json) is shown uncommented so it can be pasted,
+// and leading comment lines become notes above the code.
+function splitSnippet(snippet: string): SnippetFile[] {
+  const sections: { path: string; lines: string[] }[] = [];
+  let current: { path: string; lines: string[] } | null = null;
+  for (const line of snippet.split("\n")) {
+    const header = /^#\s+((?:~|\/)\S.*)$/.exec(line);
+    if (header) {
+      current = { path: header[1].trim(), lines: [] };
+      sections.push(current);
+      continue;
+    }
+    if (!current) {
+      current = { path: "", lines: [] };
+      sections.push(current);
+    }
+    current.lines.push(line);
+  }
+
+  return sections
+    .map(({ path, lines }) => {
+      while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+      while (lines.length && !lines[0].trim()) lines.shift();
+      const nonEmpty = lines.filter((l) => l.trim());
+      let body = lines;
+      const notes: string[] = [];
+      if (nonEmpty.length > 0 && nonEmpty.every((l) => /^#( |$)/.test(l))) {
+        body = lines.map((l) => l.replace(/^# ?/, ""));
+      } else {
+        while (body.length && /^#\s/.test(body[0])) {
+          notes.push(body[0].replace(/^#\s+/, "").replace(/^\((.*)\)$/, "$1"));
+          body = body.slice(1);
+        }
+      }
+      return { path, notes, body: body.join("\n") };
+    })
+    .filter((s) => s.body.trim() || s.path);
+}
+
+interface EnvVar {
+  name: string;
+  value: string;
+  file: string;
+}
+
+// extractEnvVars finds environment-variable style keys (UPPER_SNAKE) in the
+// snippet files, whether set in a JSON "env" block or a KEY=value env file.
+function extractEnvVars(files: SnippetFile[]): EnvVar[] {
+  const out: EnvVar[] = [];
+  const seen = new Set<string>();
+  for (const f of files) {
+    for (const line of f.body.split("\n")) {
+      const m =
+        /^\s*"([A-Z][A-Z0-9_]{2,})"\s*:\s*"([^"]*)"/.exec(line) ??
+        /^\s*(?:export\s+)?([A-Z][A-Z0-9_]{2,})=(.*)$/.exec(line);
+      if (!m) continue;
+      const name = m[1];
+      const value = m[2].trim().replace(/^"(.*)"$/, "$1");
+      const id = `${f.path}:${name}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      out.push({ name, value, file: f.path });
+    }
+  }
+  return out;
+}
+
+function basename(path: string): string {
+  const parts = path.split("/");
+  return parts[parts.length - 1] || path;
+}
+
+function SnippetWell({ files, fullText }: { files: SnippetFile[]; fullText: string }) {
+  const [active, setActive] = useState(0);
+  const baseId = useId();
+  const idx = Math.min(active, Math.max(0, files.length - 1));
+  const file = files[idx];
+  if (!file) return null;
+  const multi = files.length > 1;
+  const tabId = (i: number) => `${baseId}-tab-${i}`;
+  const panelId = `${baseId}-panel`;
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const n = files.length;
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? n - 1
+          : (idx + (event.key === "ArrowRight" ? 1 : -1) + n) % n;
+    setActive(next);
+    document.getElementById(tabId(next))?.focus();
+  };
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-line bg-subtle">
+      <div className="flex items-center justify-between gap-2 border-b border-line pl-1 pr-1.5">
+        {multi ? (
+          <div className="flex min-w-0 gap-1 overflow-x-auto" role="tablist" aria-label="Config files" onKeyDown={onKeyDown}>
+            {files.map((f, i) => {
+              const on = i === idx;
+              return (
+                <button
+                  key={`${f.path}-${i}`}
+                  id={tabId(i)}
+                  type="button"
+                  role="tab"
+                  aria-selected={on}
+                  aria-controls={panelId}
+                  tabIndex={on ? 0 : -1}
+                  title={f.path}
+                  onClick={() => setActive(i)}
+                  className={cn(
+                    "relative whitespace-nowrap px-2.5 py-2 font-mono text-[12px] transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                    on ? "text-fg" : "text-fg-muted hover:text-fg",
+                  )}
+                >
+                  {f.path ? basename(f.path) : "Snippet"}
+                  {on && <span aria-hidden="true" className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent-500" />}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <span className="truncate px-2.5 py-2 font-mono text-[12px] text-fg-muted">{file.path || "Snippet"}</span>
+        )}
+        <div className="flex shrink-0 items-center gap-1">
+          {multi && <CopyButton text={fullText} label="Copy all" toastLabel="config files" />}
+          <CopyButton text={file.body} label="Copy" toastLabel={file.path ? basename(file.path) : "snippet"} />
+        </div>
       </div>
-    );
-  }
-  return (
-    <img
-      src={meta.image}
-      alt={id}
-      onError={() => setErrored(true)}
-      className="h-12 w-12 shrink-0 rounded-xl object-contain"
-    />
+      <div
+        id={panelId}
+        role={multi ? "tabpanel" : "region"}
+        aria-labelledby={multi ? tabId(idx) : undefined}
+        aria-label={multi ? undefined : file.path || "Config snippet"}
+        tabIndex={0}
+        className="focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+      >
+        {multi && file.path && (
+          <p className="border-b border-line px-3.5 py-1.5 font-mono text-[11.5px] text-fg-muted">{file.path}</p>
+        )}
+        {file.notes.length > 0 && (
+          <p className="border-b border-line px-3.5 py-1.5 text-[12px] text-fg-muted">{file.notes.join(" ")}</p>
+        )}
+        <pre className="max-h-[420px] overflow-auto px-3.5 py-3 font-mono text-[12px] leading-5 text-fg">{file.body}</pre>
+      </div>
+    </div>
   );
 }
 
-function StatusBadge({ installed, configured }: { installed: boolean; configured: boolean }) {
-  if (configured) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">
-        <CheckCircle2 className="h-3 w-3" />
-        Connected
-      </span>
-    );
-  }
-  if (installed) {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-        <XCircle className="h-3 w-3" />
-        Not configured
-      </span>
-    );
-  }
+function CodeWell({ code, label, copyLabel }: { code: string; label: string; copyLabel: string }) {
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-[var(--bg-subtle)] px-2 py-0.5 text-[10px] font-medium text-[var(--text-muted)]">
-      <CircleDot className="h-3 w-3" />
-      Not installed
-    </span>
+    <div className="overflow-hidden rounded-xl border border-line bg-subtle">
+      <div className="flex items-center justify-between gap-2 border-b border-line pl-3.5 pr-1.5">
+        <span className="py-1.5 text-[12px] text-fg-muted">{label}</span>
+        <CopyButton text={code} label="Copy" toastLabel={copyLabel} />
+      </div>
+      <pre className="overflow-x-auto px-3.5 py-2.5 font-mono text-[12px] leading-5 text-fg">{code}</pre>
+    </div>
   );
 }
 
-function CopyButton({ text }: { text: string }) {
+function EnvTable({ vars }: { vars: EnvVar[] }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-line">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[520px] text-[13px]">
+          <caption className="sr-only">Environment variables in the config</caption>
+          <thead>
+            <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+              <th scope="col" className="px-3.5 py-2 font-medium">Environment variable</th>
+              <th scope="col" className="px-3.5 py-2 font-medium">Value</th>
+              <th scope="col" className="px-3.5 py-2 font-medium">File</th>
+              <th scope="col" className="w-10 px-2 py-2">
+                <span className="sr-only">Copy</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {vars.map((v) => (
+              <tr key={`${v.file}:${v.name}`} className="transition-colors hover:bg-hover">
+                <td className="whitespace-nowrap px-3.5 py-2 font-mono text-[12px] text-fg">{v.name}</td>
+                <td className="max-w-[260px] truncate px-3.5 py-2 font-mono text-[12px] text-fg-muted" title={v.value}>{v.value}</td>
+                <td className="whitespace-nowrap px-3.5 py-2 font-mono text-[12px] text-fg-muted">{v.file ? basename(v.file) : "—"}</td>
+                <td className="px-2 py-1.5 text-right">
+                  <CopyButton text={v.value} toastLabel={`${v.name} value`} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function CopyButton({ text, label, toastLabel }: { text: string; label?: string; toastLabel: string }) {
+  const toast = useToast();
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
+      toast.success("Copied", toastLabel);
       setTimeout(() => setCopied(false), 2000);
-    } catch { /* noop */ }
+    } catch {
+      toast.error("Copy failed", "The browser blocked clipboard access.");
+    }
   };
   return (
-    <Button variant="ghost" onClick={copy} className="px-2">
+    <button
+      type="button"
+      onClick={copy}
+      aria-label={label ? `${label} ${toastLabel}` : `Copy ${toastLabel}`}
+      title={label ? undefined : `Copy ${toastLabel}`}
+      className="inline-flex h-7 min-w-7 items-center justify-center gap-1.5 rounded-lg px-2 text-[12px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+    >
       {copied ? (
-        <Check className="h-4 w-4 text-ok" />
+        <Check className="h-3.5 w-3.5 text-ok" aria-hidden="true" />
       ) : (
-        <Copy className="h-4 w-4" />
+        <Copy className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
       )}
-      {copied ? "Copied!" : "Copy"}
-    </Button>
+      {label && (copied ? "Copied" : label)}
+    </button>
   );
 }

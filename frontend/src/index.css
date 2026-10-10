@@ -77,7 +77,7 @@
   --color-ink-950: #0d0d0f;
 
   /* ── Semantic status. */
-  --color-success: #1e8a4c;
+  --color-success: #187a43;
   --color-warning: #a85b06;
   --color-danger: #c2362b;
   --color-info: #0a72ef;
@@ -129,6 +129,8 @@
   --color-hover: var(--bg-hover);
   --color-line: var(--border);
   --color-line-strong: var(--border-strong);
+  --color-input: var(--border-input);
+  --color-link: var(--link);
   --color-fg: var(--text);
   --color-fg-muted: var(--text-muted);
   --color-fg-faint: var(--text-faint);
@@ -151,14 +153,17 @@
   --border-strong: #d6d6db;
   --text: #17171a;
   --text-muted: #5f5f69;
-  --text-faint: #73737d;
+  --text-faint: #6b6b75;
   --primary: #17171a;
   --primary-fg: #ffffff;
   --track: #ececef;
-  --status-ok: #1e8a4c;
+  --status-ok: #187a43;
   --status-warn: #a85b06;
   --status-bad: #c2362b;
   --series-alt: #ea7a3a;
+  /* WCAG: form-control borders ≥ 3:1 against surface; link text ≥ 4.5:1. */
+  --border-input: #8a8a94;
+  --link: var(--color-accent-600);
 
   --shadow-card: 0 1px 2px rgba(16, 16, 20, 0.04);
   --shadow-pop: 0 0 0 1px rgba(16, 16, 20, 0.04), 0 6px 16px -4px rgba(16, 16, 20, 0.1);
@@ -188,6 +193,8 @@
   --status-warn: #e3a347;
   --status-bad: #f0675b;
   --series-alt: #f08a4b;
+  --border-input: #6b6b75;
+  --link: var(--color-accent-400);
 
   --color-success: #3fb872;
   --color-warning: #e3a347;
@@ -431,4 +438,28 @@ select:disabled,
     padding-top: 1.25rem;
     padding-bottom: 1.25rem;
   }
+}
+
+/* WCAG 2.3.3 / 2.2.2 — honour reduced-motion: no pulsing, sliding or smooth scrolling. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* WCAG 2.4.7 — a visible focus indicator for anything that does not draw its own ring. */
+:where(a, button, [role="button"], [role="tab"], [role="radio"], [role="switch"], [role="menuitem"], summary, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-accent-500);
+  outline-offset: 2px;
+}
+
+/* Placeholder text is still text: keep it at the faint token (≥ 4.5:1). */
+::placeholder {
+  color: var(--text-faint);
+  opacity: 1;
 }

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { ChevronRight, Search, X } from "lucide-react";
@@ -76,16 +76,41 @@ export function MediaProvidersPage() {
   const available = visible.filter((p) => !accountsByProvider.has(p.id));
   const activeKind = mediaKinds.find((k) => k.id === activeFilter) ?? mediaKinds[0];
 
+  // Radio-group keyboard model for the capability chips.
+  const chipsRef = useRef<HTMLDivElement>(null);
+  const activeIndex = Math.max(
+    0,
+    mediaKinds.findIndex((k) => k.id === activeFilter),
+  );
+  const onChipKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(e.key)) return;
+    e.preventDefault();
+    const n = mediaKinds.length;
+    const next =
+      e.key === "Home"
+        ? 0
+        : e.key === "End"
+          ? n - 1
+          : (activeIndex + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1) + n) % n;
+    setActiveFilter(mediaKinds[next].id);
+    chipsRef.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+  };
+
+  const kindLower = activeKind.label.toLowerCase();
+
   return (
     <>
-      <PageHeader
-        title="Media providers"
-        description="Connect providers for embeddings, image generation, speech, and web access. Each capability routes through the same OpenAI-compatible endpoints."
-      />
+      <PageHeader title="Media providers" description="Embeddings, image, speech and web providers." />
 
-      <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center">
-        <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Filter by capability">
-          {mediaKinds.map((k) => {
+      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center">
+        <div
+          ref={chipsRef}
+          className="flex flex-wrap gap-1.5"
+          role="radiogroup"
+          aria-label="Capability"
+          onKeyDown={onChipKeyDown}
+        >
+          {mediaKinds.map((k, i) => {
             const active = activeFilter === k.id;
             return (
               <button
@@ -93,9 +118,11 @@ export function MediaProvidersPage() {
                 type="button"
                 role="radio"
                 aria-checked={active}
+                tabIndex={i === activeIndex ? 0 : -1}
+                title={k.description}
                 onClick={() => setActiveFilter(k.id)}
                 className={cn(
-                  "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+                  "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
                   active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
                 )}
               >
@@ -105,59 +132,58 @@ export function MediaProvidersPage() {
           })}
         </div>
         <div className="relative lg:ml-auto lg:w-64">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
           <input
             type="search"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder={`Search ${activeKind.label.toLowerCase()} providers`}
-            aria-label="Search media providers"
-            className="h-9 w-full rounded-lg border border-line bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25"
+            placeholder={`Search ${kindLower} providers`}
+            aria-label={`Search ${kindLower} providers`}
+            className="h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
           />
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery("")}
-              className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg"
+              className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
               aria-label="Clear search"
             >
-              <X className="h-3.5 w-3.5" />
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           )}
         </div>
       </div>
-      <p className="mb-5 text-[12.5px] text-fg-muted">
-        {activeKind.description}{" "}
-        {providers.data && <span className="tabular-nums text-fg-faint">{list.length} available.</span>}
-      </p>
 
       {providers.isLoading ? (
-        <div className="space-y-5">
+        <div className="space-y-5" aria-busy="true" aria-label="Loading providers">
           <Skeleton className="h-32 w-full rounded-2xl" />
           <Skeleton className="h-56 w-full rounded-2xl" />
         </div>
       ) : providers.isError ? (
-        <ErrorBanner message="Couldn't load providers. Is the backend running?" />
+        <ErrorBanner message="Couldn't load providers. Check that the backend is running, then reload." />
       ) : !list.length ? (
         <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-          <p className="text-[13px] font-medium text-fg">No providers for this capability</p>
-          <p className="mt-1 text-[12.5px] text-fg-muted">Pick another capability above, or add a provider account on the Providers page.</p>
-          <Link to="/providers" className="mt-3 inline-block text-[13px] font-medium text-accent-500 hover:underline dark:text-accent-400">
+          <h2 className="text-[13px] font-medium text-fg">No {kindLower} providers</h2>
+          <p className="mt-1 text-[12.5px] text-fg-muted">Pick another capability, or add an account on the Providers page.</p>
+          <Link to="/providers" className="mt-3 inline-block rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
             Go to providers
           </Link>
         </div>
       ) : (
         <div className="space-y-8">
           <section aria-labelledby="media-connected-heading">
-            <div className="mb-2.5 flex items-baseline justify-between">
+            <div className="mb-2.5 flex items-baseline gap-2.5">
               <h2 id="media-connected-heading" className="text-[14px] font-semibold text-fg">Connected</h2>
-              <span className="text-[12px] tabular-nums text-fg-faint">{connected.length}</span>
+              <span className="text-[12px] tabular-nums text-fg-muted" role="status">
+                {connected.length}
+                <span className="sr-only"> connected {kindLower} providers</span>
+              </span>
             </div>
             {connected.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-8 text-center">
-                <p className="text-[13px] font-medium text-fg">{searchQuery ? "No connected provider matches" : `No ${activeKind.label.toLowerCase()} provider connected yet`}</p>
+                <p className="text-[13px] font-medium text-fg">{searchQuery ? "No connected provider matches" : `No ${kindLower} provider connected`}</p>
                 <p className="mt-1 text-[12.5px] text-fg-muted">
-                  {searchQuery ? "Clear the search to see all of them." : "Pick one below and add an account to start routing this capability."}
+                  {searchQuery ? "Clear the search to see all of them." : "Pick one below and add an account."}
                 </p>
               </div>
             ) : (
@@ -166,23 +192,25 @@ export function MediaProvidersPage() {
           </section>
 
           <section aria-labelledby="media-catalog-heading">
-            <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5">
-              <div className="flex items-baseline gap-2.5">
-                <h2 id="media-catalog-heading" className="text-[14px] font-semibold text-fg">Catalog</h2>
-                <span className="text-[12px] tabular-nums text-fg-faint">{available.length}</span>
-              </div>
-              <p className="text-[12.5px] text-fg-muted">Open a provider to add an account and try it in the playground.</p>
+            <div className="mb-2.5 flex items-baseline gap-2.5">
+              <h2 id="media-catalog-heading" className="text-[14px] font-semibold text-fg">Add a provider</h2>
+              <span className="text-[12px] tabular-nums text-fg-muted" role="status">
+                {available.length}
+                <span className="sr-only"> available {kindLower} providers</span>
+              </span>
             </div>
             {available.length === 0 ? (
               <div className="rounded-2xl border border-line bg-surface px-6 py-10 text-center text-[13px] text-fg-muted">
                 No other providers match{searchQuery ? ` “${searchQuery}”` : " this capability"}.
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
+              <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4">
                 {available.map((p) => (
-                  <CatalogCard key={p.id} provider={p} kind={activeFilter} />
+                  <li key={p.id}>
+                    <CatalogCard provider={p} kind={activeFilter} />
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </section>
         </div>
@@ -204,13 +232,13 @@ function ConnectedTable({
   return (
     <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[560px] text-[13px]">
+        <table className="w-full min-w-[520px] text-[13px]">
+          <caption className="sr-only">Connected providers</caption>
           <thead>
             <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
-              <th className="px-4 py-2 font-medium">Provider</th>
-              <th className="px-4 py-2 font-medium">Accounts</th>
-              <th className="px-4 py-2 font-medium">Capabilities</th>
-              <th className="w-8 px-2 py-2" aria-hidden="true" />
+              <th scope="col" className="px-4 py-2 font-medium">Provider</th>
+              <th scope="col" className="px-4 py-2 text-right font-medium">Accounts</th>
+              <th scope="col" className="px-4 py-2 font-medium">Capabilities</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -221,24 +249,30 @@ function ConnectedTable({
               return (
                 <tr key={p.id} className="cursor-pointer transition-colors hover:bg-hover" onClick={() => navigate(href)}>
                   <td className="px-4 py-2.5">
-                    <Link to={href} className="flex items-center gap-2.5 focus:outline-none focus-visible:underline" onClick={(e) => e.stopPropagation()}>
+                    <Link
+                      to={href}
+                      className="flex items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <ProviderLogo icon={p.icon} name={p.display_name} size={24} />
                       <span className="min-w-0">
                         <span className="flex items-center gap-1.5">
                           <span className="truncate font-medium text-fg">{p.display_name}</span>
                           {!p.drivable && <Badge tone="neutral">Coming soon</Badge>}
                         </span>
-                        <span className="block truncate font-mono text-[11.5px] text-fg-faint">{p.id}</span>
+                        <span className="block truncate font-mono text-[11.5px] text-fg-muted">{p.id}</span>
                       </span>
                     </Link>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-2.5">
+                  <td className="whitespace-nowrap px-4 py-2.5 text-right">
                     <span className="tabular-nums text-fg">{accs.length}</span>
-                    {paused > 0 && <span className="ml-1.5 text-[12px] text-fg-faint">· {paused} paused</span>}
+                    {paused > 0 && <span className="ml-1.5 text-[12px] text-fg-muted">· {paused} paused</span>}
                   </td>
-                  <td className="px-4 py-2.5 text-[12.5px] text-fg-muted">{capabilityList(p)}</td>
-                  <td className="px-2 py-2.5 text-fg-faint" aria-hidden="true">
-                    <ChevronRight className="h-4 w-4" />
+                  <td className="px-4 py-2.5 text-[12.5px] text-fg-muted">
+                    <span className="flex items-center justify-between gap-3">
+                      {capabilityList(p)}
+                      <ChevronRight className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
+                    </span>
                   </td>
                 </tr>
               );
@@ -254,13 +288,12 @@ function CatalogCard({ provider: p, kind }: { provider: Provider; kind: string }
   return (
     <Link
       to={`/media/${kind}/${p.id}`}
-      aria-label={`Open ${p.display_name}`}
-      className="group flex items-center gap-3 rounded-2xl border border-line bg-surface px-3 py-2.5 transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+      className="group flex h-full items-center gap-3 rounded-2xl border border-line bg-surface px-3 py-2.5 transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
     >
       <ProviderLogo icon={p.icon} name={p.display_name} size={28} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium text-fg">{p.display_name}</span>
-        <span className="block truncate text-[11.5px] text-fg-faint">
+        <span className="block truncate text-[11.5px] text-fg-muted">
           <span className="font-mono">{p.id}</span>
           {capabilityList(p) && <> · {capabilityList(p)}</>}
         </span>
@@ -270,7 +303,9 @@ function CatalogCard({ provider: p, kind }: { provider: Provider; kind: string }
           <Badge tone="neutral">Coming soon</Badge>
         </span>
       ) : (
-        <span className="hidden text-[12px] font-medium text-accent-500 group-hover:inline dark:text-accent-400">Connect</span>
+        <span className="hidden text-[12px] font-medium text-link group-hover:inline" aria-hidden="true">
+          Connect
+        </span>
       )}
     </Link>
   );

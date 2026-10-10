@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { CheckCircle2, XCircle } from "lucide-react";
 import { api, type EndpointSettings } from "../../lib/api";
-import { Badge, Button, Toggle } from "../../components/ui";
-import { Code, FormField, Note, SettingRow, SettingsCard, ToggleRow, UnitInput, inputClass } from "./shared";
+import { Badge, Button } from "../../components/ui";
+import { Code, FormField, Note, SettingRow, SettingsCard, ToggleRow, UnitInput, inputClass, rowIds } from "./shared";
 
 type TabProps = {
   local: EndpointSettings;
@@ -17,35 +17,18 @@ export function RoutingTab({ local, update }: TabProps) {
   const accountsRR = isRoundRobin(local.routing_strategy);
   const chainsRR = isRoundRobin(local.combo_strategy);
   return (
-    <SettingsCard
-      title="Routing strategy"
-      description="How requests are distributed across accounts and chains. Individual providers can override the account strategy on their Routing tab."
-      footer={
-        <div className="border-t border-line bg-subtle px-4 py-3 text-[12px] leading-5 text-fg-muted" aria-live="polite">
-          <span className="font-medium text-fg">In effect: </span>
-          {accountsRR
-            ? `Distributing requests across all available accounts with ${local.sticky_limit || 3} calls per account.`
-            : "Using accounts in priority order (Fill First)."}
-          {chainsRR
-            ? ` Chains rotate after ${local.combo_sticky_limit || 1} call${(local.combo_sticky_limit || 1) === 1 ? "" : "s"} per model.`
-            : " Chains always start with their first model."}
-        </div>
-      }
-    >
-      <ToggleRow
-        label="Provider group round robin"
-        description="Cycle through accounts in the same provider/model group. Off uses accounts in priority order (fill first)."
-      >
-        <Toggle
-          checked={accountsRR}
-          onChange={() => update({ routing_strategy: isRoundRobin(local.routing_strategy) ? "fill-first" : "round-robin" })}
-        />
-      </ToggleRow>
+    <SettingsCard title="Routing strategy" description="Providers can override this on their Routing tab">
+      <ToggleRow label="Provider group round robin"
+        description="Rotate accounts in the same provider/model group. Off: use them in priority order (fill first)."
+        checked={accountsRR}
+        onChange={() => update({ routing_strategy: isRoundRobin(local.routing_strategy) ? "fill-first" : "round-robin" })}
+      />
       {accountsRR && (
-        <SettingRow nested label="Provider sticky limit" description="Calls per account before switching. 1–10.">
+        <SettingRow nested controlId="provider-sticky" label="Provider sticky limit" description="Calls per account before switching. 1–10.">
           <UnitInput
+            id="provider-sticky"
             unit="calls"
-            aria-label="Provider sticky limit"
+            aria-describedby={rowIds("provider-sticky").desc}
             min={1}
             max={10}
             value={local.sticky_limit || 3}
@@ -55,20 +38,17 @@ export function RoutingTab({ local, update }: TabProps) {
         </SettingRow>
       )}
 
-      <ToggleRow
-        label="Chain round robin"
-        description="Cycle through providers in a chain instead of always starting with the first."
-      >
-        <Toggle
-          checked={chainsRR}
-          onChange={() => update({ combo_strategy: isRoundRobin(local.combo_strategy) ? "fallback" : "round-robin" })}
-        />
-      </ToggleRow>
+      <ToggleRow label="Chain round robin"
+        description="Rotate providers in a chain. Off: always start with the first."
+        checked={chainsRR}
+        onChange={() => update({ combo_strategy: isRoundRobin(local.combo_strategy) ? "fallback" : "round-robin" })}
+      />
       {chainsRR && (
-        <SettingRow nested label="Chain sticky limit" description="Calls per chain model before switching. 1–100.">
+        <SettingRow nested controlId="chain-sticky" label="Chain sticky limit" description="Calls per chain model before switching. 1–100.">
           <UnitInput
+            id="chain-sticky"
             unit="calls"
-            aria-label="Chain sticky limit"
+            aria-describedby={rowIds("chain-sticky").desc}
             min={1}
             max={100}
             value={local.combo_sticky_limit || 1}
@@ -85,14 +65,12 @@ export function RoutingTab({ local, update }: TabProps) {
 export function NetworkTab({ local, update }: TabProps) {
   return (
     <div className="space-y-4">
-      <SettingsCard
-        title="Timeouts"
-        description="Upstream connection and streaming limits. Raise them for slow providers or reasoning models."
-      >
-        <SettingRow label="Connect timeout" description="Wait this long for the provider to start responding. Default 60 s.">
+      <SettingsCard title="Timeouts" description="Raise these for slow or reasoning models">
+        <SettingRow controlId="connect-timeout" label="Connect timeout" description="Wait for the provider to start responding. Default 60 s.">
           <UnitInput
+            id="connect-timeout"
             unit="sec"
-            aria-label="Connect timeout (sec)"
+            aria-describedby={rowIds("connect-timeout").desc}
             min={5}
             max={300}
             value={Math.round((local.response_header_timeout_ms || 60000) / 1000)}
@@ -103,10 +81,11 @@ export function NetworkTab({ local, update }: TabProps) {
             placeholder="60"
           />
         </SettingRow>
-        <SettingRow label="Stream stall timeout" description="Abort a stream that sends nothing for this long. Default 120 s.">
+        <SettingRow controlId="stall-timeout" label="Stream stall timeout" description="Abort a stream that sends nothing for this long. Default 120 s.">
           <UnitInput
+            id="stall-timeout"
             unit="sec"
-            aria-label="Stream stall timeout (sec)"
+            aria-describedby={rowIds("stall-timeout").desc}
             min={10}
             max={600}
             value={Math.round((local.stream_stall_timeout_ms || 120000) / 1000)}
@@ -117,10 +96,11 @@ export function NetworkTab({ local, update }: TabProps) {
             placeholder="120"
           />
         </SettingRow>
-        <SettingRow label="Request timeout" description="Upper limit for a whole request. Default 300 s (5 min).">
+        <SettingRow controlId="request-timeout" label="Request timeout" description="Upper limit for a whole request. Default 300 s.">
           <UnitInput
+            id="request-timeout"
             unit="sec"
-            aria-label="Request timeout (sec)"
+            aria-describedby={rowIds("request-timeout").desc}
             min={30}
             max={3600}
             value={Math.round((local.request_timeout_ms || 300000) / 1000)}
@@ -133,21 +113,20 @@ export function NetworkTab({ local, update }: TabProps) {
         </SettingRow>
       </SettingsCard>
 
-      <SettingsCard title="Rate limits" description="Per-key RPM, TPM and concurrency limits come from each key's assigned plan.">
-        <ToggleRow
-          label="Enforce API key rate limits"
-          description="Plan limits apply immediately. Blank or 0 plan values stay unlimited."
-        >
-          <Toggle checked={local.rate_limits_enabled !== false} onChange={(v) => update({ rate_limits_enabled: v })} />
-        </ToggleRow>
-      </SettingsCard>
-
       <ProxySettings local={local} update={update} />
 
-      <SettingsCard title="Observability" description="What KeiRouter records for the logs view.">
-        <ToggleRow label="Record request details" description="Store request details so they can be inspected in the logs view.">
-          <Toggle checked={local.observability_enabled !== false} onChange={(v) => update({ observability_enabled: v })} />
-        </ToggleRow>
+      <SettingsCard title="Limits and logging">
+        <ToggleRow label="Enforce API key rate limits"
+          description="Apply each key's plan RPM, TPM and concurrency limits."
+          info="Changes apply immediately. Blank or 0 plan values stay unlimited."
+          checked={local.rate_limits_enabled !== false}
+          onChange={(v) => update({ rate_limits_enabled: v })}
+        />
+        <ToggleRow label="Record request details"
+          description="Store request details for the logs view."
+          checked={local.observability_enabled !== false}
+          onChange={(v) => update({ observability_enabled: v })}
+        />
       </SettingsCard>
     </div>
   );
@@ -198,21 +177,20 @@ function ProxySettings({ local, update }: TabProps) {
   return (
     <SettingsCard
       title="Outbound proxy"
-      description="Route provider outbound requests through an HTTP, HTTPS or SOCKS5 proxy."
+      description="HTTP, HTTPS or SOCKS5 proxy for provider requests"
       action={<Badge tone={status.tone}>{status.label}</Badge>}
     >
-      <ToggleRow
-        label="Use outbound proxy"
-        description="Applies to all provider and OAuth requests when no per-account proxy is set."
-      >
-        <Toggle checked={proxyEnabled} onChange={(v) => update({ outbound_proxy_enabled: v })} />
-      </ToggleRow>
+      <ToggleRow label="Use outbound proxy"
+        description="Applies to provider and OAuth requests without a per-account proxy."
+        checked={proxyEnabled}
+        onChange={(v) => update({ outbound_proxy_enabled: v })}
+      />
 
       {proxyEnabled && (
         <>
           {!hasURL && (
             <div className="px-4 py-3">
-              <Note tone="warn">Proxy is enabled but no URL is configured. Enter a proxy URL below.</Note>
+              <Note tone="warn">The proxy is on but has no URL. Enter one below.</Note>
             </div>
           )}
           <div className="grid grid-cols-1 gap-4 px-4 py-4 sm:grid-cols-2">
@@ -222,7 +200,7 @@ function ProxySettings({ local, update }: TabProps) {
               hint={
                 <span className="flex items-center gap-2">
                   {detectedScheme && <Badge>{detectedScheme}</Badge>}
-                  Supports http, https, socks5.
+                  http, https or socks5
                 </span>
               }
             >
@@ -240,7 +218,7 @@ function ProxySettings({ local, update }: TabProps) {
               optional
               hint={
                 <>
-                  Comma-separated hostnames to bypass. Use <Code>*</Code> for all.
+                  Comma-separated hosts to bypass. <Code>*</Code> bypasses all.
                 </>
               }
             >
@@ -257,21 +235,24 @@ function ProxySettings({ local, update }: TabProps) {
             label="Test proxy"
             description={
               <>
-                Sends a test request through the proxy URL above; reports latency and exit IP.
-                {testResult && (
-                  <span
-                    className={`mt-1 flex items-center gap-1.5 ${testResult.ok ? "text-ok" : "text-bad"}`}
-                    aria-live="polite"
-                  >
-                    {testResult.ok ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0" /> : <XCircle className="h-3.5 w-3.5 shrink-0" />}
-                    <span className="min-w-0 break-words">{testResult.text}</span>
-                  </span>
-                )}
+                Reports latency and exit IP.
+                <span role="status" className="block">
+                  {testResult && (
+                    <span className={`mt-1 flex items-center gap-1.5 ${testResult.ok ? "text-ok" : "text-bad"}`}>
+                      {testResult.ok ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      )}
+                      <span className="min-w-0 break-words">{testResult.text}</span>
+                    </span>
+                  )}
+                </span>
               </>
             }
           >
             <Button variant="ghost" onClick={testProxy} disabled={testing || !hasURL}>
-              {testing ? "Testing…" : "Test proxy URL"}
+              {testing ? "Testing…" : "Test proxy"}
             </Button>
           </SettingRow>
         </>

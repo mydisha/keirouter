@@ -106,12 +106,12 @@ function SettingsTabs({ active, onChange }: { active: SettingsTab; onChange: (t:
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(value)}
             className={cn(
-              "relative -mb-px inline-flex shrink-0 items-center whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+              "relative -mb-px inline-flex shrink-0 items-center whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
               on ? "text-fg" : "text-fg-muted hover:text-fg",
             )}
           >
             {label}
-            {on && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
+            {on && <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
           </button>
         );
       })}
@@ -121,7 +121,7 @@ function SettingsTabs({ active, onChange }: { active: SettingsTab; onChange: (t:
 
 function TabSkeleton() {
   return (
-    <div className="space-y-4" aria-busy="true">
+    <div className="space-y-4" aria-busy="true" aria-label="Loading settings">
       {[3, 4, 2].map((rows, i) => (
         <div key={i} className="overflow-hidden rounded-2xl border border-line bg-surface">
           <div className="space-y-1.5 border-b border-line px-4 py-3">
@@ -177,10 +177,10 @@ export function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        description="Token saving, routing, network, branding, backups and updates."
+        description="Gateway behaviour, branding, backups and updates."
         action={
           endpointTab && local ? (
-            <span className="text-[12.5px] text-fg-muted" aria-live="polite">
+            <span role="status" className="text-[12.5px] text-fg-muted">
               {save.isPending ? "Saving…" : "Changes save automatically"}
             </span>
           ) : undefined
@@ -189,7 +189,7 @@ export function SettingsPage() {
 
       <SettingsTabs active={tab} onChange={setTab} />
 
-      <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`}>
+      <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="max-w-4xl">
         {endpointTab && (
           <>
             {save.isError && (

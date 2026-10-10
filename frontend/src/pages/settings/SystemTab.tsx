@@ -54,16 +54,16 @@ function UpdatesSettings() {
   return (
     <SettingsCard
       title="Updates"
-      description="Check for new KeiRouter releases and read the latest changelog."
+      busy={isLoading}
       action={
         <Button variant="ghost" onClick={checkNow} disabled={checking}>
-          <RefreshCw className={`text-fg-faint ${checking ? "animate-spin" : ""}`} strokeWidth={1.75} />
+          <RefreshCw className={`text-fg-faint ${checking ? "animate-spin" : ""}`} strokeWidth={1.75} aria-hidden="true" />
           {checking ? "Checking…" : "Check now"}
         </Button>
       }
     >
       {isLoading ? (
-        <div className="grid gap-px bg-line sm:grid-cols-3" aria-busy="true">
+        <div className="grid gap-px bg-line sm:grid-cols-3">
           {[0, 1, 2].map((i) => (
             <div key={i} className="space-y-2 bg-surface px-4 py-3">
               <Skeleton className="h-3 w-16" />
@@ -73,7 +73,7 @@ function UpdatesSettings() {
         </div>
       ) : !reachable ? (
         <p className="px-4 py-3.5 text-[13px] text-fg-muted">
-          Could not reach GitHub to check for updates. Current version:{" "}
+          Couldn&apos;t reach GitHub. Try again later. Current version:{" "}
           <span className="font-mono text-fg">{data?.current ?? "dev"}</span>
         </p>
       ) : (
@@ -103,22 +103,26 @@ function UpdatesSettings() {
           {data.update_available && data.changelog && (
             <div className="px-4 py-4">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <p className="text-[12.5px] font-medium text-fg">
-                  Changelog{publishedLabel ? <span className="font-normal text-fg-muted"> · {publishedLabel}</span> : null}
-                </p>
+                <h3 className="text-[12.5px] font-medium text-fg">Changelog</h3>
                 {data.html_url && (
                   <a
                     href={data.html_url}
                     target="_blank"
                     rel="noreferrer noopener"
-                    className="inline-flex items-center gap-1 text-[12px] font-medium text-accent-500 hover:underline dark:text-accent-400"
+                    className="inline-flex items-center gap-1 text-[12px] font-medium text-link hover:underline"
                   >
-                    View on GitHub
-                    <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    View release on GitHub
+                    <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                    <span className="sr-only">(opens in a new tab)</span>
                   </a>
                 )}
               </div>
-              <div className="max-h-80 overflow-y-auto rounded-lg border border-line bg-subtle p-4">
+              <div
+                tabIndex={0}
+                role="region"
+                aria-label={`Changelog for ${data.latest}`}
+                className="max-h-80 overflow-y-auto rounded-lg border border-line bg-subtle p-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              >
                 <ChangelogMarkdown changelog={data.changelog} />
               </div>
             </div>

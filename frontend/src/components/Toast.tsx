@@ -41,38 +41,29 @@ export function useToast(): ToastAPI {
 }
 
 const AUTO_DISMISS_MS = 5000;
+// Errors carry what-to-do text, so they stay up longer.
+const ERROR_DISMISS_MS = 8000;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const idRef = useRef(0);
-  const timers = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  // Screen-reader announcements go through two always-mounted live regions
+  // (a live region inserted together with its text is often not read).
+  const [politeText, setPoliteText] = useState("");
+  const [assertiveText, setAssertiveText] = useState("");
 
   const dismiss = useCallback((id: number) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
-    const timer = timers.current.get(id);
-    if (timer) {
-      clearTimeout(timer);
-      timers.current.delete(id);
-    }
   }, []);
 
-  const push = useCallback(
-    (t: { tone?: ToastTone; title: string; description?: string }) => {
-      const id = ++idRef.current;
-      const toast: Toast = { id, tone: t.tone ?? "info", title: t.title, description: t.description };
-      setToasts((prev) => [...prev, toast]);
-      const timer = setTimeout(() => dismiss(id), AUTO_DISMISS_MS);
-      timers.current.set(id, timer);
-    },
-    [dismiss],
-  );
-
-  useEffect(() => {
-    const map = timers.current;
-    return () => {
-      map.forEach((t) => clearTimeout(t));
-      map.clear();
-    };
+  const push = useCallback((t: { tone?: ToastTone; title: string; description?: string }) => {
+    const id = ++idRef.current;
+    const toast: Toast = { id, tone: t.tone ?? "info", title: t.title, description: t.description };
+    setToasts((prev) => [...prev, toast]);
+    const text = t.description ? `${t.title}. ${t.description}` : t.title;
+    // Re-announce identical consecutive messages by toggling a trailing space.
+    if (toast.tone === "error") setAssertiveText((prev) => (prev === text ? `${text} ` : text));
+    else setPoliteText((prev) => (prev === text ? `${text} ` : text));
   }, []);
 
   const api: ToastAPI = {
@@ -85,6 +76,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={api}>
       {children}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {politeText}
+      </div>
+      <div className="sr-only" role="alert" aria-live="assertive" aria-atomic="true">
+        {assertiveText}
+      </div>
       <ToastViewport toasts={toasts} onDismiss={dismiss} />
     </ToastContext.Provider>
   );
@@ -92,71 +89,103 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id: number) => void }) {
   return (
-    <div className="pointer-events-none fixed top-4 right-4 z-60 flex w-full max-w-sm flex-col gap-2.5">
-      {toasts.map((t) => (
-        <ToastCard key={t.id} toast={t} onDismiss={() => onDismiss(t.id)} />
-      ))}
+    <div
+      data-toast-region
+      className="pointer-events-none fixed right-4 top-4 z-60 flex w-[calc(100%-2rem)] max-w-sm flex-col gap-2"
+    >
+      {toasts.length > 0 && (
+        <section aria-label="Notifications">
+          <ol className="flex flex-col gap-2">
+            {toasts.map((t) => (
+              <ToastCard key={t.id} toast={t} onDismiss={() => onDismiss(t.id)} />
+            ))}
+          </ol>
+        </section>
+      )}
     </div>
   );
 }
 
-const toneMeta: Record<
-  ToastTone,
-  { icon: typeof Info; iconClass: string; bg: string; border: string; progressClass: string }
-> = {
-  success: {
-    icon: CheckCircle2,
-    iconClass: "text-ok",
-    bg: "bg-emerald-50 dark:bg-emerald-950",
-    border: "border-emerald-200 dark:border-emerald-800/60",
-    progressClass: "bg-ok",
-  },
-  error: {
-    icon: AlertCircle,
-    iconClass: "text-bad",
-    bg: "bg-red-50 dark:bg-red-950",
-    border: "border-red-200 dark:border-red-800/60",
-    progressClass: "bg-bad",
-  },
-  info: {
-    icon: Info,
-    iconClass: "text-blue-600 dark:text-blue-400",
-    bg: "bg-blue-50 dark:bg-blue-950",
-    border: "border-blue-200 dark:border-blue-800/60",
-    progressClass: "bg-blue-500",
-  },
+// Status is carried by a small icon plus sr-only tone text; the card stays neutral.
+const toneMeta: Record<ToastTone, { icon: typeof Info; iconClass: string; srLabel: string }> = {
+  success: { icon: CheckCircle2, iconClass: "text-ok", srLabel: "Success" },
+  error: { icon: AlertCircle, iconClass: "text-bad", srLabel: "Error" },
+  info: { icon: Info, iconClass: "text-fg-faint", srLabel: "Info" },
 };
 
+// ToastCard owns its timer: it pauses while hovered or focused (WCAG 2.2.1)
+// and Escape dismisses it when focus is inside.
 function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }) {
   const meta = toneMeta[toast.tone];
   const Icon = meta.icon;
+  const duration = toast.tone === "error" ? ERROR_DISMISS_MS : AUTO_DISMISS_MS;
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const paused = hovered || focused;
+  const remaining = useRef(duration);
+  const onDismissRef = useRef(onDismiss);
+
+  useEffect(() => {
+    onDismissRef.current = onDismiss;
+  }, [onDismiss]);
+
+  useEffect(() => {
+    if (paused) return;
+    const startedAt = Date.now();
+    const timer = setTimeout(() => onDismissRef.current(), remaining.current);
+    return () => {
+      clearTimeout(timer);
+      remaining.current = Math.max(0, remaining.current - (Date.now() - startedAt));
+    };
+  }, [paused]);
+
   return (
-    <div
-      role="status"
-      className={`pointer-events-auto relative overflow-hidden rounded-xl border ${meta.border} ${meta.bg} shadow-lg shadow-black/5 animate-[toast-in_0.2s_ease-out] dark:shadow-black/20`}
+    <li
+      className="pointer-events-auto relative overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-pop)] motion-safe:animate-[toast-in_0.2s_ease-out]"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setFocused(true)}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(false);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          onDismiss();
+        }
+      }}
     >
-      <div className="flex items-start gap-3 px-4 py-3">
-        <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${meta.iconClass}`} strokeWidth={2} />
+      <div className="flex items-start gap-2.5 py-2.5 pl-3.5 pr-2">
+        <Icon className={`mt-px h-4 w-4 shrink-0 ${meta.iconClass}`} strokeWidth={1.75} aria-hidden="true" />
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold leading-snug text-[var(--text)]">{toast.title}</p>
+          <p className="text-[13px] font-medium leading-snug text-fg">
+            <span className="sr-only">{meta.srLabel}: </span>
+            {toast.title}
+          </p>
           {toast.description && (
-            <p className="mt-1 break-words text-[13px] leading-relaxed text-[var(--text-muted)]">{toast.description}</p>
+            <p className="mt-0.5 break-words text-[12px] leading-5 text-fg-muted">{toast.description}</p>
           )}
         </div>
         <button
+          type="button"
           onClick={onDismiss}
-          className="-mr-1 -mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-black/5 hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 dark:hover:bg-white/10"
-          aria-label="Dismiss"
+          className="-my-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+          aria-label={`Dismiss notification: ${toast.title}`}
         >
-          <X className="h-4 w-4" />
+          <X className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
         </button>
       </div>
-      {/* Auto-dismiss progress bar */}
-      <div className="h-[3px] w-full bg-black/[0.04] dark:bg-white/[0.06]">
+      {/* Auto-dismiss progress: a neutral hairline that freezes while paused.
+          Hidden under reduced motion. */}
+      <div className="absolute inset-x-0 bottom-0 h-px motion-reduce:hidden" aria-hidden="true">
         <div
-          className={`h-full ${meta.progressClass} animate-[toast-progress_5s_linear_forwards] rounded-full opacity-40`}
+          className="h-full bg-line-strong"
+          style={{
+            animation: `toast-progress ${duration}ms linear forwards`,
+            animationPlayState: paused ? "paused" : "running",
+          }}
         />
       </div>
-    </div>
+    </li>
   );
 }

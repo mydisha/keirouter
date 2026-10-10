@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -89,7 +89,7 @@ export function BrandingTab() {
   return (
     <SettingsCard
       title="White-label branding"
-      description="Name, logo, favicon and colors. Applies to the admin dashboard and the public Usage Dashboard."
+      description="Applies to this dashboard and the Usage Dashboard"
       footer={
         <SaveBar
           dirty={dirty}
@@ -105,7 +105,7 @@ export function BrandingTab() {
         <FormField
           label="Display name"
           htmlFor="branding-name"
-          hint="Shown in the sidebar, tab title, login screen and Usage Dashboard."
+          hint="Sidebar, browser tab and login screens."
         >
           <input
             id="branding-name"
@@ -119,7 +119,7 @@ export function BrandingTab() {
           label="Portal tagline"
           htmlFor="branding-tagline"
           optional
-          hint="Message on the Usage Dashboard login screen."
+          hint="Shown on the Usage Dashboard login."
         >
           <input
             id="branding-tagline"
@@ -134,7 +134,7 @@ export function BrandingTab() {
       <div className="grid grid-cols-1 gap-6 px-4 py-4 sm:grid-cols-2">
         <ImageUploadField
           label="Logo"
-          hint="SVG or PNG recommended. Leave empty for the default."
+          formats="SVG or PNG"
           value={local.logo_url}
           fallback={DEFAULT_LOGO}
           onChange={(dataUrl) => update({ logo_url: dataUrl })}
@@ -142,7 +142,7 @@ export function BrandingTab() {
         />
         <ImageUploadField
           label="Favicon"
-          hint="PNG or ICO recommended. Leave empty for the default."
+          formats="PNG or ICO"
           value={local.favicon_url}
           fallback={DEFAULT_FAVICON}
           onChange={(dataUrl) => update({ favicon_url: dataUrl })}
@@ -152,11 +152,11 @@ export function BrandingTab() {
       </div>
 
       <div className="px-4 py-4">
-        <p className="text-[12.5px] font-medium text-fg" id="palette-label">
+        <h3 className="text-[12.5px] font-medium text-fg" id="palette-label">
           Color theme
-        </p>
-        <p className="mt-0.5 text-[12px] leading-5 text-fg-muted">
-          Sets the accent and highlight colors across the dashboard. Previews instantly; save to keep it.
+        </h3>
+        <p id="palette-hint" className="mt-0.5 text-[12px] leading-5 text-fg-muted">
+          Previews instantly. Save to keep it.
         </p>
         <PalettePicker
           value={paletteId}
@@ -168,7 +168,7 @@ export function BrandingTab() {
       </div>
 
       <div className="px-4 py-4">
-        <p className="text-[12.5px] font-medium text-fg">Preview</p>
+        <h3 className="text-[12.5px] font-medium text-fg">Preview</h3>
         <div className="mt-2 overflow-hidden rounded-lg border border-line">
           <div className="flex items-end gap-1 border-b border-line bg-subtle px-2 pt-2">
             <div className="flex h-8 min-w-0 max-w-64 items-center gap-2 rounded-t-lg border border-b-0 border-line bg-surface px-3">
@@ -182,8 +182,8 @@ export function BrandingTab() {
               <p className="truncate text-[13px] font-semibold text-fg">{local.name || "KeiRouter"}</p>
               {local.tagline && <p className="truncate text-[12px] text-fg-muted">{local.tagline}</p>}
             </div>
-            <span className="ml-auto hidden items-center gap-3 text-[12px] sm:flex">
-              <span className="font-medium text-accent-500 dark:text-accent-400">Link color</span>
+            <span className="ml-auto hidden items-center gap-3 text-[12px] sm:flex" aria-hidden="true">
+              <span className="font-medium text-link">Link color</span>
               <span className="inline-flex h-5 w-9 items-center rounded-full bg-accent-500 px-0.5" aria-hidden="true">
                 <span className="ml-auto h-4 w-4 rounded-full bg-white" />
               </span>
@@ -196,9 +196,35 @@ export function BrandingTab() {
 }
 
 function PalettePicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const current = Math.max(
+    0,
+    PALETTES.findIndex((p) => p.id === value),
+  );
+  // Radio group keyboard model: arrows move and select, Tab leaves the group.
+  const onKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(e.key)) return;
+    e.preventDefault();
+    const n = PALETTES.length;
+    const next =
+      e.key === "Home"
+        ? 0
+        : e.key === "End"
+          ? n - 1
+          : (current + (e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : -1) + n) % n;
+    onChange(PALETTES[next].id);
+    ref.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+  };
   return (
-    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4" role="radiogroup" aria-labelledby="palette-label">
-      {PALETTES.map((palette) => {
+    <div
+      ref={ref}
+      className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
+      role="radiogroup"
+      aria-labelledby="palette-label"
+      aria-describedby="palette-hint"
+      onKeyDown={onKeyDown}
+    >
+      {PALETTES.map((palette, i) => {
         const selected = palette.id === value;
         const accent = generateShades(palette.accent);
         const secondary = generateShades(palette.secondary);
@@ -208,16 +234,17 @@ function PalettePicker({ value, onChange }: { value: string; onChange: (id: stri
             type="button"
             role="radio"
             aria-checked={selected}
+            tabIndex={i === current ? 0 : -1}
             title={palette.description}
             onClick={() => onChange(palette.id)}
             className={cn(
-              "relative flex flex-col gap-2 rounded-lg border p-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
+              "relative flex flex-col gap-2 rounded-lg border p-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
               selected ? "border-fg bg-surface" : "border-line bg-surface hover:border-line-strong hover:bg-hover",
             )}
           >
             <span className="flex h-7 overflow-hidden rounded-md" aria-hidden="true">
-              {[accent[200], accent[400], accent[500], accent[700]].map((c, i) => (
-                <span key={i} className="flex-1" style={{ backgroundColor: c }} />
+              {[accent[200], accent[400], accent[500], accent[700]].map((c, j) => (
+                <span key={j} className="flex-1" style={{ backgroundColor: c }} />
               ))}
               <span className="w-5 border-l-2 border-surface" style={{ backgroundColor: secondary[500] }} />
             </span>
@@ -236,7 +263,7 @@ function PalettePicker({ value, onChange }: { value: string; onChange: (id: stri
 
 function ImageUploadField({
   label,
-  hint,
+  formats,
   value,
   fallback,
   onChange,
@@ -244,7 +271,7 @@ function ImageUploadField({
   small,
 }: {
   label: string;
-  hint: string;
+  formats: string;
   value: string;
   fallback: string;
   onChange: (dataUrl: string) => void;
@@ -254,6 +281,7 @@ function ImageUploadField({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const id = useId();
 
   const handleFile = async (file: File) => {
     if (!file.type.startsWith("image/")) return;
@@ -276,19 +304,22 @@ function ImageUploadField({
   };
 
   return (
-    <div>
-      <div className="flex items-baseline justify-between">
-        <span className="text-[12.5px] font-medium text-fg">{label}</span>
+    <div role="group" aria-labelledby={`${id}-label`}>
+      <div className="flex min-h-6 items-center justify-between">
+        <span id={`${id}-label`} className="text-[12.5px] font-medium text-fg">
+          {label}
+        </span>
         {value ? (
           <button
             type="button"
             onClick={() => onChange("")}
-            className="text-[12px] text-fg-muted hover:text-bad focus:outline-none focus-visible:underline"
+            aria-label={`Remove custom ${label.toLowerCase()}`}
+            className="inline-flex min-h-6 items-center rounded-md px-1.5 text-[12px] text-fg-muted hover:text-bad focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
           >
             Remove
           </button>
         ) : (
-          <span className="text-[12px] text-fg-faint">Default</span>
+          <span className="text-[12px] text-fg-muted">Default</span>
         )}
       </div>
       <div className="mt-1.5 flex items-stretch gap-3">
@@ -308,20 +339,22 @@ function ImageUploadField({
           onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
           onClick={() => inputRef.current?.click()}
+          aria-describedby={`${id}-formats`}
           className={cn(
-            "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed px-3 py-2 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
-            dragOver ? "border-accent-500 bg-accent-500/5" : "border-line-strong hover:bg-hover",
+            "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed px-3 py-2 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+            dragOver ? "border-accent-500 bg-accent-500/5" : "border-input hover:bg-hover",
           )}
         >
           <span className="flex items-center gap-1.5 text-[13px] font-medium text-fg">
             <Upload className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
-            {value ? "Replace image" : "Upload image"}
+            {value ? `Replace ${label.toLowerCase()}` : `Upload ${label.toLowerCase()}`}
           </span>
-          <span className="text-[12px] text-fg-muted">PNG, SVG, ICO — drag & drop or click</span>
+          <span id={`${id}-formats`} className="text-[12px] text-fg-muted">
+            {formats} · drop or click
+          </span>
         </button>
-        <input ref={inputRef} type="file" accept={accept} className="hidden" onChange={handleInputChange} />
+        <input ref={inputRef} type="file" accept={accept} className="hidden" tabIndex={-1} aria-hidden="true" onChange={handleInputChange} />
       </div>
-      <p className="mt-1.5 text-[12px] leading-5 text-fg-muted">{hint}</p>
     </div>
   );
 }

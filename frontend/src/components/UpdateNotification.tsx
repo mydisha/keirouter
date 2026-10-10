@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useId } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Sparkles, X, ExternalLink, ArrowUpCircle, FileText } from "lucide-react";
+import { X, ExternalLink, ArrowUpCircle, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { ChangelogMarkdown } from "./ChangelogMarkdown";
@@ -25,6 +25,10 @@ export function UpdateNotification() {
   const { data } = useUpdateInfo();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const panelId = useId();
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -36,8 +40,13 @@ export function UpdateNotification() {
 
   useEffect(() => {
     if (!open) return;
+    // Move focus into the popover so keyboard and screen-reader users land on it.
+    panelRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
@@ -46,76 +55,93 @@ export function UpdateNotification() {
   // Nothing to show unless GitHub reported a strictly newer version.
   if (!data || !data.update_available) return null;
 
+  const close = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
   return (
-    <div ref={ref} className="relative">
+    <div
+      ref={ref}
+      className="relative"
+      // Tabbing out of the popover closes it.
+      onBlur={(e) => {
+        if (open && !e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
+      }}
+    >
       <button
+        ref={triggerRef}
+        type="button"
         onClick={() => setOpen((v) => !v)}
-        aria-haspopup="true"
+        aria-haspopup="dialog"
         aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
         aria-label={`Update available: ${data.latest}`}
-        className="relative flex h-11 w-11 items-center justify-center rounded-xl text-accent-600 transition-colors hover:bg-ink-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 dark:text-accent-300 dark:hover:bg-ink-800"
+        title={`Update available: ${data.latest}`}
+        className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 ${
+          open ? "bg-hover text-fg" : "text-fg-muted"
+        }`}
       >
-        <ArrowUpCircle className="h-5 w-5" strokeWidth={2} />
-        {/* Edge dot — signals an available update. */}
-        <span className="absolute right-2 top-2 flex h-2.5 w-2.5">
-          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-400 opacity-75" />
-          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent-500" />
-        </span>
+        <ArrowUpCircle className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        {/* Edge dot — signals an available update (the name says it in words). */}
+        <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-accent-500 ring-2 ring-surface" aria-hidden="true" />
       </button>
 
       {open && (
         <div
+          ref={panelRef}
+          id={panelId}
           role="dialog"
-          aria-label="Update available"
-          className="fixed right-4 top-20 z-50 flex max-h-[calc(100vh-6rem)] w-[min(34rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)]/95 shadow-[0_24px_70px_rgba(15,23,42,0.18)] backdrop-blur-xl dark:shadow-[0_24px_70px_rgba(0,0,0,0.45)]"
+          aria-labelledby={titleId}
+          tabIndex={-1}
+          className="fixed right-4 top-16 z-50 flex max-h-[calc(100vh-5rem)] w-[min(34rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-float)] outline-none animate-in fade-in-0 zoom-in-[0.98] duration-150"
+          style={{ outline: "none" }}
         >
-          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg-elevated)]/90 px-4 py-3.5">
-            <div className="flex min-w-0 items-center gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-line bg-subtle text-fg-muted">
-                <Sparkles className="h-4 w-4" strokeWidth={2} />
-              </div>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold leading-tight tracking-[-0.01em]">Update available</p>
-                <p className="mt-1 flex min-w-0 items-center gap-1.5 text-xs leading-tight text-[var(--text-muted)]">
-                  <span className="truncate font-mono">{data.current}</span>
-                  <span className="text-[var(--text-muted)]">→</span>
-                  <span className="truncate font-mono font-semibold text-accent-600 dark:text-accent-400">{data.latest}</span>
-                </p>
-              </div>
+          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-4 py-3">
+            <div className="min-w-0">
+              <h2 id={titleId} className="text-[13px] font-semibold text-fg">Update available</h2>
+              <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-fg-muted">
+                <span className="truncate font-mono">{data.current}</span>
+                <span className="text-fg-faint" aria-hidden="true">→</span>
+                <span className="sr-only">to</span>
+                <span className="truncate font-mono font-medium text-fg">{data.latest}</span>
+              </p>
             </div>
             <button
-              onClick={() => setOpen(false)}
-              aria-label="Dismiss"
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-ink-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 dark:hover:bg-ink-800"
+              type="button"
+              onClick={close}
+              aria-label="Close"
+              className="-mr-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
             >
-              <X className="h-4 w-4" />
+              <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
             </button>
           </div>
 
           {data.changelog && (
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 [scrollbar-gutter:stable]">
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 [scrollbar-gutter:stable]" tabIndex={0} role="region" aria-label="Changelog">
               <ChangelogMarkdown changelog={data.changelog} compact />
             </div>
           )}
 
-          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-[var(--border)] bg-[var(--bg-elevated)]/90 px-4 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-t border-line bg-subtle px-4 py-2.5">
             <Link
               to="/settings#system"
               onClick={() => setOpen(false)}
-              className="flex items-center gap-1.5 rounded-lg bg-accent-50 px-3 py-1.5 text-xs font-semibold text-accent-700 transition-colors hover:bg-accent-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 dark:bg-accent-900/30 dark:text-accent-300 dark:hover:bg-accent-900/50"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent bg-primary px-3 text-[13px] font-medium text-primary-fg transition-opacity hover:opacity-85 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
             >
-              <FileText className="h-3.5 w-3.5" />
-              View full changelog
+              <FileText className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+              Full changelog
             </Link>
             {data.html_url && (
               <a
                 href={data.html_url}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="flex items-center gap-1 text-xs font-medium text-[var(--text-muted)] transition-colors hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60"
+                className="inline-flex min-h-6 items-center gap-1 rounded text-[12px] font-medium text-link transition-colors hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
               >
                 Release notes
-                <ExternalLink className="h-3 w-3" />
+                <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                <span className="sr-only">(opens in a new tab)</span>
               </a>
             )}
           </div>

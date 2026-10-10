@@ -11,14 +11,18 @@ import {
 import { useToast } from "../../components/Toast";
 import { useConfirm } from "../../components/ui/confirm-dialog";
 import { Badge, Button, ErrorBanner, Input, Modal } from "../../components/ui";
-import { Code, FormField, Note, SettingRow, SettingsCard } from "./shared";
+import { Code, Note, SettingRow, SettingsCard } from "./shared";
 
 // ── Import / Export tab ─────────────────────────────────────────────
 export function ImportExportTab() {
+  // One busy flag for every action that touches the database, so a restore
+  // can't start while a backup is downloading (and vice versa).
+  const [dbLoading, setDbLoading] = useState(false);
   return (
     <div className="space-y-4">
-      <DatabaseSettings />
+      <DatabaseSettings loading={dbLoading} setLoading={setDbLoading} />
       <ForeignImportSettings />
+      <DangerZone loading={dbLoading} setLoading={setDbLoading} />
     </div>
   );
 }
@@ -33,6 +37,7 @@ function PassphraseInput({
   placeholder,
   autoFocus,
   ariaInvalid,
+  ariaDescribedBy,
 }: {
   id: string;
   value: string;
@@ -42,6 +47,7 @@ function PassphraseInput({
   placeholder?: string;
   autoFocus?: boolean;
   ariaInvalid?: boolean;
+  ariaDescribedBy?: string;
 }) {
   return (
     <div className="relative">
@@ -54,6 +60,8 @@ function PassphraseInput({
         spellCheck={false}
         placeholder={placeholder}
         aria-invalid={ariaInvalid}
+        aria-describedby={ariaDescribedBy}
+        aria-required="true"
         onChange={(e) => onChange(e.target.value)}
         className="h-9 pr-11"
       />
@@ -61,9 +69,14 @@ function PassphraseInput({
         type="button"
         onClick={onToggleShow}
         aria-label={show ? "Hide passphrase" : "Show passphrase"}
-        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-fg-faint transition-colors hover:text-fg focus:outline-none focus-visible:text-fg"
+        aria-pressed={show}
+        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-lg text-fg-faint transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
       >
-        {show ? <EyeOff className="h-4 w-4" strokeWidth={1.75} /> : <Eye className="h-4 w-4" strokeWidth={1.75} />}
+        {show ? (
+          <EyeOff className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        ) : (
+          <Eye className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        )}
       </button>
     </div>
   );
@@ -119,8 +132,9 @@ function CheckOption({
         onChange={(e) => onChange(e.target.checked)}
         className="mt-0.5 h-4 w-4 shrink-0 accent-accent-500"
       />
-      <span className="text-[13px] text-fg">
-        {label} <span className="text-[12px] text-fg-muted">— {hint}</span>
+      <span className="min-w-0">
+        <span className="block text-[13px] text-fg">{label}</span>
+        <span className="block text-[12px] leading-5 text-fg-muted">{hint}</span>
       </span>
     </label>
   );
@@ -146,7 +160,7 @@ function RadioCard({
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-lg border px-3.5 py-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent-500/40",
+        "flex cursor-pointer items-start gap-3 rounded-lg border px-3.5 py-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent-500",
         checked
           ? danger
             ? "border-bad/50 bg-bad/5"
@@ -158,7 +172,7 @@ function RadioCard({
       <span
         className={cn(
           "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
-          checked ? (danger ? "border-bad" : "border-accent-500") : "border-line-strong",
+          checked ? (danger ? "border-bad" : "border-accent-500") : "border-input",
         )}
         aria-hidden="true"
       >
@@ -338,24 +352,36 @@ function ForeignImportSettings() {
         .map(([label, value]) => ({ label, value: value as number }))
     : [];
 
+  // Only show counts that carry information; "Skipped" always shows.
+  const resultItems = result
+    ? [
+        { label: "Accounts", value: result.accounts },
+        { label: "Custom providers", value: result.custom_providers },
+        { label: "API keys", value: result.api_keys },
+        { label: "Chains", value: result.chains },
+        { label: "Aliases", value: result.aliases },
+        { label: "Proxy pools", value: result.proxy_pools },
+        ...(result.usage_records != null ? [{ label: "Usage records", value: result.usage_records }] : []),
+      ].filter((i) => i.value > 0)
+    : [];
+
   return (
-    <SettingsCard
-      title="Import from other routers"
-      description="Migrate providers, keys and routing chains from a 9router or OmniRoute backup. JSON imports are additive — existing data is kept."
-    >
+    <SettingsCard title="Import from other routers" description="JSON imports keep existing data" busy={loading}>
       <SettingRow
         label={
           <>
             9router backup <Badge>Full credential transfer</Badge>
           </>
         }
-        description="Imports provider connections (API keys and OAuth tokens re-sealed), custom provider nodes, API keys (re-hashed — the same key string keeps working), combos (as chains), proxy pools and model aliases."
+        description="Providers, keys, chains, proxy pools and aliases."
+        infoLabel="About 9router backup imports"
+        info="Provider connections (API keys and OAuth tokens re-sealed), custom provider nodes, API keys (re-hashed, so the same key string keeps working), combos as chains, proxy pools and model aliases."
       >
         <Button variant="ghost" onClick={() => import9rRef.current?.click()} disabled={loading}>
-          <Upload className="text-fg-faint" strokeWidth={1.75} />
-          Select JSON
+          <Upload className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          Select 9router JSON
         </Button>
-        <input ref={import9rRef} type="file" accept="application/json,.json" className="hidden" onChange={handle9rFile} />
+        <input ref={import9rRef} type="file" accept="application/json,.json" className="hidden" tabIndex={-1} aria-hidden="true" onChange={handle9rFile} />
       </SettingRow>
 
       <SettingRow
@@ -364,19 +390,21 @@ function ForeignImportSettings() {
             OmniRoute backup <Badge>Credentials redacted</Badge>
           </>
         }
-        description="OmniRoute exports redact credentials, so accounts arrive as disabled stubs — re-authenticate after import. Custom provider nodes, combos (as chains), proxy pools and aliases transfer fully. API keys must be re-created."
+        description="Accounts arrive disabled. Re-authenticate after import."
+        infoLabel="About OmniRoute backup imports"
+        info="OmniRoute exports redact credentials, so accounts arrive as disabled stubs. Custom provider nodes, combos (as chains), proxy pools and aliases transfer fully. API keys must be re-created."
       >
         <Button variant="ghost" onClick={() => importOmniRef.current?.click()} disabled={loading}>
-          <Upload className="text-fg-faint" strokeWidth={1.75} />
-          Select JSON
+          <Upload className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          Select OmniRoute JSON
         </Button>
-        <input ref={importOmniRef} type="file" accept="application/json,.json" className="hidden" onChange={handleOmniFile} />
+        <input ref={importOmniRef} type="file" accept="application/json,.json" className="hidden" tabIndex={-1} aria-hidden="true" onChange={handleOmniFile} />
       </SettingRow>
 
       <SettingRow
         label={
           <>
-            9router SQLite database <Badge>Includes usage history</Badge>
+            9router database <Badge>Includes usage history</Badge>
           </>
         }
         description={
@@ -386,17 +414,17 @@ function ForeignImportSettings() {
             </>
           ) : (
             <>
-              Upload 9router&apos;s <Code>data.sqlite</Code> directly. Imports everything the JSON backup does, plus usage
-              history, token saver settings, routing strategy and the dashboard password. The file is analyzed first so
-              you can pick which sections to import.
+              Upload <Code>data.sqlite</Code>. You pick sections before anything is imported.
             </>
           )
         }
+        infoLabel="About 9router database imports"
+        info="Imports everything the JSON backup does, plus usage history, token saver settings, routing strategy and the dashboard password."
       >
         {!analyze && !pendingSqliteFile && (
           <>
             <Button variant="ghost" onClick={() => importSqliteRef.current?.click()} disabled={loading}>
-              <Upload className="text-fg-faint" strokeWidth={1.75} />
+              <Upload className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
               Select data.sqlite
             </Button>
             <input
@@ -404,6 +432,8 @@ function ForeignImportSettings() {
               type="file"
               accept=".sqlite,.db,application/vnd.sqlite3,application/x-sqlite3"
               className="hidden"
+              tabIndex={-1}
+              aria-hidden="true"
               onChange={handleSqliteFile}
             />
           </>
@@ -414,7 +444,7 @@ function ForeignImportSettings() {
         <div className="space-y-4 bg-subtle px-4 py-4">
           {detected.length > 0 && (
             <div>
-              <p className="mb-1.5 text-[12.5px] font-medium text-fg">Detected in file</p>
+              <h3 className="mb-1.5 text-[12.5px] font-medium text-fg">Found in file</h3>
               <StatStrip items={detected} />
             </div>
           )}
@@ -422,13 +452,13 @@ function ForeignImportSettings() {
           <fieldset>
             <legend className="mb-1 text-[12.5px] font-medium text-fg">Sections to import</legend>
             <div className="-mx-2 grid gap-0.5 sm:grid-cols-2">
-              <CheckOption checked={sqliteOptions.usage} onChange={(v) => setSection("usage", v)} label="Usage records" hint="token usage, costs, model stats" />
-              <CheckOption checked={sqliteOptions.providers} onChange={(v) => setSection("providers", v)} label="Providers & accounts" hint="connections, custom nodes, credentials re-encrypted" />
-              <CheckOption checked={sqliteOptions.api_keys} onChange={(v) => setSection("api_keys", v)} label="API keys" hint="re-hashed; same key strings keep working" />
-              <CheckOption checked={sqliteOptions.proxy_pools} onChange={(v) => setSection("proxy_pools", v)} label="Proxy pools" hint="Cloudflare / HTTP proxy configs" />
-              <CheckOption checked={sqliteOptions.chains} onChange={(v) => setSection("chains", v)} label="Routing chains" hint="combos → chains (fallback/RR strategies)" />
-              <CheckOption checked={sqliteOptions.settings} onChange={(v) => setSection("settings", v)} label="Settings" hint="token saver (RTK/Caveman/Ponytail), routing strategy" />
-              <CheckOption checked={sqliteOptions.password} onChange={(v) => setSection("password", v)} label="Dashboard password" hint="import 9router's bcrypt hash (triggers re-login)" />
+              <CheckOption checked={sqliteOptions.usage} onChange={(v) => setSection("usage", v)} label="Usage records" hint="Token usage, costs, model stats" />
+              <CheckOption checked={sqliteOptions.providers} onChange={(v) => setSection("providers", v)} label="Providers & accounts" hint="Credentials are re-encrypted" />
+              <CheckOption checked={sqliteOptions.api_keys} onChange={(v) => setSection("api_keys", v)} label="API keys" hint="Same key strings keep working" />
+              <CheckOption checked={sqliteOptions.proxy_pools} onChange={(v) => setSection("proxy_pools", v)} label="Proxy pools" hint="Cloudflare and HTTP proxies" />
+              <CheckOption checked={sqliteOptions.chains} onChange={(v) => setSection("chains", v)} label="Routing chains" hint="Combos become chains" />
+              <CheckOption checked={sqliteOptions.settings} onChange={(v) => setSection("settings", v)} label="Settings" hint="Token saver and routing strategy" />
+              <CheckOption checked={sqliteOptions.password} onChange={(v) => setSection("password", v)} label="Dashboard password" hint="Replaces yours; you sign in again" />
             </div>
           </fieldset>
 
@@ -440,14 +470,14 @@ function ForeignImportSettings() {
                 checked={sqliteOptions.mode === "merge"}
                 onChange={() => setSqliteOptions((o) => ({ ...o, mode: "merge" }))}
                 title="Merge"
-                body="Add new rows, skip existing. Safe and repeatable."
+                body="Add new rows, skip existing."
               />
               <RadioCard
                 name="n9mode"
                 checked={sqliteOptions.mode === "overwrite"}
                 onChange={() => setSqliteOptions((o) => ({ ...o, mode: "overwrite" }))}
                 title="Overwrite"
-                body="Remove previous 9router imports, then re-import. A clean sync."
+                body="Replace earlier 9router imports."
               />
               <RadioCard
                 name="n9mode"
@@ -455,13 +485,12 @@ function ForeignImportSettings() {
                 checked={sqliteOptions.mode === "wipe"}
                 onChange={() => setSqliteOptions((o) => ({ ...o, mode: "wipe" }))}
                 title="Wipe & replace"
-                body={<span className="text-bad">Destroys all selected data, including KeiRouter-native rows.</span>}
+                body={<span className="text-bad">Deletes all selected data, including KeiRouter&apos;s own.</span>}
               />
             </div>
             {sqliteOptions.mode === "wipe" && (
               <Note tone="bad" className="mt-2">
-                Wipe mode deletes all rows in the selected sections, not just previously imported ones. A safety backup is
-                created automatically before any deletion.
+                Deletes every row in the selected sections, not just imported ones. A safety backup is created first.
               </Note>
             )}
           </fieldset>
@@ -478,7 +507,7 @@ function ForeignImportSettings() {
               Cancel
             </Button>
             <Button
-              variant="primary"
+              variant={sqliteOptions.mode === "wipe" ? "danger" : "primary"}
               onClick={runSqliteImport}
               disabled={loading || !Object.values(sqliteOptions).some((v) => typeof v === "boolean" && v)}
             >
@@ -496,22 +525,17 @@ function ForeignImportSettings() {
 
       {result && (
         <div className="space-y-3 px-4 py-4">
-          <p className="text-[12.5px] font-medium text-fg">Last import</p>
-          <StatStrip
-            items={[
-              { label: "Accounts", value: result.accounts },
-              { label: "Custom providers", value: result.custom_providers },
-              { label: "API keys", value: result.api_keys },
-              { label: "Chains", value: result.chains },
-              { label: "Aliases", value: result.aliases },
-              { label: "Proxy pools", value: result.proxy_pools },
-              ...(result.usage_records != null ? [{ label: "Usage records", value: result.usage_records }] : []),
-              { label: "Skipped", value: result.skipped, muted: true },
-            ]}
-          />
+          <h3 className="text-[12.5px] font-medium text-fg">Last import</h3>
+          {resultItems.length > 0 ? (
+            <StatStrip items={[...resultItems, { label: "Skipped", value: result.skipped, muted: true }]} />
+          ) : (
+            <p className="text-[12.5px] text-fg-muted">
+              Nothing new to import{result.skipped ? ` · ${plural(result.skipped, "record")} skipped` : ""}.
+            </p>
+          )}
           {result.errors && result.errors.length > 0 && (
             <details className="rounded-lg border border-line bg-subtle px-3 py-2">
-              <summary className="cursor-pointer text-[12px] font-medium text-fg-muted">
+              <summary className="cursor-pointer rounded-md text-[12px] font-medium text-fg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
                 {plural(result.errors.length, "warning")}
               </summary>
               <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-[12px] text-fg-muted">
@@ -530,13 +554,17 @@ function ForeignImportSettings() {
 }
 
 // ── KeiRouter backups ───────────────────────────────────────────────
-function DatabaseSettings() {
+type DbBusy = { loading: boolean; setLoading: (v: boolean) => void };
+
+function useSqliteStatus() {
+  return useQuery({ queryKey: ["sqlite-status"], queryFn: () => api.sqliteStatus() });
+}
+
+function DatabaseSettings({ loading, setLoading }: DbBusy) {
   const toast = useToast();
   const confirm = useConfirm();
   const importRef = useRef<HTMLInputElement>(null);
-  const sqliteImportRef = useRef<HTMLInputElement>(null);
-  const sqlite = useQuery({ queryKey: ["sqlite-status"], queryFn: () => api.sqliteStatus() });
-  const [loading, setLoading] = useState(false);
+  const sqlite = useSqliteStatus();
 
   const [exportOpen, setExportOpen] = useState(false);
   const [usePortable, setUsePortable] = useState(false);
@@ -549,8 +577,6 @@ function DatabaseSettings() {
   const [importPass, setImportPass] = useState("");
   const [showImportPass, setShowImportPass] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
-
-  const [sqliteRestoreError, setSQLiteRestoreError] = useState<string | null>(null);
 
   const resetExport = () => {
     setExportOpen(false);
@@ -675,6 +701,260 @@ function DatabaseSettings() {
     }
   };
 
+  const submitImportWithPass = async () => {
+    const p = importPass.trim();
+    if (!p) {
+      setImportError("Enter the passphrase used when this backup was exported.");
+      return;
+    }
+    if (!pendingPayload) {
+      setImportError("No backup loaded. Select a file first.");
+      return;
+    }
+    setImportError(null);
+    setLoading(true);
+    try {
+      const result = await api.importDatabase(pendingPayload, p);
+      toast.success("Import complete", `${result.imported} records restored. Existing data was merged or updated.`);
+      resetImport();
+    } catch (e) {
+      setImportError((e as Error).message || "Import failed. Check the passphrase and try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const exportStrength = strengthOf(exportPass);
+  const exportMismatch = usePortable && exportConfirm.length > 0 && exportPass !== exportConfirm;
+  const exportDisabled = loading || (usePortable && (!exportPass.trim() || exportPass !== exportConfirm));
+  const sqliteAvailable = sqlite.data?.available === true;
+
+  return (
+    <>
+      <SettingsCard title="Backups" busy={loading}>
+        <SettingRow label="Download configuration" description="JSON file. Local, or portable with a passphrase.">
+          <Button variant="ghost" onClick={() => setExportOpen(true)} disabled={loading}>
+            <Download className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            Download backup
+          </Button>
+        </SettingRow>
+        <SettingRow label="Restore configuration" description="Merges a JSON backup. Nothing is deleted.">
+          <Button variant="ghost" onClick={() => importRef.current?.click()} disabled={loading}>
+            <Upload className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            Restore backup
+          </Button>
+          <input
+            ref={importRef}
+            type="file"
+            accept="application/json,.json"
+            className="hidden"
+            tabIndex={-1}
+            aria-hidden="true"
+            onChange={handleFilePicked}
+          />
+        </SettingRow>
+        <SettingRow
+          label={
+            <>
+              Database snapshot
+              <Badge tone={sqliteAvailable ? "success" : "neutral"}>
+                {sqlite.isLoading ? "Checking…" : sqliteAvailable ? "SQLite active" : "Unavailable"}
+              </Badge>
+            </>
+          }
+          description={
+            sqlite.data?.path ? (
+              <span className="block truncate font-mono" title={sqlite.data.path}>
+                {sqlite.data.path}
+              </span>
+            ) : !sqlite.isLoading && !sqliteAvailable ? (
+              "Only available with SQLite storage."
+            ) : undefined
+          }
+          infoLabel="About database snapshots"
+          info={
+            <>
+              Raw <span className="font-mono">.db</span> copy made with SQLite VACUUM INTO.
+              {sqlite.data?.dialect ? ` Driver: ${sqlite.data.dialect}.` : ""} Postgres and in-memory databases aren&apos;t
+              eligible.
+            </>
+          }
+        >
+          <Button variant="ghost" onClick={downloadSQLiteBackup} disabled={loading || !sqliteAvailable}>
+            <Download className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            Download .db
+          </Button>
+        </SettingRow>
+      </SettingsCard>
+
+      <Modal
+        open={exportOpen}
+        onClose={() => (loading ? null : resetExport())}
+        title="Download backup"
+        subtitle="Choose how credentials are encrypted."
+        maxWidth="max-w-md"
+      >
+        <div className="max-h-[55vh] space-y-4 overflow-y-auto px-5 py-4">
+          <fieldset className="space-y-2">
+            <legend className="sr-only">Backup type</legend>
+            <RadioCard
+              name="export-mode"
+              checked={!usePortable}
+              onChange={() => setUsePortable(false)}
+              icon={<ShieldCheck className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+              title="Local backup"
+              body="Restores only on this install. No passphrase."
+            />
+            <RadioCard
+              name="export-mode"
+              checked={usePortable}
+              onChange={() => setUsePortable(true)}
+              icon={<KeyRound className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+              title="Portable backup"
+              body="Passphrase-protected. Restores on any machine."
+            />
+          </fieldset>
+
+          {usePortable && (
+            <div className="space-y-3">
+              <div className="space-y-1.5">
+                <label htmlFor="export-pass" className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
+                  Passphrase
+                  <span className="text-[12px] font-normal text-fg-faint">Required</span>
+                </label>
+                <PassphraseInput
+                  id="export-pass"
+                  value={exportPass}
+                  onChange={setExportPass}
+                  show={showExportPass}
+                  onToggleShow={() => setShowExportPass((s) => !s)}
+                  placeholder="At least 8 characters"
+                  autoFocus
+                  ariaDescribedBy="export-pass-strength"
+                />
+                <div className="pt-1">
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-track" aria-hidden="true">
+                    <div
+                      className={cn(
+                        "h-full transition-all duration-300",
+                        exportStrength.tone === "strong"
+                          ? "bg-ok"
+                          : exportStrength.tone === "ok"
+                            ? "bg-warn"
+                            : exportStrength.tone === "weak"
+                              ? "bg-bad"
+                              : "bg-transparent",
+                      )}
+                      style={{ width: `${exportStrength.pct}%` }}
+                    />
+                  </div>
+                  <p id="export-pass-strength" className="mt-1 text-[12px] text-fg-muted" aria-live="polite">
+                    {exportStrength.label}
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="export-confirm" className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
+                  Confirm passphrase
+                  <span className="text-[12px] font-normal text-fg-faint">Required</span>
+                </label>
+                <PassphraseInput
+                  id="export-confirm"
+                  value={exportConfirm}
+                  onChange={setExportConfirm}
+                  show={showExportPass}
+                  onToggleShow={() => setShowExportPass((s) => !s)}
+                  placeholder="Re-enter passphrase"
+                  ariaInvalid={exportMismatch}
+                  ariaDescribedBy={exportMismatch ? "export-confirm-error" : undefined}
+                />
+                {exportMismatch && (
+                  <p id="export-confirm-error" role="alert" className="text-[12px] leading-5 text-bad">
+                    Passphrases don&apos;t match. Re-enter the same passphrase.
+                  </p>
+                )}
+              </div>
+
+              <Note tone="warn">Store this passphrase safely. Without it the backup can&apos;t be restored.</Note>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-line bg-subtle px-5 py-3">
+          <Button variant="ghost" onClick={resetExport} disabled={loading}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={handleExportSubmit} disabled={exportDisabled}>
+            <Download aria-hidden="true" />
+            {loading ? "Preparing…" : "Download"}
+          </Button>
+        </div>
+      </Modal>
+
+      <Modal
+        open={importOpen}
+        onClose={() => (loading ? null : resetImport())}
+        title="Portable backup detected"
+        subtitle="Enter the passphrase used to export it."
+      >
+        <div className="space-y-4 px-5 py-4">
+          <div className="space-y-1.5">
+            <label htmlFor="import-pass" className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
+              Passphrase
+              <span className="text-[12px] font-normal text-fg-faint">Required</span>
+            </label>
+            <PassphraseInput
+              id="import-pass"
+              value={importPass}
+              onChange={(v) => {
+                setImportPass(v);
+                if (importError) setImportError(null);
+              }}
+              show={showImportPass}
+              onToggleShow={() => setShowImportPass((s) => !s)}
+              placeholder="Passphrase from export"
+              autoFocus
+              ariaInvalid={!!importError}
+              ariaDescribedBy={importError ? "import-pass-error" : "import-pass-hint"}
+            />
+            {importError ? (
+              <p id="import-pass-error" role="alert" className="text-[12px] leading-5 text-bad">
+                {importError}
+              </p>
+            ) : (
+              <p id="import-pass-hint" className="text-[12px] leading-5 text-fg-muted">
+                Matching records take the backup&apos;s values. Nothing is deleted.
+              </p>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-line bg-subtle px-5 py-3">
+          <Button variant="ghost" onClick={resetImport} disabled={loading}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={submitImportWithPass} disabled={loading || !importPass.trim()}>
+            <Upload aria-hidden="true" />
+            {loading ? "Restoring…" : "Restore"}
+          </Button>
+        </div>
+      </Modal>
+    </>
+  );
+}
+
+// ── Danger zone ─────────────────────────────────────────────────────
+// Replacing the active SQLite database is the one irreversible action on
+// this tab, so it lives apart from the everyday backup rows.
+function DangerZone({ loading, setLoading }: DbBusy) {
+  const toast = useToast();
+  const confirm = useConfirm();
+  const sqliteImportRef = useRef<HTMLInputElement>(null);
+  const sqlite = useSqliteStatus();
+  const [sqliteRestoreError, setSQLiteRestoreError] = useState<string | null>(null);
+  const sqliteAvailable = sqlite.data?.available === true;
+
   const submitSQLiteRestore = async (file: File | null) => {
     if (!file) {
       setSQLiteRestoreError("No SQLite backup selected.");
@@ -721,266 +1001,36 @@ function DatabaseSettings() {
     void submitSQLiteRestore(file);
   };
 
-  const submitImportWithPass = async () => {
-    const p = importPass.trim();
-    if (!p) {
-      setImportError("Passphrase required for portable backups.");
-      return;
-    }
-    if (!pendingPayload) {
-      setImportError("No backup loaded. Select a file first.");
-      return;
-    }
-    setImportError(null);
-    setLoading(true);
-    try {
-      const result = await api.importDatabase(pendingPayload, p);
-      toast.success("Import complete", `${result.imported} records restored. Existing data was merged or updated.`);
-      resetImport();
-    } catch (e) {
-      setImportError((e as Error).message || "Import failed. Wrong passphrase?");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const exportStrength = strengthOf(exportPass);
-  const exportMismatch = usePortable && exportConfirm.length > 0 && exportPass !== exportConfirm;
-  const exportDisabled = loading || (usePortable && (!exportPass.trim() || exportPass !== exportConfirm));
-  const sqliteAvailable = sqlite.data?.available === true;
-
   return (
-    <>
-      <SettingsCard
-        title="Configuration backup"
-        description="Export or import KeiRouter configuration as JSON. Portable mode re-keys credentials with a passphrase."
-      >
-        <SettingRow
-          label="Download JSON backup"
-          description="Choose a local backup (this machine only) or a portable, passphrase-protected one in the next step."
-        >
-          <Button variant="ghost" onClick={() => setExportOpen(true)} disabled={loading}>
-            <Download className="text-fg-faint" strokeWidth={1.75} />
-            Download backup
-          </Button>
-        </SettingRow>
-        <SettingRow
-          label="Import JSON backup"
-          description="Merges a KeiRouter backup into this install. Matching records are updated; nothing is deleted."
-        >
-          <Button variant="ghost" onClick={() => importRef.current?.click()} disabled={loading}>
-            <Upload className="text-fg-faint" strokeWidth={1.75} />
-            Import backup
-          </Button>
-          <input ref={importRef} type="file" accept="application/json,.json" className="hidden" onChange={handleFilePicked} />
-        </SettingRow>
-      </SettingsCard>
-
-      <SettingsCard
-        title="SQLite database file"
-        description="Download or restore the raw SQLite database. Only available when database.driver is sqlite."
-        action={
-          <Badge tone={sqliteAvailable ? "success" : "neutral"}>
-            {sqlite.isLoading ? "Checking…" : sqliteAvailable ? "SQLite active" : "Unavailable"}
-          </Badge>
+    <SettingsCard title="Danger zone" tone="danger" busy={loading}>
+      <SettingRow
+        label="Replace database"
+        description={
+          sqliteAvailable || sqlite.isLoading
+            ? "Swap in a .db backup. Current data is replaced; restart required."
+            : "Only available with SQLite storage."
         }
+        info="KeiRouter checks the file's integrity and saves a safety copy of the current database before replacing it."
       >
-        {(sqlite.data?.dialect || sqlite.data?.path || !sqliteAvailable) && (
-          <div className="space-y-1 px-4 py-3">
-            {!sqlite.isLoading && !sqliteAvailable && (
-              <p className="text-[12px] leading-5 text-fg-muted">
-                Only available for SQLite connections. Postgres and in-memory databases are not eligible for raw
-                database-file backup.
-              </p>
-            )}
-            {(sqlite.data?.dialect || sqlite.data?.path) && (
-              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-[12px]">
-                {sqlite.data?.dialect && (
-                  <>
-                    <dt className="text-fg-muted">Driver</dt>
-                    <dd className="font-mono text-fg">{sqlite.data.dialect}</dd>
-                  </>
-                )}
-                {sqlite.data?.path && (
-                  <>
-                    <dt className="text-fg-muted">Path</dt>
-                    <dd className="truncate font-mono text-fg" title={sqlite.data.path}>
-                      {sqlite.data.path}
-                    </dd>
-                  </>
-                )}
-              </dl>
-            )}
-          </div>
-        )}
-        <SettingRow
-          label="Download .db snapshot"
-          description="Uses SQLite VACUUM INTO for a consistent .db snapshot."
-        >
-          <Button variant="ghost" onClick={downloadSQLiteBackup} disabled={loading || !sqliteAvailable}>
-            <Download className="text-fg-faint" strokeWidth={1.75} />
-            Download .db
-          </Button>
-        </SettingRow>
-        <SettingRow
-          label="Restore from .db"
-          description="Validates integrity and saves a safety copy before replacing the active database. Restart required afterwards."
-        >
-          <Button variant="ghost" onClick={() => sqliteImportRef.current?.click()} disabled={loading || !sqliteAvailable}>
-            <Upload className="text-fg-faint" strokeWidth={1.75} />
-            Restore .db
-          </Button>
-          <input
-            ref={sqliteImportRef}
-            type="file"
-            accept=".db,.sqlite,.sqlite3,application/vnd.sqlite3,application/octet-stream"
-            className="hidden"
-            onChange={handleSQLiteFilePicked}
-          />
-        </SettingRow>
-        {sqliteRestoreError && (
-          <div className="px-4 py-3">
-            <ErrorBanner message={sqliteRestoreError} />
-          </div>
-        )}
-      </SettingsCard>
-
-      <Modal
-        open={exportOpen}
-        onClose={() => (loading ? null : resetExport())}
-        title="Download backup"
-        subtitle="Choose how credentials are encrypted in the export file."
-        maxWidth="max-w-md"
-      >
-        <div className="max-h-[55vh] space-y-4 overflow-y-auto px-5 py-4">
-          <div className="space-y-2" role="radiogroup" aria-label="Backup type">
-            <RadioCard
-              name="export-mode"
-              checked={!usePortable}
-              onChange={() => setUsePortable(false)}
-              icon={<ShieldCheck className="h-4 w-4 text-fg-faint" strokeWidth={1.75} />}
-              title="Local backup"
-              body="Tied to this machine's master key. Only restores on this install. No passphrase needed."
-            />
-            <RadioCard
-              name="export-mode"
-              checked={usePortable}
-              onChange={() => setUsePortable(true)}
-              icon={<KeyRound className="h-4 w-4 text-fg-faint" strokeWidth={1.75} />}
-              title="Portable backup"
-              body="Re-keys credentials to a passphrase so you can restore on another machine."
-            />
-          </div>
-
-          {usePortable && (
-            <div className="space-y-3">
-              <FormField label="Passphrase" htmlFor="export-pass">
-                <PassphraseInput
-                  id="export-pass"
-                  value={exportPass}
-                  onChange={setExportPass}
-                  show={showExportPass}
-                  onToggleShow={() => setShowExportPass((s) => !s)}
-                  placeholder="At least 8 characters"
-                  autoFocus
-                />
-                <div className="pt-1">
-                  <div className="h-1 w-full overflow-hidden rounded-full bg-track">
-                    <div
-                      className={cn(
-                        "h-full transition-all duration-300",
-                        exportStrength.tone === "strong"
-                          ? "bg-ok"
-                          : exportStrength.tone === "ok"
-                            ? "bg-warn"
-                            : exportStrength.tone === "weak"
-                              ? "bg-bad"
-                              : "bg-transparent",
-                      )}
-                      style={{ width: `${exportStrength.pct}%` }}
-                    />
-                  </div>
-                  <p className="mt-1 text-[12px] text-fg-muted" aria-live="polite">
-                    {exportStrength.label}
-                  </p>
-                </div>
-              </FormField>
-
-              <FormField
-                label="Confirm passphrase"
-                htmlFor="export-confirm"
-                error={exportMismatch ? "Passphrases do not match." : undefined}
-              >
-                <PassphraseInput
-                  id="export-confirm"
-                  value={exportConfirm}
-                  onChange={setExportConfirm}
-                  show={showExportPass}
-                  onToggleShow={() => setShowExportPass((s) => !s)}
-                  placeholder="Re-enter passphrase"
-                  ariaInvalid={exportMismatch}
-                />
-              </FormField>
-
-              <Note tone="warn">
-                Store this passphrase safely. Without it the backup cannot be restored — there is no recovery.
-              </Note>
-            </div>
-          )}
+        <Button variant="danger" onClick={() => sqliteImportRef.current?.click()} disabled={loading || !sqliteAvailable}>
+          <Upload strokeWidth={1.75} aria-hidden="true" />
+          Replace from .db
+        </Button>
+        <input
+          ref={sqliteImportRef}
+          type="file"
+          accept=".db,.sqlite,.sqlite3,application/vnd.sqlite3,application/octet-stream"
+          className="hidden"
+          tabIndex={-1}
+          aria-hidden="true"
+          onChange={handleSQLiteFilePicked}
+        />
+      </SettingRow>
+      {sqliteRestoreError && (
+        <div className="px-4 py-3">
+          <ErrorBanner message={sqliteRestoreError} />
         </div>
-
-        <div className="flex items-center justify-end gap-2 border-t border-line bg-subtle px-5 py-3">
-          <Button variant="ghost" onClick={resetExport} disabled={loading}>
-            Cancel
-          </Button>
-          <Button variant="primary" onClick={handleExportSubmit} disabled={exportDisabled}>
-            <Download />
-            {loading ? "Preparing…" : "Download"}
-          </Button>
-        </div>
-      </Modal>
-
-      <Modal
-        open={importOpen}
-        onClose={() => (loading ? null : resetImport())}
-        title="Portable backup detected"
-        subtitle="Enter the passphrase that was used when this backup was exported."
-      >
-        <div className="space-y-4 px-5 py-4">
-          <FormField label="Passphrase" htmlFor="import-pass">
-            <PassphraseInput
-              id="import-pass"
-              value={importPass}
-              onChange={(v) => {
-                setImportPass(v);
-                if (importError) setImportError(null);
-              }}
-              show={showImportPass}
-              onToggleShow={() => setShowImportPass((s) => !s)}
-              placeholder="Passphrase from export"
-              autoFocus
-              ariaInvalid={!!importError}
-            />
-          </FormField>
-
-          {importError && <ErrorBanner message={importError} />}
-
-          <Note>
-            Existing data is merged or updated: matching records take the backup&apos;s values. Records that aren&apos;t in
-            the backup are not deleted.
-          </Note>
-        </div>
-
-        <div className="flex items-center justify-end gap-2 border-t border-line bg-subtle px-5 py-3">
-          <Button variant="ghost" onClick={resetImport} disabled={loading}>
-            Cancel
-          </Button>
-          <Button variant="primary" onClick={submitImportWithPass} disabled={loading || !importPass.trim()}>
-            <Upload />
-            {loading ? "Importing…" : "Restore"}
-          </Button>
-        </div>
-      </Modal>
-    </>
+      )}
+    </SettingsCard>
   );
 }

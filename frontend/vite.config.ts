@@ -71,13 +71,12 @@ export default defineConfig({
       output: {
         // Split heavy, rarely-changing vendor libs into their own chunks so the
         // browser caches them across deploys and they load only with the pages
-        // that import them (for example, recharts -> chart pages).
+        // that import them.
         manualChunks(id: string) {
           if (!id.includes("node_modules")) return undefined;
           if (/[\\/]node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/.test(id)) return "react";
           if (id.includes("@tanstack/react-query")) return "query";
           if (/[\\/]node_modules[\\/](radix-ui|@radix-ui|@floating-ui)[\\/]/.test(id)) return "radix";
-          if (/[\\/]node_modules[\\/](recharts|d3-[^\\/]+|victory-vendor)[\\/]/.test(id)) return "recharts";
           return undefined;
         },
       },

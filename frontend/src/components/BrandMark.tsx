@@ -2,7 +2,8 @@ import { cn } from "@/lib/utils";
 
 // BrandMark is the built-in KeiRouter mark: an ink tile with a routing fork
 // and the logo's orange dot. White-label installs replace it with their own
-// logo image (see Layout's SidebarBrand).
+// logo image (see Layout's SidebarBrand). The orange dot (secondary-500) is
+// the one sanctioned use of the brand orange.
 export function BrandMark({ size = 22, className }: { size?: number; className?: string }) {
   return (
     <span
@@ -15,7 +16,7 @@ export function BrandMark({ size = 22, className }: { size?: number; className?:
         <path d="M7 8l3 4h3" />
       </svg>
       <span
-        className="absolute -right-0.5 -top-0.5 rounded-full bg-secondary-500 ring-2 ring-[var(--bg-elevated)]"
+        className="absolute -right-0.5 -top-0.5 rounded-full bg-secondary-500 ring-2 ring-surface"
         style={{ width: Math.round(size * 0.32), height: Math.round(size * 0.32) }}
       />
     </span>

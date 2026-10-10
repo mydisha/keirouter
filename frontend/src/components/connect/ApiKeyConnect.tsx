@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, CheckCircle, CheckCircle2, FileText, Layers, Upload, XCircle } from "lucide-react";
 import { api, type AccountInput, type BulkAccountResult, type Provider } from "../../lib/api";
@@ -6,12 +6,14 @@ import { parseKeys } from "../../lib/bulk";
 import { cn } from "@/lib/utils";
 import { useToast } from "../Toast";
 import {
+  Advanced,
   ConnectDialog,
   ExternalTextLink,
   FormError,
   InlineCode,
   PrimaryAction,
   SecondaryAction,
+  SelectField,
   Steps,
   TextAreaField,
   TextField,
@@ -55,14 +57,13 @@ function hostOf(url: string): string {
 function CloudflareSteps() {
   return (
     <Steps
-      title="Cloudflare Workers AI setup"
       steps={[
         <>
-          Create an API token at <ExternalTextLink href="https://dash.cloudflare.com/profile/api-tokens">dash.cloudflare.com</ExternalTextLink> with the{" "}
-          <InlineCode>Workers AI</InlineCode> template.
+          Create a token with the <InlineCode>Workers AI</InlineCode> template at{" "}
+          <ExternalTextLink href="https://dash.cloudflare.com/profile/api-tokens">dash.cloudflare.com</ExternalTextLink>
         </>,
         <>
-          Copy your Account ID from the right sidebar of the <ExternalTextLink href="https://dash.cloudflare.com">Cloudflare dashboard</ExternalTextLink>.
+          Copy your Account ID from the <ExternalTextLink href="https://dash.cloudflare.com">dashboard</ExternalTextLink> sidebar
         </>,
       ]}
     />
@@ -71,20 +72,13 @@ function CloudflareSteps() {
 
 function RegionSelect({ provider, value, onChange }: { provider: Provider; value: string; onChange: (v: string) => void }) {
   return (
-    <label className="block space-y-1.5">
-      <span className="block text-[12.5px] font-medium text-fg">Region</span>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="h-9 w-full rounded-lg border border-line bg-surface px-2.5 text-[13px] text-fg focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25"
-      >
-        {(provider.regions ?? []).map((r) => (
-          <option key={r.id} value={r.id}>
-            {r.label}
-          </option>
-        ))}
-      </select>
-    </label>
+    <SelectField label="Region" value={value} onChange={(e) => onChange(e.target.value)}>
+      {(provider.regions ?? []).map((r) => (
+        <option key={r.id} value={r.id}>
+          {r.label}
+        </option>
+      ))}
+    </SelectField>
   );
 }
 
@@ -94,6 +88,7 @@ export function ApiKeyConnect({ provider, onClose }: { provider: Provider; onClo
   const qc = useQueryClient();
   const toast = useToast();
   const rules = keyFormRules(provider);
+  const formId = useId();
   const [form, setForm] = useState({
     label: "",
     apiKey: "",
@@ -106,6 +101,8 @@ export function ApiKeyConnect({ provider, onClose }: { provider: Provider; onClo
     azureOrganization: "",
   });
   const [check, setCheck] = useState<{ status: "idle" | "checking" | "ok" | "error"; message?: string }>({ status: "idle" });
+  // Required-field errors appear only after a submit attempt.
+  const [showErrors, setShowErrors] = useState(false);
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm((f) => ({ ...f, [key]: e.target.value }));
     setCheck({ status: "idle" });
@@ -133,11 +130,29 @@ export function ApiKeyConnect({ provider, onClose }: { provider: Provider; onClo
     },
   });
 
-  const complete =
-    (rules.isNoAuth || rules.keyOptional || !!form.apiKey.trim()) &&
-    (!rules.isCloudflare || !!form.accountID.trim()) &&
-    (!rules.isAzure || (!!form.azureEndpoint.trim() && !!form.azureDeployment.trim())) &&
-    (!rules.requiresBaseURL || !!form.baseURL.trim());
+  // Same completeness rules as before, broken out per field so each missing
+  // value can be reported next to its input.
+  const missing = {
+    apiKey: !(rules.isNoAuth || rules.keyOptional || !!form.apiKey.trim()),
+    accountID: rules.isCloudflare && !form.accountID.trim(),
+    azureEndpoint: rules.isAzure && !form.azureEndpoint.trim(),
+    azureDeployment: rules.isAzure && !form.azureDeployment.trim(),
+    baseURL: rules.requiresBaseURL && !form.baseURL.trim(),
+  };
+  const complete = !Object.values(missing).some(Boolean);
+  const err = (k: keyof typeof missing, text: string) => (showErrors && missing[k] ? text : undefined);
+
+  const submit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (create.isPending) return;
+    if (!complete) {
+      const formEl = e.currentTarget;
+      setShowErrors(true);
+      window.requestAnimationFrame(() => formEl.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+      return;
+    }
+    create.mutate();
+  };
 
   const runCheck = async () => {
     setCheck({ status: "checking" });
@@ -149,96 +164,131 @@ export function ApiKeyConnect({ provider, onClose }: { provider: Provider; onClo
     }
   };
 
+  const keyHint = provider.api_key_url ? (
+    <>
+      Get one at <ExternalTextLink href={provider.api_key_url}>{hostOf(provider.api_key_url)}</ExternalTextLink>
+    </>
+  ) : undefined;
+
+  const labelField = <TextField label="Label" optional value={form.label} onChange={set("label")} placeholder="personal" />;
+  const optionalBaseURL = !rules.isAzure && !rules.hasRegions && !rules.inheritsBaseURL && !rules.isNoAuth && !rules.requiresBaseURL;
+
   return (
     <ConnectDialog
       title={rules.isNoAuth ? `Enable ${provider.display_name}` : `Add ${provider.display_name} API key`}
-      description={rules.isNoAuth ? "No credentials needed — this creates an account so KeiRouter can route to it." : "The key is encrypted at rest and never shown again."}
+      description={rules.isNoAuth ? "No credentials needed." : undefined}
       logo={{ icon: provider.icon, name: provider.display_name }}
       onClose={onClose}
       footer={
         <>
           {!rules.isNoAuth && (
             <SecondaryAction onClick={runCheck} disabled={!complete || check.status === "checking"}>
-              <CheckCircle className={cn(check.status === "checking" && "animate-pulse")} />
-              {check.status === "checking" ? "Checking…" : "Test key"}
+              <CheckCircle className={cn(check.status === "checking" && "animate-pulse")} aria-hidden="true" />
+              {check.status === "checking" ? "Testing…" : "Test key"}
             </SecondaryAction>
           )}
-          <PrimaryAction type="submit" busy={create.isPending} disabled={!complete} onClick={() => create.mutate()}>
+          <PrimaryAction type="submit" form={formId} busy={create.isPending}>
             {create.isPending ? "Adding…" : rules.isNoAuth ? "Enable" : "Add account"}
           </PrimaryAction>
         </>
       }
     >
-      <form
-        className="space-y-3.5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (complete) create.mutate();
-        }}
-      >
+      <form id={formId} className="space-y-3.5" noValidate onSubmit={submit}>
+        {rules.isCloudflare && <CloudflareSteps />}
         {!rules.isNoAuth && (
           <TextField
             label="API key"
             optional={rules.keyOptional}
+            required={!rules.keyOptional}
             type="password"
             autoComplete="off"
             value={form.apiKey}
             onChange={set("apiKey")}
             placeholder={rules.keyPlaceholder}
             className="font-mono"
-            hint={provider.api_key_url ? <>Create one at <ExternalTextLink href={provider.api_key_url}>{hostOf(provider.api_key_url)}</ExternalTextLink>.</> : undefined}
+            hint={keyHint}
+            error={err("apiKey", "Enter the API key.")}
           />
         )}
-        <TextField label="Label" optional value={form.label} onChange={set("label")} placeholder="personal" hint="Shown in routing and usage, e.g. the team or person who owns the key." />
         {rules.isCloudflare && (
+          <TextField
+            label="Account ID"
+            required
+            value={form.accountID}
+            onChange={set("accountID")}
+            placeholder="a1b2c3d4e5f6…"
+            className="font-mono"
+            error={err("accountID", "Enter your Cloudflare Account ID.")}
+          />
+        )}
+        {rules.isAzure && (
           <>
-            <CloudflareSteps />
-            <TextField label="Account ID" value={form.accountID} onChange={set("accountID")} placeholder="a1b2c3d4e5f6…" className="font-mono" />
+            <TextField
+              label="Endpoint"
+              required
+              value={form.azureEndpoint}
+              onChange={set("azureEndpoint")}
+              placeholder="https://your-resource.openai.azure.com"
+              className="font-mono"
+              error={err("azureEndpoint", "Enter the Azure resource endpoint.")}
+            />
+            <TextField
+              label="Deployment name"
+              required
+              value={form.azureDeployment}
+              onChange={set("azureDeployment")}
+              placeholder="gpt-4o"
+              className="font-mono"
+              error={err("azureDeployment", "Enter the deployment name.")}
+            />
           </>
         )}
-        {rules.isAzure ? (
-          <div className="space-y-3.5 rounded-xl border border-line bg-subtle p-3.5">
-            <TextField label="Endpoint" value={form.azureEndpoint} onChange={set("azureEndpoint")} placeholder="https://your-resource.openai.azure.com" className="font-mono" />
-            <TextField label="Deployment name" value={form.azureDeployment} onChange={set("azureDeployment")} placeholder="gpt-4o" className="font-mono" />
-            <div className="grid gap-3.5 sm:grid-cols-2">
-              <TextField label="API version" value={form.azureAPIVersion} onChange={set("azureAPIVersion")} className="font-mono" />
-              <TextField label="Organization" optional value={form.azureOrganization} onChange={set("azureOrganization")} placeholder="org_…" className="font-mono" />
-            </div>
-          </div>
-        ) : rules.hasRegions ? (
-          <RegionSelect provider={provider} value={form.region} onChange={(v) => setForm((f) => ({ ...f, region: v }))} />
-        ) : rules.inheritsBaseURL ? (
-          <div className="space-y-1.5">
-            <span className="block text-[12.5px] font-medium text-fg">Base URL</span>
-            <p className="truncate rounded-lg border border-line bg-subtle px-3 py-2 font-mono text-[12px] text-fg-muted" title={provider.base_url}>
-              {provider.base_url}
-            </p>
-            <p className="text-[12px] text-fg-muted">Inherited from this custom provider.</p>
-          </div>
-        ) : (
-          !rules.isNoAuth && (
-            <TextField
-              label="Base URL"
-              optional={!rules.requiresBaseURL}
-              value={form.baseURL}
-              onChange={set("baseURL")}
-              placeholder="https://…/v1"
-              className="font-mono"
-              hint={rules.requiresBaseURL ? "The OpenAI- or Anthropic-compatible endpoint this key belongs to." : "Only for a proxy or self-hosted endpoint."}
-            />
-          )
+        {rules.hasRegions && !rules.isAzure && <RegionSelect provider={provider} value={form.region} onChange={(v) => setForm((f) => ({ ...f, region: v }))} />}
+        {rules.requiresBaseURL && !rules.isAzure && !rules.hasRegions && (
+          <TextField
+            label="Base URL"
+            required
+            value={form.baseURL}
+            onChange={set("baseURL")}
+            placeholder="https://…/v1"
+            className="font-mono"
+            hint="The compatible endpoint this key belongs to"
+            error={err("baseURL", "Enter the endpoint's base URL.")}
+          />
         )}
-
-        {check.status === "ok" && (
-          <p role="status" className="flex items-center gap-1.5 text-[12.5px] font-medium text-ok">
-            <CheckCircle2 className="h-4 w-4" />
-            The key works.
+        {rules.inheritsBaseURL && !rules.isAzure && !rules.hasRegions && (
+          <p className="text-[12.5px] text-fg-muted">
+            Uses <InlineCode>{provider.base_url}</InlineCode>
           </p>
         )}
-        {check.status === "error" && <FormError message={check.message || "The key was rejected."} />}
+
+        {rules.isNoAuth ? (
+          labelField
+        ) : (
+          <Advanced>
+            {labelField}
+            {optionalBaseURL && (
+              <TextField label="Base URL" optional value={form.baseURL} onChange={set("baseURL")} placeholder="https://…/v1" className="font-mono" hint="Only for a proxy or self-hosted endpoint" />
+            )}
+            {rules.isAzure && (
+              <div className="grid gap-3.5 sm:grid-cols-2">
+                <TextField label="API version" value={form.azureAPIVersion} onChange={set("azureAPIVersion")} className="font-mono" />
+                <TextField label="Organization" optional value={form.azureOrganization} onChange={set("azureOrganization")} placeholder="org_…" className="font-mono" />
+              </div>
+            )}
+          </Advanced>
+        )}
+
+        <div role="status" aria-live="polite">
+          {check.status === "ok" && (
+            <p className="flex items-center gap-1.5 text-[12.5px] font-medium text-ok">
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+              The key works.
+            </p>
+          )}
+        </div>
+        {check.status === "error" && <FormError message={check.message || "The key was rejected. Check it and try again."} />}
         <FormError message={create.error?.message} />
-        {/* Enter submits from any field. */}
-        <button type="submit" className="hidden" aria-hidden="true" tabIndex={-1} />
       </form>
     </ConnectDialog>
   );
@@ -261,6 +311,8 @@ export function BulkKeyImport({ provider, onClose }: { provider: Provider; onClo
   const [accountID, setAccountID] = useState("");
   const [results, setResults] = useState<BulkAccountResult[] | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const textId = useId();
+  const validateId = useId();
 
   const showBaseURL = !rules.hasRegions && !rules.isCloudflare && !rules.inheritsBaseURL && !rules.isQoder;
   const noun = rules.isQoder ? "token" : "key";
@@ -315,11 +367,11 @@ export function BulkKeyImport({ provider, onClose }: { provider: Provider; onClo
                 setText("");
               }}
             >
-              <Layers />
+              <Layers aria-hidden="true" />
               Import more
             </SecondaryAction>
             <PrimaryAction onClick={onClose}>
-              <Check />
+              <Check aria-hidden="true" />
               Done
             </PrimaryAction>
           </>
@@ -327,21 +379,20 @@ export function BulkKeyImport({ provider, onClose }: { provider: Provider; onClo
       >
         <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
           {results.map((r) => (
-            <li key={r.index} className="flex items-center gap-3 px-3 py-2 text-[12.5px]">
+            <li key={r.index} className="flex items-start gap-3 px-3 py-2 text-[12.5px]">
               {r.status === "created" ? (
-                <CheckCircle className="h-4 w-4 shrink-0 text-ok" />
+                <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-ok" aria-hidden="true" />
               ) : r.status === "skipped" ? (
-                <AlertCircle className="h-4 w-4 shrink-0 text-warn" />
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
               ) : (
-                <XCircle className="h-4 w-4 shrink-0 text-bad" />
+                <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-bad" aria-hidden="true" />
               )}
+              <span className="sr-only">{r.status === "created" ? "Added:" : r.status === "skipped" ? "Skipped:" : "Failed:"}</span>
               <span className="w-9 shrink-0 font-mono text-fg-faint">#{r.index + 1}</span>
-              <span className="min-w-0 flex-1 truncate font-medium text-fg">{r.label || "Unlabeled"}</span>
-              {r.error && (
-                <span className="max-w-[55%] truncate text-fg-muted" title={r.error}>
-                  {r.error}
-                </span>
-              )}
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium text-fg">{r.label || "Unlabeled"}</span>
+                {r.error && <span className="block break-words text-fg-muted">{r.error}</span>}
+              </span>
             </li>
           ))}
         </ul>
@@ -349,10 +400,10 @@ export function BulkKeyImport({ provider, onClose }: { provider: Provider; onClo
     );
   }
 
+  const keysLabel = rules.isQoder ? "Personal Access Tokens" : "API keys";
   return (
     <ConnectDialog
       title={`Import ${provider.display_name} ${rules.isQoder ? "tokens" : "API keys"}`}
-      description={`Paste one ${noun} per line, or load a .txt / .csv file.`}
       logo={{ icon: provider.icon, name: provider.display_name }}
       width="lg"
       onClose={onClose}
@@ -360,92 +411,98 @@ export function BulkKeyImport({ provider, onClose }: { provider: Provider; onClo
         <>
           <SecondaryAction onClick={onClose}>Cancel</SecondaryAction>
           <PrimaryAction onClick={() => importMut.mutate()} disabled={!canImport} busy={importMut.isPending}>
-            {!importMut.isPending && <Upload />}
+            {!importMut.isPending && <Upload aria-hidden="true" />}
             {importMut.isPending ? "Importing…" : ready ? `Import ${ready} ${noun}${ready === 1 ? "" : "s"}` : "Import"}
           </PrimaryAction>
         </>
       }
     >
       <div className="space-y-3.5">
-        {(rules.hasRegions || rules.isCloudflare || showBaseURL) && (
-          <div className="space-y-3.5 rounded-xl border border-line bg-subtle p-3.5">
-            <p className="text-[12px] font-medium text-fg-muted">Applied to every {noun}</p>
-            {rules.hasRegions && <RegionSelect provider={provider} value={region} onChange={setRegion} />}
-            {rules.isCloudflare && (
-              <>
-                <CloudflareSteps />
-                <TextField label="Account ID" value={accountID} onChange={(e) => setAccountID(e.target.value)} placeholder="a1b2c3d4e5f6…" className="font-mono" />
-              </>
-            )}
-            {showBaseURL && (
-              <TextField
-                label="Base URL"
-                optional={!rules.requiresBaseURL}
-                value={baseURL}
-                onChange={(e) => setBaseURL(e.target.value)}
-                placeholder="https://…/v1"
-                className="font-mono"
-              />
-            )}
-          </div>
+        {rules.isCloudflare && <CloudflareSteps />}
+        {rules.hasRegions && <RegionSelect provider={provider} value={region} onChange={setRegion} />}
+        {rules.isCloudflare && (
+          <TextField label="Account ID" required value={accountID} onChange={(e) => setAccountID(e.target.value)} placeholder="a1b2c3d4e5f6…" className="font-mono" hint={`Applies to every ${noun}`} />
+        )}
+        {showBaseURL && (
+          <TextField
+            label="Base URL"
+            optional={!rules.requiresBaseURL}
+            required={rules.requiresBaseURL}
+            value={baseURL}
+            onChange={(e) => setBaseURL(e.target.value)}
+            placeholder="https://…/v1"
+            className="font-mono"
+            hint={`Applies to every ${noun}`}
+          />
         )}
         {rules.inheritsBaseURL && (
           <p className="text-[12.5px] text-fg-muted">
-            Keys use this provider's base URL <InlineCode>{provider.base_url}</InlineCode>.
+            Uses <InlineCode>{provider.base_url}</InlineCode>
           </p>
         )}
 
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-[12.5px] font-medium text-fg">{rules.isQoder ? "Personal Access Tokens" : "API keys"}</span>
+            <label htmlFor={textId} className="text-[12.5px] font-medium text-fg">
+              {keysLabel}
+            </label>
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line px-2 text-[12px] text-fg-muted transition-colors hover:bg-hover hover:text-fg"
+              className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line px-2 text-[12px] text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
             >
-              <FileText className="h-3.5 w-3.5" />
+              <FileText className="h-3.5 w-3.5" aria-hidden="true" />
               Load file
             </button>
-            <input ref={fileRef} type="file" accept=".txt,.csv,text/plain,text/csv" className="hidden" onChange={onFile} />
+            <input ref={fileRef} type="file" accept=".txt,.csv,text/plain,text/csv" className="hidden" tabIndex={-1} aria-hidden="true" onChange={onFile} />
           </div>
           <TextAreaField
-            aria-label={rules.isQoder ? "Personal Access Tokens" : "API keys"}
+            id={textId}
             value={text}
             onChange={(e) => setText(e.target.value)}
             rows={8}
             placeholder={`${rules.keyPlaceholder}\nlabel-2, ${rules.keyPlaceholder}\n# lines starting with # are ignored`}
             hint={
               <>
-                One {noun} per line. Optional label: <InlineCode>label, {noun}</InlineCode>. Blank lines and <InlineCode>#</InlineCode> comments are ignored.
+                One per line, optionally <InlineCode>label, {noun}</InlineCode>. Lines starting with <InlineCode>#</InlineCode> are skipped.
               </>
             }
           />
         </div>
 
-        {text.trim() && (
-          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px]" aria-live="polite">
-            <span className={cn("font-medium", ready ? "text-ok" : "text-fg-muted")}>{ready} ready</span>
-            {parsed.duplicates > 0 && <span className="text-warn">{parsed.duplicates} duplicate</span>}
-            {parsed.errors.length > 0 && <span className="text-bad">{parsed.errors.length} invalid</span>}
-            {parsed.errors.slice(0, 2).map((err) => (
-              <span key={err.line} className="text-fg-muted">
-                line {err.line}: {err.message}
-              </span>
-            ))}
-          </p>
-        )}
+        <p className="flex min-h-5 flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px]" role="status" aria-live="polite">
+          {text.trim() && (
+            <>
+              <span className={cn("font-medium", ready ? "text-ok" : "text-fg-muted")}>{ready} ready</span>
+              {parsed.duplicates > 0 && <span className="text-warn">{parsed.duplicates} duplicate</span>}
+              {parsed.errors.length > 0 && <span className="text-bad">{parsed.errors.length} invalid</span>}
+              {parsed.errors.slice(0, 2).map((err) => (
+                <span key={err.line} className="text-fg-muted">
+                  line {err.line}: {err.message}
+                </span>
+              ))}
+            </>
+          )}
+        </p>
 
-        <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-line px-3.5 py-3">
+        <div className="flex items-start gap-2.5">
           <input
+            id={validateId}
             type="checkbox"
             checked={validate}
             onChange={(e) => setValidate(e.target.checked)}
-            className="mt-0.5 h-4 w-4 rounded border-line accent-[var(--color-accent-500)]"
+            aria-describedby={`${validateId}-hint`}
+            className="mt-0.5 h-4 w-4 shrink-0 rounded border-input accent-accent-500"
           />
-          <span className="text-[12.5px] leading-5 text-fg-muted">
-            <span className="font-medium text-fg">Test each {noun} before saving.</span> Slower for large batches and may hit the provider's rate limits.
-          </span>
-        </label>
+          <div className="text-[12.5px] leading-5">
+            <label htmlFor={validateId} className="font-medium text-fg">
+              Test each {noun} before saving
+            </label>
+            <p id={`${validateId}-hint`} className="text-fg-muted">
+              Slower, and may hit the provider's rate limits
+            </p>
+          </div>
+        </div>
       </div>
     </ConnectDialog>
   );

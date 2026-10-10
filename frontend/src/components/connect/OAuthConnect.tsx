@@ -9,9 +9,12 @@ import {
   Connected,
   DeviceWaiting,
   FormError,
+  InlineCode,
   PrimaryAction,
   SecondaryAction,
+  Starting,
   Steps,
+  TextButton,
   TextField,
   useDevicePoll,
 } from "./ConnectKit";
@@ -181,7 +184,6 @@ function OAuthCodeConnect({ provider, logo, onClose }: { provider: OAuthProvider
   return (
     <ConnectDialog
       title={`Connect ${provider.display_name}`}
-      description="Sign in with your existing account — no API key needed."
       logo={logo}
       onClose={onClose}
       onBack={phase === "manual" ? () => setPhase("waiting") : undefined}
@@ -190,17 +192,11 @@ function OAuthCodeConnect({ provider, logo, onClose }: { provider: OAuthProvider
 
       {phase === "idle" && (
         <div className="space-y-4">
-          <Steps
-            steps={[
-              `A ${provider.display_name} sign-in window opens.`,
-              "Sign in and approve access for KeiRouter.",
-              "The token is exchanged, encrypted and stored — this dialog closes on its own.",
-            ]}
-          />
+          <Steps steps={[`Sign in to ${provider.display_name} in the window that opens`, "Approve access for KeiRouter", "This dialog closes on its own"]} />
           <FormError message={error} />
           <div className="flex justify-end">
             <PrimaryAction onClick={start}>
-              <ExternalLink />
+              <ExternalLink aria-hidden="true" />
               Open sign-in
             </PrimaryAction>
           </div>
@@ -209,18 +205,16 @@ function OAuthCodeConnect({ provider, logo, onClose }: { provider: OAuthProvider
 
       {phase === "waiting" && (
         <div className="space-y-4">
-          <div className="flex items-center gap-2.5 rounded-xl border border-line px-3.5 py-3" role="status" aria-live="polite">
-            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-fg-muted" />
-            <div className="min-w-0">
+          <div className="flex items-center gap-2.5 rounded-xl border border-line px-3.5 py-3">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin text-fg-muted" aria-hidden="true" />
+            <div className="min-w-0" role="status" aria-live="polite">
               <p className="text-[13px] font-medium text-fg">Waiting for sign-in</p>
-              <p className="text-[12px] text-fg-muted">Finish in the {provider.display_name} window. This dialog closes automatically.</p>
+              <p className="text-[12px] text-fg-muted">Finish in the {provider.display_name} window.</p>
             </div>
           </div>
           <FormError message={error} />
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <button type="button" onClick={() => setPhase("manual")} className="text-[12.5px] font-medium text-fg-muted underline-offset-2 hover:text-fg hover:underline">
-              Window landed on a page that won't load?
-            </button>
+            <TextButton onClick={() => setPhase("manual")}>Page didn't load? Paste its URL</TextButton>
             <SecondaryAction onClick={start}>Reopen sign-in</SecondaryAction>
           </div>
         </div>
@@ -229,17 +223,24 @@ function OAuthCodeConnect({ provider, logo, onClose }: { provider: OAuthProvider
       {phase === "manual" && (
         <form
           className="space-y-3.5"
+          noValidate
           onSubmit={(e) => {
             e.preventDefault();
             submitManual();
           }}
         >
-          <p className="text-[13px] leading-5 text-fg-muted">
-            After approving, the browser lands on a <code className="font-mono text-[12px]">localhost</code> page that can't load when KeiRouter runs on another machine.
-            Copy that page's full URL from the address bar and paste it here.
-          </p>
+          <Steps
+            steps={[
+              <>
+                Approve access, even if the page ends on an unreachable <InlineCode>localhost</InlineCode> address
+              </>,
+              "Copy the full URL from that tab's address bar",
+              "Paste it below",
+            ]}
+          />
           <TextField
             label="Callback URL"
+            required
             value={pasted}
             onChange={(e) => {
               setPasted(e.target.value);
@@ -247,8 +248,8 @@ function OAuthCodeConnect({ provider, logo, onClose }: { provider: OAuthProvider
             }}
             placeholder="http://localhost:…/oauth/callback?code=…&state=…"
             className="font-mono text-[12px]"
+            error={error || undefined}
           />
-          <FormError message={error} />
           <div className="flex justify-end">
             <PrimaryAction type="submit" busy={exchanging}>
               {exchanging ? "Connecting…" : "Complete connection"}
@@ -270,27 +271,16 @@ function OAuthDeviceConnect({ provider, logo, onClose }: { provider: OAuthProvid
     onConnected: onClose,
   });
   return (
-    <ConnectDialog title={`Connect ${provider.display_name}`} description="Approve KeiRouter with a one-time device code." logo={logo} onClose={onClose}>
+    <ConnectDialog title={`Connect ${provider.display_name}`} logo={logo} onClose={onClose}>
       {flow.status === "idle" && (
         <div className="space-y-4">
-          <Steps
-            steps={[
-              "KeiRouter requests a one-time code.",
-              `You open ${provider.display_name}'s verification page and enter it.`,
-              "Once approved, the token is encrypted and stored.",
-            ]}
-          />
+          <Steps steps={["Get a one-time code", `Enter it on ${provider.display_name}'s verification page`, "Approve access — this dialog finishes on its own"]} />
           <div className="flex justify-end">
             <PrimaryAction onClick={flow.start}>Get a device code</PrimaryAction>
           </div>
         </div>
       )}
-      {flow.status === "starting" && (
-        <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-fg-muted">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Requesting a device code…
-        </div>
-      )}
+      {(flow.status === "starting" || (flow.status === "waiting" && !flow.code)) && <Starting text="Requesting a device code…" />}
       {flow.status === "waiting" && flow.code && <DeviceWaiting code={flow.code} elapsed={flow.elapsed} />}
       {flow.status === "done" && <Connected name={provider.display_name} />}
       {flow.status === "error" && <ConnectError message={flow.error} onRetry={flow.start} onClose={onClose} />}

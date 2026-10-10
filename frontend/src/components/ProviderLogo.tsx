@@ -9,20 +9,25 @@ export function ProviderLogo({
   name,
   size = 20,
   className,
+  label,
 }: {
   icon?: string;
   name: string;
   size?: number;
   className?: string;
+  /** Expose the logo to assistive tech with this name. By default it is
+   *  decorative, because the provider name is written next to it. */
+  label?: string;
 }) {
   const [failed, setFailed] = useState(false);
   const style = { width: size, height: size };
+  const a11y = label ? ({ role: "img", "aria-label": label } as const) : ({ "aria-hidden": true } as const);
   if (icon && !failed) {
     return (
       <span
         className={cn("inline-flex shrink-0 items-center justify-center overflow-hidden rounded-md border border-line bg-white", className)}
         style={style}
-        aria-hidden="true"
+        {...a11y}
       >
         <img src={icon} alt="" className="h-full w-full object-contain p-[2px]" onError={() => setFailed(true)} />
       </span>
@@ -31,11 +36,11 @@ export function ProviderLogo({
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-md border border-line bg-subtle font-mono font-medium uppercase text-fg-muted",
+        "inline-flex shrink-0 items-center justify-center rounded-md border border-line bg-subtle font-mono font-medium text-fg-muted",
         className,
       )}
       style={{ ...style, fontSize: Math.max(8, Math.round(size * 0.42)) }}
-      aria-hidden="true"
+      {...a11y}
     >
       {monogram(name)}
     </span>

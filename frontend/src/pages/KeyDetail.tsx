@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -16,8 +16,10 @@ import {
 } from "lucide-react";
 import {
   api,
+  fetchKeyUsageById,
   type APIKey,
   type GuardrailPolicyConfig,
+  type KeyUsageData,
   type Plan,
 } from "../lib/api";
 import { microsToUSD, formatTokens } from "../lib/format";
@@ -40,6 +42,10 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSepara
 
 type Tab = "general" | "models" | "guardrails";
 const TAB_VALUES: Tab[] = ["general", "models", "guardrails"];
+const TAB_LABELS: Record<Tab, string> = { general: "Overview", models: "Models", guardrails: "Guardrails" };
+
+const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const USAGE_DAYS = 30;
 
 // ── Local helpers ────────────────────────────────────────────────────────────
 
@@ -74,7 +80,7 @@ function useCopy() {
           return true;
         },
         () => {
-          toast.error("Copy failed", "Your browser blocked clipboard access.");
+          toast.error("Copy failed", "Your browser blocked clipboard access. Select the text and copy it manually.");
           return false;
         },
       ),
@@ -82,12 +88,16 @@ function useCopy() {
   );
 }
 
-function Dot() {
-  return (
-    <span aria-hidden="true" className="text-fg-faint">
-      ·
-    </span>
-  );
+function fmtUSD(v: number): string {
+  const n = v || 0;
+  if (n === 0) return "$0.00";
+  if (n < 0.01) return `$${n.toPrecision(2)}`;
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function periodLabel(period: string): string {
+  if (period === "total") return "All-time";
+  return period.charAt(0).toUpperCase() + period.slice(1);
 }
 
 function CopyIconButton({ label, value, title, description }: { label: string; value: string; title: string; description?: string }) {
@@ -105,18 +115,18 @@ function CopyIconButton({ label, value, title, description }: { label: string; v
       }
       aria-label={label}
       title={label}
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+      className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg", FOCUS_RING)}
     >
-      {copied ? <Check className="h-3.5 w-3.5 text-ok" strokeWidth={1.75} /> : <Copy className="h-3.5 w-3.5" strokeWidth={1.75} />}
+      {copied ? <Check className="h-3.5 w-3.5 text-ok" strokeWidth={1.75} aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />}
     </button>
   );
 }
 
-function SettingsRow({ label, description, children }: { label: string; description?: ReactNode; children: ReactNode }) {
+function SettingsRow({ label, labelId, description, children }: { label: string; labelId?: string; description?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-8 sm:px-5">
       <div className="min-w-0 sm:max-w-[45%]">
-        <p className="text-[13px] font-medium text-fg">{label}</p>
+        <p id={labelId} className="text-[13px] font-medium text-fg">{label}</p>
         {description && <p className="mt-0.5 text-[12px] leading-5 text-fg-muted">{description}</p>}
       </div>
       <div className="flex min-w-0 items-center gap-2 sm:justify-end">{children}</div>
@@ -124,14 +134,13 @@ function SettingsRow({ label, description, children }: { label: string; descript
   );
 }
 
-function PanelCard({ title, subtitle, action, children, footer }: { title: ReactNode; subtitle?: ReactNode; action?: ReactNode; children: ReactNode; footer?: ReactNode }) {
+function PanelCard({ title, action, children, footer, aside }: { title: ReactNode; action?: ReactNode; children: ReactNode; footer?: ReactNode; aside?: ReactNode }) {
+  const headingId = useId();
   return (
-    <section className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section aria-labelledby={headingId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3 sm:px-5">
-        <div className="min-w-0">
-          <h2 className="text-[13px] font-semibold text-fg">{title}</h2>
-          {subtitle && <p className="mt-0.5 text-[12px] text-fg-muted">{subtitle}</p>}
-        </div>
+        <h2 id={headingId} className="min-w-0 text-[13px] font-semibold text-fg">{title}</h2>
+        {aside && <span className="text-[12px] text-fg-muted">{aside}</span>}
         {action && <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div>}
       </div>
       {children}
@@ -143,7 +152,7 @@ function PanelCard({ title, subtitle, action, children, footer }: { title: React
 function SaveBar({ status, children }: { status: ReactNode; children: ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-2 border-t border-line bg-subtle px-4 py-3 sm:px-5">
-      <div className="min-w-0 flex-1 text-[12.5px]">{status}</div>
+      <div role="status" className="min-w-0 flex-1 text-[12.5px]">{status}</div>
       <div className="flex flex-wrap items-center gap-2">{children}</div>
     </div>
   );
@@ -166,6 +175,7 @@ export function KeyDetailPage() {
   const toast = useToast();
   const confirm = useConfirm();
   const copy = useCopy();
+  const tabsId = useId();
   const [params, setParams] = useSearchParams();
   const rawTab = params.get("tab");
   const tab: Tab = TAB_VALUES.includes(rawTab as Tab) ? (rawTab as Tab) : "general";
@@ -203,24 +213,24 @@ export function KeyDetailPage() {
     mutationFn: (k: APIKey) => api.updateKey(k.id, { disabled: !k.disabled }),
     onSuccess: (updated) => {
       qc.invalidateQueries({ queryKey: ["keys"] });
-      toast.success(updated.disabled ? "Key disabled" : "Key enabled", updated.disabled ? "New requests using this key will be rejected." : "This key can authenticate requests again.");
+      toast.success(updated.disabled ? "Key disabled" : "Key enabled", updated.disabled ? "Requests using this key are rejected." : "This key can authenticate requests again.");
     },
-    onError: (error) => toast.error("Key update failed", error instanceof Error ? error.message : "Please try again."),
+    onError: (error) => toast.error("Couldn't update key", error instanceof Error ? error.message : "Please try again."),
   });
 
   const revoke = useMutation({
     mutationFn: (keyId: string) => api.deleteKey(keyId),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["keys"] });
-      toast.success("Key revoked", "The key has been permanently deleted and can no longer authenticate requests.");
+      toast.success("Key revoked", "It can no longer authenticate requests.");
       navigate("/keys");
     },
-    onError: (e: Error) => toast.error("Revocation failed", e.message),
+    onError: (e: Error) => toast.error("Couldn't revoke key", e.message),
   });
 
   if (keys.isLoading) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-4" aria-busy="true" aria-label="Loading key">
         <Skeleton className="h-5 w-40" />
         <Skeleton className="h-14 w-full max-w-lg" />
         <Skeleton className="h-9 w-72" />
@@ -231,32 +241,47 @@ export function KeyDetailPage() {
   if (!key) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-        <p className="text-[14px] font-medium text-fg">API key not found</p>
-        <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">It may have been revoked. Go back to API keys to pick another one.</p>
+        <h1 className="text-[14px] font-semibold text-fg">API key not found</h1>
+        <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">It may have been revoked.</p>
         <Button className="mt-4" onClick={() => navigate("/keys")}>Back to API keys</Button>
       </div>
     );
   }
 
   const portalUrl = `${window.location.origin}/portal?id=${key.id}`;
-  const keyModels = key.allowed_models ?? [];
-  const effectiveCount = keyModels.length > 0 ? keyModels.length : (plan?.allowed_models ?? []).length;
-  const lastUsed = usedAt(key.last_used_at);
 
   const revokeKey = async () => {
     if (!(await confirm({ title: `Revoke ${key.name}?`, description: "Tools using this key stop authenticating immediately. This cannot be undone.", confirmLabel: "Revoke", tone: "danger" }))) return;
     revoke.mutate(key.id);
   };
 
+  const onTabKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const i = TAB_VALUES.indexOf(tab);
+    const next =
+      event.key === "Home" ? 0
+        : event.key === "End" ? TAB_VALUES.length - 1
+          : (i + (event.key === "ArrowRight" ? 1 : -1) + TAB_VALUES.length) % TAB_VALUES.length;
+    setTab(TAB_VALUES[next]);
+    document.getElementById(`${tabsId}-tab-${TAB_VALUES[next]}`)?.focus();
+  };
+
   return (
     <>
-      <nav aria-label="Breadcrumb" className="mb-3 flex items-center gap-1.5 text-[13px] text-fg-muted">
-        <Link to="/keys" className="inline-flex items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40">
-          <ArrowLeft className="h-3.5 w-3.5" />
-          API keys
-        </Link>
-        <span aria-hidden="true" className="text-fg-faint">/</span>
-        <span className="truncate text-fg">{key.name}</span>
+      <nav aria-label="Breadcrumb" className="mb-3 text-[13px] text-fg-muted">
+        <ol className="flex items-center gap-1.5">
+          <li>
+            <Link to="/keys" className={cn("inline-flex items-center gap-1.5 rounded-md hover:text-fg", FOCUS_RING)}>
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+              API keys
+            </Link>
+          </li>
+          <li aria-hidden="true" className="text-fg-faint">/</li>
+          <li className="min-w-0">
+            <span aria-current="page" className="block truncate text-fg">{key.name}</span>
+          </li>
+        </ol>
       </nav>
 
       <header className="mb-5 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
@@ -268,52 +293,41 @@ export function KeyDetailPage() {
           <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
             <button
               type="button"
-              onClick={() => copy(key.display, "Key identifier copied")}
-              className="group inline-flex max-w-full items-center gap-1.5 rounded-md font-mono text-[12.5px] hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
-              title="Copy masked key"
+              onClick={() => copy(key.display, "Masked key copied")}
+              aria-label={`Copy masked key ${key.display}`}
+              className={cn("group inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-md font-mono text-[12.5px] hover:text-fg", FOCUS_RING)}
             >
               <span className="truncate">{key.display}</span>
-              <Copy className="h-3 w-3 shrink-0 text-fg-faint" />
+              <Copy className="h-3 w-3 shrink-0 text-fg-faint" aria-hidden="true" />
             </button>
-            <Dot />
-            <span>{key.plan_name || "Custom plan"}</span>
-            <Dot />
+            <span aria-hidden="true" className="text-fg-faint">·</span>
             <span title={new Date(key.created_at).toLocaleString()}>Created {new Date(key.created_at).toLocaleDateString()}</span>
-            <Dot />
-            <span title={lastUsed ? new Date(lastUsed).toLocaleString() : undefined}>{lastUsed ? `Last used ${relativeTime(key.last_used_at)}` : "Never used"}</span>
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="secondary" onClick={() => copy(portalUrl, "Portal link copied", "Owner usage portal link copied.")}>
-            <Link2 />
+          <Button variant="secondary" onClick={() => copy(portalUrl, "Portal link copied", "Share it with the key owner.")}>
+            <Link2 aria-hidden="true" />
             Copy portal link
-          </Button>
-          <Button variant="secondary" onClick={() => toggle.mutate(key)} disabled={toggle.isPending}>
-            {key.disabled ? "Enable key" : "Disable key"}
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger
               aria-label="More key actions"
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40"
+              className={cn("flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg", FOCUS_RING)}
             >
-              <MoreHorizontal className="h-4 w-4" />
+              <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => copy(key.display, "Key identifier copied")}>
-                <Copy />
-                Copy masked key
-              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => copy(key.id, "Key ID copied")}>
-                <Copy />
+                <Copy aria-hidden="true" />
                 Copy internal ID
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => window.open(portalUrl, "_blank", "noopener,noreferrer")}>
-                <ExternalLink />
+                <ExternalLink aria-hidden="true" />
                 Open owner portal
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem tone="danger" onSelect={revokeKey} disabled={revoke.isPending}>
-                <Trash2 />
+                <Trash2 aria-hidden="true" />
                 Revoke key
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -321,42 +335,59 @@ export function KeyDetailPage() {
         </div>
       </header>
 
-      <div className="mb-5 flex gap-1 overflow-x-auto border-b border-line" role="tablist" aria-label={`${key.name} sections`}>
-        {(
-          [
-            ["general", "General", null],
-            ["models", "Models", effectiveCount > 0 ? effectiveCount : "All"],
-            ["guardrails", "Guardrails", null],
-          ] as [Tab, string, number | string | null][]
-        ).map(([value, label, count]) => (
-          <button
-            key={value}
-            type="button"
-            role="tab"
-            aria-selected={tab === value}
-            onClick={() => setTab(value)}
-            className={cn(
-              "relative -mb-px inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/40",
-              tab === value ? "text-fg" : "text-fg-muted hover:text-fg",
-            )}
-          >
-            {label}
-            {count != null && <span className="rounded-md bg-subtle px-1.5 text-[11.5px] tabular-nums text-fg-muted">{count}</span>}
-            {tab === value && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
-          </button>
-        ))}
+      <div className="mb-5 flex gap-1 overflow-x-auto border-b border-line" role="tablist" aria-label={`${key.name} sections`} onKeyDown={onTabKeyDown}>
+        {TAB_VALUES.map((value) => {
+          const active = tab === value;
+          return (
+            <button
+              key={value}
+              id={`${tabsId}-tab-${value}`}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              aria-controls={`${tabsId}-panel-${value}`}
+              tabIndex={active ? 0 : -1}
+              onClick={() => setTab(value)}
+              className={cn(
+                "relative -mb-px inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors",
+                FOCUS_RING,
+                active ? "text-fg" : "text-fg-muted hover:text-fg",
+              )}
+            >
+              {TAB_LABELS[value]}
+              {active && <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
+            </button>
+          );
+        })}
       </div>
 
-      {tab === "general" && (
-        <GeneralTab apiKey={key} plan={plan} portalUrl={portalUrl} onToggle={() => toggle.mutate(key)} togglePending={toggle.isPending} />
-      )}
-      {tab === "models" && <ModelsTab apiKey={key} plan={plan} plansLoading={plans.isLoading} />}
-      {tab === "guardrails" && <GuardrailsTab apiKey={key} />}
+      <div role="tabpanel" id={`${tabsId}-panel-${tab}`} aria-labelledby={`${tabsId}-tab-${tab}`}>
+        {tab === "general" && (
+          <GeneralTab apiKey={key} plan={plan} portalUrl={portalUrl} onToggle={() => toggle.mutate(key)} togglePending={toggle.isPending} />
+        )}
+        {tab === "models" && <ModelsTab apiKey={key} plan={plan} plansLoading={plans.isLoading} />}
+        {tab === "guardrails" && <GuardrailsTab apiKey={key} />}
+      </div>
     </>
   );
 }
 
-// ── General ──────────────────────────────────────────────────────────────────
+// ── Overview: usage, limits, settings ────────────────────────────────────────
+
+type LimitRow = { id: string; title: string; used: string; limit: string; pct: number; alert: boolean };
+
+function limitRows(budgets: KeyUsageData["budgets"]): LimitRow[] {
+  return budgets.flatMap((b, i) => {
+    const out: LimitRow[] = [];
+    if (b.limit_usd > 0) {
+      out.push({ id: `${i}-usd`, title: `${periodLabel(b.period)} spend`, used: fmtUSD(b.spent_usd), limit: fmtUSD(b.limit_usd), pct: b.usd_pct_used, alert: b.alert });
+    }
+    if (b.limit_tokens > 0) {
+      out.push({ id: `${i}-tokens`, title: `${periodLabel(b.period)} tokens`, used: formatTokens(b.tokens_used), limit: formatTokens(b.limit_tokens), pct: b.tokens_pct_used, alert: b.alert });
+    }
+    return out;
+  });
+}
 
 function GeneralTab({
   apiKey,
@@ -371,55 +402,142 @@ function GeneralTab({
   onToggle: () => void;
   togglePending: boolean;
 }) {
+  const acceptId = useId();
   const lastUsed = usedAt(apiKey.last_used_at);
+  // Same query (and cache entry) the owner portal uses for a shared portal ID.
+  const usage = useQuery({
+    queryKey: ["key-usage", apiKey.id, true, USAGE_DAYS],
+    queryFn: () => fetchKeyUsageById(apiKey.id, USAGE_DAYS),
+    retry: false,
+  });
+
+  const totals = useMemo(
+    () =>
+      (usage.data?.daily ?? []).reduce(
+        (acc, dp) => ({
+          requests: acc.requests + dp.requests,
+          prompt: acc.prompt + dp.prompt_tokens,
+          completion: acc.completion + dp.completion_tokens,
+          cost: acc.cost + dp.cost_usd,
+        }),
+        { requests: 0, prompt: 0, completion: 0, cost: 0 },
+      ),
+    [usage.data],
+  );
+  const rows = limitRows(usage.data?.budgets ?? []);
+  const dash = usage.isLoading ? "…" : usage.isError ? "—" : null;
+
+  const kpis: { label: string; value: string; hint?: string; title?: string }[] = [
+    { label: "Requests", value: dash ?? totals.requests.toLocaleString() },
+    { label: "Spend", value: dash ?? fmtUSD(totals.cost) },
+    {
+      label: "Tokens",
+      value: dash ?? formatTokens(totals.prompt + totals.completion),
+      hint: dash ? undefined : `${formatTokens(totals.prompt)} in · ${formatTokens(totals.completion)} out`,
+    },
+    {
+      label: "Last used",
+      value: relativeTime(apiKey.last_used_at),
+      title: lastUsed ? new Date(lastUsed).toLocaleString() : undefined,
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      <PanelCard title="Access" subtitle="Whether this key can authenticate, and which plan governs it.">
+      <PanelCard
+        title="Usage"
+        aside={`Last ${USAGE_DAYS} days`}
+        action={
+          <a href={portalUrl} target="_blank" rel="noopener noreferrer" className={cn("inline-flex items-center gap-1 rounded-md text-[12.5px] font-medium text-link hover:underline", FOCUS_RING)}>
+            Owner portal
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+            <span className="sr-only">(opens in a new tab)</span>
+          </a>
+        }
+      >
+        <div className="grid grid-cols-2 gap-px bg-line lg:grid-cols-4" aria-busy={usage.isLoading}>
+          {kpis.map((k) => (
+            <div key={k.label} className="bg-surface px-4 py-3 sm:px-5">
+              <p className="text-[12px] font-medium text-fg-muted">{k.label}</p>
+              <p className="mt-1 text-[20px] font-semibold leading-tight tracking-[-0.01em] tabular-nums text-fg" title={k.title}>{k.value}</p>
+              {k.hint && <p className="mt-0.5 truncate text-[12px] tabular-nums text-fg-muted">{k.hint}</p>}
+            </div>
+          ))}
+        </div>
+        {usage.isError && (
+          <p className="border-t border-line px-4 py-2.5 text-[12.5px] text-fg-muted sm:px-5">Usage couldn't be loaded. Try again later.</p>
+        )}
+      </PanelCard>
+
+      <PanelCard title="Limits">
         <div className="divide-y divide-line">
-          <SettingsRow label="Accept requests" description="Disabled keys reject every request until they are enabled again. Nothing else changes.">
-            <span className={cn("inline-flex items-center gap-2", togglePending && "pointer-events-none opacity-50")}>
-              <span className={cn("text-[12.5px]", apiKey.disabled ? "text-fg-faint" : "text-fg")}>{apiKey.disabled ? "Disabled" : "Active"}</span>
-              <Toggle checked={!apiKey.disabled} onChange={onToggle} />
-            </span>
-          </SettingsRow>
           <SettingsRow
             label="Plan"
-            description={plan ? planBudgetText(plan) : apiKey.plan_id ? "Budget and limits come from the assigned plan." : "No plan assigned. Limits are set on the key itself."}
+            description={
+              plan
+                ? planBudgetText(plan)
+                : apiKey.plan_id || usage.isLoading
+                  ? undefined
+                  : rows.length > 0
+                    ? "Limits set on this key"
+                    : "No spend or token limit"
+            }
           >
-            <span className="truncate text-[13px] text-fg">{apiKey.plan_name || "Custom plan"}</span>
-            <Link to="/plans" className="shrink-0 text-[12.5px] font-medium text-accent-500 hover:underline dark:text-accent-400">
+            <span className="truncate text-[13px] text-fg">{apiKey.plan_name || "Custom"}</span>
+            <Link to="/plans" className={cn("shrink-0 rounded-md text-[12.5px] font-medium text-link hover:underline", FOCUS_RING)}>
               Manage plans
             </Link>
           </SettingsRow>
-          <SettingsRow label="Last used" description="The most recent request this key authenticated.">
-            <span className={cn("text-[13px]", lastUsed ? "text-fg" : "text-fg-faint")} title={lastUsed ? new Date(lastUsed).toLocaleString() : undefined}>
-              {relativeTime(apiKey.last_used_at)}
-            </span>
-          </SettingsRow>
+          {usage.isLoading ? (
+            <div className="px-4 py-3 sm:px-5" aria-hidden="true">
+              <Skeleton className="h-8 w-full" />
+            </div>
+          ) : (
+            rows.map((r) => {
+              const pct = Math.min(Math.max(r.pct, 0), 100);
+              const tone: "bad" | "warn" | "ok" = r.pct >= 100 ? "bad" : r.alert || r.pct > 80 ? "warn" : "ok";
+              const pctText = r.pct >= 100 ? "Limit reached" : `${r.pct.toFixed(r.pct < 10 ? 1 : 0)}%`;
+              return (
+                <div key={r.id} className="space-y-1.5 px-4 py-3 sm:px-5">
+                  <div className="flex items-baseline gap-2 text-[13px]">
+                    <span className="font-medium text-fg">{r.title}</span>
+                    <span className="tabular-nums text-fg-muted">
+                      {r.used} of {r.limit}
+                    </span>
+                    <span className={cn("ml-auto text-[12.5px] font-medium tabular-nums", tone === "bad" ? "text-bad" : tone === "warn" ? "text-warn" : "text-fg")}>
+                      {pctText}
+                    </span>
+                  </div>
+                  <div
+                    className="h-1.5 overflow-hidden rounded-full bg-track"
+                    role="progressbar"
+                    aria-label={r.title}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(pct)}
+                    aria-valuetext={`${r.used} of ${r.limit} · ${pctText}`}
+                  >
+                    <div className={cn("h-full rounded-full", tone === "bad" ? "bg-bad" : tone === "warn" ? "bg-warn" : "bg-accent-500")} style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              );
+            })
+          )}
         </div>
       </PanelCard>
 
-      <PanelCard title="Identity" subtitle="Identifiers for logs, support and the owner portal. The full secret is never stored.">
+      <PanelCard title="Settings">
         <div className="divide-y divide-line">
-          <SettingsRow label="Name">
-            <span className="truncate text-[13px] text-fg">{apiKey.name}</span>
-          </SettingsRow>
-          <SettingsRow label="Key identifier" description="Masked form of the secret, as shown in usage logs.">
-            <span className="truncate font-mono text-[12.5px] text-fg">{apiKey.display}</span>
-            <CopyIconButton label="Copy masked key" value={apiKey.display} title="Key identifier copied" />
+          <SettingsRow label="Accept requests" labelId={acceptId} description="Off rejects every request with this key.">
+            <Toggle checked={!apiKey.disabled} onChange={onToggle} disabled={togglePending} aria-labelledby={acceptId} />
           </SettingsRow>
           <SettingsRow label="Internal ID">
             <span className="truncate font-mono text-[12.5px] text-fg">{apiKey.id}</span>
             <CopyIconButton label="Copy internal ID" value={apiKey.id} title="Key ID copied" />
           </SettingsRow>
-          <SettingsRow label="Owner portal" description="Share with the key owner so they can track their own usage and budget.">
-            <a href={portalUrl} target="_blank" rel="noopener noreferrer" className="truncate font-mono text-[12.5px] text-accent-500 hover:underline dark:text-accent-400" title={portalUrl}>
-              {portalUrl}
-            </a>
-            <CopyIconButton label="Copy portal link" value={portalUrl} title="Portal link copied" description="Owner usage portal link copied." />
-          </SettingsRow>
-          <SettingsRow label="Created">
-            <span className="text-[13px] tabular-nums text-fg">{new Date(apiKey.created_at).toLocaleString()}</span>
+          <SettingsRow label="Owner portal">
+            <span className="truncate font-mono text-[12.5px] text-fg" title={portalUrl}>{portalUrl}</span>
+            <CopyIconButton label="Copy portal link" value={portalUrl} title="Portal link copied" description="Share it with the key owner." />
           </SettingsRow>
         </div>
       </PanelCard>
@@ -435,6 +553,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
   const qc = useQueryClient();
   const toast = useToast();
   const catalog = useModelCatalog();
+  const uid = useId();
   const keyModels = apiKey.allowed_models ?? [];
   const inheritedModels = plan?.allowed_models ?? [];
   const effectiveModels = keyModels.length > 0 ? keyModels : inheritedModels;
@@ -456,9 +575,9 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
       qc.invalidateQueries({ queryKey: ["keys"] });
       setModels(next);
       setEditing(false);
-      toast.success(next.length > 0 ? "Model access updated" : "Model override removed", next.length > 0 ? `${next.length} models are available to this key.` : "This key now follows its plan's model access.");
+      toast.success(next.length > 0 ? "Model access updated" : "Model override removed", next.length > 0 ? `${next.length} models allowed.` : "This key now follows its plan.");
     },
-    onError: (error) => toast.error("Model access update failed", error instanceof Error ? error.message : "Please try again."),
+    onError: (error) => toast.error("Couldn't update model access", error instanceof Error ? error.message : "Please try again."),
   });
 
   const lookup = useMemo(() => {
@@ -538,24 +657,19 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
   };
   const dirty = JSON.stringify(models) !== JSON.stringify(keyModels);
 
-  const sourceBadge = <Badge tone={source === "key" ? "warning" : "neutral"}>{source === "key" ? "Key override" : source === "plan" ? "Inherited from plan" : "No restriction"}</Badge>;
+  const sourceBadge = (
+    <Badge tone={source === "key" ? "warning" : "neutral"}>
+      {source === "key" ? "Key override" : source === "plan" ? `From ${plan?.name || "plan"}` : "No restriction"}
+    </Badge>
+  );
 
   return (
     <PanelCard
       title={
         <span className="inline-flex flex-wrap items-center gap-2">
-          {editing ? "Edit allowed models" : source === "all" ? "All available models" : `${effectiveModels.length} model${effectiveModels.length === 1 ? "" : "s"} allowed`}
+          {editing ? "Edit allowed models" : source === "all" ? "All models allowed" : `${effectiveModels.length} model${effectiveModels.length === 1 ? "" : "s"} allowed`}
           {!editing && sourceBadge}
         </span>
-      }
-      subtitle={
-        editing
-          ? "Tick the models this key may call. The catalog comes from your connected providers; wildcard patterns are supported."
-          : source === "all"
-            ? "This key can use every model available through its assigned plan."
-            : source === "plan"
-              ? `Access follows the ${plan?.name || "assigned"} plan. Add an override only when this key needs a narrower list.`
-              : "This key uses its own model allowlist instead of the plan default."
       }
       action={!editing ? (
         <Button variant="secondary" onClick={startEditing}>
@@ -566,7 +680,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
         <SaveBar
           status={
             models.length === 0 ? (
-              <span className="text-warn">Select at least one model, or discard to keep current access.</span>
+              <span className="text-warn">Select at least one model.</span>
             ) : (
               <span className="text-fg-muted">
                 <span className="tabular-nums text-fg">{models.length}</span> selected{dirty ? " · Unsaved changes" : ""}
@@ -586,21 +700,21 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
     >
       {!editing && source === "all" ? (
         <div className="px-6 py-10 text-center">
-          <p className="text-[13px] font-medium text-fg">No model restriction</p>
-          <p className="mx-auto mt-1 max-w-md text-[12.5px] text-fg-muted">Neither the key nor its plan limits models, so every routable model works. Restrict it when this key should only reach a few.</p>
+          <h3 className="text-[13px] font-semibold text-fg">No model restriction</h3>
+          <p className="mx-auto mt-1 max-w-md text-[12.5px] text-fg-muted">Every routable model works with this key.</p>
         </div>
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5 sm:px-5">
             <div className="relative w-full sm:w-64">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
               <input
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Filter models"
                 aria-label="Filter models"
-                className="h-8 w-full rounded-lg border border-line bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25"
+                className={cn("h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500", FOCUS_RING)}
               />
             </div>
             {providerOptions.length > 1 && (
@@ -622,6 +736,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                     onClick={() => setShow(f)}
                     className={cn(
                       "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium",
+                      FOCUS_RING,
                       show === f ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:text-fg",
                     )}
                   >
@@ -630,15 +745,16 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                 ))}
               </div>
             )}
-            <span className="ml-auto text-[12.5px] tabular-nums text-fg-faint">
+            <span role="status" className="ml-auto text-[12.5px] tabular-nums text-fg-muted">
               {catalog.loading ? "Loading catalog…" : `${rows.length} shown`}
             </span>
           </div>
 
           {editing && (
             <div className="flex flex-wrap items-center gap-2 border-b border-line bg-subtle px-4 py-2 sm:px-5">
-              <span className="text-[12.5px] text-fg-muted">Add a pattern</span>
+              <label htmlFor={`${uid}-pattern`} className="text-[12.5px] font-medium text-fg">Add pattern</label>
               <input
+                id={`${uid}-pattern`}
                 value={pattern}
                 onChange={(e) => setPattern(e.target.value)}
                 onKeyDown={(e) => {
@@ -647,20 +763,18 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                     addPattern();
                   }
                 }}
-                placeholder="claude-*"
-                aria-label="Custom model pattern"
-                className="h-8 w-full min-w-0 flex-1 rounded-lg border border-line bg-surface px-2.5 font-mono text-[12.5px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500/25 sm:max-w-xs"
+                placeholder="e.g. gpt-4o*"
+                className={cn("h-8 w-full min-w-0 flex-1 rounded-lg border border-input bg-surface px-2.5 font-mono text-[12.5px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 sm:max-w-xs", FOCUS_RING)}
               />
               <Button variant="ghost" className="min-h-8 py-1" onClick={addPattern} disabled={!pattern.trim()}>
-                <Plus />
+                <Plus aria-hidden="true" />
                 Add
               </Button>
-              <span className="text-[12px] text-fg-faint">Use <span className="font-mono">*</span> to match many models, e.g. <span className="font-mono">gpt-4o*</span>.</span>
             </div>
           )}
 
           {catalog.loading && editing && rows.length === 0 ? (
-            <div className="space-y-2 p-4">
+            <div className="space-y-2 p-4" aria-busy="true" aria-label="Loading models">
               <Skeleton className="h-8 w-full" />
               <Skeleton className="h-8 w-full" />
               <Skeleton className="h-8 w-full" />
@@ -675,11 +789,11 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                 <thead>
                   <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
                     {editing && (
-                      <th className="w-10 px-4 py-2 sm:pl-5">
+                      <th scope="col" className="w-10 px-4 py-2 sm:pl-5">
                         <input
                           type="checkbox"
                           aria-label="Select all shown models"
-                          className="h-4 w-4 rounded border-line accent-[var(--color-accent-500)]"
+                          className="h-4 w-4 rounded border-input accent-accent-500"
                           checked={allRowsSelected}
                           ref={(el) => {
                             if (el) el.indeterminate = someRowsSelected && !allRowsSelected;
@@ -688,9 +802,9 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                         />
                       </th>
                     )}
-                    <th className={cn("py-2 font-medium", editing ? "px-2" : "px-4 sm:px-5")}>Model</th>
-                    <th className="px-4 py-2 font-medium">Provider</th>
-                    {editing && <th className="w-10 px-2 py-2"><span className="sr-only">Remove</span></th>}
+                    <th scope="col" className={cn("py-2 font-medium", editing ? "px-2" : "px-4 sm:px-5")}>Model</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Provider</th>
+                    {editing && <th scope="col" className="w-10 px-2 py-2"><span className="sr-only">Remove</span></th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
@@ -700,7 +814,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                     return (
                       <tr
                         key={`${r.option?.providerId ?? "custom"}:${r.id}`}
-                        className={cn("transition-colors", editing && "cursor-pointer", editing && checked ? "bg-accent-500/5" : "hover:bg-hover/60")}
+                        className={cn("transition-colors", editing && "cursor-pointer", editing && checked ? "bg-accent-500/5" : "hover:bg-hover")}
                         onClick={editing ? () => toggleModel(r.id) : undefined}
                       >
                         {editing && (
@@ -710,7 +824,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                               checked={checked}
                               onChange={() => toggleModel(r.id)}
                               aria-label={`Allow ${r.option?.name || r.id}`}
-                              className="h-4 w-4 rounded border-line accent-[var(--color-accent-500)]"
+                              className="h-4 w-4 rounded border-input accent-accent-500"
                             />
                           </td>
                         )}
@@ -727,7 +841,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                               <span className="truncate">{r.option.providerName}</span>
                             </span>
                           ) : (
-                            <span className="text-[12.5px] text-fg-faint">
+                            <span className="text-[12.5px] text-fg-muted">
                               {catalog.loading ? "Resolving…" : r.id.includes("*") ? "Wildcard pattern" : "Custom model"}
                             </span>
                           )}
@@ -739,9 +853,9 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                                 type="button"
                                 onClick={() => setModels(models.filter((m) => m !== r.id))}
                                 aria-label={`Remove ${r.id}`}
-                                className="flex h-7 w-7 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg"
+                                className={cn("flex h-7 w-7 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg", FOCUS_RING)}
                               >
-                                <X className="h-3.5 w-3.5" />
+                                <X className="h-3.5 w-3.5" aria-hidden="true" />
                               </button>
                             )}
                           </td>
@@ -777,6 +891,7 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
   const confirm = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
+  const uid = useId();
   const policies = useQuery({
     queryKey: ["guardrails", "apikey"],
     queryFn: () => api.listGuardrails("apikey"),
@@ -816,9 +931,9 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
         qc.invalidateQueries({ queryKey: ["guardrails", "effective", apiKey.id] }),
       ]);
       setEditing(false);
-      toast.success("Key guardrails saved", enabled ? "The per-key override is active." : "The override is saved but currently paused.");
+      toast.success("Guardrails saved", enabled ? "The override is active." : "The override is saved but paused.");
     },
-    onError: (error) => toast.error("Guardrail save failed", error instanceof Error ? error.message : "Please try again."),
+    onError: (error) => toast.error("Couldn't save guardrails", error instanceof Error ? error.message : "Please try again."),
   });
 
   const remove = useMutation({
@@ -831,14 +946,14 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
       setConfig({});
       setEnabled(true);
       setEditing(false);
-      toast.success("Override removed", "This key now inherits the upstream guardrail policy.");
+      toast.success("Override removed", "This key now inherits upstream policies.");
     },
-    onError: (error) => toast.error("Override removal failed", error instanceof Error ? error.message : "Please try again."),
+    onError: (error) => toast.error("Couldn't remove override", error instanceof Error ? error.message : "Please try again."),
   });
 
   if (policies.isLoading) {
     return (
-      <div className="space-y-4">
+      <div className="space-y-4" aria-busy="true" aria-label="Loading guardrails">
         <Skeleton className="h-36 w-full rounded-2xl" />
         <Skeleton className="h-40 w-full rounded-2xl" />
       </div>
@@ -847,8 +962,8 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
   if (policies.isError) {
     return (
       <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
-        <p className="text-[14px] font-medium text-fg">Unable to load key guardrails</p>
-        <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">The existing override could not be verified. Retry before making changes.</p>
+        <h2 className="text-[14px] font-semibold text-fg">Couldn't load key guardrails</h2>
+        <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">Retry before making changes.</p>
         <Button variant="secondary" className="mt-4" onClick={() => policies.refetch()}>Retry</Button>
       </div>
     );
@@ -864,14 +979,15 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
   };
 
   const activeEffective = enabledDetectors(effective.data?.policy);
-  const statusTitle = existing ? (enabled ? "Override active" : "Override paused") : editing ? "New override" : "Inherited policy";
-  const statusHint = existing ? "Changes here take priority for this API key." : editing ? "Configure detectors, test the policy, then save." : "Global, provider, model, and chain policies continue to apply.";
+  const statusTitle = existing ? (enabled ? "Override active" : "Override paused") : editing ? "New override" : "Inherited";
+  const statusHint = existing ? "Takes priority for this key" : editing ? undefined : "Global, provider, model and chain policies apply";
+  const applyId = `${uid}-apply`;
+  const mergedId = `${uid}-merged`;
 
   return (
     <div className="space-y-4">
       <PanelCard
-        title="Per-key guardrails"
-        subtitle="Add a key-specific layer only when this key needs different protection from upstream policies."
+        title="Per-key override"
         action={!editing ? (
           <Button variant="secondary" onClick={() => setEditing(true)}>{existing ? "Edit override" : "Create override"}</Button>
         ) : undefined}
@@ -879,7 +995,7 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
           <SaveBar status={dirty ? <span className="text-fg">Unsaved changes</span> : <span className="text-fg-muted">No changes yet</span>}>
             {existing && (
               <Button variant="danger" onClick={removeOverride} disabled={remove.isPending}>
-                <Trash2 />
+                <Trash2 aria-hidden="true" />
                 Remove override
               </Button>
             )}
@@ -898,8 +1014,8 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
             </span>
           </SettingsRow>
           {editing && (
-            <SettingsRow label="Apply this override" description="Paused overrides are kept but not enforced; upstream policies apply instead.">
-              <Toggle checked={enabled} onChange={setEnabled} />
+            <SettingsRow label="Apply this override" labelId={applyId} description="Paused overrides are kept but not enforced.">
+              <Toggle checked={enabled} onChange={setEnabled} aria-labelledby={applyId} />
             </SettingsRow>
           )}
         </div>
@@ -907,17 +1023,26 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
 
       {editing && <GuardrailEditor value={config} onChange={setConfig} compact />}
 
-      <PanelCard title="Effective protection" subtitle="The final policy after all applicable guardrail layers are merged.">
+      <PanelCard title="Effective protection">
         <div className="px-4 py-3 sm:px-5">
           {effective.isLoading ? (
             <Skeleton className="h-6 w-64" />
           ) : effective.isError ? (
-            <p className="text-[13px] text-bad">Unable to load the effective policy.</p>
+            <p className="text-[13px] text-bad">Couldn't load the effective policy.</p>
           ) : (
-            <div className="flex flex-wrap items-center gap-2">
-              {activeEffective.length > 0 ? activeEffective.map((name) => <Badge key={name} tone="success">{name}</Badge>) : <Badge tone="neutral">No detectors active</Badge>}
-              <span className="text-[12px] tabular-nums text-fg-faint">{activeEffective.length} active detector{activeEffective.length === 1 ? "" : "s"}</span>
-            </div>
+            <ul className="flex flex-wrap items-center gap-2" aria-label="Active detectors">
+              {activeEffective.length > 0 ? (
+                activeEffective.map((name) => (
+                  <li key={name}>
+                    <Badge tone="success">{name}</Badge>
+                  </li>
+                ))
+              ) : (
+                <li>
+                  <Badge tone="neutral">No detectors active</Badge>
+                </li>
+              )}
+            </ul>
           )}
         </div>
         {!effective.isLoading && !effective.isError && (
@@ -926,13 +1051,14 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
               type="button"
               onClick={() => setShowMerged((v) => !v)}
               aria-expanded={showMerged}
-              className="flex w-full items-center justify-between px-4 py-2.5 text-left text-[12.5px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg sm:px-5"
+              aria-controls={mergedId}
+              className={cn("flex min-h-10 w-full items-center justify-between px-4 py-2.5 text-left text-[12.5px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg sm:px-5", FOCUS_RING)}
             >
               Merged configuration
-              <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showMerged && "rotate-180")} strokeWidth={1.75} />
+              <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showMerged && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
             </button>
             {showMerged && (
-              <pre className="max-h-72 overflow-auto border-t border-line bg-subtle px-4 py-3 font-mono text-[11.5px] leading-5 text-fg-muted sm:px-5">{JSON.stringify(effective.data?.policy ?? {}, null, 2)}</pre>
+              <pre id={mergedId} className="max-h-72 overflow-auto border-t border-line bg-subtle px-4 py-3 font-mono text-[11.5px] leading-5 text-fg-muted sm:px-5">{JSON.stringify(effective.data?.policy ?? {}, null, 2)}</pre>
             )}
           </div>
         )}

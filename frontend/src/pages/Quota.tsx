@@ -1,32 +1,38 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Activity,
   AlertTriangle,
   ChevronDown,
-  Gauge,
   Loader2,
+  MoreHorizontal,
+  Plug,
   Power,
   PowerOff,
   RefreshCw,
   Search,
-  Server,
+  SlidersHorizontal,
   Trash2,
-  type LucideIcon,
 } from "lucide-react";
 import { api, connectUsageStream, type QuotaAccount, type UpstreamQuota } from "../lib/api";
 import { REPORT_PERIODS } from "../lib/periods";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
+import { ProviderLogo } from "../components/ProviderLogo";
 import {
   Badge,
+  Button,
   Card,
   EmptyState,
   ErrorCard,
-  SegmentedControl,
-  Spinner,
+  Input,
+  Select,
+  Skeleton,
   TablePagination,
+  Toggle,
   useClientPagination,
 } from "../components/ui";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { useToast } from "../components/Toast";
 import { useConfirm } from "../components/ui/confirm-dialog";
 
@@ -34,11 +40,14 @@ const PERIODS = REPORT_PERIODS.map((p) => ({ ...p }));
 
 const REFRESH_INTERVAL = 10_000;
 const DEPLETED_THRESHOLD = 5;
+// A window counts as "near limit" once this share of it has been used.
+const NEAR_LIMIT_USED = 80;
 const ACCOUNTS_PER_PAGE = 12;
+// Windows shown inline per account; the rest live in the expandable details.
+const INLINE_WINDOWS = 2;
 
 type QuotaFilter = "all" | "reported" | "capable" | "usage_only";
 type SortMode = "attention" | "reset" | "usage" | "provider";
-type SummaryTone = "accent" | "success" | "warning";
 
 const statusMeta: Record<string, { label: string; tone: "success" | "warning" | "danger" | "neutral" }> = {
   active: { label: "Active", tone: "success" },
@@ -46,8 +55,31 @@ const statusMeta: Record<string, { label: string; tone: "success" | "warning" | 
   needs_attention: { label: "Needs attention", tone: "danger" },
 };
 
+const STATUS_CHIPS = [
+  { value: "all", label: "All" },
+  { value: "active", label: "Active" },
+  { value: "paused", label: "Paused" },
+  { value: "needs_attention", label: "Needs attention" },
+];
+
+const iconButton =
+  "inline-flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-35";
+
+const checkboxClass = "h-4 w-4 rounded border-input accent-accent-500";
+// Pads the native checkbox to a 24×24 target (WCAG 2.5.8).
+const checkboxTarget = "inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded";
+
+function SelectBox({ checked, onChange, label, className }: { checked: boolean; onChange: () => void; label: string; className?: string }) {
+  return (
+    <label className={cn(checkboxTarget, className)}>
+      <input type="checkbox" checked={checked} onChange={onChange} aria-label={label} className={checkboxClass} />
+    </label>
+  );
+}
+
 export function QuotaPage() {
   const confirm = useConfirm();
+  const navigate = useNavigate();
   const [period, setPeriod] = useState<string>("30d");
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState("all");
@@ -58,6 +90,7 @@ export function QuotaPage() {
   const [countdown, setCountdown] = useState(REFRESH_INTERVAL / 1000);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const countdownRef = useRef(REFRESH_INTERVAL / 1000);
   const queryClient = useQueryClient();
   const toast = useToast();
@@ -99,7 +132,7 @@ export function QuotaPage() {
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [autoRefresh, queryClient]);
 
-  const accounts = quota.data?.accounts ?? [];
+  const accounts = useMemo(() => quota.data?.accounts ?? [], [quota.data]);
   const providers = useMemo(
     () => [...new Map(accounts.map((account) => [account.provider, account.provider_name || account.provider])).entries()]
       .sort((left, right) => left[1].localeCompare(right[1])),
@@ -230,87 +263,100 @@ export function QuotaPage() {
     if (result.isError) toast.error("Quota refresh failed", "The latest account data could not be loaded.");
   };
 
-  const totals = useMemo(() => ({
-    requests: accounts.reduce((sum, account) => sum + account.total_requests, 0),
-    input: accounts.reduce((sum, account) => sum + account.prompt_tokens, 0),
-    output: accounts.reduce((sum, account) => sum + account.completion_tokens, 0),
-    cost: accounts.reduce((sum, account) => sum + account.cost_usd, 0),
-    active: accounts.filter((account) => account.status === "active").length,
-    paused: accounts.filter((account) => account.status === "paused").length,
-    attention: accounts.filter((account) => account.status === "needs_attention").length,
-    reported: accounts.filter(hasReportedQuota).length,
-    capable: accounts.filter(supportsQuota).length,
-    usageOnly: accounts.filter((account) => !supportsQuota(account)).length,
-    notReported: accounts.filter((account) => supportsQuota(account) && !hasReportedQuota(account)).length,
-  }), [accounts]);
+  const totals = useMemo(() => {
+    let nextReset: { at: number; account: QuotaAccount } | null = null;
+    for (const account of accounts) {
+      const at = earliestReset(account);
+      if (at != null && at > Date.now() && (nextReset == null || at < nextReset.at)) nextReset = { at, account };
+    }
+    return {
+      requests: accounts.reduce((sum, account) => sum + account.total_requests, 0),
+      input: accounts.reduce((sum, account) => sum + account.prompt_tokens, 0),
+      output: accounts.reduce((sum, account) => sum + account.completion_tokens, 0),
+      cost: accounts.reduce((sum, account) => sum + account.cost_usd, 0),
+      active: accounts.filter((account) => account.status === "active").length,
+      paused: accounts.filter((account) => account.status === "paused").length,
+      attention: accounts.filter((account) => account.status === "needs_attention").length,
+      reported: accounts.filter(hasReportedQuota).length,
+      capable: accounts.filter(supportsQuota).length,
+      usageOnly: accounts.filter((account) => !supportsQuota(account)).length,
+      notReported: accounts.filter((account) => supportsQuota(account) && !hasReportedQuota(account)).length,
+      exhausted: accounts.filter(isDepleted).length,
+      nearLimit: accounts.filter((account) => !isDepleted(account) && worstRemainingPercent(account) <= 100 - NEAR_LIMIT_USED).length,
+      nextReset,
+    };
+  }, [accounts]);
+
+  const activeFilterCount = [providerFilter !== "all", quotaFilter !== "all", sortMode !== "attention"].filter(Boolean).length;
+  const resetFilters = () => {
+    setProviderFilter("all");
+    setQuotaFilter("all");
+    setSortMode("attention");
+  };
+
+  const statusCounts: Record<string, number> = {
+    all: accounts.length,
+    active: totals.active,
+    paused: totals.paused,
+    needs_attention: totals.attention,
+  };
 
   return (
     <>
       <PageHeader
-        title="Quota Tracker"
-        icon={Gauge}
-        description="Monitor account capacity, reported upstream limits, and period usage."
+        title="Quota tracker"
+        description="Upstream limits and local usage for each provider account."
         action={
-          <div className="flex items-center gap-2">
-            <SegmentedControl value={period} onChange={setPeriod} options={PERIODS} />
+          <>
+            <PeriodRadios value={period} onChange={setPeriod} />
+            <button
+              type="button"
+              onClick={() => setAutoRefresh((current) => !current)}
+              aria-pressed={autoRefresh}
+              title={autoRefresh ? "Pause automatic refresh" : "Refresh every 10 seconds"}
+              className={cn(
+                "inline-flex h-8 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 text-[12px] font-medium transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                autoRefresh ? "text-fg" : "text-fg-muted",
+              )}
+            >
+              <span className={cn("h-1.5 w-1.5 rounded-full", autoRefresh ? "live-dot bg-ok" : "bg-fg-faint")} aria-hidden="true" />
+              <span className="tabular-nums">
+                Auto refresh
+                {/* Ticks every second; keep it out of the accessible name (aria-pressed carries state). */}
+                <span aria-hidden="true">{autoRefresh ? ` · ${countdown}s` : " off"}</span>
+              </span>
+            </button>
             <button
               type="button"
               onClick={handleRefresh}
               disabled={quota.isFetching}
               aria-label="Refresh quota data"
               title="Refresh quota data"
-              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-muted)] shadow-sm transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] disabled:opacity-60"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-60"
             >
-              <RefreshCw className={`h-4 w-4 ${quota.isFetching ? "animate-spin" : ""}`} />
+              <RefreshCw className={cn("h-3.5 w-3.5", quota.isFetching && "animate-spin")} strokeWidth={1.75} aria-hidden="true" />
             </button>
-          </div>
+          </>
         }
       />
 
       {quota.isError ? (
-        <ErrorCard message="Failed to load quota and account usage data." />
+        <ErrorCard message="Couldn't load quota data. Check the gateway is running, then refresh." />
+      ) : quota.isLoading ? (
+        <QuotaSkeleton />
+      ) : accounts.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-line-strong bg-surface px-6 py-12 text-center">
+          <h2 className="text-[14px] font-medium text-fg">No connected accounts</h2>
+          <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
+            Connect a provider account to track its usage and limits.
+          </p>
+          <Button className="mt-4" onClick={() => navigate("/providers")}>
+            <Plug aria-hidden="true" />
+            Connect a provider
+          </Button>
+        </div>
       ) : (
         <div className="space-y-5 pb-12">
-          {!quota.isLoading && accounts.length > 0 && (
-            <div className="grid gap-4 lg:grid-cols-3">
-              <SummaryGroupCard
-                icon={Server}
-                title="Routing accounts"
-                primary={fmtInteger(totals.active)}
-                primaryLabel={`of ${fmtInteger(accounts.length)} active`}
-                tone={totals.attention > 0 || depletedAccounts.length > 0 ? "warning" : "success"}
-                items={[
-                  { label: "Paused", value: fmtInteger(totals.paused) },
-                  { label: "Attention", value: fmtInteger(totals.attention), tone: totals.attention > 0 ? "danger" : undefined },
-                  { label: "Depleted", value: fmtInteger(depletedAccounts.length), tone: depletedAccounts.length > 0 ? "danger" : undefined },
-                ]}
-              />
-              <SummaryGroupCard
-                icon={Activity}
-                title="Period usage"
-                primary={fmtCompact(totals.requests)}
-                primaryLabel="requests"
-                items={[
-                  { label: "Input", value: fmtCompact(totals.input) },
-                  { label: "Output", value: fmtCompact(totals.output) },
-                  { label: "Attributed cost", value: fmtUSD(totals.cost) },
-                ]}
-              />
-              <SummaryGroupCard
-                icon={Gauge}
-                title="Quota visibility"
-                primary={fmtInteger(totals.reported)}
-                primaryLabel="accounts reporting"
-                tone={totals.notReported > 0 ? "warning" : "accent"}
-                items={[
-                  { label: "Quota-capable", value: fmtInteger(totals.capable) },
-                  { label: "Usage only", value: fmtInteger(totals.usageOnly) },
-                  { label: "Not reported", value: fmtInteger(totals.notReported) },
-                ]}
-              />
-            </div>
-          )}
-
           {(depletedAccounts.length > 0 || resumableAccounts.length > 0) && (
             <CapacityActions
               depleted={depletedAccounts.length}
@@ -320,90 +366,163 @@ export function QuotaPage() {
             />
           )}
 
+          <SummaryStrip
+            cells={[
+              {
+                label: "Needs attention",
+                value: fmtInteger(totals.attention),
+                hint: `of ${fmtInteger(accounts.length)} accounts`,
+                tone: totals.attention > 0 ? "bad" : undefined,
+              },
+              {
+                label: "Near limit",
+                value: fmtInteger(totals.nearLimit),
+                hint: `${NEAR_LIMIT_USED}%+ of a window used`,
+                tone: totals.nearLimit > 0 ? "warn" : undefined,
+              },
+              {
+                label: "Exhausted",
+                value: fmtInteger(totals.exhausted),
+                hint: depletedAccounts.length > 0 ? `${fmtInteger(depletedAccounts.length)} still routing` : undefined,
+                tone: totals.exhausted > 0 ? "bad" : undefined,
+              },
+              {
+                label: "Next reset",
+                value: totals.nextReset ? formatCountdown(totals.nextReset.at).replace(/^in /, "") : "—",
+                hint: totals.nextReset ? totals.nextReset.account.label || totals.nextReset.account.provider_name : undefined,
+                title: totals.nextReset ? new Date(totals.nextReset.at).toLocaleString() : undefined,
+              },
+            ]}
+          />
+
           <Card>
-            <div className="flex flex-col gap-3 border-b border-[var(--border)] px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
-              <div>
-                <h2 className="text-sm font-semibold">Account capacity</h2>
-                <p className="mt-1 text-xs text-[var(--text-muted)]">
-                  Upstream limits are shown only when the provider reports them; every account still shows local period usage.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setAutoRefresh((current) => !current)}
-                aria-pressed={autoRefresh}
-                className={`inline-flex h-8 shrink-0 items-center gap-2 self-start rounded-lg border px-3 text-xs font-medium transition-colors lg:self-auto ${
-                  autoRefresh
-                    ? "border-emerald-300/70 bg-emerald-50 text-emerald-700 dark:border-emerald-700/50 dark:bg-emerald-950/20 dark:text-emerald-300"
-                    : "border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-muted)]"
-                }`}
-              >
-                <span className={`h-1.5 w-1.5 rounded-full ${autoRefresh ? "bg-ok" : "bg-[var(--text-muted)]"}`} />
-                {autoRefresh ? `Auto refresh · ${countdown}s` : "Auto refresh off"}
-              </button>
+            <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+              <h2 className="text-[13px] font-semibold text-fg">Accounts</h2>
+              <span role="status" className="shrink-0 text-[12px] tabular-nums text-fg-muted">
+                {sorted.length === accounts.length
+                  ? `${fmtInteger(accounts.length)} accounts`
+                  : `${fmtInteger(sorted.length)} of ${fmtInteger(accounts.length)} accounts`}
+              </span>
             </div>
 
-            <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--bg-subtle)]/30 px-4 py-3 xl:flex-row xl:items-center">
-              <label className="relative min-w-0 flex-1 xl:max-w-xs">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
-                <span className="sr-only">Search accounts</span>
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search provider or account…"
-                  className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] pl-9 pr-3 text-xs outline-none transition-colors placeholder:text-[var(--text-muted)] focus:border-[var(--border-strong)] focus:ring-2 focus:ring-accent-400/20"
-                />
-              </label>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:flex xl:items-center">
-                <FilterSelect value={providerFilter} onChange={setProviderFilter} label="Provider">
-                  <option value="all">All providers</option>
-                  {providers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-                </FilterSelect>
-                <FilterSelect value={statusFilter} onChange={setStatusFilter} label="Status">
-                  <option value="all">All statuses</option>
-                  <option value="active">Active</option>
-                  <option value="paused">Paused</option>
-                  <option value="needs_attention">Needs attention</option>
-                </FilterSelect>
-                <FilterSelect value={quotaFilter} onChange={(value) => setQuotaFilter(value as QuotaFilter)} label="Quota visibility">
-                  <option value="all">All quota states</option>
-                  <option value="reported">Limits reported</option>
-                  <option value="capable">No current report</option>
-                  <option value="usage_only">Usage only</option>
-                </FilterSelect>
-                <FilterSelect value={sortMode} onChange={(value) => setSortMode(value as SortMode)} label="Sort accounts">
-                  <option value="attention">Attention first</option>
-                  <option value="reset">Reset soon</option>
-                  <option value="usage">Highest usage</option>
-                  <option value="provider">Provider name</option>
-                </FilterSelect>
+            <div className="border-b border-line px-4 py-2.5">
+              <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+                <label className="relative min-w-0 lg:w-60">
+                  <span className="sr-only">Search accounts</span>
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                  <Input
+                    type="search"
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Search accounts"
+                    className="h-8 min-h-8 py-0 pl-8 text-[12.5px]"
+                  />
+                </label>
+                <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="Filter by status">
+                  {STATUS_CHIPS.map((chip) => {
+                    const active = statusFilter === chip.value;
+                    return (
+                      <button
+                        key={chip.value}
+                        type="button"
+                        role="radio"
+                        aria-checked={active}
+                        onClick={() => setStatusFilter(chip.value)}
+                        className={cn(
+                          "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                          active ? "border-transparent bg-primary text-primary-fg" : "border-line bg-surface text-fg-muted hover:text-fg",
+                        )}
+                      >
+                        {chip.label}
+                        <span className={cn("tabular-nums", !active && "text-fg-faint")}>{statusCounts[chip.value] ?? 0}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center gap-1 lg:ml-auto">
+                  {activeFilterCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={resetFilters}
+                      className="inline-flex h-8 items-center rounded-lg px-2 text-[12px] text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                    >
+                      Reset
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setFiltersOpen((open) => !open)}
+                    aria-expanded={filtersOpen}
+                    aria-controls="quota-filters"
+                    className={cn(
+                      "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                      filtersOpen ? "border-line-strong bg-hover text-fg" : "border-line bg-surface text-fg-muted hover:text-fg",
+                    )}
+                  >
+                    <SlidersHorizontal className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                    Filters
+                    {activeFilterCount > 0 && (
+                      <span className="rounded-md bg-subtle px-1.5 text-[11.5px] tabular-nums text-fg">
+                        {activeFilterCount}
+                        <span className="sr-only"> active</span>
+                      </span>
+                    )}
+                  </button>
+                </div>
               </div>
-              <span className="shrink-0 text-xs tabular-nums text-[var(--text-muted)]">{fmtInteger(sorted.length)} accounts</span>
+              {filtersOpen && (
+                <div id="quota-filters" role="group" aria-label="Filters and sort" className="mt-2.5 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <FilterSelect value={providerFilter} onChange={setProviderFilter} label="Provider">
+                    <option value="all">All providers</option>
+                    {providers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+                  </FilterSelect>
+                  <FilterSelect value={quotaFilter} onChange={(value) => setQuotaFilter(value as QuotaFilter)} label="Quota">
+                    <option value="all">All quota states</option>
+                    <option value="reported">Limits reported</option>
+                    <option value="capable">No current report</option>
+                    <option value="usage_only">Usage only</option>
+                  </FilterSelect>
+                  <FilterSelect value={sortMode} onChange={(value) => setSortMode(value as SortMode)} label="Sort">
+                    <option value="attention">Attention first</option>
+                    <option value="reset">Reset soon</option>
+                    <option value="usage">Highest usage</option>
+                    <option value="provider">Provider name</option>
+                  </FilterSelect>
+                </div>
+              )}
             </div>
 
             {selected.size > 0 && (
-              <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border)] bg-accent-50/50 px-4 py-2.5 text-xs dark:bg-accent-950/20">
-                <span className="mr-1 font-semibold">{selected.size} selected</span>
+              <div className="flex flex-wrap items-center gap-2 border-b border-line bg-subtle px-4 py-2 text-[12.5px]">
+                <span role="status" className="mr-1 font-medium tabular-nums text-fg">{selected.size} selected</span>
                 {selectedCanEnable.length > 0 && (
-                  <button type="button" onClick={() => applyBulkState(selectedCanEnable, false)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 font-medium hover:bg-[var(--bg-subtle)]">Enable</button>
+                  <Button variant="secondary" className="h-8 min-h-8 text-[12.5px]" onClick={() => applyBulkState(selectedCanEnable, false)}>
+                    <Power strokeWidth={1.75} aria-hidden="true" /> Enable
+                  </Button>
                 )}
                 {selectedCanPause.length > 0 && (
-                  <button type="button" onClick={() => applyBulkState(selectedCanPause, true)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5 font-medium hover:bg-[var(--bg-subtle)]">Pause</button>
+                  <Button variant="secondary" className="h-8 min-h-8 text-[12.5px]" onClick={() => applyBulkState(selectedCanPause, true)}>
+                    <PowerOff strokeWidth={1.75} aria-hidden="true" /> Pause
+                  </Button>
                 )}
-                <button type="button" onClick={handleBulkDelete} className="rounded-lg border border-red-300/60 bg-[var(--bg-elevated)] px-2.5 py-1.5 font-medium text-bad hover:bg-red-50 dark:border-red-700/50 dark:text-red-300 dark:hover:bg-red-950/20">Delete</button>
-                <button type="button" onClick={() => setSelected(new Set())} className="px-2 py-1.5 text-[var(--text-muted)] hover:text-[var(--text)]">Clear</button>
+                <Button variant="danger" className="h-8 min-h-8 text-[12.5px]" onClick={handleBulkDelete}>
+                  <Trash2 strokeWidth={1.75} aria-hidden="true" /> Delete
+                </Button>
+                <button
+                  type="button"
+                  onClick={() => setSelected(new Set())}
+                  className="inline-flex h-8 items-center rounded-lg px-2 text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                >
+                  Clear selection
+                </button>
               </div>
             )}
 
-            {quota.isLoading ? (
-              <div className="flex min-h-64 items-center justify-center"><Spinner /></div>
-            ) : accounts.length === 0 ? (
-              <EmptyState title="No connected accounts" hint="Add a provider account to begin tracking usage and quota visibility." />
-            ) : sorted.length === 0 ? (
-              <EmptyState title="No accounts match these filters." hint="Clear a filter or search for another account." />
+            {sorted.length === 0 ? (
+              <EmptyState title="No accounts match these filters" hint="Clear a filter or search for another account." />
             ) : (
               <>
-                <div className="divide-y divide-[var(--border)] md:hidden">
+                <div className="divide-y divide-line md:hidden">
                   {pagination.paged.map((account) => (
                     <QuotaAccountMobile
                       key={account.id}
@@ -418,27 +537,22 @@ export function QuotaPage() {
                   ))}
                 </div>
                 <div className="hidden overflow-x-auto md:block">
-                  <table className="w-full min-w-[1120px] text-xs">
+                  <table className="w-full min-w-[900px] text-[13px]">
+                    <caption className="sr-only">Provider accounts</caption>
                     <thead>
-                      <tr className="border-b border-[var(--border)] text-[11.5px] font-medium text-[var(--text-muted)]">
-                        <th className="w-12 px-4 py-3 text-left">
-                          <input
-                            type="checkbox"
-                            checked={allPageSelected}
-                            onChange={togglePageSelection}
-                            aria-label="Select accounts on this page"
-                            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-accent-600"
-                          />
+                      <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                        <th scope="col" className="w-10 py-1.5 pl-3 pr-1 font-medium">
+                          <SelectBox checked={allPageSelected} onChange={togglePageSelection} label="Select accounts on this page" />
                         </th>
-                        <th className="px-3 py-3 text-left">Provider / account</th>
-                        <th className="px-3 py-3 text-left">Routing</th>
-                        <th className="w-[290px] px-3 py-3 text-left">Quota visibility</th>
-                        <th className="px-3 py-3 text-right">Period usage</th>
-                        <th className="px-3 py-3 text-right">Attributed cost</th>
-                        <th className="px-4 py-3 text-right">Actions</th>
+                        <th scope="col" className="px-3 py-2 font-medium">Account</th>
+                        <th scope="col" className="px-3 py-2 font-medium">Routing</th>
+                        <th scope="col" className="w-[300px] px-3 py-2 font-medium">Quota windows</th>
+                        <th scope="col" className="px-3 py-2 text-right font-medium">Period usage</th>
+                        <th scope="col" className="px-3 py-2 text-right font-medium">Cost</th>
+                        <th scope="col" className="px-4 py-2 text-right font-medium"><span className="sr-only">Actions</span></th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[var(--border)]">
+                    <tbody className="divide-y divide-line">
                       {pagination.paged.map((account) => (
                         <QuotaAccountRow
                           key={account.id}
@@ -469,6 +583,97 @@ export function QuotaPage() {
   );
 }
 
+function PeriodRadios({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="inline-flex h-8 items-center rounded-xl border border-line bg-subtle p-0.5" role="radiogroup" aria-label="Usage period">
+      {PERIODS.map((option) => {
+        const active = option.value === value;
+        return (
+          <button
+            key={option.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onChange(option.value)}
+            className={cn(
+              "h-full rounded-lg px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+              active ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
+            )}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function QuotaSkeleton() {
+  return (
+    <div className="space-y-5" aria-busy="true" aria-label="Loading quota data">
+      <div className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <div key={index} className="space-y-2 bg-surface px-4 py-3">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="h-6 w-14" />
+            <Skeleton className="h-3 w-28" />
+          </div>
+        ))}
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        <div className="border-b border-line px-4 py-3">
+          <Skeleton className="h-3.5 w-24" />
+        </div>
+        <div className="divide-y divide-line">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <div key={index} className="flex items-center gap-4 px-4 py-3">
+              <Skeleton className="h-6 w-6 rounded-md" />
+              <div className="w-48 space-y-1.5">
+                <Skeleton className="h-3.5 w-32" />
+                <Skeleton className="h-3 w-40" />
+              </div>
+              <Skeleton className="hidden h-5 w-16 md:block" />
+              <div className="flex-1 space-y-1.5">
+                <Skeleton className="h-1.5 w-full max-w-xs" />
+                <Skeleton className="h-1.5 w-full max-w-xs" />
+              </div>
+              <Skeleton className="hidden h-4 w-16 md:block" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SummaryStrip({
+  cells,
+}: {
+  cells: { label: string; value: string; hint?: string; tone?: "warn" | "bad"; title?: string }[];
+}) {
+  return (
+    <section
+      aria-label="Quota summary"
+      className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line shadow-[var(--shadow-card)] lg:grid-cols-4"
+    >
+      {cells.map((cell) => (
+        <div key={cell.label} className="flex min-w-0 flex-col gap-1 bg-surface px-4 py-3" title={cell.title}>
+          <span className="text-[12px] font-medium text-fg-muted">{cell.label}</span>
+          <span
+            className={cn(
+              "text-[22px] font-semibold leading-tight tracking-[-0.02em] tabular-nums",
+              cell.tone === "bad" ? "text-bad" : cell.tone === "warn" ? "text-warn" : "text-fg",
+            )}
+          >
+            {cell.value}
+          </span>
+          {cell.hint && <span className="truncate text-[12px] tabular-nums text-fg-faint" title={cell.hint}>{cell.hint}</span>}
+        </div>
+      ))}
+    </section>
+  );
+}
+
 function CapacityActions({
   depleted,
   resumable,
@@ -481,88 +686,29 @@ function CapacityActions({
   onResumeAvailable: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-3 rounded-xl border border-amber-300/60 bg-amber-50/40 px-4 py-3 dark:border-amber-700/40 dark:bg-amber-950/10 lg:flex-row lg:items-center">
-      <AlertTriangle className="h-4 w-4 shrink-0 text-warn" />
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold">Capacity actions available</p>
-        <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-          Recommendations use only the upstream limits currently reported by providers.
+    <section aria-label="Accounts needing attention" className="flex flex-col gap-3 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3 sm:flex-row sm:items-center">
+      <AlertTriangle className="hidden h-4 w-4 shrink-0 text-warn sm:block" strokeWidth={1.75} aria-hidden="true" />
+      <div className="min-w-0 flex-1 text-[13px] leading-5">
+        <p role="status" className="font-medium text-fg">
+          {depleted > 0 && `${depleted} active account${depleted === 1 ? " is" : "s are"} almost out of quota`}
+          {depleted > 0 && resumable > 0 && " · "}
+          {resumable > 0 && `${resumable} paused account${resumable === 1 ? " has" : "s have"} capacity again`}
         </p>
+        <p className="text-[12px] text-fg-muted">Paused accounts stay out of routing until enabled.</p>
       </div>
       <div className="flex flex-wrap gap-2">
         {depleted > 0 && (
-          <button type="button" onClick={onPauseDepleted} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-300/70 bg-[var(--bg-elevated)] px-3 text-xs font-medium text-bad hover:bg-red-50 dark:border-red-700/50 dark:text-red-300 dark:hover:bg-red-950/20">
-            <PowerOff className="h-3.5 w-3.5" /> Pause depleted ({depleted})
-          </button>
+          <Button variant="danger" className="h-8 min-h-8 text-[12.5px]" onClick={onPauseDepleted}>
+            <PowerOff strokeWidth={1.75} aria-hidden="true" /> Pause depleted ({depleted})
+          </Button>
         )}
         {resumable > 0 && (
-          <button type="button" onClick={onResumeAvailable} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-emerald-300/70 bg-[var(--bg-elevated)] px-3 text-xs font-medium text-emerald-700 hover:bg-emerald-50 dark:border-emerald-700/50 dark:text-emerald-300 dark:hover:bg-emerald-950/20">
-            <Power className="h-3.5 w-3.5" /> Resume available ({resumable})
-          </button>
+          <Button variant="secondary" className="h-8 min-h-8 text-[12.5px]" onClick={onResumeAvailable}>
+            <Power strokeWidth={1.75} aria-hidden="true" /> Resume available ({resumable})
+          </Button>
         )}
       </div>
-    </div>
-  );
-}
-
-function SummaryGroupCard({
-  icon: Icon,
-  title,
-  primary,
-  primaryLabel,
-  items,
-  tone = "accent",
-}: {
-  icon: LucideIcon;
-  title: string;
-  primary: string;
-  primaryLabel: string;
-  items: Array<{ label: string; value: string; tone?: "good" | "danger" }>;
-  tone?: SummaryTone;
-}) {
-  const tones: Record<SummaryTone, { icon: string; background: string }> = {
-    accent: {
-      icon: "text-secondary-600 dark:text-secondary-300",
-      background: "bg-secondary-50 ring-secondary-200/70 dark:bg-secondary-950/30 dark:ring-secondary-900/60",
-    },
-    success: {
-      icon: "text-ok",
-      background: "bg-emerald-50 ring-emerald-200/70 dark:bg-emerald-950/30 dark:ring-emerald-900/60",
-    },
-    warning: {
-      icon: "text-warn",
-      background: "bg-amber-50 ring-amber-200/70 dark:bg-amber-950/30 dark:ring-amber-900/60",
-    },
-  };
-  const colors = tones[tone];
-
-  return (
-    <Card className="p-5">
-      <div className="flex items-center gap-2">
-        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ${colors.background}`}>
-          <Icon className={`h-4 w-4 ${colors.icon}`} />
-        </span>
-        <span className="text-xs font-medium text-[var(--text-muted)]">{title}</span>
-      </div>
-      <div className="mt-4 flex items-baseline gap-2">
-        <span className="text-3xl font-semibold tracking-tight tabular-nums">{primary}</span>
-        <span className="text-xs text-[var(--text-muted)]">{primaryLabel}</span>
-      </div>
-      <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[var(--border)] pt-3">
-        {items.map((item) => (
-          <div key={item.label} className="min-w-0">
-            <div className={`truncate text-xs font-semibold tabular-nums sm:text-sm ${
-              item.tone === "good"
-                ? "text-ok"
-                : item.tone === "danger"
-                  ? "text-bad"
-                  : "text-[var(--text)]"
-            }`} title={item.value}>{item.value}</div>
-            <div className="mt-0.5 text-[9px] font-medium text-[var(--text-muted)]">{item.label}</div>
-          </div>
-        ))}
-      </div>
-    </Card>
+    </section>
   );
 }
 
@@ -578,43 +724,24 @@ function FilterSelect({
   children: ReactNode;
 }) {
   return (
-    <label className="min-w-0">
-      <span className="sr-only">{label}</span>
-      <select
+    <label className="flex min-w-0 items-center gap-2">
+      <span className="w-14 shrink-0 text-[12px] font-medium text-fg-muted sm:w-auto">{label}</span>
+      <Select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 text-xs outline-none focus:border-[var(--border-strong)] focus:ring-2 focus:ring-accent-400/20 xl:w-auto"
+        className="h-8 min-h-8 py-0 pl-2.5 pr-7 text-[12.5px]"
       >
         {children}
-      </select>
+      </Select>
     </label>
   );
 }
 
-function QuotaAccountRow({
-  account,
-  selected,
-  expanded,
-  onSelect,
-  onExpand,
-  onToggle,
-  onDelete,
-}: {
-  account: QuotaAccount;
-  selected: boolean;
-  expanded: boolean;
-  onSelect: () => void;
-  onExpand: () => void;
-  onToggle: () => void;
-  onDelete: () => void;
-}) {
+// useQuotaRefresh asks the provider for fresh upstream limits for one account.
+function useQuotaRefresh(account: QuotaAccount) {
   const queryClient = useQueryClient();
   const toast = useToast();
-  const quotas = account.upstream_quotas ?? [];
-  const canReportQuota = supportsQuota(account);
-  const state = effectiveQuotaState(account);
-  const status = statusMeta[account.status] ?? { label: account.status, tone: "neutral" as const };
-  const refreshQuota = useMutation({
+  return useMutation({
     mutationFn: () => api.accountQuota(account.id),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["quota"] });
@@ -623,84 +750,122 @@ function QuotaAccountRow({
     },
     onError: (error: Error) => toast.error("Quota refresh failed", error.message),
   });
+}
+
+type RowProps = {
+  account: QuotaAccount;
+  selected: boolean;
+  expanded: boolean;
+  onSelect: () => void;
+  onExpand: () => void;
+  onToggle: () => void;
+  onDelete: () => void;
+};
+
+function accountName(account: QuotaAccount): string {
+  return account.label || account.provider_name;
+}
+
+function AccountIdentity({ account }: { account: QuotaAccount }) {
+  const providerName = account.provider_name || account.provider;
+  return (
+    <div className="flex min-w-0 items-center gap-2.5">
+      <ProviderLogo icon={`/providers/${account.provider}.png`} name={providerName} size={24} />
+      <div className="min-w-0">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="max-w-48 truncate font-medium text-fg" title={providerName}>{providerName}</span>
+          {account.plan_name && <Badge tone="neutral">{account.plan_name}</Badge>}
+        </div>
+        <div className="max-w-64 truncate text-[12px] text-fg-faint" title={account.label || account.auth_kind}>
+          {account.label || account.auth_kind} · {formatAuthKind(account.auth_kind)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RowActions({
+  account,
+  refreshQuota,
+  onToggle,
+  onDelete,
+}: {
+  account: QuotaAccount;
+  refreshQuota: ReturnType<typeof useQuotaRefresh>;
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  const name = accountName(account);
+  const paused = account.status === "paused";
+  return (
+    <div className="inline-flex items-center gap-1">
+      {supportsQuota(account) && (
+        <button
+          type="button"
+          onClick={() => refreshQuota.mutate()}
+          disabled={refreshQuota.isPending || paused}
+          aria-label={`Refresh quota for ${name}`}
+          title={paused ? "Enable the account before refreshing quota" : "Refresh upstream quota"}
+          className={iconButton}
+        >
+          {refreshQuota.isPending
+            ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} aria-hidden="true" />
+            : <RefreshCw className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />}
+        </button>
+      )}
+      <span title={paused ? "Enable account" : "Pause account"} className="inline-flex px-1">
+        <Toggle checked={!paused} onChange={() => onToggle()} label={`Route traffic to ${name}`} />
+      </span>
+      <DropdownMenu>
+        <DropdownMenuTrigger aria-label={`Actions for ${name}`} className={iconButton}>
+          <MoreHorizontal className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem tone="danger" onSelect={onDelete}>
+            <Trash2 aria-hidden="true" />
+            Delete account
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  );
+}
+
+function QuotaAccountRow({ account, selected, expanded, onSelect, onExpand, onToggle, onDelete }: RowProps) {
+  const quotas = account.upstream_quotas ?? [];
+  const state = effectiveQuotaState(account);
+  const status = statusMeta[account.status] ?? { label: account.status, tone: "neutral" as const };
+  const refreshQuota = useQuotaRefresh(account);
 
   return (
     <>
-      <tr className={`transition-colors hover:bg-[var(--bg-subtle)]/60 ${account.status === "paused" ? "opacity-65" : ""}`}>
-        <td className="px-4 py-3 align-middle">
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={onSelect}
-            aria-label={`Select ${account.label || account.provider_name}`}
-            className="h-3.5 w-3.5 rounded border-[var(--border)] accent-accent-600"
-          />
+      <tr className="align-top transition-colors hover:bg-hover">
+        <td className="py-2.5 pl-3 pr-1">
+          <SelectBox checked={selected} onChange={onSelect} label={`Select ${accountName(account)}`} className="mt-0.5" />
         </td>
-        <td className="px-3 py-3 align-middle">
-          <div className="flex min-w-0 items-center gap-3">
-            <ProviderIcon provider={account.provider} label={account.provider_name} />
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="max-w-48 truncate text-sm font-semibold" title={account.provider_name}>{account.provider_name || account.provider}</span>
-                {account.plan_name && <Badge tone="accent">{account.plan_name}</Badge>}
-              </div>
-              <div className="mt-0.5 max-w-64 truncate text-[10px] text-[var(--text-muted)]" title={account.label || account.auth_kind}>
-                {account.label || account.auth_kind} · {formatAuthKind(account.auth_kind)}
-              </div>
-            </div>
-          </div>
+        <td className="px-3 py-3">
+          <AccountIdentity account={account} />
         </td>
-        <td className="px-3 py-3 align-middle">
-          <span className="whitespace-nowrap"><Badge tone={status.tone}>{status.label}</Badge></span>
-          <div className="mt-1 text-[10px] text-[var(--text-muted)]">Priority {account.priority}</div>
+        <td className="px-3 py-3">
+          <Badge tone={status.tone}>{status.label}</Badge>
+          <div className="mt-1 text-[12px] tabular-nums text-fg-faint">Priority {account.priority}</div>
         </td>
-        <td className="px-3 py-3 align-middle">
-          <QuotaVisibilityCell account={account} expanded={expanded} onExpand={onExpand} />
+        <td className="px-3 py-3">
+          <QuotaWindowsCell account={account} expanded={expanded} onExpand={onExpand} detailsId={`quota-details-${account.id}`} />
         </td>
-        <td className="px-3 py-3 text-right align-middle tabular-nums">
-          <div className="font-semibold">{fmtInteger(account.total_requests)} req</div>
-          <div className="mt-1 text-[10px] text-[var(--text-muted)]">{fmtCompact(account.prompt_tokens + account.completion_tokens)} tokens</div>
+        <td className="px-3 py-3 text-right tabular-nums">
+          <div className="text-fg">{fmtInteger(account.total_requests)} req</div>
+          <div className="text-[12px] text-fg-faint">{fmtCompact(account.prompt_tokens + account.completion_tokens)} tokens</div>
         </td>
-        <td className="px-3 py-3 text-right align-middle font-semibold tabular-nums">{fmtUSD(account.cost_usd)}</td>
-        <td className="px-4 py-3 text-right align-middle">
-          <div className="inline-flex items-center gap-1">
-            {canReportQuota && (
-              <button
-                type="button"
-                onClick={() => refreshQuota.mutate()}
-                disabled={refreshQuota.isPending || account.status === "paused"}
-                aria-label={`Refresh quota for ${account.label || account.provider_name}`}
-                title={account.status === "paused" ? "Enable the account before refreshing quota" : "Refresh upstream quota"}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-35"
-              >
-                {refreshQuota.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-              </button>
-            )}
-            <button
-              type="button"
-              onClick={onToggle}
-              aria-label={account.status === "paused" ? `Enable ${account.label || account.provider_name}` : `Pause ${account.label || account.provider_name}`}
-              title={account.status === "paused" ? "Enable account" : "Pause account"}
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)]"
-            >
-              {account.status === "paused" ? <Power className="h-3.5 w-3.5" /> : <PowerOff className="h-3.5 w-3.5" />}
-            </button>
-            <button
-              type="button"
-              onClick={onDelete}
-              aria-label={`Delete ${account.label || account.provider_name}`}
-              title="Delete account"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-muted)] hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/20 dark:hover:text-red-300"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          </div>
+        <td className="px-3 py-3 text-right tabular-nums text-fg">{fmtUSD(account.cost_usd)}</td>
+        <td className="px-4 py-2.5 text-right">
+          <RowActions account={account} refreshQuota={refreshQuota} onToggle={onToggle} onDelete={onDelete} />
           {state === "error" && <span className="sr-only">Quota refresh error</span>}
         </td>
       </tr>
       {expanded && quotas.length > 0 && (
-        <tr>
-          <td colSpan={7} className="border-t border-[var(--border)] bg-[var(--bg-subtle)]/35 px-5 py-4">
+        <tr id={`quota-details-${account.id}`}>
+          <td colSpan={7} className="bg-subtle px-4 py-3">
             <QuotaDetails account={account} />
           </td>
         </tr>
@@ -709,100 +874,36 @@ function QuotaAccountRow({
   );
 }
 
-function QuotaAccountMobile({
-  account,
-  selected,
-  expanded,
-  onSelect,
-  onExpand,
-  onToggle,
-  onDelete,
-}: {
-  account: QuotaAccount;
-  selected: boolean;
-  expanded: boolean;
-  onSelect: () => void;
-  onExpand: () => void;
-  onToggle: () => void;
-  onDelete: () => void;
-}) {
-  const queryClient = useQueryClient();
-  const toast = useToast();
+function QuotaAccountMobile({ account, selected, expanded, onSelect, onExpand, onToggle, onDelete }: RowProps) {
   const status = statusMeta[account.status] ?? { label: account.status, tone: "neutral" as const };
-  const canReportQuota = supportsQuota(account);
-  const refreshQuota = useMutation({
-    mutationFn: () => api.accountQuota(account.id),
-    onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["quota"] });
-      if (result.supported) toast.success("Quota refreshed", "The latest upstream limits are now available.");
-      else toast.success("Usage-only account", "This provider does not expose upstream quota through KeiRouter.");
-    },
-    onError: (error: Error) => toast.error("Quota refresh failed", error.message),
-  });
+  const refreshQuota = useQuotaRefresh(account);
 
   return (
-    <article className={`px-4 py-4 ${account.status === "paused" ? "opacity-65" : ""}`}>
-      <div className="flex items-start gap-3">
-        <input
-          type="checkbox"
-          checked={selected}
-          onChange={onSelect}
-          aria-label={`Select ${account.label || account.provider_name}`}
-          className="mt-2 h-3.5 w-3.5 shrink-0 rounded border-[var(--border)] accent-accent-600"
-        />
-        <ProviderIcon provider={account.provider} label={account.provider_name} />
+    <article className="px-4 py-3.5 text-[13px]" aria-label={accountName(account)}>
+      <div className="flex items-start gap-2">
+        <SelectBox checked={selected} onChange={onSelect} label={`Select ${accountName(account)}`} className="shrink-0" />
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <h3 className="truncate text-sm font-semibold">{account.provider_name || account.provider}</h3>
-            {account.plan_name && <Badge tone="accent">{account.plan_name}</Badge>}
-          </div>
-          <p className="mt-0.5 truncate text-[10px] text-[var(--text-muted)]">
-            {account.label || account.auth_kind} · {formatAuthKind(account.auth_kind)}
-          </p>
+          <AccountIdentity account={account} />
         </div>
-        <span className="shrink-0 whitespace-nowrap"><Badge tone={status.tone}>{status.label}</Badge></span>
+        <Badge tone={status.tone}>{status.label}</Badge>
       </div>
 
-      <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)]/35 px-3 py-2.5">
-        <QuotaVisibilityCell account={account} expanded={expanded} onExpand={onExpand} />
+      <div className="mt-3 pl-8">
+        <QuotaWindowsCell account={account} expanded={expanded} onExpand={onExpand} detailsId={`quota-details-m-${account.id}`} />
       </div>
 
-      <div className="mt-3 grid grid-cols-2 gap-3 border-t border-[var(--border)] pt-3">
-        <div>
-          <div className="text-[9px] font-medium text-[var(--text-muted)]">Period usage</div>
-          <div className="mt-1 text-xs font-semibold tabular-nums">{fmtInteger(account.total_requests)} requests</div>
-          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{fmtCompact(account.prompt_tokens + account.completion_tokens)} tokens</div>
+      <div className="mt-3 flex items-center justify-between gap-3 pl-8">
+        <div className="min-w-0 text-[12px] tabular-nums text-fg-muted">
+          <span className="text-fg">{fmtInteger(account.total_requests)} req</span>
+          {" · "}{fmtCompact(account.prompt_tokens + account.completion_tokens)} tokens
+          {" · "}{fmtUSD(account.cost_usd)}
+          <span className="text-fg-faint"> · Priority {account.priority}</span>
         </div>
-        <div className="text-right">
-          <div className="text-[9px] font-medium text-[var(--text-muted)]">Attributed cost</div>
-          <div className="mt-1 text-xs font-semibold tabular-nums">{fmtUSD(account.cost_usd)}</div>
-          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">Priority {account.priority}</div>
-        </div>
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-2">
-        {canReportQuota && (
-          <button
-            type="button"
-            onClick={() => refreshQuota.mutate()}
-            disabled={refreshQuota.isPending || account.status === "paused"}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 text-[10px] font-medium text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] disabled:opacity-35"
-          >
-            {refreshQuota.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
-            Refresh quota
-          </button>
-        )}
-        <button type="button" onClick={onToggle} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border)] px-2.5 text-[10px] font-medium text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)]">
-          {account.status === "paused" ? <Power className="h-3.5 w-3.5" /> : <PowerOff className="h-3.5 w-3.5" />}
-          {account.status === "paused" ? "Enable" : "Pause"}
-        </button>
-        <button type="button" onClick={onDelete} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-300/50 px-2.5 text-[10px] font-medium text-bad hover:bg-red-50 dark:border-red-700/40 dark:text-red-300 dark:hover:bg-red-950/20">
-          <Trash2 className="h-3.5 w-3.5" /> Delete
-        </button>
+        <RowActions account={account} refreshQuota={refreshQuota} onToggle={onToggle} onDelete={onDelete} />
       </div>
 
       {expanded && hasReportedQuota(account) && (
-        <div className="mt-4">
+        <div className="mt-3" id={`quota-details-m-${account.id}`}>
           <QuotaDetails account={account} />
         </div>
       )}
@@ -810,73 +911,93 @@ function QuotaAccountMobile({
   );
 }
 
-function QuotaVisibilityCell({ account, expanded, onExpand }: { account: QuotaAccount; expanded: boolean; onExpand: () => void }) {
+function QuotaWindowsCell({ account, expanded, onExpand, detailsId }: { account: QuotaAccount; expanded: boolean; onExpand: () => void; detailsId: string }) {
   const quotas = account.upstream_quotas ?? [];
   const state = effectiveQuotaState(account);
 
   if (quotas.length === 0) {
-    const content: Record<string, { label: string; detail: string; tone: string }> = {
-      usage_only: {
-        label: "Usage only",
-        detail: "Provider does not expose upstream limits.",
-        tone: "bg-[var(--text-muted)]",
-      },
-      paused: {
-        label: "Quota refresh paused",
-        detail: "Enable the account to fetch limits.",
-        tone: "bg-[var(--text-muted)]",
-      },
-      error: {
-        label: "Refresh failed",
-        detail: account.message || "Retry the upstream quota request.",
-        tone: "bg-bad",
-      },
-      pending: {
-        label: "Not yet reported",
-        detail: "The provider supports upstream limits.",
-        tone: "bg-warn",
-      },
-      unavailable: {
-        label: "Not reported",
-        detail: account.message || "The provider returned no limit buckets.",
-        tone: "bg-warn",
-      },
+    // Only states with something actionable to say carry a second line.
+    const content: Record<string, { label: string; detail?: string; dot: string }> = {
+      usage_only: { label: "Usage only", dot: "bg-fg-faint" },
+      paused: { label: "Paused · enable to fetch limits", dot: "bg-fg-faint" },
+      error: { label: "Refresh failed", detail: account.message || "Retry the quota refresh.", dot: "bg-bad" },
+      pending: { label: "Not yet reported", dot: "bg-warn" },
+      unavailable: { label: "Not reported", detail: account.message || undefined, dot: "bg-warn" },
     };
     const item = content[state] ?? content.unavailable;
     return (
       <div className="flex min-w-0 items-start gap-2">
-        <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${item.tone}`} />
+        <span className={cn("mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full", item.dot)} aria-hidden="true" />
         <div className="min-w-0">
-          <div className="text-xs font-semibold">{item.label}</div>
-          <div className="mt-0.5 max-w-64 truncate text-[10px] text-[var(--text-muted)]" title={item.detail}>{item.detail}</div>
+          <div className={cn("text-[13px]", state === "error" ? "text-bad" : "text-fg")}>{item.label}</div>
+          {item.detail && <div className="max-w-72 truncate text-[12px] text-fg-faint" title={item.detail}>{item.detail}</div>}
         </div>
       </div>
     );
   }
 
-  const remaining = worstRemainingPercent(account);
-  const resetAt = earliestReset(account);
-  const color = quotaColor(remaining);
+  // Surface the most-consumed windows first; the rest are in the details panel.
+  const ranked = [...quotas].sort((left, right) => windowUsedPercent(right) - windowUsedPercent(left));
+  const inline = ranked.slice(0, INLINE_WINDOWS);
+  const hidden = quotas.length - inline.length;
+
   return (
-    <div className="min-w-0">
-      <div className="flex items-center justify-between gap-3">
-        <span className={`text-xs font-semibold tabular-nums ${color.text}`}>{remaining}% remaining</span>
-        <button
-          type="button"
-          onClick={onExpand}
-          aria-expanded={expanded}
-          className="inline-flex items-center gap-1 text-[10px] font-medium text-[var(--text-muted)] hover:text-[var(--text)]"
-        >
-          {quotas.length} limit{quotas.length === 1 ? "" : "s"}
-          <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
-        </button>
+    <div className="min-w-0 space-y-2">
+      {inline.map((window, index) => <WindowBar key={`${window.resource_type}-${index}`} quota={window} />)}
+      <button
+        type="button"
+        onClick={onExpand}
+        aria-expanded={expanded}
+        aria-controls={expanded ? detailsId : undefined}
+        className="inline-flex min-h-6 items-center gap-1 rounded text-[12px] text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+      >
+        {expanded
+          ? "Hide details"
+          : hidden > 0
+            ? `${hidden} more limit${hidden === 1 ? "" : "s"}`
+            : "Details"}
+        <span className="sr-only"> for {accountName(account)}</span>
+        <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+// WindowBar is one quota window as a thin bar: accent while healthy, warn once
+// mostly used, bad when exhausted.
+function WindowBar({ quota }: { quota: UpstreamQuota }) {
+  const limited = quota.limit > 0;
+  const used = windowUsedPercent(quota);
+  const tone = windowTone(quota);
+  return (
+    <div className="min-w-0" title={quota.reset_at ? `Resets ${formatDateTime(quota.reset_at)}` : undefined}>
+      <div className="grid grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)_2.75rem] items-center gap-2">
+        <span className="truncate text-[12px] text-fg-muted" title={humanize(quota.resource_type)}>{humanize(quota.resource_type)}</span>
+        <UsageBar quota={quota} />
+        <span className={cn("text-right text-[12px] tabular-nums", tone.text)}>{limited ? `${used}%` : "—"}</span>
       </div>
-      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-        <div className={`h-full rounded-full ${color.bar}`} style={{ width: `${Math.max(2, 100 - remaining)}%` }} />
+      <div className="mt-0.5 truncate text-[11.5px] tabular-nums text-fg-faint">
+        {limited ? `${fmtCompact(quota.used)} of ${fmtCompact(quota.limit)}` : `${fmtCompact(quota.used)} used · unlimited`}
+        {" · "}
+        {quota.reset_at ? `resets ${formatCountdown(quota.reset_at)}` : "no reset reported"}
       </div>
-      <div className="mt-1 text-[10px] text-[var(--text-muted)]">
-        {resetAt ? `Next reset ${formatCountdown(resetAt)}` : "No reset time reported"}
-      </div>
+    </div>
+  );
+}
+
+function UsageBar({ quota }: { quota: UpstreamQuota }) {
+  const used = windowUsedPercent(quota);
+  const tone = windowTone(quota);
+  return (
+    <div
+      className="h-1.5 overflow-hidden rounded-full bg-track"
+      role="meter"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={used}
+      aria-label={`${humanize(quota.resource_type)} used`}
+    >
+      <div className={cn("h-full rounded-full", tone.bar)} style={{ width: `${Math.max(quota.used > 0 && quota.limit > 0 ? 2 : 0, used)}%` }} />
     </div>
   );
 }
@@ -886,31 +1007,30 @@ function QuotaDetails({ account }: { account: QuotaAccount }) {
   const { page, pages, paged, setPage, total } = useClientPagination(quotas, 6);
 
   return (
-    <div className="mx-auto max-w-5xl overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]">
-      <div className="flex flex-col gap-2 border-b border-[var(--border)] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h3 className="text-xs font-semibold">Reported upstream limits</h3>
-          <p className="mt-0.5 text-[10px] text-[var(--text-muted)]">
-            {account.message || "Values are fetched directly from the provider and may use provider-specific units."}
-          </p>
+    <div className="overflow-hidden rounded-2xl border border-line bg-surface">
+      <div className="flex flex-col gap-1 border-b border-line px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-[13px] font-semibold text-fg">Upstream limits</h3>
+          {account.message && <p className="text-[12px] text-fg-muted">{account.message}</p>}
         </div>
-        <span className="text-[10px] text-[var(--text-muted)]">Account updated {relativeTime(account.updated_at)}</span>
+        <span className="shrink-0 text-[12px] text-fg-faint">Updated {relativeTime(account.updated_at)}</span>
       </div>
-      <div className="divide-y divide-[var(--border)] sm:hidden">
+      <div className="divide-y divide-line sm:hidden">
         {paged.map((quota, index) => <QuotaDetailMobile key={`${quota.resource_type}-${index}`} quota={quota} />)}
       </div>
       <div className="hidden overflow-x-auto sm:block">
-        <table className="w-full min-w-[680px] text-xs">
+        <table className="w-full min-w-[640px] text-[13px]">
+          <caption className="sr-only">Upstream limits for {accountName(account)}</caption>
           <thead>
-            <tr className="border-b border-[var(--border)] text-[9px] font-medium text-[var(--text-muted)]">
-              <th className="px-4 py-2.5 text-left">Resource</th>
-              <th className="px-3 py-2.5 text-left">Consumption</th>
-              <th className="px-3 py-2.5 text-right">Used</th>
-              <th className="px-3 py-2.5 text-right">Remaining</th>
-              <th className="px-4 py-2.5 text-right">Reset</th>
+            <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+              <th scope="col" className="px-4 py-2 font-medium">Window</th>
+              <th scope="col" className="w-[30%] px-3 py-2 font-medium">Consumption</th>
+              <th scope="col" className="px-3 py-2 text-right font-medium">Used</th>
+              <th scope="col" className="px-3 py-2 text-right font-medium">Remaining</th>
+              <th scope="col" className="px-4 py-2 text-right font-medium">Resets</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-[var(--border)]">
+          <tbody className="divide-y divide-line">
             {paged.map((quota, index) => <QuotaDetailRow key={`${quota.resource_type}-${index}`} quota={quota} />)}
           </tbody>
         </table>
@@ -921,69 +1041,41 @@ function QuotaDetails({ account }: { account: QuotaAccount }) {
 }
 
 function QuotaDetailMobile({ quota }: { quota: UpstreamQuota }) {
-  const remaining = quota.limit > 0 ? Math.max(0, Math.min(100, Math.round((quota.remaining / quota.limit) * 100))) : 100;
-  const used = quota.limit > 0 ? 100 - remaining : 0;
-  const color = quotaColor(remaining);
+  const remaining = windowRemainingPercent(quota);
+  const tone = windowTone(quota);
   return (
-    <div className="px-3 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-xs font-semibold">{humanize(quota.resource_type)}</div>
-          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
-            {fmtInteger(quota.used)} used of {quota.limit > 0 ? fmtInteger(quota.limit) : "unlimited"}
-          </div>
-        </div>
-        <div className={`shrink-0 text-right text-xs font-semibold tabular-nums ${color.text}`}>
+    <div className="px-4 py-2.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="truncate text-[13px] text-fg">{humanize(quota.resource_type)}</span>
+        <span className={cn("shrink-0 text-[12px] tabular-nums", tone.text)}>
           {quota.limit > 0 ? `${remaining}% left` : "Unlimited"}
-        </div>
+        </span>
       </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-        <div className={`h-full rounded-full ${color.bar}`} style={{ width: `${Math.max(quota.used > 0 ? 2 : 0, used)}%` }} />
-      </div>
-      <div className="mt-1.5 text-[10px] text-[var(--text-muted)]">
-        {quota.reset_at ? `Resets ${formatCountdown(quota.reset_at)}` : "No reset time reported"}
+      <div className="mt-1.5"><UsageBar quota={quota} /></div>
+      <div className="mt-1 text-[12px] tabular-nums text-fg-faint">
+        {fmtInteger(quota.used)} of {quota.limit > 0 ? fmtInteger(quota.limit) : "unlimited"}
+        {" · "}
+        {quota.reset_at ? `resets ${formatCountdown(quota.reset_at)}` : "no reset reported"}
       </div>
     </div>
   );
 }
 
 function QuotaDetailRow({ quota }: { quota: UpstreamQuota }) {
-  const remaining = quota.limit > 0 ? Math.max(0, Math.min(100, Math.round((quota.remaining / quota.limit) * 100))) : 100;
-  const used = quota.limit > 0 ? 100 - remaining : 0;
-  const color = quotaColor(remaining);
+  const remaining = windowRemainingPercent(quota);
+  const tone = windowTone(quota);
   return (
     <tr>
-      <td className="px-4 py-3 font-medium">{humanize(quota.resource_type)}</td>
-      <td className="px-3 py-3">
-        <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-          <div className={`h-full rounded-full ${color.bar}`} style={{ width: `${Math.max(quota.used > 0 ? 2 : 0, used)}%` }} />
-        </div>
+      <td className="px-4 py-2.5 text-fg">{humanize(quota.resource_type)}</td>
+      <td className="px-3 py-2.5"><UsageBar quota={quota} /></td>
+      <td className="px-3 py-2.5 text-right tabular-nums text-fg-muted">
+        {fmtInteger(quota.used)} / {quota.limit > 0 ? fmtInteger(quota.limit) : "Unlimited"}
       </td>
-      <td className="px-3 py-3 text-right tabular-nums">{fmtInteger(quota.used)} / {quota.limit > 0 ? fmtInteger(quota.limit) : "Unlimited"}</td>
-      <td className={`px-3 py-3 text-right font-semibold tabular-nums ${color.text}`}>{quota.limit > 0 ? `${remaining}%` : "Unlimited"}</td>
-      <td className="whitespace-nowrap px-4 py-3 text-right text-[var(--text-muted)]" title={quota.reset_at ? formatDateTime(quota.reset_at) : undefined}>
+      <td className={cn("px-3 py-2.5 text-right tabular-nums", tone.text)}>{quota.limit > 0 ? `${remaining}%` : "Unlimited"}</td>
+      <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-fg-muted" title={quota.reset_at ? formatDateTime(quota.reset_at) : undefined}>
         {quota.reset_at ? formatCountdown(quota.reset_at) : "—"}
       </td>
     </tr>
-  );
-}
-
-function ProviderIcon({ provider, label }: { provider: string; label: string }) {
-  const [errored, setErrored] = useState(false);
-  if (errored) {
-    return (
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--bg-subtle)] text-[10px] font-bold text-[var(--text-muted)]">
-        {(label || provider).slice(0, 2).toUpperCase()}
-      </div>
-    );
-  }
-  return (
-    <img
-      src={`/providers/${provider}.png`}
-      alt=""
-      onError={() => setErrored(true)}
-      className="h-8 w-8 shrink-0 rounded-lg object-contain"
-    />
   );
 }
 
@@ -1014,6 +1106,23 @@ function worstRemainingPercent(account: QuotaAccount): number {
   return percentages.length > 0 ? Math.min(...percentages) : 100;
 }
 
+function windowRemainingPercent(quota: UpstreamQuota): number {
+  return quota.limit > 0 ? Math.max(0, Math.min(100, Math.round((quota.remaining / quota.limit) * 100))) : 100;
+}
+
+function windowUsedPercent(quota: UpstreamQuota): number {
+  return quota.limit > 0 ? 100 - windowRemainingPercent(quota) : 0;
+}
+
+// windowTone colours a window by consumption: exhausted uses the same
+// threshold as the depleted-account logic, near-limit starts at 80% used.
+function windowTone(quota: UpstreamQuota): { bar: string; text: string } {
+  if (quota.limit <= 0) return { bar: "bg-accent-500", text: "text-fg-faint" };
+  if ((quota.remaining / quota.limit) * 100 < DEPLETED_THRESHOLD) return { bar: "bg-bad", text: "text-bad" };
+  if (windowUsedPercent(quota) >= NEAR_LIMIT_USED) return { bar: "bg-warn", text: "text-warn" };
+  return { bar: "bg-accent-500", text: "text-fg-muted" };
+}
+
 function earliestReset(account: QuotaAccount): number | null {
   let earliest: number | null = null;
   for (const quota of account.upstream_quotas ?? []) {
@@ -1037,12 +1146,6 @@ function accountAttentionScore(account: QuotaAccount): number {
   if (effectiveQuotaState(account) === "error") return 2;
   if (account.status === "active") return 3;
   return 4;
-}
-
-function quotaColor(remaining: number): { bar: string; text: string } {
-  if (remaining > 70) return { bar: "bg-ok", text: "text-ok" };
-  if (remaining >= 30) return { bar: "bg-warn", text: "text-warn" };
-  return { bar: "bg-bad", text: "text-bad" };
 }
 
 function formatCountdown(value: string | number): string {

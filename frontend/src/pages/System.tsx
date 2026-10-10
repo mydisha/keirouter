@@ -1,443 +1,354 @@
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Activity,
-  Cpu,
-  MemoryStick,
-  Server,
-  AlertTriangle,
-  RefreshCw,
-  Globe,
-} from "lucide-react";
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  ResponsiveContainer,
-  Tooltip,
-  CartesianGrid,
-} from "recharts";
-import { api } from "../lib/api";
+import { AlertTriangle, ChevronRight, RefreshCw } from "lucide-react";
+import { api, type SystemSample } from "../lib/api";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
-import { Card, SectionHeader, Spinner, ErrorCard, Badge } from "../components/ui";
+import { Badge, ErrorCard, Skeleton } from "../components/ui";
+import { ChartCard, TimeLines } from "../components/charts/TimeSeries";
 
-// ---- helpers ----------------------------------------------------------------
+// System shows what this KeiRouter instance and its host are using, refreshed
+// every 5 seconds from /api/system and /api/system/history. The history is a
+// rolling in-memory ring kept by the gateway, so it starts empty after a
+// restart and fills as samples arrive.
 
-function formatUptime(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h < 24) return `${h}h ${m}m`;
-  const d = Math.floor(h / 24);
-  return `${d}d ${h % 24}h ${m}m`;
-}
+const CPU_WARN = 80;
+const MEM_WARN = 85;
 
-function tsLabel(ts: number): string {
-  const d = new Date(ts * 1000);
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
+// Chart series colours are CSS custom properties handed to the SVG chart kit
+// (accent = primary data series, as in HealthCharts).
+const SERIES_MAIN = "var(--color-accent-500)";
+const SERIES_SOFT = "var(--color-accent-300)";
+const SERIES_ALT = "var(--series-alt)";
 
-// ---- page -------------------------------------------------------------------
+const FOCUS = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
 
 export function SystemPage() {
-  const snap = useQuery({
-    queryKey: ["system"],
-    queryFn: () => api.systemMonitor(),
-    refetchInterval: 5000,
-  });
+  const snap = useQuery({ queryKey: ["system"], queryFn: () => api.systemMonitor(), refetchInterval: 5000 });
+  const history = useQuery({ queryKey: ["system-history"], queryFn: () => api.systemHistory(), refetchInterval: 5000 });
+  const refresh = () => {
+    snap.refetch();
+    history.refetch();
+  };
 
-  const history = useQuery({
-    queryKey: ["system-history"],
-    queryFn: () => api.systemHistory(),
-    refetchInterval: 5000,
-  });
+  const header = (
+    <PageHeader
+      title="System"
+      description="This instance and its host, refreshed every 5 seconds."
+      action={
+        <>
+          <span role="status" className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12px] font-medium text-fg-muted">
+            <span className={cn("h-1.5 w-1.5 rounded-full", snap.isError ? "bg-bad" : "live-dot bg-ok")} aria-hidden="true" />
+            {snap.isError ? "Unreachable" : "Live"}
+          </span>
+          <button
+            type="button"
+            onClick={refresh}
+            aria-label="Refresh now"
+            className={cn("inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg", FOCUS)}
+          >
+            <RefreshCw className={cn("h-4 w-4", (snap.isFetching || history.isFetching) && "animate-spin")} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </>
+      }
+    />
+  );
 
-  if (snap.isLoading) return <Spinner />;
-  if (snap.isError) return <ErrorCard message={(snap.error as Error).message} />;
+  if (snap.isLoading) {
+    return (
+      <>
+        {header}
+        <div className="space-y-5" aria-busy="true">
+          <span className="sr-only" role="status">Loading system metrics</span>
+          <Skeleton className="h-[92px] w-full rounded-2xl" />
+          <div className="grid gap-5 lg:grid-cols-2">
+            <Skeleton className="h-[260px] rounded-2xl" />
+            <Skeleton className="h-[260px] rounded-2xl" />
+          </div>
+        </div>
+      </>
+    );
+  }
+  if (snap.isError || !snap.data) {
+    return (
+      <>
+        {header}
+        <ErrorCard message={(snap.error as Error)?.message || "Couldn't read system metrics. Check that the gateway is running."} />
+      </>
+    );
+  }
 
-  const s = snap.data!;
-  const h = history.data;
+  const s = snap.data;
+  const samples = history.data?.samples ?? [];
+  const spikes = history.data?.spikes ?? [];
+  const interval = history.data?.interval_sec ?? 5;
+  const windowText = samples.length > 1 ? `Last ${fmtDuration((samples[samples.length - 1].ts - samples[0].ts) || interval * samples.length)}` : "Collecting samples…";
+  const x = (p: SystemSample) => p.ts * 1000;
+  const spanS = samples.length > 1 ? samples[samples.length - 1].ts - samples[0].ts : 0;
+  // Short windows need seconds on the axis or every label reads the same minute.
+  const xFormat = spanS < 600 ? fmtClockSeconds : (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false });
 
-  const chartData = (h?.samples ?? []).map((pt) => ({
-    time: tsLabel(pt.ts),
-    cpu: +pt.cpu_pct.toFixed(1),
-    mem: +pt.mem_pct.toFixed(1),
-    procCpu: +(pt.proc_cpu_pct ?? 0).toFixed(1),
-    procRss: +(pt.proc_rss_mb ?? 0).toFixed(1),
-  }));
-
-  const spikes = h?.spikes ?? [];
+  // Four vitals: host load leads, KeiRouter's own share is the context line.
+  const vitals: { label: string; value: string; pct: number; warn: number; hint: string }[] = [
+    { label: "CPU", value: `${s.cpu_pct.toFixed(1)}%`, pct: s.cpu_pct, warn: CPU_WARN, hint: `KeiRouter ${s.proc_cpu_pct.toFixed(1)}% · ${s.cpu_per_core.length} cores` },
+    { label: "Memory", value: `${s.mem_pct.toFixed(1)}%`, pct: s.mem_pct, warn: MEM_WARN, hint: `${fmtMB(s.mem_used_mb)} of ${fmtMB(s.mem_total_mb)} · KeiRouter ${fmtMB(s.proc_rss_mb)}` },
+    { label: "Disk", value: `${s.disk_pct.toFixed(1)}%`, pct: s.disk_pct, warn: 90, hint: `${s.disk_free_gb.toFixed(1)} GB free` },
+    { label: "Uptime", value: fmtDuration(s.uptime_s), pct: -1, warn: 0, hint: `${s.proc_threads} threads` },
+  ];
 
   return (
     <>
-      <PageHeader
-        title="System Monitor"
-        description="Real-time resource usage and runtime health"
-        icon={Activity}
-        action={
-          <button
-            onClick={() => { snap.refetch(); history.refetch(); }}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-sm font-medium text-[var(--text-muted)] transition-colors hover:bg-ink-100 dark:hover:bg-ink-800"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Refresh
-          </button>
-        }
-      />
-
-      {/* ── Overview panel ─────────────────────────────────────────── */}
-      <Card className="mb-6">
-        <SectionHeader
-          title="System Overview"
-          description="Host and process resource usage"
-          icon={Server}
-          iconTone="accent"
-        />
-        <div className="px-6 pb-5 grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-4">
-          {/* Host column */}
-          <div className="space-y-3">
-            <p className="text-xs font-medium text-[var(--text-muted)]">Host</p>
-            <MetricBar label="CPU" value={s.cpu_pct} unit="%" detail={`${s.cpu_per_core.length} cores`} />
-            <MetricBar label="Memory" value={s.mem_pct} unit="%" detail={`${s.mem_used_mb} / ${s.mem_total_mb} MB`} />
-            <MetricBar label="Disk" value={s.disk_pct} unit="%" detail={`${s.disk_used_gb.toFixed(1)} / ${s.disk_total_gb.toFixed(1)} GB`} />
-            <div className="flex items-center justify-between text-sm pt-1">
-              <span className="text-[var(--text-muted)]">Network Connections</span>
-              <span className="tabular-nums font-medium">{s.net_conns.toLocaleString()}</span>
+      {header}
+      <div className="space-y-6">
+        <section aria-label="Current usage" className="grid grid-cols-2 gap-px overflow-hidden rounded-2xl border border-line bg-line shadow-[var(--shadow-card)] lg:grid-cols-4">
+          {vitals.map((g) => (
+            <div key={g.label} className="min-w-0 bg-surface px-4 py-3">
+              <p className="text-[12px] font-medium text-fg-muted">{g.label}</p>
+              <p className={cn("mt-1 text-[22px] font-semibold leading-tight tracking-[-0.02em] tabular-nums", g.pct >= 0 ? toneText(g.pct, g.warn) : "text-fg")}>
+                {g.value}
+                {g.pct >= g.warn && g.pct >= 0 && <span className="sr-only"> (high)</span>}
+              </p>
+              {g.pct >= 0 && (
+                <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-track" aria-hidden="true">
+                  <div className={cn("h-full rounded-full", toneFill(g.pct, g.warn))} style={{ width: `${Math.min(100, g.pct)}%` }} />
+                </div>
+              )}
+              <p className="mt-1.5 truncate text-[12px] tabular-nums text-fg-faint" title={g.hint}>
+                {g.hint}
+              </p>
             </div>
+          ))}
+        </section>
+
+        <section aria-labelledby="history-title" className="space-y-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <h2 id="history-title" className="text-[14px] font-semibold text-fg">History</h2>
+            <p className="text-[12px] tabular-nums text-fg-muted">
+              {windowText}
+              {samples.length > 1 && spikes.length === 0 && " · no spikes"}
+            </p>
           </div>
-          {/* Process column */}
-          <div className="space-y-3">
-            <p className="text-xs font-medium text-[var(--text-muted)]">Process (PID {s.pid})</p>
-            <MetricBar label="CPU" value={s.proc_cpu_pct} unit="%" detail={`Uptime ${formatUptime(s.uptime_s)}`} />
-            <MetricBar label="RSS" value={Math.min((s.proc_rss_mb / s.mem_total_mb) * 100, 100)} unit="%" detail={`${s.proc_rss_mb.toFixed(0)} MB`} />
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-[var(--text-muted)]">Goroutines</span>
-              <span className="tabular-nums font-medium">{s.goroutines.toLocaleString()}</span>
-            </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-[var(--text-muted)]">Threads</span>
-              <span className="tabular-nums font-medium">{s.proc_threads.toLocaleString()}</span>
-            </div>
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-[var(--text-muted)]">Open FDs</span>
-              <span className="tabular-nums font-medium">{s.proc_open_fds.toLocaleString()}</span>
-            </div>
+          {history.isError && (
+            <p role="status" className="flex items-center gap-2 text-[12.5px] text-warn">
+              <AlertTriangle className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+              History is unavailable; current values above are still live.
+            </p>
+          )}
+
+          <div className="grid gap-5 lg:grid-cols-2">
+            <ChartCard
+              title="CPU"
+              legend={[
+                { label: "Host", color: SERIES_MAIN },
+                { label: "KeiRouter", color: SERIES_ALT },
+              ]}
+            >
+              <TimeLines
+                data={samples}
+                x={x}
+                max={100}
+                threshold={{ value: CPU_WARN, label: `${CPU_WARN}% spike` }}
+                format={(v) => `${Math.round(v)}%`}
+                tooltipTime={fmtClockSeconds}
+                xFormat={xFormat}
+                label="CPU usage over time, host and KeiRouter"
+                series={[
+                  { key: "host", label: "Host", color: SERIES_MAIN, value: (p) => p.cpu_pct },
+                  { key: "proc", label: "KeiRouter", color: SERIES_ALT, value: (p) => p.proc_cpu_pct ?? 0 },
+                ]}
+              />
+              {s.cpu_per_core.length > 0 && <PerCore cores={s.cpu_per_core} />}
+            </ChartCard>
+
+            <ChartCard title="Host memory" legend={[{ label: "Memory", color: SERIES_MAIN }]}>
+              <TimeLines
+                data={samples}
+                x={x}
+                max={100}
+                threshold={{ value: MEM_WARN, label: `${MEM_WARN}% spike` }}
+                format={(v) => `${Math.round(v)}%`}
+                tooltipTime={fmtClockSeconds}
+                xFormat={xFormat}
+                label="Host memory usage over time"
+                series={[{ key: "mem", label: "Memory", color: SERIES_MAIN, value: (p) => p.mem_pct }]}
+              />
+            </ChartCard>
+
+            <ChartCard
+              title="KeiRouter memory"
+              legend={[
+                { label: "RSS", color: SERIES_MAIN },
+                { label: "Heap", color: SERIES_SOFT },
+              ]}
+            >
+              <TimeLines
+                data={samples}
+                x={x}
+                format={(v) => `${Math.round(v)} MB`}
+                tooltipTime={fmtClockSeconds}
+                xFormat={xFormat}
+                label="KeiRouter process memory over time, RSS and heap"
+                series={[
+                  { key: "rss", label: "RSS", color: SERIES_MAIN, value: (p) => p.proc_rss_mb ?? 0 },
+                  { key: "heap", label: "Heap", color: SERIES_SOFT, value: (p) => p.heap_mb },
+                ]}
+              />
+            </ChartCard>
+
+            <ChartCard title="Goroutines" subtitle="A steady climb can mean a leak" legend={[{ label: "Goroutines", color: SERIES_MAIN }]}>
+              <TimeLines
+                data={samples}
+                x={x}
+                tooltipTime={fmtClockSeconds}
+                xFormat={xFormat}
+                label="Goroutines over time"
+                series={[{ key: "g", label: "Goroutines", color: SERIES_MAIN, value: (p) => p.goroutines }]}
+              />
+            </ChartCard>
           </div>
-        </div>
-      </Card>
+        </section>
 
-      {/* ── Host charts ──────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 mb-6">
-        <MetricChart
-          title="Host CPU"
-          description="System-wide CPU percentage over time"
-          icon={Cpu}
-          data={chartData}
-          dataKey="cpu"
-          color="var(--color-accent-500)"
-          unit="%"
-          threshold={80}
-        />
-        <MetricChart
-          title="Host Memory"
-          description="System-wide memory percentage over time"
-          icon={MemoryStick}
-          data={chartData}
-          dataKey="mem"
-          color="var(--color-secondary-500, #d98a6a)"
-          unit="%"
-          threshold={85}
-        />
-      </div>
-
-      {/* ── Process charts ───────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 mb-6">
-        <MetricChart
-          title="Process CPU"
-          description="keirouter's own CPU usage over time"
-          icon={Cpu}
-          data={chartData}
-          dataKey="procCpu"
-          color="#f59e0b"
-          unit="%"
-          threshold={80}
-        />
-        <MetricChart
-          title="Process RSS"
-          description="keirouter's resident memory over time"
-          icon={MemoryStick}
-          data={chartData}
-          dataKey="procRss"
-          color="#06b6d4"
-          unit=" MB"
-        />
-      </div>
-
-      {/* ── Spike log ────────────────────────────────────────────── */}
-      {spikes.length > 0 && (
-        <Card className="mb-6">
-          <SectionHeader
-            title="Spike Events"
-            description="Recent CPU (>80%) or Memory (>85%) spikes detected"
-            icon={AlertTriangle}
-            iconTone="danger"
-          />
-          <div className="px-6 pb-5">
+        {spikes.length > 0 && (
+          <section aria-labelledby="spikes-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+            <div className="border-b border-line px-4 py-3">
+              <h2 id="spikes-title" className="text-[13px] font-semibold text-fg">Spikes</h2>
+              <p className="mt-0.5 text-[12px] text-fg-muted">
+                CPU above {CPU_WARN}% or memory above {MEM_WARN}%
+              </p>
+            </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full min-w-[560px] text-[13px]">
                 <thead>
-                  <tr className="border-b border-[var(--border)]">
-                    <th className="pb-2 pr-4 text-left text-xs font-medium text-[var(--text-muted)]">Time</th>
-                    <th className="pb-2 pr-4 text-left text-xs font-medium text-[var(--text-muted)]">Type</th>
-                    <th className="pb-2 pr-4 text-right text-xs font-medium text-[var(--text-muted)]">CPU %</th>
-                    <th className="pb-2 pr-4 text-right text-xs font-medium text-[var(--text-muted)]">Mem %</th>
-                    <th className="pb-2 text-right text-xs font-medium text-[var(--text-muted)]">Goroutines</th>
+                  <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                    <th scope="col" className="px-4 py-2 font-medium">Time</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Spike</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium">CPU</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium">Memory</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium">Goroutines</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[var(--border)]">
+                <tbody className="divide-y divide-line">
                   {spikes.map((sp, i) => (
-                    <tr key={i} className="group">
-                      <td className="py-2 pr-4 font-mono text-xs text-[var(--text-muted)]">{tsLabel(sp.ts)}</td>
-                      <td className="py-2 pr-4">
-                        {sp.cpu_spike && <Badge tone="danger">CPU spike</Badge>}
-                        {sp.mem_spike && <Badge tone="danger">Memory spike</Badge>}
-                      </td>
-                      <td className="py-2 pr-4 text-right tabular-nums">
-                        <span className={sp.cpu_spike ? "text-[color:var(--color-danger)] font-medium" : ""}>
-                          {sp.cpu_pct.toFixed(1)}%
+                    <tr key={i} className="hover:bg-hover">
+                      <td className="whitespace-nowrap px-4 py-2 font-mono text-[12px] text-fg-muted">{new Date(sp.ts * 1000).toLocaleString()}</td>
+                      <td className="px-4 py-2">
+                        <span className="inline-flex gap-1.5">
+                          {sp.cpu_spike && <Badge tone="danger">CPU</Badge>}
+                          {sp.mem_spike && <Badge tone="danger">Memory</Badge>}
                         </span>
                       </td>
-                      <td className="py-2 pr-4 text-right tabular-nums">
-                        <span className={sp.mem_spike ? "text-[color:var(--color-danger)] font-medium" : ""}>
-                          {sp.mem_pct.toFixed(1)}%
-                        </span>
-                      </td>
-                      <td className="py-2 text-right tabular-nums">{sp.goroutines}</td>
+                      <td className={cn("px-4 py-2 text-right tabular-nums", sp.cpu_spike ? "font-medium text-bad" : "text-fg")}>{sp.cpu_pct.toFixed(1)}%</td>
+                      <td className={cn("px-4 py-2 text-right tabular-nums", sp.mem_spike ? "font-medium text-bad" : "text-fg")}>{sp.mem_pct.toFixed(1)}%</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-fg">{sp.goroutines.toLocaleString("en-US")}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </div>
-        </Card>
-      )}
+          </section>
+        )}
 
-      {/* ── Runtime details ──────────────────────────────────────── */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 mb-6">
-        <Card>
-          <SectionHeader
-            title="Go Runtime"
-            description="Memory and GC statistics"
-            icon={Server}
-            iconTone="accent"
-          />
-          <div className="px-6 pb-5">
-            <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-              <DetailRow label="Heap Alloc" value={`${s.heap_alloc_mb.toFixed(1)} MB`} />
-              <DetailRow label="Heap Sys" value={`${s.heap_sys_mb.toFixed(1)} MB`} />
-              <DetailRow label="Heap In-Use" value={`${s.heap_inuse_mb.toFixed(1)} MB`} />
-              <DetailRow label="Heap Idle" value={`${s.heap_idle_mb.toFixed(1)} MB`} />
-              <DetailRow label="GC Cycles" value={s.gc_cycles.toLocaleString()} />
-              <DetailRow label="GC Pause (total)" value={`${s.gc_pause_total_ms.toFixed(1)} ms`} />
-              <DetailRow label="GC Pause (last)" value={`${s.gc_pause_last_ms.toFixed(2)} ms`} />
-              <DetailRow label="Network Conns" value={s.net_conns.toLocaleString()} />
-              <DetailRow label="Process FDs" value={s.proc_open_fds.toLocaleString()} />
-              <DetailRow label="Process Threads" value={s.proc_threads.toLocaleString()} />
-            </div>
+        <section aria-labelledby="details-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+          <div className="border-b border-line px-4 py-3">
+            <h2 id="details-title" className="text-[13px] font-semibold text-fg">Details</h2>
           </div>
-        </Card>
-
-        <Card>
-          <SectionHeader
-            title="Host Info"
-            description="System and process details"
-            icon={Globe}
-            iconTone="secondary"
-          />
-          <div className="px-6 pb-5">
-            <div className="grid grid-cols-2 gap-x-8 gap-y-3">
-              <DetailRow label="Hostname" value={s.host || "—"} />
-              <DetailRow label="OS" value={s.os || "—"} />
-              <DetailRow label="Architecture" value={s.arch || "—"} />
-              <DetailRow label="PID" value={String(s.pid)} />
-              <DetailRow label="Uptime" value={formatUptime(s.uptime_s)} />
-              <DetailRow label="Memory Available" value={`${s.mem_available_mb} MB`} />
-              <DetailRow label="Disk Free" value={`${s.disk_free_gb.toFixed(1)} GB`} />
-            </div>
+          <div className="grid divide-y divide-line lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+            <DetailList
+              title="Go runtime"
+              rows={[
+                ["Heap allocated", `${s.heap_alloc_mb.toFixed(1)} MB`],
+                ["Heap in use", `${s.heap_inuse_mb.toFixed(1)} MB`],
+                ["Heap idle", `${s.heap_idle_mb.toFixed(1)} MB`],
+                ["Heap reserved from OS", `${s.heap_sys_mb.toFixed(1)} MB`],
+                ["GC cycles", s.gc_cycles.toLocaleString("en-US")],
+                ["Last GC pause", `${s.gc_pause_last_ms.toFixed(2)} ms`],
+                ["Total GC pause", `${s.gc_pause_total_ms.toFixed(1)} ms`],
+                ["Goroutines", s.goroutines.toLocaleString("en-US")],
+              ]}
+            />
+            <DetailList
+              title="Host & process"
+              rows={[
+                ["Hostname", <span key="h" className="font-mono text-[12.5px]">{s.host || "—"}</span>],
+                ["Platform", <span key="p" className="font-mono text-[12.5px]">{s.os && s.arch ? `${s.os}/${s.arch}` : s.os || "—"}</span>],
+                ["Process ID", <span key="pid" className="font-mono text-[12.5px]">{s.pid}</span>],
+                ["Memory available", fmtMB(s.mem_available_mb)],
+                ["Disk", `${s.disk_used_gb.toFixed(1)} of ${s.disk_total_gb.toFixed(1)} GB used`],
+                ["Network connections", s.net_conns.toLocaleString("en-US")],
+                ["Open file descriptors", `${s.proc_open_fds.toLocaleString("en-US")} process · ${s.open_fds.toLocaleString("en-US")} host`],
+              ]}
+            />
           </div>
-        </Card>
+        </section>
       </div>
-
-      {/* ── Per-core CPU ─────────────────────────────────────────── */}
-      {s.cpu_per_core.length > 0 && (
-        <Card className="mb-6">
-          <SectionHeader
-            title="CPU Per Core"
-            description={`Utilization across ${s.cpu_per_core.length} cores`}
-            icon={Cpu}
-            iconTone="accent"
-          />
-          <div className="px-6 pb-5">
-            {/* Heat strip: compact colored cells, wraps to fill width */}
-            <div className="flex flex-wrap gap-1">
-              {s.cpu_per_core.map((pct, i) => {
-                const bg =
-                  pct >= 85 ? "bg-[color:var(--color-danger)]" :
-                  pct >= 60 ? "bg-[color:var(--color-warning)]" :
-                  pct >= 20 ? "bg-accent-500" :
-                  "bg-ink-200 dark:bg-ink-700";
-                return (
-                  <div
-                    key={i}
-                    title={`Core ${i}: ${pct.toFixed(0)}%`}
-                    className={`h-5 rounded-sm transition-colors duration-300 ${bg}`}
-                    style={{
-                      width: s.cpu_per_core.length <= 16
-                        ? `calc(${100 / 8}% - 4px)`    // ~8 per row for small counts
-                        : s.cpu_per_core.length <= 32
-                        ? `calc(${100 / 16}% - 3px)`   // ~16 per row
-                        : `calc(${100 / 20}% - 3px)`,  // ~20 per row for 40+
-                      minWidth: 8,
-                      opacity: Math.max(0.15, pct / 100),
-                    }}
-                  />
-                );
-              })}
-            </div>
-            {/* Legend */}
-            <div className="flex items-center gap-3 mt-3 text-[11px] text-[var(--text-muted)]">
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-ink-200 dark:bg-ink-700" /> Idle</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-accent-500" /> 20-60%</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-[color:var(--color-warning)]" /> 60-85%</span>
-              <span className="flex items-center gap-1"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-[color:var(--color-danger)]" /> 85%+</span>
-            </div>
-          </div>
-        </Card>
-      )}
     </>
   );
 }
 
-// ---- sub-components ---------------------------------------------------------
-
-function MetricChart({
-  title,
-  description,
-  icon: Icon,
-  data,
-  dataKey,
-  color,
-  unit,
-  threshold,
-}: {
-  title: string;
-  description: string;
-  icon: typeof Activity;
-  data: Record<string, string | number>[];
-  dataKey: string;
-  color: string;
-  unit: string;
-  threshold?: number;
-}) {
+// Per-core load sits behind a disclosure inside the CPU card; most visits only
+// need the aggregate.
+function PerCore({ cores }: { cores: number[] }) {
   return (
-    <Card>
-      <SectionHeader title={title} description={description} icon={Icon} iconTone="accent" />
-      <div className="px-4 pb-4" style={{ height: 220 }}>
-        {data.length < 2 ? (
-          <div className="flex h-full items-center justify-center text-sm text-[var(--text-muted)]">
-            Collecting data…
+    <details className="group mt-3 border-t border-line pt-2">
+      <summary className={cn("flex h-7 w-fit cursor-pointer list-none items-center gap-1 rounded-md text-[12.5px] font-medium text-fg-muted hover:text-fg [&::-webkit-details-marker]:hidden", FOCUS)}>
+        <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" strokeWidth={1.75} aria-hidden="true" />
+        Per core ({cores.length})
+      </summary>
+      <ul className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(64px,1fr))] gap-1.5" aria-label="CPU load per core">
+        {cores.map((pct, i) => (
+          <li key={i} className="rounded-lg border border-line px-2 py-1.5" aria-label={`Core ${i}: ${Math.round(pct)}%`}>
+            <div className="flex items-baseline justify-between text-[11px] tabular-nums" aria-hidden="true">
+              <span className="font-mono text-fg-faint">{i}</span>
+              <span className={pct >= 85 ? "text-bad" : pct >= 60 ? "text-warn" : "text-fg"}>{Math.round(pct)}%</span>
+            </div>
+            <div className="mt-1 h-1 overflow-hidden rounded-full bg-track" aria-hidden="true">
+              <div className={cn("h-full rounded-full", pct >= 85 ? "bg-bad" : pct >= 60 ? "bg-warn" : "bg-accent-500")} style={{ width: `${Math.max(2, pct)}%` }} />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
+function DetailList({ title, rows }: { title: string; rows: [string, ReactNode][] }) {
+  return (
+    <div className="min-w-0">
+      <h3 className="px-4 pb-1 pt-3 text-[12.5px] font-medium text-fg-muted">{title}</h3>
+      <dl className="divide-y divide-line">
+        {rows.map(([label, value]) => (
+          <div key={label} className="flex items-baseline justify-between gap-4 px-4 py-2.5 text-[13px]">
+            <dt className="text-fg-muted">{label}</dt>
+            <dd className="text-right tabular-nums text-fg">{value}</dd>
           </div>
-        ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
-              <defs>
-                <linearGradient id={`grad-${dataKey}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={color} stopOpacity={0.3} />
-                  <stop offset="100%" stopColor={color} stopOpacity={0.02} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis
-                dataKey="time"
-                tick={{ fontSize: 10, fill: "var(--text-muted)" }}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                tick={{ fontSize: 10, fill: "var(--text-muted)" }}
-                tickLine={false}
-                axisLine={false}
-                domain={unit === "%" ? [0, 100] : ["auto", "auto"]}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "var(--bg-elevated)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 12,
-                  fontSize: 12,
-                  boxShadow: "var(--shadow-pop)",
-                }}
-                labelStyle={{ fontSize: 11, color: "var(--text-muted)" }}
-                formatter={(val) => [`${val}${unit}`, title]}
-              />
-              {threshold != null && (
-                <Area
-                  type="monotone"
-                  dataKey={() => threshold}
-                  stroke="#ef4444"
-                  strokeDasharray="4 4"
-                  strokeWidth={1}
-                  fill="none"
-                  dot={false}
-                  activeDot={false}
-                  isAnimationActive={false}
-                />
-              )}
-              <Area
-                type="monotone"
-                dataKey={dataKey}
-                stroke={color}
-                strokeWidth={2}
-                fill={`url(#grad-${dataKey})`}
-                dot={false}
-                activeDot={{ r: 4, stroke: color, strokeWidth: 2, fill: "var(--bg-elevated)" }}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function MetricBar({ label, value, unit, detail }: { label: string; value: number; unit: string; detail: string }) {
-  const color =
-    value >= 85 ? "var(--color-danger, #ef4444)" :
-    value >= 60 ? "var(--color-warning, #f59e0b)" :
-    "var(--color-accent-500, #6366f1)";
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-sm">
-        <span className="text-[var(--text-muted)]">{label}</span>
-        <span className="tabular-nums font-medium">{value.toFixed(1)}{unit}</span>
-      </div>
-      <div className="h-1.5 w-full rounded-full bg-ink-200 dark:bg-ink-700 overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${Math.min(value, 100)}%`, backgroundColor: color }}
-        />
-      </div>
-      <p className="text-[11px] text-[var(--text-muted)]">{detail}</p>
+        ))}
+      </dl>
     </div>
   );
 }
 
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline justify-between gap-2">
-      <span className="text-xs text-[var(--text-muted)]">{label}</span>
-      <span className="text-sm font-medium tabular-nums">{value}</span>
-    </div>
-  );
+function toneText(pct: number, warn: number) {
+  return pct >= warn ? "text-bad" : pct >= warn * 0.75 ? "text-warn" : "text-fg";
+}
+
+function toneFill(pct: number, warn: number) {
+  return pct >= warn ? "bg-bad" : pct >= warn * 0.75 ? "bg-warn" : "bg-accent-500";
+}
+
+function fmtMB(mb: number) {
+  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
+}
+
+function fmtDuration(seconds: number) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h < 24) return `${h}h ${m}m`;
+  return `${Math.floor(h / 24)}d ${h % 24}h`;
+}
+
+function fmtClockSeconds(ms: number) {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 }
