@@ -2,6 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -13,7 +16,17 @@ import (
 func newTestDB(t *testing.T) *DB {
 	t.Helper()
 	ctx := context.Background()
-	db, err := Open(ctx, config.DatabaseConfig{Driver: "sqlite", DSN: ":memory:"}, t.TempDir())
+	cfg := config.DatabaseConfig{Driver: "sqlite", DSN: ":memory:"}
+	if base := os.Getenv("KEIROUTER_AUDIT_PG_DSN"); base != "" {
+		schema := fmt.Sprintf("t_%d", time.Now().UnixNano())
+		admin, err := sql.Open("pgx", base)
+		require.NoError(t, err)
+		_, err = admin.Exec("CREATE SCHEMA " + schema)
+		require.NoError(t, err)
+		_ = admin.Close()
+		cfg = config.DatabaseConfig{Driver: "postgres", DSN: base + "&search_path=" + schema}
+	}
+	db, err := Open(ctx, cfg, t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, db.Migrate(ctx))
 	require.NoError(t, db.Tenants().EnsureDefault(ctx))

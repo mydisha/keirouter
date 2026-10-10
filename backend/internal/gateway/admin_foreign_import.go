@@ -976,6 +976,11 @@ var psdKeyRemap = map[string]map[string]string{
 		"userId":    "user_id",
 		"machineId": "machine_id",
 	},
+	// The Cloudflare base URL template is .../accounts/{accountId}/ai/v1, so
+	// the key must stay camelCase to resolve the placeholder.
+	"cloudflare-ai": {
+		"accountId": "accountId",
+	},
 }
 
 // psdToMetadata converts a 9router providerSpecificData map into KeiRouter

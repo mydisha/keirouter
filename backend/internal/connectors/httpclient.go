@@ -833,6 +833,11 @@ func httpStatusError(provider, model string, resp *http.Response, body []byte) e
 		case looksLikeCreditsExhausted(bodyStr):
 			kind = core.ErrQuotaExhausted
 			creditsExhausted = true
+		// Some APIs (Cloudflare) report a rejected token as a plain 400;
+		// treat it as the credential problem it is so the next account is
+		// tried and this one is benched.
+		case errclass.LooksLikeAuthError(bodyStr):
+			kind = core.ErrAuth
 		// The prompt does not fit this model: a larger-context target in the
 		// chain can still serve it.
 		case errclass.LooksLikeContextWindow(bodyStr):

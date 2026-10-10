@@ -64,7 +64,29 @@ var modelCapabilities = map[string]caps{
 // alias then full model id. These win over modelCapabilities and patterns.
 var providerCapabilities = map[string]map[string]caps{
 	"cloudflare-ai": {
-		"@cf/zai-org/glm-5.3-flash": {Vision: true, Reasoning: true, ThinkingFormat: "openai", ContextWindow: 1048576},
+		"@cf/zai-org/glm-5.3-flash":                    {Vision: true, Reasoning: true, ThinkingFormat: "openai", ContextWindow: 1048576},
+		"@cf/zai-org/glm-5.2":                          {Reasoning: true, ThinkingFormat: "openai", ContextWindow: 262144},
+		"@cf/zai-org/glm-4.7-flash":                    {Reasoning: true, ThinkingFormat: "openai", ContextWindow: 131072},
+		"@cf/moonshotai/kimi-k2.6":                     {Reasoning: true, ThinkingFormat: "kimi", ContextWindow: 262144},
+		"@cf/moonshotai/kimi-k2.7-code":                {Reasoning: true, ThinkingFormat: "kimi", ContextWindow: 262144},
+		"@cf/openai/gpt-oss-120b":                      {Reasoning: true, ThinkingFormat: "openai", ContextWindow: 128000},
+		"@cf/openai/gpt-oss-20b":                       {Reasoning: true, ThinkingFormat: "openai", ContextWindow: 128000},
+		"@cf/nvidia/nemotron-3-120b-a12b":              {Reasoning: true, ThinkingFormat: "openai", ContextWindow: 256000},
+		"@cf/google/gemma-4-26b-a4b-it":                {Reasoning: true, ThinkingFormat: "openai", ContextWindow: 256000},
+		"@cf/qwen/qwen3-30b-a3b-fp8":                   {Reasoning: true, ThinkingFormat: "qwen", ContextWindow: 32768},
+		"@cf/qwen/qwq-32b":                             {Reasoning: true, ThinkingFormat: "qwen", NoTools: true, ContextWindow: 24000},
+		"@cf/deepseek-ai/deepseek-r1-distill-qwen-32b": {Reasoning: true, ThinkingFormat: "deepseek", NoTools: true, ContextWindow: 80000},
+		"@cf/meta/llama-4-scout-17b-16e-instruct":      {Vision: true, ContextWindow: 131000},
+		"@cf/meta/llama-3.2-11b-vision-instruct":       {Vision: true, NoTools: true, ContextWindow: 128000},
+		"@cf/meta/llama-3.3-70b-instruct-fp8-fast":     {ContextWindow: 24000},
+		"@cf/mistralai/mistral-small-3.1-24b-instruct": {Vision: true, ContextWindow: 128000},
+		"@cf/ibm-granite/granite-4.0-h-micro":          {ContextWindow: 131000},
+		"@cf/qwen/qwen2.5-coder-32b-instruct":          {NoTools: true, ContextWindow: 32768},
+		"@cf/meta/llama-3.1-8b-instruct-fp8":           {NoTools: true, ContextWindow: 32000},
+		"@cf/meta/llama-3.2-3b-instruct":               {NoTools: true, ContextWindow: 80000},
+		"@cf/meta/llama-3.2-1b-instruct":               {NoTools: true, ContextWindow: 60000},
+		"@cf/meta/llama-guard-3-8b":                    {NoTools: true, ContextWindow: 131072},
+		"@cf/aisingapore/gemma-sea-lion-v4-27b-it":     {NoTools: true, ContextWindow: 128000},
 	},
 	// CodeBuddy exposes authoritative per-model metadata via its gateway
 	// config; every model reasons through OpenAI-style reasoning_effort.

@@ -38,8 +38,28 @@ func (c *OpenAICompatible) baseURL(creds core.Credentials) string {
 	}
 	// Resolve template placeholders like {accountId} from creds.Extra.
 	// Cloudflare Workers AI uses: /accounts/{accountId}/ai/v1/chat/completions
-	for key, val := range creds.Extra {
+	u = resolveURLPlaceholders(u, creds.Extra)
+	if c.id == "cloudflare-ai" {
+		// A legacy /ai/run base (or an AI Gateway URL without /v1) does not
+		// serve the OpenAI-compatible endpoint; rewrite it like LiteLLM does.
+		u = NormalizeCloudflareBaseURL(u)
+	}
+	return u
+}
+
+// resolveURLPlaceholders substitutes {key} template placeholders in u from
+// account metadata. Accounts imported from 9router before the import remap
+// stored the Cloudflare account under account_id, so that spelling also
+// resolves {accountId}.
+func resolveURLPlaceholders(u string, extra map[string]string) string {
+	if !strings.Contains(u, "{") {
+		return u
+	}
+	for key, val := range extra {
 		u = strings.ReplaceAll(u, "{"+key+"}", val)
+	}
+	if v := extra["account_id"]; v != "" {
+		u = strings.ReplaceAll(u, "{accountId}", v)
 	}
 	return u
 }
@@ -473,9 +493,7 @@ func (s *OpenAICompatibleModelSource) ListModels(ctx context.Context, creds core
 		base = creds.BaseURL
 	}
 	// Resolve template placeholders (e.g. cloudflare {accountId}).
-	for key, val := range creds.Extra {
-		base = strings.ReplaceAll(base, "{"+key+"}", val)
-	}
+	base = resolveURLPlaceholders(base, creds.Extra)
 
 	url := joinURL(base, "models")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

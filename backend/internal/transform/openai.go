@@ -586,6 +586,11 @@ func renderOAIRequestForProvider(req *core.ChatRequest, providerID string, scope
 		return nil, err
 	}
 	out.Extra = filterExtraForProvider(req.Extra, providerID)
+	if providerID == "cloudflare-ai" {
+		// Workers AI model ids are namespaced ("@cf/meta/..."); a bare
+		// "meta/..." answers 400. Accept the short form clients tend to type.
+		out.Model = canonicalCloudflareModel(out.Model)
+	}
 	if isDeepSeekTarget(providerID, req.Model) {
 		applyDeepSeekRequestFixes(out, req, providerID)
 	} else if isOpenAIFirstParty(providerID) {
@@ -613,6 +618,16 @@ func renderOAIRequestForProvider(req *core.ChatRequest, providerID string, scope
 		}
 	}
 	return json.Marshal(out)
+}
+
+// canonicalCloudflareModel gives bare Workers AI model names the "@cf/"
+// namespace; names already namespaced (@cf/, @hf/) are untouched.
+func canonicalCloudflareModel(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" || strings.HasPrefix(model, "@") {
+		return model
+	}
+	return "@cf/" + model
 }
 
 // isOpenAIFirstParty reports whether the provider is api.openai.com or Azure

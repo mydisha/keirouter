@@ -462,3 +462,14 @@ func TestToolNameAliasesForGemini(t *testing.T) {
 	require.Len(t, aliases, 1)
 	require.NotEqual(t, "mcp__server__very/odd name", aliases[0])
 }
+
+func TestOpenAIRenderCanonicalisesCloudflareModel(t *testing.T) {
+	req := &core.ChatRequest{Model: "meta/llama-3.3-70b-instruct-fp8-fast",
+		Messages: []core.Message{{Role: core.RoleUser, Content: []core.ContentPart{{Type: core.PartText, Text: "hi"}}}}}
+	body, err := OpenAICodec{}.RenderRequestForProvider(req, "cloudflare-ai")
+	require.NoError(t, err)
+	require.Equal(t, "@cf/meta/llama-3.3-70b-instruct-fp8-fast", decodeJSON(t, body)["model"])
+	body, err = OpenAICodec{}.RenderRequestForProvider(req, "groq")
+	require.NoError(t, err)
+	require.Equal(t, "meta/llama-3.3-70b-instruct-fp8-fast", decodeJSON(t, body)["model"])
+}

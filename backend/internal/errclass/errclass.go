@@ -81,6 +81,38 @@ func LooksLikeContextWindow(body string) bool {
 	return false
 }
 
+// authPhrases are lowercase substrings providers use for credential
+// failures reported under a status other than 401/403. Cloudflare answers an
+// invalid token with HTTP 400 {"errors":[{"code":9106,"message":
+// "Authentication failed"}]} or code 10000 "Authentication error".
+var authPhrases = []string{
+	"authentication failed",
+	"authentication error",
+	"invalid api key",
+	"invalid api token",
+	"invalid token",
+	"incorrect api key",
+	"unauthorized",
+	"invalid x-api-key",
+	"api key not valid",
+	"invalid authentication",
+}
+
+// LooksLikeAuthError reports whether an error body describes rejected
+// credentials regardless of the HTTP status it came with.
+func LooksLikeAuthError(body string) bool {
+	if body == "" {
+		return false
+	}
+	s := strings.ToLower(body)
+	for _, p := range authPhrases {
+		if strings.Contains(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // contentFilterPhrases are lowercase substrings used by OpenAI, Azure,
 // Anthropic, Gemini and Bedrock when a safety system rejects a request.
 var contentFilterPhrases = []string{
