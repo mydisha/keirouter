@@ -1,5 +1,5 @@
 fastapi==0.115.6
 uvicorn==0.34.0
-transformers==4.48.3
+transformers==5.10.1
 sentencepiece==0.2.0
 protobuf==5.29.3
