@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/market"
@@ -43,10 +44,92 @@ func (a *App) fetchMergedModels(ctx context.Context) ([]market.Model, error) {
 		out = append(out, models...)
 	}
 
+	out = append(out, a.fetchSurplusTrusted(ctx)...)
+
 	if len(out) == 0 {
 		return nil, firstErr
 	}
 	return out, nil
+}
+
+// boundTrustedSurplusModels returns the Surplus model names referenced by any
+// chain (chain-level or per-step) through a surplus-trusted: slug.
+func (a *App) boundTrustedSurplusModels(ctx context.Context) []string {
+	chains, err := a.db.Chains().ListByTenant(ctx, store.DefaultTenantID)
+	if err != nil {
+		a.log.Debug("surplus trusted: list chains failed", "err", err)
+		return nil
+	}
+	seen := map[string]bool{}
+	var names []string
+	add := func(slug string) {
+		name, ok := strings.CutPrefix(slug, market.SurplusTrustedPrefix)
+		if !ok || name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	for _, c := range chains {
+		for _, slug := range c.MarketSlugs {
+			add(slug)
+		}
+		for _, st := range c.Steps {
+			add(st.MarketSlug)
+		}
+	}
+	return names
+}
+
+// fetchSurplusTrusted quotes every bound surplus-trusted model from its order
+// book, using only trusted+available+healthy offers. Books are fetched
+// concurrently (bounded); a failed or empty book drops that slug from the
+// snapshot so routing never prices against stale trusted offers.
+func (a *App) fetchSurplusTrusted(ctx context.Context) []market.Model {
+	names := a.boundTrustedSurplusModels(ctx)
+	if len(names) == 0 {
+		return nil
+	}
+	if len(names) > maxSurplusBooksPerSync {
+		a.log.Warn("surplus trusted: order-book fetch capped", "cap", maxSurplusBooksPerSync, "bound", len(names))
+		names = names[:maxSurplusBooksPerSync]
+	}
+	depth := market.LoadSettings(ctx, a.db.Settings().Get).SurplusFallbackDepth
+	ceiling := depth > 0
+	if !ceiling {
+		depth = 1
+	}
+	out := make([]market.Model, len(names))
+	ok := make([]bool, len(names))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 8)
+	for i, name := range names {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			q, err := market.FetchSurplusTrustedBook(ctx, a.surplusURL, name, depth)
+			if err != nil || !q.Found {
+				if err != nil {
+					a.log.Debug("surplus trusted book fetch failed", "model", name, "err", err)
+				}
+				return
+			}
+			if !ceiling {
+				q.MinDiscountPct = 0
+			}
+			out[i], ok[i] = q.Model(name), true
+		}()
+	}
+	wg.Wait()
+	models := out[:0]
+	for i := range out {
+		if ok[i] {
+			models = append(models, out[i])
+		}
+	}
+	return models
 }
 
 // enrichSurplusFailover fetches the order book for each Surplus model actually

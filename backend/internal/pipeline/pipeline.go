@@ -15,6 +15,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -220,6 +221,8 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 		}
 		usage := hit.Usage
 		usage.Source = core.UsageSourceCache
+		// A replayed response cost the upstream nothing this time.
+		usage.UpstreamCostMicro, usage.UpstreamCostReported = 0, false
 		cost := p.recordOutcomeWithTTFT(ctx, req.Metadata, attempt, usage, "cache_hit", "", true,
 			0, time.Since(requestStarted), 0, nil)
 		return &Result{
@@ -266,6 +269,7 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 		p.log.Debug("attempt start", "i", i, "provider", attempt.Target.Provider,
 			"model", attempt.Target.Model, "account", attempt.Account.ID)
 		attemptReq := cloneForAttempt(attemptBaseReq, attempt.Target.Model)
+		attempt.Creds = withTargetHeaders(attempt)
 
 		// Soft-degrade unsupported modalities. Stripping replaces input
 		// modalities the resolved profile cannot handle with text placeholders,
@@ -620,6 +624,8 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 	for i := 0; hasAttempt; i++ {
 		lastAttempt = attempt
 		attemptReq := cloneForAttempt(req, attempt.Target.Model)
+		attempt.Creds = withTargetHeaders(attempt)
+		attemptReq.UpstreamUsage = attempt.Target.BillUpstreamCost
 		started := time.Now()
 		p.log.Debug("stream attempt start", "i", i, "provider", attempt.Target.Provider,
 			"model", attempt.Target.Model, "account", attempt.Account.ID)
@@ -670,8 +676,12 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 		// omits one. Raw byte piping can't inject a synthetic event, so we trade
 		// the zero-copy throughput for correct usage accounting on these opt-in
 		// requests.
+		//
+		// Upstream-cost-billed targets (surplus-trusted) also take the channel
+		// path: the codec parses usage.buyer_cost_micro for billing, and the
+		// re-rendered stream keeps that operator cost out of the client's bytes.
 		if len(attemptReq.Tools) == 0 && !req.IncludeUsage && req.Metadata.SourceDialect == attempt.Conn.Dialect() &&
-			!requiresParsedStreamAdmission(attempt.Target.Provider) {
+			!requiresParsedStreamAdmission(attempt.Target.Provider) && !attempt.Target.BillUpstreamCost {
 			if ds, ok := attempt.Conn.(core.DirectStreamable); ok {
 				body, _, rawErr := ds.StreamRaw(callCtx, attemptReq, attempt.Creds, streamCfg)
 				if rawErr != nil && isUnsupportedCloudflareImageError(rawErr, attempt.Target.Provider, attempt.Target.Model, attemptReq) {
@@ -1137,6 +1147,9 @@ func mergeUsage(old, new core.Usage) core.Usage {
 	if new.Source != "" {
 		old.Source = new.Source
 	}
+	if new.UpstreamCostReported {
+		old.UpstreamCostMicro, old.UpstreamCostReported = new.UpstreamCostMicro, true
+	}
 	if old.PromptTokens+old.CompletionTokens > 0 {
 		old.TotalTokens = old.PromptTokens + old.CompletionTokens
 	}
@@ -1159,6 +1172,14 @@ func addAttemptUsage(total, attempt core.Usage) core.Usage {
 	total.CachedTokens += attempt.CachedTokens
 	total.CacheWriteTokens += attempt.CacheWriteTokens
 	total.ReasoningTokens += attempt.ReasoningTokens
+	// The summed upstream cost is only trustworthy when every contributing
+	// attempt reported one; otherwise the meter falls back to rate pricing.
+	if totalTokens == 0 && !total.UpstreamCostReported {
+		total.UpstreamCostReported = attempt.UpstreamCostReported
+	} else if attemptTokens > 0 || attempt.UpstreamCostReported {
+		total.UpstreamCostReported = total.UpstreamCostReported && attempt.UpstreamCostReported
+	}
+	total.UpstreamCostMicro += attempt.UpstreamCostMicro
 
 	switch {
 	case total.Source == "":
@@ -1683,6 +1704,8 @@ func (p *Pipeline) recordOutcomeWithTTFT(ctx context.Context, meta core.RequestM
 		UpstreamCacheReadRate:  attempt.Target.UpstreamCacheReadRate,
 		UpstreamCacheWriteRate: attempt.Target.UpstreamCacheWriteRate,
 		CheapestRateIn:         attempt.Target.InputPerM,
+		BillUpstreamCost:       attempt.Target.BillUpstreamCost,
+		UpstreamCostMult:       attempt.Target.UpstreamCostMult,
 		Provider:               attempt.Target.Provider,
 		Model:                  attempt.Target.Model,
 		AccountID:              attempt.Account.ID,
@@ -2325,4 +2348,21 @@ func streamJSONPayload(line string) (string, bool) {
 		return "", false
 	}
 	return line, true
+}
+
+// withTargetHeaders returns the attempt's credentials with per-target upstream
+// headers applied. The headers map is cloned because prepared credentials are
+// shared across attempts on the same account.
+func withTargetHeaders(attempt dispatch.Attempt) core.Credentials {
+	creds := attempt.Creds
+	if attempt.Target.MinDiscountPct <= 0 {
+		return creds
+	}
+	headers := make(map[string]string, len(creds.Headers)+1)
+	for k, v := range creds.Headers {
+		headers[k] = v
+	}
+	headers["X-Min-Discount"] = strconv.Itoa(attempt.Target.MinDiscountPct)
+	creds.Headers = headers
+	return creds
 }

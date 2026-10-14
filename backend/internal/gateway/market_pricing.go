@@ -28,6 +28,7 @@ func (s *Server) adminUpdateMarketPricingSettings(w http.ResponseWriter, r *http
 		MarkupPercent          *float64 `json:"markup_percent"`
 		SafetyMarginEnabled    *bool    `json:"safety_margin_enabled"`
 		SafetyMarginPercent    *float64 `json:"safety_margin_percent"`
+		SurplusFallbackDepth   *int     `json:"surplus_fallback_depth"`
 	}
 	if !decodeJSON(w, r, &patch) {
 		return
@@ -60,6 +61,14 @@ func (s *Server) adminUpdateMarketPricingSettings(w http.ResponseWriter, r *http
 			return
 		}
 		current.SafetyMarginPercent = v
+	}
+	if patch.SurplusFallbackDepth != nil {
+		v := *patch.SurplusFallbackDepth
+		if v < 0 || v > 20 {
+			writeError(w, http.StatusBadRequest, "surplus_fallback_depth must be between 0 and 20")
+			return
+		}
+		current.SurplusFallbackDepth = v
 	}
 	if err := market.SaveSettings(r.Context(), s.settings.Set, current); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())

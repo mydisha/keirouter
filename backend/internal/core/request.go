@@ -60,6 +60,11 @@ type ChatRequest struct {
 	// the upstream provider never reports one — synthesizing an estimate as a
 	// fallback. Router-internal; never serialized upstream.
 	IncludeUsage bool `json:"-"`
+	// UpstreamUsage asks the upstream itself for a final usage event on a
+	// stream (stream_options.include_usage). Set per attempt for targets
+	// billed from the upstream's reported cost; independent of what the
+	// client receives.
+	UpstreamUsage bool `json:"-"`
 
 	// Reasoning controls extended thinking / reasoning effort where supported.
 	Reasoning *ReasoningConfig `json:"reasoning,omitempty"`

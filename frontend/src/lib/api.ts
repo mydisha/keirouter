@@ -172,6 +172,8 @@ export interface MarketPricingSettings {
   markup_percent: number;
   safety_margin_enabled: boolean;
   safety_margin_percent: number;
+  /** Distinct trusted price levels Surplus may fail over across for surplus-trusted slugs (0 = no ceiling). */
+  surplus_fallback_depth: number;
   last_fetched_at: string;
   last_fetch_error?: string;
   last_synced_count: number;
@@ -1775,7 +1777,7 @@ export const api = {
   refreshCurrency: () => request<CurrencyStatus>("POST", "/settings/currency/refresh", {}),
 
   marketPricingSettings: () => request<MarketPricingSettings>("GET", "/market-pricing/settings"),
-  updateMarketPricingSettings: (patch: Partial<Pick<MarketPricingSettings, "auto_refresh" | "refresh_interval_seconds" | "markup_percent" | "safety_margin_enabled" | "safety_margin_percent">>) =>
+  updateMarketPricingSettings: (patch: Partial<Pick<MarketPricingSettings, "auto_refresh" | "refresh_interval_seconds" | "markup_percent" | "safety_margin_enabled" | "safety_margin_percent" | "surplus_fallback_depth">>) =>
     request<MarketPricingSettings>("PATCH", "/market-pricing/settings", patch),
   refreshMarketPrices: () => request<{ synced: number; last_fetched_at: string }>("POST", "/market-pricing/refresh", {}),
 

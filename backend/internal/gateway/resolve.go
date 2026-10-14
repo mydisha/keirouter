@@ -136,6 +136,7 @@ func chainResultWith(ctx context.Context, chains ChainSource, latency LatencyRea
 			if c.ReorderByMarket {
 				steps = orderStepsByMarket(steps, cache, markupPercent)
 			}
+			steps = stampSurplusTrusted(steps, c.MarketSlugs, cache, markupPercent)
 			// Ordering strategies reorder the chain steps before the optional
 			// fallback model is appended, so the explicit last-resort target
 			// always stays last. round-robin rotates at dispatch time; the
@@ -262,6 +263,63 @@ func orderStepsByMarket(steps []dispatch.Target, cache *market.SnapshotCache, ma
 		}
 		return ki.sum < kj.sum
 	})
+	return out
+}
+
+// stampSurplusTrusted marks every surplus-trusted step for upstream-cost
+// billing. A step without its own slug adopts a chain-level surplus-trusted
+// slug naming the same model. The Market*/Upstream* rates carry the X-Min-Discount
+// ceiling price (the most Surplus can charge), used only when a response
+// reports no cost, so the fallback bill can never undercut a Surplus failover.
+// It runs after any market reordering so the ceiling overrides cheapest-ask stamps.
+func stampSurplusTrusted(steps []dispatch.Target, chainSlugs []string, cache *market.SnapshotCache, markupPercent float64) []dispatch.Target {
+	byModel := map[string]string{}
+	for _, slug := range chainSlugs {
+		if name, ok := strings.CutPrefix(slug, market.SurplusTrustedPrefix); ok && name != "" {
+			byModel[name] = slug
+		}
+	}
+	mult := 1 + markupPercent/100
+	out := steps
+	copied := false
+	for i := range out {
+		slug := out[i].MarketSlug
+		if slug == "" {
+			slug = byModel[out[i].Model]
+		}
+		if !strings.HasPrefix(slug, market.SurplusTrustedPrefix) {
+			continue
+		}
+		if !copied {
+			out = append([]dispatch.Target(nil), steps...)
+			copied = true
+		}
+		t := &out[i]
+		t.MarketSlug = slug
+		t.BillUpstreamCost = true
+		t.UpstreamCostMult = mult
+		t.MinDiscountPct = 0
+		t.MarketRateIn, t.MarketRateOut, t.MarketCacheReadRate, t.MarketCacheWriteRate = 0, 0, 0, 0
+		t.UpstreamRateIn, t.UpstreamRateOut, t.UpstreamCacheReadRate, t.UpstreamCacheWriteRate = 0, 0, 0, 0
+		if cache == nil {
+			continue
+		}
+		m, ok := cache.Lookup(slug)
+		if !ok {
+			continue
+		}
+		t.MinDiscountPct = m.MinDiscountPct
+		capIn, capOut := m.FailoverIn, m.FailoverOut
+		if capIn <= 0 || capOut <= 0 {
+			capIn, capOut = m.MinAskIn, m.MinAskOut
+		}
+		t.UpstreamRateIn, t.UpstreamRateOut = capIn, capOut
+		t.UpstreamCacheReadRate = capIn * market.CacheReadMult
+		t.UpstreamCacheWriteRate = capIn * market.CacheWriteMult
+		t.MarketRateIn, t.MarketRateOut = capIn*mult, capOut*mult
+		t.MarketCacheReadRate = t.MarketRateIn * market.CacheReadMult
+		t.MarketCacheWriteRate = t.MarketRateIn * market.CacheWriteMult
+	}
 	return out
 }
 

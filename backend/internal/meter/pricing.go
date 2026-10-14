@@ -317,6 +317,9 @@ func providerPrice(ev Event) (Price, bool) {
 // It returns zero when no market slug is bound because the true upstream cost is
 // then unknown; charging zero is the safe default for a profit view.
 func upstreamCostForEvent(ev Event) CostBreakdown {
+	if reportedUpstreamCost(ev) {
+		return upstreamBilledCost(ev, ev.Usage.UpstreamCostMicro, 0)
+	}
 	price, ok := providerPrice(ev)
 	if !ok {
 		return CostBreakdown{}
@@ -460,4 +463,48 @@ func (m *Meter) BackfillUnpriced(ctx context.Context) (int, error) {
 			return updated, nil
 		}
 	}
+}
+
+// reportedUpstreamCost reports whether ev is billed from the upstream's own
+// reported cost rather than from rates.
+func reportedUpstreamCost(ev Event) bool {
+	return ev.BillUpstreamCost && ev.Usage.UpstreamCostReported && ev.Usage.UpstreamCostMicro >= 0 &&
+		!math.IsInf(ev.Usage.UpstreamCostMicro, 0) && !math.IsNaN(ev.Usage.UpstreamCostMicro)
+}
+
+// upstreamBilledCost prices ev at a fixed total (USD micros). The per-class
+// breakdown is the rate-based split rescaled to that total, so analytics stay
+// proportional while CostNanos is exactly the billed amount.
+func upstreamBilledCost(ev Event, totalMicros float64, savedTokens int) CostBreakdown {
+	price, ok := marketPrice(ev)
+	if !ok {
+		price = Price{}
+	}
+	price.Source = "upstream_cost"
+	match := pricingMatch(ev.MarketSlug, price, "upstream_cost", false)
+	match.Status = "priced"
+	out := calculateCostFromPrice(match, ev.Usage, false, savedTokens)
+	if !ok {
+		out = CostBreakdown{Pricing: match}
+	}
+	total := int64(math.Ceil(totalMicros*1000 - 1e-6))
+	if total < 0 {
+		total = 0
+	}
+	rateTotal := out.InputCostNanos + out.CachedCostNanos + out.CacheWriteCostNanos + out.OutputCostNanos + out.ReasoningCostNanos
+	if rateTotal > 0 {
+		scale := float64(total) / float64(rateTotal)
+		out.InputCostNanos = int64(math.Floor(float64(out.InputCostNanos) * scale))
+		out.CachedCostNanos = int64(math.Floor(float64(out.CachedCostNanos) * scale))
+		out.CacheWriteCostNanos = int64(math.Floor(float64(out.CacheWriteCostNanos) * scale))
+		out.ReasoningCostNanos = int64(math.Floor(float64(out.ReasoningCostNanos) * scale))
+		// Output absorbs rounding so the parts sum to the exact total.
+		out.OutputCostNanos = total - out.InputCostNanos - out.CachedCostNanos - out.CacheWriteCostNanos - out.ReasoningCostNanos
+	} else {
+		out.InputCostNanos, out.CachedCostNanos, out.CacheWriteCostNanos, out.ReasoningCostNanos = 0, 0, 0, 0
+		out.OutputCostNanos = total
+	}
+	out.CostNanos = total
+	out.CostMicros = int64(math.Round(float64(total) / 1000))
+	return out
 }

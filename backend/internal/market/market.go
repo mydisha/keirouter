@@ -28,6 +28,9 @@ type Model struct {
 	// margin then cannot floor against them.
 	FailoverIn  float64 `json:"-"`
 	FailoverOut float64 `json:"-"`
+	// MinDiscountPct is the X-Min-Discount ceiling for surplus-trusted slugs
+	// (zero = no ceiling).
+	MinDiscountPct int `json:"-"`
 }
 
 func ParseSnapshot(r io.Reader) ([]Model, error) {

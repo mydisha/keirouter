@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
@@ -488,9 +489,14 @@ func buildOAIRequest(req *core.ChatRequest, scope reasoningScope) (*oaiRequest, 
 	if len(req.Tools) > 0 {
 		out.ToolChoice = req.ToolChoice
 	}
-	// Note: stream_options with include_usage is intentionally omitted. Many
+	// Note: stream_options with include_usage is omitted by default. Many
 	// OpenAI-compatible providers (MiMo, Volcengine, etc.) reject this field
-	// with 400. Usage is captured from the final stream chunk instead.
+	// with 400. Usage is captured from the final stream chunk instead. Only a
+	// target billed from its reported cost (Surplus) opts in explicitly, since
+	// Surplus emits no usage frame (and so no buyer_cost_micro) without it.
+	if req.Stream && req.UpstreamUsage {
+		out.StreamOpts = &oaiStreamOpt{IncludeUsage: true}
+	}
 
 	if req.System != "" {
 		sysContent, _ := json.Marshal(req.System)
@@ -892,6 +898,22 @@ type oaiUsage struct {
 	CompletionTokensDetails *struct {
 		ReasoningTokens int `json:"reasoning_tokens"`
 	} `json:"completion_tokens_details,omitempty"`
+	// BuyerCostMicro is Surplus Intelligence's settled cost for the request.
+	BuyerCostMicro *float64 `json:"buyer_cost_micro,omitempty"`
+}
+
+// applyUpstreamCost copies a provider-reported request cost onto u. Negative
+// or non-finite values are ignored as unreported.
+func (u *oaiUsage) applyUpstreamCost(out *core.Usage) {
+	if u.BuyerCostMicro == nil {
+		return
+	}
+	v := *u.BuyerCostMicro
+	if v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
+		return
+	}
+	out.UpstreamCostMicro = v
+	out.UpstreamCostReported = true
 }
 
 func (c OpenAICodec) ParseResponse(body []byte, model string) (*core.ChatResponse, error) {
@@ -974,6 +996,7 @@ func (OpenAICodec) buildResponse(raw oaiResponse, model string) (*core.ChatRespo
 			ReasoningTokens:  reasoning,
 			Source:           core.UsageSourceProvider,
 		}
+		raw.Usage.applyUpstreamCost(&resp.Usage)
 	}
 	return resp, nil
 }

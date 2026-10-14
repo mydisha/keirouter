@@ -16,13 +16,17 @@ type Settings struct {
 	// dark cannot make a chain sell below its fallback cost.
 	SafetyMarginEnabled bool    `json:"safety_margin_enabled"`
 	SafetyMarginPercent float64 `json:"safety_margin_percent"`
+	// SurplusFallbackDepth is how many distinct trusted price levels Surplus may
+	// fail over across for surplus-trusted slugs (sent as X-Min-Discount).
+	// Zero disables the ceiling: Surplus may then fail over to any trusted offer.
+	SurplusFallbackDepth int `json:"surplus_fallback_depth"`
 	LastFetchedAt       string  `json:"last_fetched_at"`
 	LastFetchError      string  `json:"last_fetch_error,omitempty"`
 	LastSyncedCount     int     `json:"last_synced_count"`
 }
 
 func DefaultSettings() Settings {
-	return Settings{AutoRefresh: false, RefreshIntervalSeconds: 30, MarkupPercent: 10, SafetyMarginEnabled: false, SafetyMarginPercent: 10}
+	return Settings{AutoRefresh: false, RefreshIntervalSeconds: 30, MarkupPercent: 10, SafetyMarginEnabled: false, SafetyMarginPercent: 10, SurplusFallbackDepth: DefaultSurplusFallbackDepth}
 }
 
 func LoadSettings(ctx context.Context, get func(context.Context, string) (string, error)) Settings {
@@ -40,6 +44,9 @@ func LoadSettings(ctx context.Context, get func(context.Context, string) (string
 	}
 	if s.MarkupPercent < 0 {
 		s.MarkupPercent = def.MarkupPercent
+	}
+	if s.SurplusFallbackDepth < 0 {
+		s.SurplusFallbackDepth = def.SurplusFallbackDepth
 	}
 	if s.SafetyMarginPercent < 0 {
 		s.SafetyMarginPercent = def.SafetyMarginPercent

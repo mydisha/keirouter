@@ -142,6 +142,11 @@ type Event struct {
 	// When the winning market slug costs more than this, the request is a
 	// fallback and this value is retained for the audit trail.
 	CheapestRateIn float64
+	// BillUpstreamCost charges the user Usage.UpstreamCostMicro ×
+	// UpstreamCostMult when the upstream reported its cost (surplus-trusted);
+	// the rates above are then only the fallback for unreported responses.
+	BillUpstreamCost bool
+	UpstreamCostMult float64
 
 	Provider  string
 	Model     string
@@ -225,7 +230,7 @@ func (m *Meter) Record(ctx context.Context, ev Event) (int64, error) {
 		savedTokens += ev.HeadroomStats.TokensSaved
 	}
 	var cost CostBreakdown
-	if u.PromptTokens+u.CompletionTokens == 0 && !ev.CacheHit {
+	if u.PromptTokens+u.CompletionTokens == 0 && !ev.CacheHit && !reportedUpstreamCost(ev) {
 		// A terminal request without upstream usage has no applicable price,
 		// including a nominally successful response whose provider omitted usage.
 		// Do not inflate coverage merely because the target exists in the catalog.
@@ -299,6 +304,13 @@ func (m *Meter) costForEvent(ev Event) CostBreakdown {
 	}
 	if u.PromptTokens+u.CompletionTokens == 0 && !ev.CacheHit {
 		return CostBreakdown{Pricing: PricingMatch{Status: "none", MatchKind: "none"}}
+	}
+	if reportedUpstreamCost(ev) {
+		mult := ev.UpstreamCostMult
+		if mult < 1 {
+			mult = 1 // never bill below what the upstream charged
+		}
+		return upstreamBilledCost(ev, ev.Usage.UpstreamCostMicro*mult, savedTokens)
 	}
 	if price, ok := marketPrice(ev); ok {
 		out := calculateCostFromPrice(pricingMatch(ev.MarketSlug, price, "market_slug", false), u, ev.CacheHit, savedTokens)

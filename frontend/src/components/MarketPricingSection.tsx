@@ -12,16 +12,18 @@ export function MarketPricingSection() {
   const [markup, setMarkup] = useState("");
   const [intervalSec, setIntervalSec] = useState("");
   const [safetyPct, setSafetyPct] = useState("");
+  const [depth, setDepth] = useState("");
   useEffect(() => {
     if (settings.data) {
       setMarkup(String(settings.data.markup_percent));
       setIntervalSec(String(settings.data.refresh_interval_seconds));
       setSafetyPct(String(settings.data.safety_margin_percent));
+      setDepth(String(settings.data.surplus_fallback_depth ?? 3));
     }
   }, [settings.data]);
 
   const save = useMutation({
-    mutationFn: (patch: Partial<Pick<MarketPricingSettings, "auto_refresh" | "refresh_interval_seconds" | "markup_percent" | "safety_margin_enabled" | "safety_margin_percent">>) =>
+    mutationFn: (patch: Partial<Pick<MarketPricingSettings, "auto_refresh" | "refresh_interval_seconds" | "markup_percent" | "safety_margin_enabled" | "safety_margin_percent" | "surplus_fallback_depth">>) =>
       api.updateMarketPricingSettings(patch),
     onSuccess: (data) => {
       qc.setQueryData(["market-pricing-settings"], data);
@@ -53,6 +55,8 @@ export function MarketPricingSection() {
   const safetyTrim = safetyPct.trim();
   const safetyInvalid =
     safetyTrim === "" || !Number.isFinite(Number(safetyPct)) || Number(safetyPct) < 0 || Number(safetyPct) > 1000;
+  const depthInvalid =
+    depth.trim() === "" || !Number.isInteger(Number(depth)) || Number(depth) < 0 || Number(depth) > 20;
 
   return (
     <div className="space-y-4">
@@ -123,6 +127,21 @@ export function MarketPricingSection() {
                   Applied over the next-best offer when safety margin is on.
                 </p>
               </Field>
+              <Field label="Surplus fallback depth">
+                <Input
+                  type="number"
+                  min={0}
+                  max={20}
+                  value={depth}
+                  onChange={(e) => setDepth(e.target.value)}
+                  className="w-24"
+                />
+                <p className="mt-1 text-xs text-[var(--text-muted)]">
+                  For <code>surplus-trusted:</code> slugs: Surplus may fail over across this many trusted
+                  price levels (sent as X-Min-Discount). Users are billed Surplus's reported cost plus markup.
+                  0 = no ceiling.
+                </p>
+              </Field>
             </div>
           </div>
 
@@ -133,9 +152,10 @@ export function MarketPricingSection() {
                   markup_percent: Number(markup),
                   refresh_interval_seconds: Number(intervalSec),
                   safety_margin_percent: Number(safetyPct),
+                  surplus_fallback_depth: Number(depth),
                 })
               }
-              disabled={save.isPending || markupInvalid || intervalInvalid || safetyInvalid}
+              disabled={save.isPending || markupInvalid || intervalInvalid || safetyInvalid || depthInvalid}
             >
               {save.isPending ? "Saving…" : "Save"}
             </Button>

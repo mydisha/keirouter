@@ -55,3 +55,12 @@ func (c *SnapshotCache) Age() time.Duration {
 	}
 	return time.Since(f)
 }
+
+// Lookup returns the full snapshot model for slug, including source-specific
+// fields (failover cap, discount ceiling) that Rate does not expose.
+func (c *SnapshotCache) Lookup(slug string) (Model, bool) {
+	c.mu.RLock()
+	m, ok := c.bySlug[slug]
+	c.mu.RUnlock()
+	return m, ok
+}

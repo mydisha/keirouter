@@ -108,6 +108,16 @@ type Target struct {
 	UpstreamRateOut        float64
 	UpstreamCacheReadRate  float64
 	UpstreamCacheWriteRate float64
+
+	// BillUpstreamCost marks a surplus-trusted step: the user is charged the
+	// upstream's reported cost (usage.buyer_cost_micro) × UpstreamCostMult,
+	// and the Market*/Upstream* rates above are only the fallback when a
+	// response carries no reported cost.
+	BillUpstreamCost bool
+	UpstreamCostMult float64
+	// MinDiscountPct, when > 0, is sent upstream as X-Min-Discount so the
+	// provider cannot fail over past the configured price depth.
+	MinDiscountPct int
 }
 
 // Attempt describes a single resolved try: the connector, credentials, and the

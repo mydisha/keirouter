@@ -37,6 +37,12 @@ type Usage struct {
 	// ReasoningTokens is a subset of CompletionTokens, never an additional token
 	// class. This invariant prevents reasoning output from being double charged.
 	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
+	// UpstreamCostMicro is the request's cost as reported by the upstream
+	// itself (Surplus usage.buyer_cost_micro), in USD microdollars; valid only
+	// when UpstreamCostReported. Router-internal: never emitted to clients and
+	// never replayed from the response cache.
+	UpstreamCostMicro    float64 `json:"-"`
+	UpstreamCostReported bool    `json:"-"`
 	// Source is router-internal provenance and is never emitted to API clients.
 	Source UsageSource `json:"-"`
 }
