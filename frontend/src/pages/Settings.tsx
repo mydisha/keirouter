@@ -14,6 +14,7 @@ import { applyShadeScale, generateShades } from "../lib/color-utils";
 import { PageHeader } from "../components/Layout";
 import { useUpdateInfo } from "../components/UpdateNotification";
 import { useToast } from "../components/Toast";
+import { FullBackupSection } from "../components/FullBackupSection";
 import { MarketPricingSection } from "../components/MarketPricingSection";
 import {
   Card, SectionHeader, Spinner, Toggle, SegmentedControl, ErrorBanner, Button, Input, Field,
@@ -2063,6 +2064,7 @@ function DatabaseSettings() {
 
   return (
     <>
+      <FullBackupSection />
       <Card>
         <SectionHeader
           title="Configuration backup"

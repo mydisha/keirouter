@@ -131,6 +131,8 @@ func (s *Server) mountAdmin(r chi.Router) {
 	r.Post("/settings/headroom-test", s.adminTestHeadroom)
 	r.Get("/settings/access", s.adminGetAccessSettings)
 	r.Post("/settings/access", s.adminUpdateAccessSettings)
+	r.Post("/settings/backup", s.adminFullBackup)
+	r.Post("/settings/restore", s.adminFullRestore)
 	r.Get("/settings/database", s.adminExportDatabase)
 	r.Post("/settings/database", s.adminImportDatabase)
 	r.Post("/settings/database/import-foreign", s.adminImportForeignConfig)

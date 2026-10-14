@@ -1184,6 +1184,24 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return res.json() as Promise<T>;
 }
 
+export interface FullRestoreResult {
+  ok: boolean;
+  tables: number;
+  rows: number;
+  backup_created_at: string;
+  source_dialect: string;
+  restart_required: boolean;
+}
+
+async function errorMessage(res: Response): Promise<string> {
+  try {
+    const data = await res.json();
+    return data?.error?.message ?? res.statusText;
+  } catch {
+    return res.statusText;
+  }
+}
+
 async function requestBlob(method: string, path: string): Promise<Blob> {
   const res = await fetchWithTimeout(`/api${path}`, { method });
   if (!res.ok) {
@@ -1837,6 +1855,27 @@ export const api = {
   // KeiRouter records (accounts re-sealed, api keys re-hashed, combos → chains).
   importForeignConfig: (source: "9router" | "omniroute", config: Record<string, unknown>) =>
     request<ForeignImportResult>("POST", "/settings/database/import-foreign", { source, config }),
+
+  // Full router backup: every table (chains, providers, accounts, API keys,
+  // portal users, balances, usage...) with secrets re-keyed to a passphrase.
+  fullBackup: async (passphrase: string): Promise<Blob> => {
+    const res = await fetchWithTimeout(
+      "/api/settings/backup",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ passphrase }) },
+      300_000,
+    );
+    if (!res.ok) throw new APIError(res.status, await errorMessage(res));
+    return res.blob();
+  },
+  fullRestore: async (file: File, passphrase: string): Promise<FullRestoreResult> => {
+    const res = await fetchWithTimeout(
+      "/api/settings/restore",
+      { method: "POST", headers: { "Content-Type": "application/json", "X-Backup-Passphrase": passphrase }, body: file },
+      600_000,
+    );
+    if (!res.ok) throw new APIError(res.status, await errorMessage(res));
+    return res.json() as Promise<FullRestoreResult>;
+  },
 
   sqliteStatus: () => request<SQLiteStatus>("GET", "/settings/sqlite"),
   backupSQLite: () => requestBlob("GET", "/settings/sqlite/backup"),
