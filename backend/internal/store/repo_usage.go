@@ -409,6 +409,7 @@ type RecentRecord struct {
 	CachedTokens     int
 	CacheWriteTokens int
 	CostMicros       int64
+	CostNanos        int64
 	CacheHit         bool
 	LatencyMS        int
 	TTFTMS           int    // time-to-first-token in ms (0 for non-streaming)
@@ -823,7 +824,7 @@ func (r *UsageRepo) RecentByKey(ctx context.Context, keyID string, since time.Ti
 	}
 	q := r.db.rebind(`
 		SELECT id, provider, model, chain_id, prompt_tokens, completion_tokens, cached_tokens,
-		       cache_write_tokens, cost_micros, cache_hit, latency_ms, ttft_ms,
+		       cache_write_tokens, cost_micros, cost_nanos, cache_hit, latency_ms, ttft_ms,
 		       slim_bytes_saved, slim_tokens_saved, slim_rules, slim_active, caveman_active, terse_active,
 		       headroom_tokens_saved, headroom_bytes_saved, headroom_active, ponytail_active,
 		       created_at
@@ -847,7 +848,7 @@ func (r *UsageRepo) RecentByKey(ctx context.Context, keyID string, since time.Ti
 		)
 		if err := rows.Scan(&rec.ID, &rec.Provider, &rec.Model, &rec.ChainID, &rec.PromptTokens,
 			&rec.CompletionTokens, &rec.CachedTokens, &rec.CacheWriteTokens,
-			&rec.CostMicros, &cacheHit, &rec.LatencyMS, &rec.TTFTMS,
+			&rec.CostMicros, &rec.CostNanos, &cacheHit, &rec.LatencyMS, &rec.TTFTMS,
 			&rec.SlimBytesSaved, &rec.SlimTokensSaved, &rec.SlimRules, &slimActive, &caveman, &terse,
 			&rec.HeadroomTokensSaved, &rec.HeadroomBytesSaved, &headroomActive, &ponytailActive,
 			&createdAt); err != nil {

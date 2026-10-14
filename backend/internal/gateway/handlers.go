@@ -1414,7 +1414,7 @@ func (s *Server) buildKeyUsageMap(ctx context.Context, key store.APIKey, days in
 			"model":             displayModel(rec.Model, rec.ChainID, chainNames),
 			"prompt_tokens":     rec.PromptTokens,
 			"completion_tokens": rec.CompletionTokens,
-			"cost_usd":          float64(rec.CostMicros) / 1_000_000,
+			"cost_usd":          recordCostUSD(rec),
 			"cache_hit":         rec.CacheHit,
 			"latency_ms":        rec.LatencyMS,
 			"created_at":        rec.CreatedAt,
@@ -1695,4 +1695,14 @@ func limitAffinityText(s string) string {
 		return s
 	}
 	return s[:max]
+}
+
+// recordCostUSD is a usage record's billed cost in USD at full nano precision,
+// so a sub-micro charge is shown as charged rather than rounded to zero. Legacy
+// rows without nanos fall back to micros.
+func recordCostUSD(rec store.RecentRecord) float64 {
+	if rec.CostNanos != 0 {
+		return float64(rec.CostNanos) / 1_000_000_000
+	}
+	return float64(rec.CostMicros) / 1_000_000
 }

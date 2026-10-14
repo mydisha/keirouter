@@ -13,7 +13,7 @@ import {
 import { Badge, Button, Card, EmptyState, ErrorCard, Input, Spinner } from "../../components/ui";
 import { TurnstileWidget, useTurnstileSiteKey } from "../../components/TurnstileWidget";
 import { useToast } from "../../components/Toast";
-import { formatUSD } from "../../lib/format";
+import { formatSpendUSD, formatUSD } from "../../lib/format";
 import { portal } from "../../lib/portalRoutes";
 import { SectionTitle, formatDateTime } from "./components";
 
@@ -187,9 +187,9 @@ export function PortalTopupPage() {
         <Card className="p-6 md:p-7">
           {balance ? (
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-              <BalanceStat label="Budget Limit" value={formatUSD(balance.limit_usd)} />
-              <BalanceStat label="Spent" value={formatUSD(balance.spent_usd)} />
-              <BalanceStat label="Remaining" value={formatUSD(balance.usd_remaining)} accent />
+              <BalanceStat label="Budget Limit" value={formatSpendUSD(balance.limit_usd)} />
+              <BalanceStat label="Spent" value={formatSpendUSD(balance.spent_usd)} />
+              <BalanceStat label="Remaining" value={formatSpendUSD(balance.usd_remaining)} accent />
             </div>
           ) : (
             <p className="py-2 text-sm text-[var(--text-muted)]">No budget limit configured.</p>

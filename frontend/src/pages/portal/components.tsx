@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { Button, Card, Badge, Input, SegmentedControl } from "../../components/ui";
 import { claimPortalKey, type KeyUsageData, type PortalRecentRequest } from "../../lib/api";
-import { formatSpendUSD } from "../../lib/format";
+import { formatCostUSD, formatSpendUSD } from "../../lib/format";
 
 // ─── Shared portal onboarding surfaces ────────────────────────────────────
 
@@ -264,7 +264,7 @@ export function OverviewSection({ d }: { d: KeyUsageData }) {
           </div>
           <div className="grid grid-cols-2 gap-4">
             <KpiCard icon={Activity} label="Requests" value={formatNumber(t.requests)} sub={`${avgPerReq ? formatTokens(avgPerReq) : 0} tokens / req`} color={C_REQ} data={daily} dataKey="requests" sparkId="sp-req" />
-            <KpiCard icon={DollarSign} label="Total Cost" value={`$${t.cost.toFixed(4)}`} sub={activeDays ? `~$${(t.cost / activeDays).toFixed(2)} / day` : "no spend yet"} color={C_COST} accent data={daily} dataKey="cost_usd" sparkId="sp-cost" />
+            <KpiCard icon={DollarSign} label="Total Cost" value={formatCostUSD(t.cost)} sub={activeDays ? `~${formatCostUSD(t.cost / activeDays)} / day` : "no spend yet"} color={C_COST} accent data={daily} dataKey="cost_usd" sparkId="sp-cost" />
             <KpiCard icon={ArrowDownRight} label="Input Tokens" value={formatTokens(t.prompt)} sub={`${inputPct}% of tokens`} color={C_INPUT} data={daily} dataKey="prompt_tokens" sparkId="sp-in" />
             <KpiCard icon={ArrowUpRight} label="Output Tokens" value={formatTokens(t.completion)} sub={`${100 - inputPct}% of tokens`} color={C_OUTPUT} data={daily} dataKey="completion_tokens" sparkId="sp-out" />
           </div>
@@ -272,7 +272,7 @@ export function OverviewSection({ d }: { d: KeyUsageData }) {
             <Calendar size={14} className="text-[var(--text-muted)]" />
             This month so far:
             <strong className="font-medium text-[var(--text)]">{formatNumber(d.current_period.total_requests)}</strong> requests ·
-            <strong className="font-medium text-[var(--text)]">${d.current_period.cost_usd.toFixed(4)}</strong> spent
+            <strong className="font-medium text-[var(--text)]">{formatCostUSD(d.current_period.cost_usd)}</strong> spent
           </div>
         </div>
       </div>
@@ -291,7 +291,7 @@ export function TrendSection({ daily, days }: { daily: NonNullable<KeyUsageData[
   const headline =
     metric === "tokens" ? formatTokens(t.prompt + t.completion) + " tokens"
       : metric === "requests" ? formatNumber(t.requests) + " requests"
-        : "$" + t.cost.toFixed(4);
+        : formatCostUSD(t.cost);
 
   return (
     <section className="space-y-4">
@@ -441,7 +441,7 @@ export function RecentRequestsSection({ recent, days: _days }: { recent: PortalR
                         {formatTokens(r.completion_tokens)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-[13px] text-[var(--text-muted)]">${r.cost_usd.toFixed(4)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-[13px] text-[var(--text-muted)]">{formatCostUSD(r.cost_usd)}</td>
                     <td className="px-4 py-3 text-center">
                       {opts.length >0 ? (
                         <div className="flex flex-wrap items-center justify-center gap-1">
@@ -596,7 +596,7 @@ export function InsightsSection({ d }: { d: KeyUsageData }) {
             <Highlight label="Busiest Day" value={busiest && busiest.requests > 0 ? busiest.date.slice(5) : "—"} sub={busiest && busiest.requests > 0 ? `${formatNumber(busiest.requests)} requests` : "no activity"} />
             <Highlight label="Models Used" value={String(d.models?.length ?? 0)} sub="in period" />
             <Highlight label="Avg / Request" value={formatTokens(avgPerReq)} sub="tokens" />
-            <Highlight label="This Month" value={`$${d.current_period.cost_usd.toFixed(2)}`} sub={`${formatNumber(d.current_period.total_requests)} requests`} />
+            <Highlight label="This Month" value={formatCostUSD(d.current_period.cost_usd)} sub={`${formatNumber(d.current_period.total_requests)} requests`} />
           </div>
         </Card>
       </div>
@@ -662,7 +662,7 @@ export function ModelSection({ models }: { models: NonNullable<KeyUsageData["mod
                     <td className="px-6 py-4 text-right tabular-nums font-mono text-[13px] text-[var(--text-muted)]">{formatTokens(m.prompt_tokens)}</td>
                     <td className="px-6 py-4 text-right tabular-nums font-mono text-[13px] text-[var(--text-muted)]">{formatTokens(m.completion_tokens)}</td>
                     <td className="px-6 py-4 text-right tabular-nums font-mono text-[13px] text-[var(--text-muted)]">{formatTokens(avg)}</td>
-                    <td className={`px-6 py-4 text-right tabular-nums font-semibold text-[15px] ${m.cost_usd > 0 ? "text-[var(--text)]" : "text-[var(--text-muted)]"}`}>${m.cost_usd.toFixed(4)}</td>
+                    <td className={`px-6 py-4 text-right tabular-nums font-semibold text-[15px] ${m.cost_usd > 0 ? "text-[var(--text)]" : "text-[var(--text-muted)]"}`}>{formatCostUSD(m.cost_usd)}</td>
                   </tr>
                 );
               })}
@@ -675,7 +675,7 @@ export function ModelSection({ models }: { models: NonNullable<KeyUsageData["mod
                   <td className="px-6 py-4 text-right tabular-nums font-mono text-[var(--text-muted)]">{formatTokens(totals.prompt)}</td>
                   <td className="px-6 py-4 text-right tabular-nums font-mono text-[var(--text-muted)]">{formatTokens(totals.completion)}</td>
                   <td className="px-6 py-4" />
-                  <td className="px-6 py-4 text-right tabular-nums font-semibold text-[var(--text)]">${totals.cost.toFixed(4)}</td>
+                  <td className="px-6 py-4 text-right tabular-nums font-semibold text-[var(--text)]">{formatCostUSD(totals.cost)}</td>
                 </tr>
               </tfoot>
             )}
@@ -846,7 +846,7 @@ export function ChartTooltip({ active, payload, label, metric: _metric, simple }
   if (!active || !payload?.length) return null;
   const fmtVal = (key: string, v: number) => {
     if (key === "requests" || key === "Requests") return formatNumber(v);
-    if (key === "cost_usd" || key === "Cost") return `$${v.toFixed(4)}`;
+    if (key === "cost_usd" || key === "Cost") return formatCostUSD(v);
     return formatTokens(v);
   };
   const nameOf = (key: string) => (key === "prompt_tokens" || key === "Input" ? "Input" : key === "completion_tokens" || key === "Output" ? "Output" : key === "requests" ? "Requests" : key === "cost_usd" ? "Cost" : key);

@@ -720,3 +720,22 @@ func TestAdminSetPortalUserPlanResyncsBudget(t *testing.T) {
 	u, _ = srv.db.PortalUsers().GetBySub(ctx, "sub-1")
 	require.Equal(t, "pro", u.PlanID)
 }
+
+// TestPortalUsageRecentCostKeepsNanoPrecision guards sub-micro charges (cheap
+// Surplus requests) from being shown to the user as $0.
+func TestPortalUsageRecentCostKeepsNanoPrecision(t *testing.T) {
+	srv := newPortalTestServer(t)
+	ctx := context.Background()
+	issued, err := srv.identity.Create(ctx, store.DefaultTenantID, "", "portal-key")
+	require.NoError(t, err)
+	require.NoError(t, srv.usage.Record(ctx, store.UsageRecord{
+		ID: "r1", TenantID: store.DefaultTenantID, APIKeyID: issued.Record.ID,
+		Provider: "openai", Model: "gpt-4o", Status: "success",
+		PromptTokens: 18, CompletionTokens: 83, CostNanos: 1250, CreatedAt: time.Now().UTC(),
+	}))
+	payload, err := srv.buildKeyUsageMap(ctx, issued.Record, 30)
+	require.NoError(t, err)
+	recent := payload["recent"].([]map[string]any)
+	require.Len(t, recent, 1)
+	require.InDelta(t, 0.00000125, recent[0]["cost_usd"], 1e-15)
+}
