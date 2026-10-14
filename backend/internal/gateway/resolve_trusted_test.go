@@ -1,10 +1,12 @@
 package gateway
 
 import (
+	"context"
 	"testing"
 
 	"github.com/mydisha/keirouter/backend/internal/dispatch"
 	"github.com/mydisha/keirouter/backend/internal/market"
+	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
 func TestStampSurplusTrustedFlagsStepAndUsesCapAsFallbackRate(t *testing.T) {
@@ -52,5 +54,24 @@ func TestStampSurplusTrustedMissingQuoteStillBillsUpstreamCost(t *testing.T) {
 	out := stampSurplusTrusted(steps, nil, market.NewSnapshotCache(), 10)
 	if !out[0].BillUpstreamCost || out[0].MinDiscountPct != 0 {
 		t.Fatalf("step = %+v, want upstream-cost billing without a ceiling", out[0])
+	}
+}
+
+func TestChainResultUsesChainMarkupOverride(t *testing.T) {
+	cache := market.NewSnapshotCache()
+	cache.Replace([]market.Model{market.TrustedQuote{Found: true, BestIn: 1, BestOut: 2, CapIn: 3, CapOut: 4}.Model("m")})
+	override := 50.0
+	chains := &fakeChains{chains: []store.Chain{
+		{ID: "a", Name: "own", MarkupPercent: &override, Steps: []store.ChainStep{{Provider: "p", Model: "m", MarketSlug: "surplus-trusted:m"}}},
+		{ID: "b", Name: "global", Steps: []store.ChainStep{{Provider: "p", Model: "m", MarketSlug: "surplus-trusted:m"}}},
+	}}
+	for name, want := range map[string]float64{"own": 1.5, "global": 1.1} {
+		res, err := chainResultWith(context.Background(), chains, nil, cache, 10, store.DefaultTenantID, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := res.Targets[0].UpstreamCostMult; got < want-1e-9 || got > want+1e-9 {
+			t.Fatalf("%s mult = %v, want %v", name, got, want)
+		}
 	}
 }

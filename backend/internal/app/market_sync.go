@@ -209,7 +209,7 @@ func (a *App) syncChainMarketPricesWithModels(ctx context.Context, models []mark
 		if len(c.MarketSlugs) == 0 {
 			continue
 		}
-		rate, ok := market.ComputeChainRateWithSafety(c.MarketSlugs, models, settings.MarkupPercent, marketCacheReadMult, marketCacheWriteMult, settings.SafetyMarginEnabled, settings.SafetyMarginPercent)
+		rate, ok := market.ComputeChainRateWithSafety(c.MarketSlugs, models, market.EffectiveMarkup(c.MarkupPercent, settings.MarkupPercent), marketCacheReadMult, marketCacheWriteMult, settings.SafetyMarginEnabled, settings.SafetyMarginPercent)
 		if !ok {
 			continue
 		}

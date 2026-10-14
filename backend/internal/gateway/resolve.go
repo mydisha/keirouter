@@ -129,6 +129,7 @@ func chainResultWith(ctx context.Context, chains ChainSource, latency LatencyRea
 			}
 
 			opts := dispatch.PlanOptions{ChainID: c.ID}
+			markupPercent := market.EffectiveMarkup(c.MarkupPercent, markupPercent)
 			// A chain marked ReorderByMarket is ordered cheapest-first by the
 			// live rate of each step's bound slug. Unresolvable/slugless steps
 			// sink last. Runs before the declared strategy switch so it

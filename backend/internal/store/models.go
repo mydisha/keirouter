@@ -145,9 +145,12 @@ type Chain struct {
 	// ReorderByMarket orders steps cheapest-first by live market slug rate at
 	// request time. Off by default; requires per-step market slugs to be useful.
 	ReorderByMarket bool
-	Steps           []ChainStep
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	// MarkupPercent overrides the global market markup for this chain. Nil
+	// follows the global setting; 0 is an explicit no-markup override.
+	MarkupPercent *float64
+	Steps         []ChainStep
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // ChainStep is one candidate target within a chain.

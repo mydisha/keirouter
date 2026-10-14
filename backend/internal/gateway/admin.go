@@ -1861,6 +1861,8 @@ func (s *Server) adminListChains(w http.ResponseWriter, r *http.Request) {
 			"display_provider":     c.DisplayProvider,
 			"reorder_by_market":    c.ReorderByMarket,
 			"capability_overrides": c.CapabilityOverrides,
+			// null = follows the global market markup.
+			"markup_percent": c.MarkupPercent,
 		}
 		if c.FallbackProvider != "" && c.FallbackModel != "" {
 			entry["fallback_provider"] = c.FallbackProvider
@@ -1885,6 +1887,7 @@ func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 		CacheReadPerM       float64  `json:"cache_read_per_m"`
 		MarketSlugs         []string `json:"market_slugs"`
 		ReorderByMarket     bool     `json:"reorder_by_market"`
+		MarkupPercent       *float64 `json:"markup_percent"`
 		Steps               []struct {
 			Provider   string `json:"provider"`
 			Model      string `json:"model"`
@@ -1946,8 +1949,13 @@ func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 		CacheReadPerM:       body.CacheReadPerM,
 		MarketSlugs:         body.MarketSlugs,
 		ReorderByMarket:     body.ReorderByMarket,
+		MarkupPercent:       body.MarkupPercent,
 		CreatedAt:           now,
 		UpdatedAt:           now,
+	}
+	if body.MarkupPercent != nil && !validMarkup(*body.MarkupPercent) {
+		writeError(w, http.StatusBadRequest, "markup_percent must be between 0 and 1000")
+		return
 	}
 	for i, st := range body.Steps {
 		if _, ok := connectors.SpecByID(st.Provider); !ok {
@@ -1964,6 +1972,7 @@ func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
+	s.resyncMarketPricesAsync(chain)
 	writeJSON(w, http.StatusCreated, map[string]any{"id": chain.ID, "name": chain.Name})
 }
 
@@ -1996,7 +2005,9 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 		CacheReadPerM       *float64  `json:"cache_read_per_m"`
 		MarketSlugs         *[]string `json:"market_slugs"`
 		ReorderByMarket     *bool     `json:"reorder_by_market"`
-		Steps               *[]struct {
+		// markup_percent: absent = unchanged, null = follow global, number = override.
+		MarkupPercent json.RawMessage `json:"markup_percent"`
+		Steps         *[]struct {
 			Provider   string `json:"provider"`
 			Model      string `json:"model"`
 			MarketSlug string `json:"market_slug"`
@@ -2037,6 +2048,18 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ReorderByMarket != nil {
 		existing.ReorderByMarket = *body.ReorderByMarket
+	}
+	if len(body.MarkupPercent) > 0 {
+		if string(body.MarkupPercent) == "null" {
+			existing.MarkupPercent = nil
+		} else {
+			var v float64
+			if err := json.Unmarshal(body.MarkupPercent, &v); err != nil || !validMarkup(v) {
+				writeError(w, http.StatusBadRequest, "markup_percent must be null or between 0 and 1000")
+				return
+			}
+			existing.MarkupPercent = &v
+		}
 	}
 	if body.InputPerM != nil || body.OutputPerM != nil || body.CacheWritePerM != nil || body.CacheReadPerM != nil {
 		rates := []*float64{body.InputPerM, body.OutputPerM, body.CacheWritePerM, body.CacheReadPerM}
@@ -2084,6 +2107,7 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
+	s.resyncMarketPricesAsync(existing)
 	writeJSON(w, http.StatusOK, map[string]any{"id": existing.ID, "name": existing.Name})
 }
 
@@ -3563,4 +3587,25 @@ func validateCapabilityOverrides(raw string) error {
 		}
 	}
 	return nil
+}
+
+// validMarkup bounds a markup percentage the same way the global setting is.
+func validMarkup(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && v <= 1000
+}
+
+// resyncMarketPricesAsync re-derives market-bound chain prices in the
+// background after a chain edit, so a changed slug set or markup override is
+// reflected in the displayed price without waiting for the next refresh tick.
+func (s *Server) resyncMarketPricesAsync(c store.Chain) {
+	if s.syncMarketPrices == nil || len(c.MarketSlugs) == 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		if _, err := s.syncMarketPrices(ctx); err != nil {
+			s.log.Debug("market resync after chain edit failed", "chain", c.Name, "err", err)
+		}
+	}()
 }

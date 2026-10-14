@@ -82,6 +82,9 @@ export function ChainEditorPage() {
   const [chainPrice, setChainPrice] = useState({ inputPerM: 0, outputPerM: 0, cacheWritePerM: 0, cacheReadPerM: 0 });
   const [marketSlugs, setMarketSlugs] = useState("");
   const [reorderByMarket, setReorderByMarket] = useState(false);
+  const [markupEnabled, setMarkupEnabled] = useState(false);
+  const [markupValue, setMarkupValue] = useState("");
+  const marketSettings = useQuery({ queryKey: ["market-pricing-settings"], queryFn: () => api.marketPricingSettings() });
   const [priceOpen, setPriceOpen] = useState(false);
   const [priceDrafts, setPriceDrafts] = useState<Map<string, string>>(() => new Map());
   const [error, setError] = useState("");
@@ -98,6 +101,8 @@ export function ChainEditorPage() {
     setChainPrice({ inputPerM: existing.input_per_m ?? 0, outputPerM: existing.output_per_m ?? 0, cacheWritePerM: existing.cache_write_per_m ?? 0, cacheReadPerM: existing.cache_read_per_m ?? 0 });
     setMarketSlugs((existing.market_slugs ?? []).join("\n"));
     setReorderByMarket(existing.reorder_by_market ?? false);
+    setMarkupEnabled(existing.markup_percent != null);
+    setMarkupValue(existing.markup_percent != null ? String(existing.markup_percent) : "");
     setPriceOpen((existing.input_per_m ?? 0) > 0 || (existing.output_per_m ?? 0) > 0 || (existing.cache_write_per_m ?? 0) > 0 || (existing.cache_read_per_m ?? 0) > 0);
     setHydrated(true);
   }, [existing, hydrated]);
@@ -114,13 +119,15 @@ export function ChainEditorPage() {
   const hasMarketSlugs = parseMarketSlugs(marketSlugs).length > 0;
   const priced = !hasMarketSlugs && (chainPrice.inputPerM > 0 || chainPrice.outputPerM > 0 || chainPrice.cacheWritePerM > 0 || chainPrice.cacheReadPerM > 0);
   const needsPricing = priced && (chainPrice.inputPerM <= 0 || chainPrice.outputPerM <= 0);
-  const validationMessage = !name.trim() ? "Add a chain name to continue." : !isValidChainName(name.trim()) ? "Use up to 128 letters, numbers, hyphens, underscores, or dots; begin with a letter or number." : completeSteps.length === 0 ? "Add at least one model to the route." : incompleteSteps ? "Complete or remove every model row before saving." : duplicate ? "Each route step must be a different provider/model target." : fallbackEnabled && (!fallback.provider || !fallback.model) ? "Choose the final fallback model or turn it off." : needsPricing ? "Set both input and output price, or clear all price fields." : "";
+  const markupNumber = Number(markupValue);
+  const markupInvalid = markupEnabled && (markupValue.trim() === "" || !Number.isFinite(markupNumber) || markupNumber < 0 || markupNumber > 1000);
+  const validationMessage = markupInvalid ? "Chain markup must be between 0 and 1000%." : !name.trim() ? "Add a chain name to continue." : !isValidChainName(name.trim()) ? "Use up to 128 letters, numbers, hyphens, underscores, or dots; begin with a letter or number." : completeSteps.length === 0 ? "Add at least one model to the route." : incompleteSteps ? "Complete or remove every model row before saving." : duplicate ? "Each route step must be a different provider/model target." : fallbackEnabled && (!fallback.provider || !fallback.model) ? "Choose the final fallback model or turn it off." : needsPricing ? "Set both input and output price, or clear all price fields." : "";
   const valid = !validationMessage;
   const routeChain = useMemo(() => ({ id: existing?.id ?? "draft", name, strategy, steps: completeSteps.map((step, position) => ({ provider: step.provider, model: step.model, position } as ChainStep)), fallback_provider: fallbackEnabled ? fallback.provider : "", fallback_model: fallbackEnabled ? fallback.model : "" } as Chain), [completeSteps, existing?.id, fallback.model, fallback.provider, fallbackEnabled, name, strategy]);
 
   const saveMutation = useMutation({
     mutationFn: () => {
-      const payload = { name: name.trim(), strategy, input_per_m: chainPrice.inputPerM, output_per_m: chainPrice.outputPerM, cache_write_per_m: chainPrice.cacheWritePerM, cache_read_per_m: chainPrice.cacheReadPerM, market_slugs: parseMarketSlugs(marketSlugs), reorder_by_market: reorderByMarket, steps: completeSteps.map((step) => ({ provider: step.provider, model: step.model, market_slug: step.marketSlug ?? "" })), fallback_provider: fallbackEnabled ? fallback.provider : "", fallback_model: fallbackEnabled ? fallback.model : "", display_provider: displayProvider, capability_overrides: serializeCapOverrides(capOverrides) };
+      const payload = { name: name.trim(), strategy, input_per_m: chainPrice.inputPerM, output_per_m: chainPrice.outputPerM, cache_write_per_m: chainPrice.cacheWritePerM, cache_read_per_m: chainPrice.cacheReadPerM, market_slugs: parseMarketSlugs(marketSlugs), reorder_by_market: reorderByMarket, markup_percent: markupEnabled ? markupNumber : null, steps: completeSteps.map((step) => ({ provider: step.provider, model: step.model, market_slug: step.marketSlug ?? "" })), fallback_provider: fallbackEnabled ? fallback.provider : "", fallback_model: fallbackEnabled ? fallback.model : "", display_provider: displayProvider, capability_overrides: serializeCapOverrides(capOverrides) };
       return isEdit ? api.updateChain(id!, payload) : api.createChain(payload);
     },
     onSuccess: () => {
@@ -204,6 +211,27 @@ export function ChainEditorPage() {
             />
           </Field>
           {hasMarketSlugs && <p className="mt-2 text-xs text-[var(--text-muted)]">Prices below are managed automatically from the market.</p>}
+          <div className="mt-4 flex flex-wrap items-start gap-3 border-t border-[var(--border)] pt-4">
+            <label className="relative mt-0.5 inline-flex h-6 w-11 shrink-0 cursor-pointer items-center">
+              <input type="checkbox" checked={markupEnabled} onChange={(event) => { setMarkupEnabled(event.target.checked); if (event.target.checked && markupValue === "") setMarkupValue(String(marketSettings.data?.markup_percent ?? 0)); setDirty(true); }} className="peer sr-only" aria-label="Custom markup for this chain" />
+              <span className="absolute inset-0 rounded-full bg-ink-300 transition-colors peer-checked:bg-accent-600 peer-focus-visible:ring-2 peer-focus-visible:ring-accent-400/50 dark:bg-ink-700" />
+              <span className="relative ml-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform peer-checked:translate-x-5" />
+            </label>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">Custom markup for this chain</p>
+              <p className="text-xs text-[var(--text-muted)]">
+                {markupEnabled
+                  ? "Overrides the global markup for this chain's market price and Surplus-billed requests. 0 = no markup."
+                  : `Off: follows the global markup (${marketSettings.data?.markup_percent ?? "…"}%).`}
+              </p>
+            </div>
+            {markupEnabled && (
+              <div className="flex items-center gap-2">
+                <Input type="number" min={0} max={1000} step="any" value={markupValue} onChange={(event) => { setMarkupValue(event.target.value); setDirty(true); }} className="w-28" aria-label="Chain markup percent" />
+                <span className="text-sm text-[var(--text-muted)]">%</span>
+              </div>
+            )}
+          </div>
         </Card>
         <Card className="p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">

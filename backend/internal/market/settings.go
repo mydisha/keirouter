@@ -3,6 +3,7 @@ package market
 import (
 	"context"
 	"encoding/json"
+	"math"
 )
 
 const SettingsKey = "market_pricing_settings"
@@ -60,4 +61,12 @@ func SaveSettings(ctx context.Context, set func(context.Context, string, string)
 		return err
 	}
 	return set(ctx, SettingsKey, string(raw))
+}
+// EffectiveMarkup returns a chain's markup: its own override when set and
+// valid, otherwise the global setting.
+func EffectiveMarkup(override *float64, global float64) float64 {
+	if override == nil || *override < 0 || math.IsNaN(*override) || math.IsInf(*override, 0) {
+		return global
+	}
+	return *override
 }

@@ -85,3 +85,38 @@ func TestSyncFetchesTrustedBooksForBoundSlugsOnly(t *testing.T) {
 		t.Fatalf("chain input = %v, want 0.0027445", got.InputPerM)
 	}
 }
+
+func TestSyncAppliesChainMarkupOverride(t *testing.T) {
+	db := newSyncTestDB(t)
+	ctx := context.Background()
+	var hits []string
+	srv := trustedSurplusServer(t, map[string]string{"gpt-5.6-luna": lunaBook}, &hits)
+	override, zero := 50.0, 0.0
+	for _, c := range []store.Chain{
+		{ID: "own", Name: "own", MarkupPercent: &override},
+		{ID: "none", Name: "none", MarkupPercent: &zero},
+		{ID: "global", Name: "global"},
+	} {
+		c.TenantID, c.Strategy = store.DefaultTenantID, "priority"
+		c.MarketSlugs = []string{"surplus-trusted:gpt-5.6-luna"}
+		c.Steps = []store.ChainStep{{ID: c.ID + "-s", ChainID: c.ID, Provider: "custom-openai-surplus", Model: "gpt-5.6-luna"}}
+		if err := db.Chains().Create(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := market.SaveSettings(ctx, db.Settings().Set, market.Settings{RefreshIntervalSeconds: 2, MarkupPercent: 10, SurplusFallbackDepth: 3}); err != nil {
+		t.Fatal(err)
+	}
+	a := newSyncTestApp(t, db)
+	a.surplusURL = srv.URL
+	if _, err := a.syncChainMarketPrices(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Cheapest trusted input = 0.002495 $/M.
+	for id, want := range map[string]float64{"own": 0.0037425, "none": 0.002495, "global": 0.0027445} {
+		c, _ := db.Chains().Get(ctx, id)
+		if c.InputPerM < want-1e-12 || c.InputPerM > want+1e-12 {
+			t.Fatalf("%s input = %v, want %v", id, c.InputPerM, want)
+		}
+	}
+}

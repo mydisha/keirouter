@@ -41,3 +41,36 @@ func TestChainPricingRoundTrip(t *testing.T) {
 	require.Len(t, list, 1)
 	require.Equal(t, 3.125, list[0].CacheWritePerM)
 }
+
+func TestChainMarkupOverrideRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	now := time.Now().UTC()
+	step := []ChainStep{{ID: "s", ChainID: "c-mk", Position: 0, Provider: "openai", Model: "gpt-4o", CreatedAt: now}}
+	c := Chain{ID: "c-mk", TenantID: DefaultTenantID, Name: "mk", Strategy: "priority", CreatedAt: now, UpdatedAt: now, Steps: step}
+	require.NoError(t, db.Chains().Create(ctx, c))
+	got, err := db.Chains().Get(ctx, "c-mk")
+	require.NoError(t, err)
+	require.Nil(t, got.MarkupPercent, "unset markup must follow global (nil)")
+
+	zero := 0.0
+	c.MarkupPercent = &zero
+	require.NoError(t, db.Chains().Update(ctx, c))
+	got, err = db.Chains().Get(ctx, "c-mk")
+	require.NoError(t, err)
+	require.NotNil(t, got.MarkupPercent, "explicit 0 must survive as an override")
+	require.Equal(t, 0.0, *got.MarkupPercent)
+
+	v := 25.5
+	c.MarkupPercent = &v
+	require.NoError(t, db.Chains().Update(ctx, c))
+	list, err := db.Chains().ListByTenant(ctx, DefaultTenantID)
+	require.NoError(t, err)
+	require.Equal(t, 25.5, *list[0].MarkupPercent)
+
+	c.MarkupPercent = nil
+	require.NoError(t, db.Chains().Update(ctx, c))
+	got, err = db.Chains().Get(ctx, "c-mk")
+	require.NoError(t, err)
+	require.Nil(t, got.MarkupPercent)
+}
