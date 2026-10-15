@@ -3,6 +3,8 @@ package finance
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -98,4 +100,27 @@ func TestValidateAndMaskWebhook(t *testing.T) {
 	require.Error(t, ValidateDiscordWebhook("http://discord.com/api/webhooks/123/abc"))
 	require.Equal(t, "https://discord.com/api/webhooks/123/****", MaskDiscordWebhook("https://discord.com/api/webhooks/123/abcSECRET"))
 	require.Equal(t, "", MaskDiscordWebhook(""))
+}
+
+func TestPostDiscord_ErrorsOmitToken(t *testing.T) {
+	const token = "SECRETTOKEN123"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	// Non-2xx response.
+	err := PostDiscord(context.Background(), srv.URL+"/api/webhooks/1/"+token, "hi")
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), token)
+
+	// Unreachable server: the transport error must not echo the URL.
+	srv.Close()
+	err = PostDiscord(context.Background(), srv.URL+"/api/webhooks/1/"+token, "hi")
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), token)
+	require.NotContains(t, err.Error(), "/api/webhooks/")
+
+	// Malformed URL.
+	err = PostDiscord(context.Background(), "https://discord.com/api/webhooks/1/"+token+"\x7f", "hi")
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), token)
 }
