@@ -11,6 +11,20 @@ interface ThemeAPI {
 const ThemeContext = createContext<ThemeAPI | null>(null);
 const STORAGE_KEY = "keirouter-theme";
 
+// Public pages (landing, /model, /bansos, /ketentuan) run their own theme in
+// PublicLayout; keep in sync with the pre-paint script in index.html.
+export const PUBLIC_PATH = /^\/(bansos|model|ketentuan)?\/?$/;
+
+/** The dashboard theme the visitor saved, resolved against the OS setting. */
+export function storedDashboardTheme(): "light" | "dark" {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return resolve(stored === "dark" || stored === "system" ? stored : "light");
+  } catch {
+    return "light";
+  }
+}
+
 function getSystemTheme(): "light" | "dark" {
   if (typeof window === "undefined") return "light";
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -38,12 +52,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const [resolved, setResolved] = useState<"light" | "dark">(() => resolve(theme));
 
-  // Apply theme on mount and when theme changes.
+  // Apply theme on mount and when theme changes. Public pages own the root
+  // class themselves (PublicLayout), so the dashboard theme stays out of them.
   useEffect(() => {
     const r = resolve(theme);
     setResolved(r);
-    apply(r);
-    localStorage.setItem(STORAGE_KEY, theme);
+    if (!PUBLIC_PATH.test(window.location.pathname)) apply(r);
   }, [theme]);
 
   // Listen for system theme changes when in "system" mode.
@@ -53,13 +67,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const handler = () => {
       const r = getSystemTheme();
       setResolved(r);
-      apply(r);
+      if (!PUBLIC_PATH.test(window.location.pathname)) apply(r);
     };
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
   }, [theme]);
 
-  const setTheme = (t: Theme) => setThemeState(t);
+  // Persist only an explicit choice; writing the default on mount would make
+  // every visitor look like they had picked it.
+  const setTheme = (t: Theme) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, t);
+    } catch {
+      /* storage unavailable: the choice lasts for this page only */
+    }
+    setThemeState(t);
+  };
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, resolved }}>

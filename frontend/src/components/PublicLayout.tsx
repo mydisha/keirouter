@@ -5,21 +5,21 @@
 // theme toggle flips `data-theme` on this element only, so it never touches
 // the dashboard's `.dark` class.
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Bell, Boxes, Gift, Home, Moon, Send, Sun, UserRound, type LucideIcon } from "lucide-react";
 import { NotificationPopup } from "./NotificationPopup";
+import { storedDashboardTheme } from "./ThemeProvider";
 
 type Theme = "light" | "dark";
 
-// Shared with the dashboard ThemeProvider, so a saved choice carries over.
-const THEME_STORAGE_KEY = "keirouter-theme";
+// Separate from the dashboard theme key: the dashboard's light default must
+// not switch public pages away from their dark default. Read by index.html.
+const THEME_STORAGE_KEY = "keirouter-public-theme";
 export const TELEGRAM_URL = "https://t.me/+F2C4PaeMgv1hYjE1";
 
 function storedTheme(): Theme {
   try {
-    const saved = localStorage.getItem(THEME_STORAGE_KEY);
-    if (saved === "dark") return "dark";
-    if (saved === "light") return "light";
+    if (localStorage.getItem(THEME_STORAGE_KEY) === "light") return "light";
     // Public pages open in dark mode until the visitor picks a theme.
     return "dark";
   } catch {
@@ -125,6 +125,13 @@ export function PublicLayout({ children }: { children: ReactNode }) {
     return "overview";
   });
   const [announcementOpen, setAnnouncementOpen] = useState(false);
+
+  // Keep the page background (html.dark) on the public theme; hand the root
+  // back to the dashboard theme when leaving for the portal or dashboard.
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", theme === "dark");
+  }, [theme]);
+  useEffect(() => () => void document.documentElement.classList.toggle("dark", storedDashboardTheme() === "dark"), []);
 
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
