@@ -8,6 +8,7 @@ import (
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
 
 	"github.com/mydisha/keirouter/backend/internal/core"
+	"github.com/mydisha/keirouter/backend/internal/errclass"
 )
 
 // The Responses API streams a rich, typed event sequence rather than uniform
@@ -26,11 +27,14 @@ import (
 
 // respStreamEvent is one Responses SSE data payload.
 type respStreamEvent struct {
-	Type     string          `json:"type"`
-	Delta    string          `json:"delta"`
-	ItemID   string          `json:"item_id"`
-	Item     *respStreamItem `json:"item"`
-	Response *struct {
+	Type   string `json:"type"`
+	Delta  string `json:"delta"`
+	ItemID string `json:"item_id"`
+	// OutputIndex orders parallel tool calls; chat clients accumulate
+	// arguments per index, so it must be carried through.
+	OutputIndex int             `json:"output_index"`
+	Item        *respStreamItem `json:"item"`
+	Response    *struct {
 		Usage *struct {
 			InputTokens        int `json:"input_tokens"`
 			OutputTokens       int `json:"output_tokens"`
@@ -65,7 +69,7 @@ func (OpenAIResponsesCodec) ParseStreamLine(line []byte, _ string) ([]core.Strea
 	}
 
 	var ev respStreamEvent
-	if err := json.Unmarshal(line, &ev); err != nil {
+	if err := json.UnmarshalNoCopy(line, &ev); err != nil {
 		return nil, fmt.Errorf("openai-responses: parse stream event: %w", err)
 	}
 
@@ -84,14 +88,11 @@ func (OpenAIResponsesCodec) ParseStreamLine(line []byte, _ string) ([]core.Strea
 
 	case "response.output_item.added":
 		if ev.Item != nil && (ev.Item.Type == "function_call" || ev.Item.Type == "custom_tool_call") {
-			return []core.StreamChunk{{
-				Type: core.ChunkToolCall,
-				ToolCall: &core.ToolCall{
-					ID:        ev.Item.CallID,
-					Name:      ev.Item.Name,
-					Arguments: json.RawMessage("{}"),
-				},
-			}}, nil
+			tc := &core.ToolCall{ID: ev.Item.CallID, Name: ev.Item.Name, Arguments: json.RawMessage("{}"), Custom: ev.Item.Type == "custom_tool_call"}
+			if tc.Custom {
+				tc.Arguments = nil
+			}
+			return []core.StreamChunk{{Type: core.ChunkToolCall, Index: ev.OutputIndex, ToolCall: tc}}, nil
 		}
 		return nil, nil
 
@@ -101,6 +102,7 @@ func (OpenAIResponsesCodec) ParseStreamLine(line []byte, _ string) ([]core.Strea
 		}
 		return []core.StreamChunk{{
 			Type:     core.ChunkToolCall,
+			Index:    ev.OutputIndex,
 			ToolCall: &core.ToolCall{Arguments: json.RawMessage(ev.Delta)},
 		}}, nil
 
@@ -152,12 +154,6 @@ func (OpenAIResponsesCodec) ParseStreamLine(line []byte, _ string) ([]core.Strea
 func classifyRespStreamError(msg string) *core.ProviderError {
 	m := strings.ToLower(msg)
 	switch {
-	// Rate limits mention token counts too ("Rate limit reached … too many
-	// tokens per min"); match the rate-limit vocabulary first so a TPM limit
-	// is never mistaken for context overflow below and left without cooldown.
-	case strings.Contains(m, "rate limit") || strings.Contains(m, "rate_limit") ||
-		strings.Contains(m, "tokens per min"):
-		return &core.ProviderError{Kind: core.ErrRateLimit, Message: msg}
 	// Codex can report model capacity and service overload inside an otherwise
 	// successful HTTP 200 stream. This is not a bad credential: let the
 	// pipeline rotate attempts without cooling the account or provider.
@@ -166,24 +162,8 @@ func classifyRespStreamError(msg string) *core.ProviderError {
 		strings.Contains(m, "server_is_overloaded"),
 		strings.Contains(m, "service_unavailable_error"):
 		return &core.ProviderError{Kind: core.ErrUpstream, Scope: core.FailureScopeRequest, Message: msg}
-	// Context overflow: the request itself is too large. Only the client can
-	// fix it (compact/trim), so scope it to the request — no cooldown, no
-	// fallback, surface the error straight back.
-	case strings.Contains(m, "exceeds the context window"),
-		strings.Contains(m, "context length"),
-		strings.Contains(m, "maximum context"),
-		strings.Contains(m, "input is too long"),
-		strings.Contains(m, "prompt is too long"),
-		strings.Contains(m, "too many tokens"):
-		return &core.ProviderError{Kind: core.ErrBadRequest, Scope: core.FailureScopeRequest, Message: msg}
-	// Unknown/inaccessible model reported in-stream: model-scoped so chains
-	// can fall back, mirroring the HTTP-status classification in connectors.
-	case strings.Contains(m, "model") &&
-		(strings.Contains(m, "not supported") || strings.Contains(m, "not available") ||
-			strings.Contains(m, "not found") || strings.Contains(m, "does not exist")):
-		return &core.ProviderError{Kind: core.ErrModelUnavailable, Scope: core.FailureScopeModel, Message: msg}
 	}
-	return &core.ProviderError{Kind: core.ErrUpstream, Message: msg}
+	return errclass.ClassifyErrorDetail("", 0, "", msg)
 }
 
 // respStreamState tracks per-stream rendering bookkeeping for the Responses
@@ -198,6 +178,7 @@ type respStreamState struct {
 	toolAdded    map[int]bool
 	toolCallID   map[int]string
 	toolName     map[int]string
+	toolCustom   map[int]bool
 	toolArgs     map[int]string
 	completed    bool
 }
@@ -214,6 +195,7 @@ func respState(state *StreamState) *respStreamState {
 		toolAdded:  map[int]bool{},
 		toolCallID: map[int]string{},
 		toolName:   map[int]string{},
+		toolCustom: map[int]bool{},
 		toolArgs:   map[int]string{},
 	}
 	state.Custom["resp"] = s
@@ -291,6 +273,7 @@ func (OpenAIResponsesCodec) RenderStreamChunk(chunk core.StreamChunk, state *Str
 		idx := chunk.Index
 		if chunk.ToolCall.Name != "" {
 			s.toolName[idx] = chunk.ToolCall.Name
+			s.toolCustom[idx] = chunk.ToolCall.Custom
 		}
 		if chunk.ToolCall.ID != "" && !s.toolAdded[idx] {
 			s.toolAdded[idx] = true
@@ -298,7 +281,7 @@ func (OpenAIResponsesCodec) RenderStreamChunk(chunk core.StreamChunk, state *Str
 			emit("response.output_item.added", map[string]any{
 				"output_index": idx,
 				"item": map[string]any{
-					"id": "fc_" + chunk.ToolCall.ID, "type": "function_call",
+					"id": "fc_" + chunk.ToolCall.ID, "type": s.toolItemType(idx),
 					"call_id": chunk.ToolCall.ID, "name": s.toolName[idx], "arguments": "",
 				},
 			})
@@ -306,7 +289,7 @@ func (OpenAIResponsesCodec) RenderStreamChunk(chunk core.StreamChunk, state *Str
 		if args := string(chunk.ToolCall.Arguments); args != "" && args != "{}" {
 			callID := s.toolCallID[idx]
 			s.toolArgs[idx] += args
-			emit("response.function_call_arguments.delta", map[string]any{
+			emit(s.toolDeltaEvent(idx), map[string]any{
 				"item_id": "fc_" + callID, "output_index": idx, "delta": args,
 			})
 		}
@@ -330,6 +313,19 @@ func (OpenAIResponsesCodec) RenderStreamChunk(chunk core.StreamChunk, state *Str
 			args := s.toolArgs[idx]
 			if args == "" {
 				args = "{}"
+			}
+			if s.toolCustom[idx] {
+				emit("response.custom_tool_call_input.done", map[string]any{
+					"item_id": "fc_" + callID, "output_index": idx, "input": args,
+				})
+				emit("response.output_item.done", map[string]any{
+					"output_index": idx,
+					"item": map[string]any{
+						"id": "fc_" + callID, "type": "custom_tool_call",
+						"call_id": callID, "name": s.toolName[idx], "input": args,
+					},
+				})
+				continue
 			}
 			emit("response.function_call_arguments.done", map[string]any{
 				"item_id": "fc_" + callID, "output_index": idx, "arguments": args,
@@ -396,4 +392,20 @@ func respEvent(name string, payload map[string]any) []byte {
 	out = append(out, b...)
 	out = append(out, '\n', '\n')
 	return out
+}
+
+// toolItemType is the Responses item type for the tool call at idx.
+func (s *respStreamState) toolItemType(idx int) string {
+	if s.toolCustom[idx] {
+		return "custom_tool_call"
+	}
+	return "function_call"
+}
+
+// toolDeltaEvent is the argument/input delta event name for the call at idx.
+func (s *respStreamState) toolDeltaEvent(idx int) string {
+	if s.toolCustom[idx] {
+		return "response.custom_tool_call_input.delta"
+	}
+	return "response.function_call_arguments.delta"
 }

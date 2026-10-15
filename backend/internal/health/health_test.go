@@ -23,6 +23,9 @@ func TestClassifyError(t *testing.T) {
 		{"bad_request_unsupported_msg", &core.ProviderError{Kind: core.ErrBadRequest, Message: "model not found"}, ProviderErrorUnsupported},
 		{"model_unavailable", &core.ProviderError{Kind: core.ErrModelUnavailable}, ProviderErrorUnsupported},
 		{"capability", &core.ProviderError{Kind: core.ErrCapability}, ProviderErrorUnsupported},
+		{"cloudflare_bad_account_id", &core.ProviderError{Kind: core.ErrModelUnavailable, StatusCode: 404,
+			Message: `{"errors":[{"code":7003,"message":"Could not route to /client/v4/accounts/%7BaccountId%7D/ai/v1/chat/completions, perhaps your object identifier is invalid?"}]}`},
+			ProviderErrorAuth},
 		{"internal", &core.ProviderError{Kind: core.ErrInternal}, ProviderErrorUnknown},
 	}
 	for _, c := range cases {

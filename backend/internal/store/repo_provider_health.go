@@ -489,3 +489,106 @@ func assignIntPtr(n sql.NullInt64, dst **int) {
 		*dst = &v
 	}
 }
+
+// ProviderHealthRollup is one provider's aggregate over one timeline bucket,
+// summed across every account/model/capability snapshot in that bucket.
+type ProviderHealthRollup struct {
+	Provider       string
+	Bucket         int
+	Requests       int64
+	Successes      int64
+	Failures       int64
+	Fallbacks      int64
+	RateLimited    int64
+	LatencyP95Ms   int64 // worst per-snapshot p95 in the bucket
+	WorstStatusRnk int   // 3 unhealthy, 2 degraded, 1 healthy, 0 unknown
+}
+
+// RollupSnapshots aggregates every provider's 1-minute health snapshots since
+// `since` into buckets of bucketSecs, in one query for all providers. It is
+// the data behind the dashboard's per-provider uptime strips.
+func (r *ProviderHealthRepo) RollupSnapshots(ctx context.Context, since time.Time, bucketSecs int64) ([]ProviderHealthRollup, error) {
+	if bucketSecs <= 0 {
+		bucketSecs = 3600
+	}
+	epochBucket, epochSince := r.db.epochExpr("bucket_start"), r.db.epochExpr("?")
+	q := r.db.rebind(fmt.Sprintf(`SELECT provider, CAST((%s-%s)/? AS INTEGER),
+		COALESCE(SUM(request_count),0), COALESCE(SUM(success_count),0), COALESCE(SUM(failure_count),0),
+		COALESCE(SUM(fallback_count),0), COALESCE(SUM(rate_limited_count),0),
+		COALESCE(MAX(latency_p95_ms),0),
+		COALESCE(MAX(CASE health_status WHEN 'unhealthy' THEN 3 WHEN 'degraded' THEN 2 WHEN 'healthy' THEN 1 ELSE 0 END),0)
+		FROM provider_health_snapshots
+		WHERE bucket_start >= ?
+		GROUP BY 1, 2 ORDER BY 1, 2`, epochBucket, epochSince))
+	rows, err := r.db.sql.QueryContext(ctx, q, formatTime(since), bucketSecs, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("store: rollup provider health snapshots: %w", err)
+	}
+	defer rows.Close()
+	var out []ProviderHealthRollup
+	for rows.Next() {
+		var p ProviderHealthRollup
+		if err := rows.Scan(&p.Provider, &p.Bucket, &p.Requests, &p.Successes, &p.Failures,
+			&p.Fallbacks, &p.RateLimited, &p.LatencyP95Ms, &p.WorstStatusRnk); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// SnapshotSummary is a provider (or provider+model) rollup of persisted
+// 1-minute health snapshots over a window. It backs the historical ranges of
+// the health dashboard, which the rolling "current" table cannot answer.
+type SnapshotSummary struct {
+	Provider, Model                        string
+	Requests, Successes, Failures          int64
+	Fallbacks, FinalFailures               int64
+	RateLimited, AuthErrors, QuotaExceeded int64
+	Timeouts, Provider5xx, NetworkErrors   int64
+	BadRequests                            int64
+	LatencyP95Ms, TTFTP95Ms                int64 // worst per-snapshot value
+	WorstStatusRank                        int   // 3 unhealthy, 2 degraded, 1 healthy, 0 unknown
+	Accounts, Models                       int64
+	LastBucket                             time.Time
+}
+
+// SummarizeSnapshots aggregates snapshots since `since`, grouped by provider,
+// or by provider and model when byModel is set.
+func (r *ProviderHealthRepo) SummarizeSnapshots(ctx context.Context, since time.Time, byModel bool) ([]SnapshotSummary, error) {
+	modelCol, group := "''", "provider"
+	if byModel {
+		modelCol, group = "model", "provider, model"
+	}
+	q := r.db.rebind(`SELECT provider, ` + modelCol + `,
+		COALESCE(SUM(request_count),0), COALESCE(SUM(success_count),0), COALESCE(SUM(failure_count),0),
+		COALESCE(SUM(fallback_count),0), COALESCE(SUM(final_failure_count),0),
+		COALESCE(SUM(rate_limited_count),0), COALESCE(SUM(auth_error_count),0), COALESCE(SUM(quota_exceeded_count),0),
+		COALESCE(SUM(timeout_count),0), COALESCE(SUM(provider_5xx_count),0), COALESCE(SUM(network_error_count),0),
+		COALESCE(SUM(bad_request_count),0),
+		COALESCE(MAX(latency_p95_ms),0), COALESCE(MAX(ttft_p95_ms),0),
+		COALESCE(MAX(CASE health_status WHEN 'unhealthy' THEN 3 WHEN 'degraded' THEN 2 WHEN 'healthy' THEN 1 ELSE 0 END),0),
+		COUNT(DISTINCT provider_account_id), COUNT(DISTINCT model), MAX(bucket_start)
+		FROM provider_health_snapshots
+		WHERE bucket_start >= ?
+		GROUP BY ` + group + ` ORDER BY ` + group)
+	rows, err := r.db.sql.QueryContext(ctx, q, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("store: summarize provider health snapshots: %w", err)
+	}
+	defer rows.Close()
+	var out []SnapshotSummary
+	for rows.Next() {
+		var s SnapshotSummary
+		var last string
+		if err := rows.Scan(&s.Provider, &s.Model, &s.Requests, &s.Successes, &s.Failures,
+			&s.Fallbacks, &s.FinalFailures, &s.RateLimited, &s.AuthErrors, &s.QuotaExceeded,
+			&s.Timeouts, &s.Provider5xx, &s.NetworkErrors, &s.BadRequests,
+			&s.LatencyP95Ms, &s.TTFTP95Ms, &s.WorstStatusRank, &s.Accounts, &s.Models, &last); err != nil {
+			return nil, err
+		}
+		s.LastBucket = parseTime(last)
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}

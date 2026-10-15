@@ -1,6 +1,6 @@
 ---
 name: keirouter-embeddings
-description: Generate vector embeddings via KeiRouter /v1/embeddings using OpenAI / Gemini / Mistral / Voyage / Nvidia embedding models for RAG, semantic search, similarity. Use when the user wants embeddings, vectors, RAG, semantic search, or to embed text.
+description: Generate vector embeddings via KeiRouter /v1/embeddings using OpenAI / Mistral / Cohere / Voyage / NVIDIA / AWS Bedrock and other embedding models for RAG, semantic search, similarity. Use when the user wants embeddings, vectors, RAG, semantic search, or to embed text.
 ---
 
 # KeiRouter — Embeddings
@@ -23,7 +23,6 @@ curl "$KEIROUTER_URL/v1/models/info?id=openai/text-embedding-3-small"
 |---|---|---|
 | `model` | yes | from `/v1/models/embedding` |
 | `input` | yes | string OR array of strings |
-| `encoding_format` | no | `float` (default) / `base64` |
 | `dimensions` | no | OpenAI v3 only |
 
 ## Examples
@@ -62,8 +61,12 @@ console.log(data[0].embedding.length);  // dimension
 
 | Provider | Notes |
 |---|---|
-| OpenAI, Mistral, Voyage, Fireworks, Together, Nebius, NVIDIA, Jina | Native OpenAI shape — `dimensions` works only on OpenAI v3 (`text-embedding-3-*`) |
-| Gemini | Server auto-converts to `embedContent`/`batchEmbedContents` — send OpenAI shape |
-| Custom OpenAI | Custom `baseUrl` from credentials |
+| OpenAI, Mistral, Cohere, Voyage, Jina, Fireworks, Together, Nebius, NVIDIA, OpenRouter, Venice, Cloudflare, vLLM | OpenAI shape — `dimensions` works only on models that support it (e.g. OpenAI `text-embedding-3-*`) |
+| AWS Bedrock | Titan and Cohere Embed via InvokeModel; send OpenAI shape |
+| Azure AI Foundry, Databricks, GitHub Models | OpenAI shape on the provider's own endpoint |
+| GigaChat | Native connector; send OpenAI shape |
+| Custom OpenAI | Any OpenAI-compatible `/embeddings` endpoint |
+
+Vectors are always returned as float arrays.
 
 Batch (`input` as array) is faster; some providers cap batch size.

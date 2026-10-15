@@ -131,7 +131,7 @@ func (s *Server) fetchLiveModels(ctx context.Context, tenantID string) map[strin
 		if err != nil {
 			continue
 		}
-		probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		probeCtx, cancel := context.WithTimeout(s.accountEgressContext(ctx, acc), 10*time.Second)
 		models, err := src.ListModels(probeCtx, creds)
 		cancel()
 		if err != nil || len(models) == 0 {

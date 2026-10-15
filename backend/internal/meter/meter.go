@@ -26,6 +26,11 @@ type Price struct {
 	CachedInputPerM float64
 	CacheWritePerM  float64
 	ReasoningPerM   float64
+	// CacheWrite1hPerM prices one-hour cache writes. Zero falls back to
+	// CacheWritePerM × 1.6 (Anthropic lists 1h at 2× input vs 1.25× for 5m).
+	CacheWrite1hPerM float64
+	// WebSearchPerK is the USD price per 1,000 provider-side web searches.
+	WebSearchPerK float64
 
 	LongContextThreshold int
 	LongInputPerM        float64
@@ -53,15 +58,29 @@ type Meter struct {
 	pricingMu   sync.RWMutex
 	pricing     map[string]Price // provider-level fallback
 	modelPrices map[string]Price // provider/model-level
+	// modelFingerprints indexes modelPrices keys by model fingerprint.
+	modelFingerprints map[string][]string
 
-	hub   *usagehub.Hub
-	async *AsyncWriter
+	hub       *usagehub.Hub
+	async     *AsyncWriter
+	observers []func(store.UsageRecord)
 }
 
 // SetHub installs a usage event hub. When set, the meter publishes an event
 // after every successful Record call. This enables SSE-based near-real-time
 // dashboard updates.
 func (m *Meter) SetHub(h *usagehub.Hub) { m.hub = h }
+
+// SetRecordObserver replaces every observer with fn. See AddRecordObserver.
+func (m *Meter) SetRecordObserver(fn func(store.UsageRecord)) {
+	m.observers = []func(store.UsageRecord){fn}
+}
+
+// AddRecordObserver installs fn to run after every successful Record, with
+// the row that was written. Used to feed shared budget counters and the
+// request export. fn runs on the request path and must not block. Install
+// observers before the meter serves traffic.
+func (m *Meter) AddRecordObserver(fn func(store.UsageRecord)) { m.observers = append(m.observers, fn) }
 
 // New builds a Meter backed by a usage repo and pricing tables.
 func New(usage UsageStore, pricing map[string]Price, modelPrices map[string]Price) *Meter {
@@ -71,7 +90,7 @@ func New(usage UsageStore, pricing map[string]Price, modelPrices map[string]Pric
 	if modelPrices == nil {
 		modelPrices = map[string]Price{}
 	}
-	return &Meter{usage: usage, pricing: pricing, modelPrices: modelPrices}
+	return &Meter{usage: usage, pricing: pricing, modelPrices: modelPrices, modelFingerprints: indexModelFingerprints(modelPrices)}
 }
 
 // AsyncConfig configures the buffered usage writer.
@@ -114,7 +133,6 @@ type Event struct {
 	TenantID  string
 	ProjectID string
 	APIKeyID  string
-	ChainID   string
 
 	// Optional chain-level price override. When any rate is > 0 the meter
 	// prices from these instead of the catalog.
@@ -154,10 +172,18 @@ type Event struct {
 	Client    string
 	Status    string
 	ErrorKind string
+	// ChainID is the routing chain that resolved the request ("" when the
+	// client targeted provider/model directly); FallbackCount is how many
+	// attempts failed over before the terminal one.
+	ChainID       string
+	FallbackCount int
 
-	Usage           core.Usage
-	UsageSource     string // provider | estimated | cache | none
-	CacheHit        bool
+	Usage       core.Usage
+	UsageSource string // provider | estimated | cache | none
+	CacheHit    bool
+	// ServiceTier is the OpenAI service tier the request ran under
+	// ("flex", "priority", "default"); flex and priority change the rates.
+	ServiceTier     string
 	Latency         time.Duration // winning upstream attempt
 	EndToEndLatency time.Duration
 	TTFT            time.Duration
@@ -169,6 +195,10 @@ type Event struct {
 	TerseActive    bool
 	HeadroomStats  *HeadroomSnapshot
 	PonytailActive bool
+
+	// Guardrail is what the guardrails did to the request (zero when no
+	// policy applied).
+	Guardrail core.GuardrailSummary
 }
 
 // SlimSnapshot captures the RTK slimmer's per-request compression results.
@@ -251,13 +281,14 @@ func (m *Meter) Record(ctx context.Context, ev Event) (int64, error) {
 	rec := store.UsageRecord{
 		ID: uuid.NewString(), RequestID: ev.RequestID,
 		TenantID: ev.TenantID, ProjectID: ev.ProjectID, APIKeyID: ev.APIKeyID,
-		ChainID:  ev.ChainID,
 		Provider: ev.Provider, Model: ev.Model, AccountID: ev.AccountID, Client: ev.Client,
+		ChainID: ev.ChainID, FallbackCount: ev.FallbackCount,
 		Status: status, ErrorKind: ev.ErrorKind, UsageSource: usageSource,
 		PromptTokens: u.PromptTokens, CompletionTokens: u.CompletionTokens,
 		CachedTokens: u.CachedTokens, CacheWriteTokens: u.CacheWriteTokens,
-		ReasoningTokens: u.ReasoningTokens,
-		CostMicros:      cost.CostMicros, CostNanos: cost.CostNanos,
+		ReasoningTokens: u.ReasoningTokens, CacheWrite1hTokens: u.CacheWrite1hTokens,
+		WebSearchRequests: u.WebSearchRequests,
+		CostMicros:        cost.CostMicros, CostNanos: cost.CostNanos, ToolCostNanos: cost.ToolCostNanos,
 		InputCostNanos: cost.InputCostNanos, CachedCostNanos: cost.CachedCostNanos,
 		CacheWriteCostNanos: cost.CacheWriteCostNanos, OutputCostNanos: cost.OutputCostNanos,
 		ReasoningCostNanos: cost.ReasoningCostNanos, AvoidedCostNanos: cost.AvoidedCostNanos,
@@ -273,7 +304,10 @@ func (m *Meter) Record(ctx context.Context, ev Event) (int64, error) {
 		UpstreamLatencyMS: int(ev.Latency.Milliseconds()), EndToEndLatencyMS: int(endToEnd.Milliseconds()),
 		TTFTMS: int(ev.TTFT.Milliseconds()), CavemanActive: ev.CavemanActive,
 		SlimActive: ev.SlimActive, TerseActive: ev.TerseActive, PonytailActive: ev.PonytailActive,
-		CreatedAt: recordedAt,
+		GuardrailAction: ev.Guardrail.Action, GuardrailDetector: ev.Guardrail.Detector,
+		GuardrailDirection: ev.Guardrail.Direction, GuardrailMidStream: ev.Guardrail.MidStream,
+		GuardrailMS: int(ev.Guardrail.Elapsed.Milliseconds()),
+		CreatedAt:   recordedAt,
 	}
 	if ev.SlimStats != nil {
 		rec.SlimBytesSaved, rec.SlimTokensSaved, rec.SlimRules = ev.SlimStats.BytesSaved, ev.SlimStats.TokensSaved, ev.SlimStats.Rules
@@ -283,6 +317,9 @@ func (m *Meter) Record(ctx context.Context, ev Event) (int64, error) {
 	}
 	if err := m.recordUsage(ctx, rec); err != nil {
 		return cost.CostMicros, err
+	}
+	for _, fn := range m.observers {
+		fn(rec)
 	}
 	if m.hub != nil {
 		m.hub.Publish(usagehub.Event{Provider: ev.Provider, Model: ev.Model, AccountID: ev.AccountID,
@@ -322,7 +359,7 @@ func (m *Meter) costForEvent(ev Event) CostBreakdown {
 	if price, ok := chainPrice(ev); ok {
 		return calculateCostFromPrice(pricingMatch("chain", price, "chain", false), u, ev.CacheHit, savedTokens)
 	}
-	return m.CalculateCost(ev.Provider, ev.Model, u, ev.CacheHit, savedTokens)
+	return m.CalculateCostWith(ev.Provider, ev.Model, u, ev.CacheHit, savedTokens, ev.ServiceTier)
 }
 
 func (m *Meter) recordUsage(ctx context.Context, rec store.UsageRecord) error {

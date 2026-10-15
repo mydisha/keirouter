@@ -530,3 +530,106 @@ func TestAdvanceRotationStateHonorsStickyLimit(t *testing.T) {
 	require.Equal(t, 1, nextCursor)
 	require.Equal(t, 0, hits)
 }
+
+func TestNoteFailureTransientNeedsRepeatedStrikes(t *testing.T) {
+	ctx := context.Background()
+	d, db := newDispatchTest(t, testAccount("acc-blip", 10))
+
+	upstream := func() *core.ProviderError {
+		return &core.ProviderError{Kind: core.ErrUpstream, Scope: core.FailureScopeProvider, StatusCode: 502}
+	}
+	// Two isolated 502s are a blip: the only account must stay in rotation.
+	for range TransientFailureThreshold - 1 {
+		d.NoteFailure(ctx, "acc-blip", upstream())
+		account, err := db.Accounts().Get(ctx, "acc-blip")
+		require.NoError(t, err)
+		require.Nil(t, account.CooldownUntil)
+	}
+	// The third strike inside the window benches it.
+	d.NoteFailure(ctx, "acc-blip", upstream())
+	account, err := db.Accounts().Get(ctx, "acc-blip")
+	require.NoError(t, err)
+	require.NotNil(t, account.CooldownUntil)
+
+	// A 429 still cools down immediately: the provider told us to back off.
+	d2, db2 := newDispatchTest(t, testAccount("acc-429", 10))
+	d2.NoteFailure(ctx, "acc-429", &core.ProviderError{Kind: core.ErrRateLimit})
+	account, err = db2.Accounts().Get(ctx, "acc-429")
+	require.NoError(t, err)
+	require.NotNil(t, account.CooldownUntil)
+}
+
+func TestNoteSuccessKeepsCooldownSetAfterAttemptStarted(t *testing.T) {
+	ctx := context.Background()
+	d, db := newDispatchTest(t, testAccount("acc-race", 10))
+
+	attemptStarted := time.Now().Add(-time.Second)
+	// A concurrent request hit a rate limit after our attempt began.
+	d.NoteFailure(ctx, "acc-race", &core.ProviderError{Kind: core.ErrRateLimit, RetryAfter: time.Minute})
+	account, err := db.Accounts().Get(ctx, "acc-race")
+	require.NoError(t, err)
+	require.NotNil(t, account.CooldownUntil)
+
+	// Our older in-flight request completing must not erase that cooldown.
+	d.NoteSuccessAt(ctx, "openai", "acc-race", "gpt-4o", attemptStarted)
+	account, err = db.Accounts().Get(ctx, "acc-race")
+	require.NoError(t, err)
+	require.NotNil(t, account.CooldownUntil, "success that predates the failure must not clear it")
+
+	// A request that started after the failure proves recovery.
+	d.NoteSuccessAt(ctx, "openai", "acc-race", "gpt-4o", time.Now())
+	account, err = db.Accounts().Get(ctx, "acc-race")
+	require.NoError(t, err)
+	require.Nil(t, account.CooldownUntil)
+}
+
+func TestNoteFailureContextWindowNeverCoolsDown(t *testing.T) {
+	ctx := context.Background()
+	d, db := newDispatchTest(t, testAccount("acc-ctx", 10))
+	d.NoteFailure(ctx, "acc-ctx", &core.ProviderError{Kind: core.ErrContextWindow, Model: "gpt-4o"})
+	account, err := db.Accounts().Get(ctx, "acc-ctx")
+	require.NoError(t, err)
+	require.Nil(t, account.CooldownUntil)
+	active, err := db.Routing().IsModelCooldownActive(ctx, "acc-ctx", "gpt-4o")
+	require.NoError(t, err)
+	require.False(t, active)
+}
+
+func TestPlanWithLimitStopsAfterFirstHealthyAttempt(t *testing.T) {
+	ctx := context.Background()
+	d, _ := newDispatchTest(t, testAccount("acc-1", 10), testAccount("acc-2", 20), testAccount("acc-3", 30))
+	targets := []Target{{Provider: "openai", Model: "gpt-4o"}}
+	attempts, err := d.PlanWith(ctx, store.DefaultTenantID, targets, core.NewCapabilitySet(), PlanOptions{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	require.Equal(t, "acc-1", attempts[0].Account.ID)
+
+	all, err := d.PlanWith(ctx, store.DefaultTenantID, targets, core.NewCapabilitySet(), PlanOptions{})
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+}
+
+func TestProviderCircuitHalfOpenAdmitsSingleProbe(t *testing.T) {
+	d, _ := newDispatchTest(t, testAccount("acc-1", 10))
+	now := time.Now()
+	d.clock = func() time.Time { return now }
+	for range ProviderCircuitFailureThreshold {
+		d.recordProviderFailure("openai")
+	}
+	require.Greater(t, d.providerCircuitRemaining("openai", now), time.Duration(0), "circuit is open")
+
+	// Once the open interval elapses exactly one caller is admitted as the
+	// probe; the next caller still waits.
+	later := now.Add(ProviderCircuitBaseCooldown + time.Second)
+	require.Equal(t, time.Duration(0), d.providerCircuitRemaining("openai", later))
+	require.Greater(t, d.providerCircuitRemaining("openai", later), time.Duration(0))
+
+	// A failed probe re-opens the circuit immediately, for longer.
+	now = later
+	d.recordProviderFailure("openai")
+	require.Greater(t, d.providerCircuitRemaining("openai", later.Add(ProviderCircuitBaseCooldown+time.Second)), time.Duration(0))
+
+	// A successful probe closes it for everyone.
+	d.recordProviderSuccess("openai")
+	require.Equal(t, time.Duration(0), d.providerCircuitRemaining("openai", later.Add(time.Hour)))
+}

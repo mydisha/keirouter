@@ -1,0 +1,95 @@
+import type { ComponentProps } from "react";
+import { DropdownMenu as DropdownMenuPrimitive } from "radix-ui";
+import { Check } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+// Radix-backed menu: keyboard navigation, typeahead, focus return and
+// outside-click dismissal come from the primitive, not hand-rolled handlers.
+
+export const DropdownMenu = DropdownMenuPrimitive.Root;
+export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;
+export const DropdownMenuGroup = DropdownMenuPrimitive.Group;
+export const DropdownMenuRadioGroup = DropdownMenuPrimitive.RadioGroup;
+
+export function DropdownMenuContent({
+  className,
+  sideOffset = 6,
+  collisionPadding = 8,
+  ...props
+}: ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+  return (
+    <DropdownMenuPrimitive.Portal>
+      <DropdownMenuPrimitive.Content
+        sideOffset={sideOffset}
+        collisionPadding={collisionPadding}
+        // Never wider or taller than the screen: a long menu scrolls.
+        className={cn(
+          "z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-44 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-2xl border border-line bg-surface p-1 text-[13px] text-fg shadow-[var(--shadow-pop)]",
+          "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
+          "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          className,
+        )}
+        {...props}
+      />
+    </DropdownMenuPrimitive.Portal>
+  );
+}
+
+// Items are 32px with a mouse and 40px on touch screens.
+const menuItem = cn(
+  "flex h-8 cursor-pointer select-none items-center gap-2 rounded-lg px-2 outline-none transition-colors [@media(pointer:coarse)]:h-10",
+  "data-[highlighted]:bg-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+  "[&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-fg-faint",
+);
+
+export function DropdownMenuItem({
+  className,
+  tone = "default",
+  ...props
+}: ComponentProps<typeof DropdownMenuPrimitive.Item> & { tone?: "default" | "danger" }) {
+  return (
+    <DropdownMenuPrimitive.Item
+      className={cn(
+        menuItem,
+        tone === "danger" && "text-bad [&_svg]:text-bad data-[highlighted]:bg-bad/10",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export function DropdownMenuLabel({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.Label>) {
+  return <DropdownMenuPrimitive.Label className={cn("px-2 py-1.5 text-[12px] text-fg-muted", className)} {...props} />;
+}
+
+export function DropdownMenuSeparator({ className, ...props }: ComponentProps<typeof DropdownMenuPrimitive.Separator>) {
+  return <DropdownMenuPrimitive.Separator className={cn("-mx-1 my-1 h-px bg-line", className)} {...props} />;
+}
+
+const choiceItem = menuItem;
+
+// DropdownMenuRadioItem is a single choice inside <DropdownMenuRadioGroup>
+// (role="menuitemradio" + aria-checked, check mark shown when selected).
+export function DropdownMenuRadioItem({ className, children, ...props }: ComponentProps<typeof DropdownMenuPrimitive.RadioItem>) {
+  return (
+    <DropdownMenuPrimitive.RadioItem className={cn(choiceItem, className)} {...props}>
+      {children}
+      <DropdownMenuPrimitive.ItemIndicator className="ml-auto inline-flex">
+        <Check className="!text-fg" aria-hidden="true" />
+      </DropdownMenuPrimitive.ItemIndicator>
+    </DropdownMenuPrimitive.RadioItem>
+  );
+}
+
+// DropdownMenuCheckboxItem is an on/off item (role="menuitemcheckbox").
+export function DropdownMenuCheckboxItem({ className, children, ...props }: ComponentProps<typeof DropdownMenuPrimitive.CheckboxItem>) {
+  return (
+    <DropdownMenuPrimitive.CheckboxItem className={cn(choiceItem, className)} {...props}>
+      {children}
+      <DropdownMenuPrimitive.ItemIndicator className="ml-auto inline-flex">
+        <Check className="!text-fg" aria-hidden="true" />
+      </DropdownMenuPrimitive.ItemIndicator>
+    </DropdownMenuPrimitive.CheckboxItem>
+  );
+}

@@ -1,6 +1,10 @@
 package connectors
 
-import "strings"
+import (
+	"slices"
+	"strings"
+	"sync"
+)
 
 // ModelPrice holds immutable catalog metadata and per-million-token rates for a
 // specific model. Source metadata lets analytics distinguish actual list price,
@@ -13,6 +17,8 @@ type ModelPrice struct {
 	CachedInputPerM      float64
 	CacheWritePerM       float64
 	ReasoningPerM        float64
+	CacheWrite1hPerM     float64
+	WebSearchPerK        float64
 	LongContextThreshold int
 	LongInputPerM        float64
 	LongOutputPerM       float64
@@ -25,55 +31,118 @@ type ModelPrice struct {
 }
 
 // ModelPriceByProviderModel resolves exact provider/model entries first, then
-// controlled provider aliases and finally a globally unique canonical model.
-// Iterating in reverse lets currentOfficialModelPrices override stale entries.
+// controlled provider aliases and finally a canonical model shared across
+// providers. Later table entries override earlier ones for the same key, so
+// currentOfficialModelPrices wins over the broader catalog.
 func ModelPriceByProviderModel(provider, model string) (ModelPrice, bool) {
-	table := ModelPricingTable()
+	idx := modelPriceIndex()
 	providers := []string{normalizePriceProvider(provider)}
 	if p := strings.ToLower(strings.TrimSpace(provider)); p != providers[0] {
 		providers = append(providers, p)
 	}
 	models := priceModelCandidates(model)
-	for i := len(table) - 1; i >= 0; i-- {
-		mp := table[i]
-		for _, p := range providers {
-			for _, m := range models {
-				if normalizePriceProvider(mp.Provider) == p && strings.EqualFold(mp.Model, m) {
-					return mp, true
-				}
+	best := -1
+	for _, p := range providers {
+		for _, m := range models {
+			if i, ok := idx.exact[p+"/"+strings.ToLower(m)]; ok && i > best {
+				best = i
 			}
 		}
 	}
+	if best >= 0 {
+		return idx.table[best], true
+	}
 
 	// Custom OpenAI-compatible endpoints often expose a vendor model without a
-	// billable-provider id. Use a cross-provider match only when every canonical
-	// match has the same rates; ambiguity remains visibly unpriced.
-	fingerprints := make(map[string]struct{}, len(models))
+	// billable-provider id. Use a cross-provider match when every canonical
+	// match has the same rates, or when the most authoritative source tier
+	// agrees; remaining ambiguity stays visibly unpriced.
+	var matches []int
+	seen := map[int]struct{}{}
 	for _, m := range models {
-		fingerprints[priceModelFingerprint(m)] = struct{}{}
+		for _, i := range idx.fingerprints[priceModelFingerprint(m)] {
+			if _, dup := seen[i]; !dup {
+				seen[i] = struct{}{}
+				matches = append(matches, i)
+			}
+		}
 	}
-	seenKeys := map[string]struct{}{}
-	var found ModelPrice
-	hasFound := false
-	for i := len(table) - 1; i >= 0; i-- {
-		mp := table[i]
-		key := normalizePriceProvider(mp.Provider) + "/" + strings.ToLower(mp.Model)
-		if _, seen := seenKeys[key]; seen {
-			continue
+	if len(matches) == 0 {
+		return ModelPrice{}, false
+	}
+	if !allSameModelRates(idx.table, matches) {
+		top := priceSourcePriority(idx.table[matches[0]].Source)
+		for _, i := range matches[1:] {
+			top = min(top, priceSourcePriority(idx.table[i].Source))
 		}
-		seenKeys[key] = struct{}{}
-		if _, ok := fingerprints[priceModelFingerprint(mp.Model)]; !ok {
-			continue
+		preferred := matches[:0:0]
+		for _, i := range matches {
+			if priceSourcePriority(idx.table[i].Source) == top {
+				preferred = append(preferred, i)
+			}
 		}
-		if !hasFound {
-			found, hasFound = mp, true
-			continue
-		}
-		if !sameModelRates(found, mp) {
+		if !allSameModelRates(idx.table, preferred) {
 			return ModelPrice{}, false
 		}
+		matches = preferred
 	}
-	return found, hasFound
+	return idx.table[slices.Max(matches)], true
+}
+
+// priceIndex is the immutable lookup structure over ModelPricingTable.
+type priceIndex struct {
+	table []ModelPrice
+	// exact maps "provider/model" (normalized provider, lowercased model) to
+	// the last table position holding that key.
+	exact map[string]int
+	// fingerprints maps a canonical model fingerprint to the deduplicated
+	// table positions sharing it.
+	fingerprints map[string][]int
+}
+
+var modelPriceIndex = sync.OnceValue(func() *priceIndex {
+	table := buildModelPricingTable()
+	idx := &priceIndex{
+		table:        table,
+		exact:        make(map[string]int, len(table)),
+		fingerprints: make(map[string][]int, len(table)),
+	}
+	for i, mp := range table {
+		idx.exact[normalizePriceProvider(mp.Provider)+"/"+strings.ToLower(mp.Model)] = i
+	}
+	for i, mp := range table {
+		if idx.exact[normalizePriceProvider(mp.Provider)+"/"+strings.ToLower(mp.Model)] != i {
+			continue
+		}
+		fp := priceModelFingerprint(mp.Model)
+		idx.fingerprints[fp] = append(idx.fingerprints[fp], i)
+	}
+	return idx
+})
+
+func allSameModelRates(table []ModelPrice, positions []int) bool {
+	for _, i := range positions[1:] {
+		if !sameModelRates(table[positions[0]], table[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// priceSourcePriority ranks catalog provenance; lower is more authoritative.
+func priceSourcePriority(source string) int {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "official":
+		return 0
+	case "", "catalog":
+		return 1
+	case "custom":
+		return 2
+	case "retail_equivalent":
+		return 3
+	default:
+		return 4
+	}
 }
 
 func normalizePriceProvider(provider string) string {
@@ -105,7 +174,39 @@ func priceModelCandidates(model string) []string {
 			break
 		}
 	}
+	// Fine-tunes and dated snapshots price like their base model.
+	for _, candidate := range out {
+		base := candidate
+		if strings.HasPrefix(base, "ft:") {
+			rest := strings.TrimPrefix(base, "ft:")
+			if i := strings.IndexByte(rest, ':'); i >= 0 {
+				rest = rest[:i]
+			}
+			base = rest
+		}
+		if n := len(base); n > 11 && base[n-11] == '-' && looksLikeDate(base[n-10:]) {
+			base = base[:n-11]
+		}
+		if base != candidate {
+			out = append(out, base)
+		}
+	}
 	return out
+}
+
+func looksLikeDate(s string) bool {
+	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if i == 4 || i == 7 {
+			continue
+		}
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func priceModelFingerprint(model string) string {
@@ -113,38 +214,45 @@ func priceModelFingerprint(model string) string {
 	if i := strings.LastIndexByte(m, '/'); i >= 0 {
 		m = m[i+1:]
 	}
-	replacer := strings.NewReplacer("-", "", "_", "", ".", "", " ", "")
-	return replacer.Replace(m)
+	return priceFingerprintReplacer.Replace(m)
 }
+
+var priceFingerprintReplacer = strings.NewReplacer("-", "", "_", "", ".", "", " ", "")
 
 func sameModelRates(a, b ModelPrice) bool {
 	return a.InputPerM == b.InputPerM && a.OutputPerM == b.OutputPerM &&
 		a.CachedInputPerM == b.CachedInputPerM && a.CacheWritePerM == b.CacheWritePerM &&
-		a.ReasoningPerM == b.ReasoningPerM && a.LongInputPerM == b.LongInputPerM &&
-		a.LongOutputPerM == b.LongOutputPerM
+		a.ReasoningPerM == b.ReasoningPerM && a.CacheWrite1hPerM == b.CacheWrite1hPerM &&
+		a.WebSearchPerK == b.WebSearchPerK && a.LongContextThreshold == b.LongContextThreshold &&
+		a.LongInputPerM == b.LongInputPerM && a.LongOutputPerM == b.LongOutputPerM &&
+		a.LongCachedInputPerM == b.LongCachedInputPerM && a.LongCacheWritePerM == b.LongCacheWritePerM &&
+		a.ExplicitFree == b.ExplicitFree
 }
 
-// ModelPricingTable returns the built-in catalog. Later entries override older
-// compatibility entries when provider/model keys collide.
+// ModelPricingTable returns a copy of the built-in catalog. Later entries
+// override earlier ones when provider/model keys collide.
 func ModelPricingTable() []ModelPrice {
+	return slices.Clone(modelPriceIndex().table)
+}
+
+// buildModelPricingTable assembles the catalog in override order: retired
+// compatibility entries first, then the per-provider list-price catalog, then
+// subscription estimates and curated overrides.
+func buildModelPricingTable() []ModelPrice {
 	var out []ModelPrice
-	out = append(out, openaiModelPrices()...)
 	out = append(out, anthropicModelPrices()...)
 	out = append(out, deepseekModelPrices()...)
 	out = append(out, geminiModelPrices()...)
 	out = append(out, groqModelPrices()...)
-	out = append(out, mistralModelPrices()...)
 	out = append(out, xaiModelPrices()...)
-	out = append(out, perplexityModelPrices()...)
 	out = append(out, cohereModelPrices()...)
 	out = append(out, togetherModelPrices()...)
-	out = append(out, fireworksModelPrices()...)
-	out = append(out, cerebrasModelPrices()...)
 	out = append(out, nebiusModelPrices()...)
 	out = append(out, nvidiaModelPrices()...)
-	out = append(out, openrouterModelPrices()...)
 	out = append(out, minimaxModelPrices()...)
 	out = append(out, glmModelPrices()...)
+	out = append(out, catalogModelPrices()...)
+	out = append(out, openrouterModelPrices()...)
 	out = append(out, mimoModelPrices()...)
 	out = append(out, kiroModelPrices()...)
 	out = append(out, currentOfficialModelPrices()...)
@@ -158,7 +266,8 @@ func ModelPricingTable() []ModelPrice {
 //
 // The recorded model ID is the client-facing string with synthetic suffixes
 // intact (-thinking, -agentic, -thinking-agentic), so each base model is
-// expanded into all four variants at the same rate.
+// expanded into all four variants at the same rate. GPT 5.6 variants are
+// derived from the OpenAI list price in currentOfficialModelPrices.
 func kiroModelPrices() []ModelPrice {
 	// base holds one logical model and its rate; variants are generated below.
 	type base struct {
@@ -167,57 +276,50 @@ func kiroModelPrices() []ModelPrice {
 		outputPerM      float64
 		cachedInputPerM float64
 		cacheWritePerM  float64
-		reasoningPerM   float64
 	}
+	// Anthropic list prices: cache read is 0.1x input, a 5-minute cache write
+	// is 1.25x input.
 	const (
-		sonnetIn, sonnetOut, sonnetCached, sonnetWrite = 3.0, 15.0, 0.375, 3.75
-		opusIn, opusOut, opusCached, opusWrite         = 15.0, 75.0, 1.875, 18.75
+		sonnet5In, sonnet5Out, sonnet5Cached, sonnet5Write = 2.0, 10.0, 0.2, 2.5
+		sonnetIn, sonnetOut, sonnetCached, sonnetWrite     = 3.0, 15.0, 0.3, 3.75
+		opusIn, opusOut, opusCached, opusWrite             = 5.0, 25.0, 0.5, 6.25
 	)
 	bases := []base{
-		// Claude Sonnet family (current + announced versions).
-		{"claude-sonnet-5", sonnetIn, sonnetOut, sonnetCached, sonnetWrite, 0},
-		{"claude-sonnet-4.5", sonnetIn, sonnetOut, sonnetCached, sonnetWrite, 0},
-		{"claude-sonnet-4.6", sonnetIn, sonnetOut, sonnetCached, sonnetWrite, 0},
-		{"claude-sonnet-4.7", sonnetIn, sonnetOut, sonnetCached, sonnetWrite, 0},
-		{"claude-sonnet-4.8", sonnetIn, sonnetOut, sonnetCached, sonnetWrite, 0},
-		// Claude Opus family.
-		{"claude-opus-4.5", opusIn, opusOut, opusCached, opusWrite, 0},
-		{"claude-opus-4.6", opusIn, opusOut, opusCached, opusWrite, 0},
-		{"claude-opus-4.7", opusIn, opusOut, opusCached, opusWrite, 0},
-		{"claude-opus-4.8", opusIn, opusOut, opusCached, opusWrite, 0},
+		// Claude Sonnet family.
+		{"claude-sonnet-5", sonnet5In, sonnet5Out, sonnet5Cached, sonnet5Write},
+		{"claude-sonnet-4.5", sonnetIn, sonnetOut, sonnetCached, sonnetWrite},
+		{"claude-sonnet-4.6", sonnetIn, sonnetOut, sonnetCached, sonnetWrite},
+		{"claude-sonnet-4.7", sonnetIn, sonnetOut, sonnetCached, sonnetWrite},
+		{"claude-sonnet-4.8", sonnetIn, sonnetOut, sonnetCached, sonnetWrite},
+		// Claude Opus family (4.5+ pricing).
+		{"claude-opus-4.5", opusIn, opusOut, opusCached, opusWrite},
+		{"claude-opus-4.6", opusIn, opusOut, opusCached, opusWrite},
+		{"claude-opus-4.7", opusIn, opusOut, opusCached, opusWrite},
+		{"claude-opus-4.8", opusIn, opusOut, opusCached, opusWrite},
 		// Claude Haiku family.
-		{"claude-haiku-4.5", 0.8, 4.0, 0.08, 1.0, 0},
-		// GPT 5.6 family (Sol/Terra/Luna). Subscription-priced upstream; these
-		// are retail-equivalent estimates scaled off the GPT-5 rate (2.5 in /
-		// 10 out) by each tier's relative cost, with the standard 50% cache-read
-		// discount and cache-write charged at the standard input rate.
-		{"gpt-5.6-sol", 6.0, 24.0, 3.0, 6.0, 0},
-		{"gpt-5.6-terra", 3.0, 12.0, 1.5, 3.0, 0},
-		{"gpt-5.6-luna", 1.5, 6.0, 0.75, 1.5, 0},
-		// Non-Claude models exposed by Kiro (estimated from underlying provider).
-		{"deepseek-3.2", 0.27, 1.1, 0.07, 0.27, 0},
-		{"glm-5", 0.6, 2.2, 0, 0, 0},
-		{"MiniMax-M2.5", 0.3, 1.1, 0, 0, 0},
-		{"qwen3-coder-next", 0.3, 1.2, 0, 0, 0},
+		{"claude-haiku-4.5", 1.0, 5.0, 0.1, 1.25},
+		// Non-Claude models exposed by Kiro (estimated from the underlying
+		// vendor's list price).
+		{"deepseek-3.2", 0.28, 0.42, 0.028, 0},
+		{"glm-5", 1.0, 3.2, 0.2, 0},
+		{"MiniMax-M2.5", 0.3, 1.2, 0.03, 0.375},
+		{"qwen3-coder-next", 0.2, 1.5, 0, 0},
 	}
-	// Suffix variants share the base rate. "auto" maps to Sonnet 4.5 as a
-	// neutral default since Kiro picks the model server-side.
+	// Suffix variants share the base rate.
 	suffixes := []string{"", "-thinking", "-agentic", "-thinking-agentic"}
 
 	var out []ModelPrice
-	add := func(model string, in, outp, cached, write, reason float64) {
+	for _, b := range bases {
 		for _, sfx := range suffixes {
 			out = append(out, ModelPrice{
-				Provider: "kiro", Model: model + sfx,
-				InputPerM: in, OutputPerM: outp,
-				CachedInputPerM: cached, CacheWritePerM: write, ReasoningPerM: reason,
+				Provider: "kiro", Model: b.model + sfx,
+				InputPerM: b.inputPerM, OutputPerM: b.outputPerM,
+				CachedInputPerM: b.cachedInputPerM, CacheWritePerM: b.cacheWritePerM,
 			})
 		}
 	}
-	for _, b := range bases {
-		add(b.model, b.inputPerM, b.outputPerM, b.cachedInputPerM, b.cacheWritePerM, b.reasoningPerM)
-	}
-	// "auto" only exposes base + -thinking variants in the catalog.
+	// "auto" only exposes base + -thinking variants in the catalog; it maps to
+	// Sonnet 4.6 as a neutral default since Kiro picks the model server-side.
 	out = append(out,
 		ModelPrice{Provider: "kiro", Model: "auto", InputPerM: sonnetIn, OutputPerM: sonnetOut, CachedInputPerM: sonnetCached, CacheWritePerM: sonnetWrite},
 		ModelPrice{Provider: "kiro", Model: "auto-thinking", InputPerM: sonnetIn, OutputPerM: sonnetOut, CachedInputPerM: sonnetCached, CacheWritePerM: sonnetWrite},
@@ -225,81 +327,44 @@ func kiroModelPrices() []ModelPrice {
 	return out
 }
 
-func openaiModelPrices() []ModelPrice {
-	return []ModelPrice{
-		// GPT-5 family — cache write = standard input (OpenAI doesn't charge extra)
-		{Provider: "openai", Model: "gpt-5", InputPerM: 2.5, OutputPerM: 10, CachedInputPerM: 1.25, CacheWritePerM: 2.5},
-		{Provider: "openai", Model: "gpt-5-mini", InputPerM: 0.4, OutputPerM: 1.6, CachedInputPerM: 0.2, CacheWritePerM: 0.4},
-		{Provider: "openai", Model: "gpt-5-nano", InputPerM: 0.1, OutputPerM: 0.4, CachedInputPerM: 0.05, CacheWritePerM: 0.1},
-		{Provider: "openai", Model: "gpt-5.4", InputPerM: 2.5, OutputPerM: 10, CachedInputPerM: 1.25, CacheWritePerM: 2.5},
-		{Provider: "openai", Model: "gpt-5.4-mini", InputPerM: 0.4, OutputPerM: 1.6, CachedInputPerM: 0.2, CacheWritePerM: 0.4},
-		{Provider: "openai", Model: "gpt-5.3-codex", InputPerM: 2.5, OutputPerM: 10, CachedInputPerM: 1.25, CacheWritePerM: 2.5},
-		// GPT-4o family
-		{Provider: "openai", Model: "gpt-4o", InputPerM: 2.5, OutputPerM: 10, CachedInputPerM: 1.25, CacheWritePerM: 2.5},
-		{Provider: "openai", Model: "gpt-4o-2024-11-20", InputPerM: 2.5, OutputPerM: 10, CachedInputPerM: 1.25, CacheWritePerM: 2.5},
-		{Provider: "openai", Model: "gpt-4o-2024-08-06", InputPerM: 2.5, OutputPerM: 10, CachedInputPerM: 1.25, CacheWritePerM: 2.5},
-		{Provider: "openai", Model: "gpt-4o-mini", InputPerM: 0.15, OutputPerM: 0.6, CachedInputPerM: 0.075, CacheWritePerM: 0.15},
-		{Provider: "openai", Model: "gpt-4o-mini-2024-07-18", InputPerM: 0.15, OutputPerM: 0.6, CachedInputPerM: 0.075, CacheWritePerM: 0.15},
-		// o-series (reasoning) — cache write = standard input
-		{Provider: "openai", Model: "o1", InputPerM: 15, OutputPerM: 60, CachedInputPerM: 7.5, CacheWritePerM: 15, ReasoningPerM: 60},
-		{Provider: "openai", Model: "o1-pro", InputPerM: 150, OutputPerM: 600, CachedInputPerM: 75, CacheWritePerM: 150, ReasoningPerM: 600},
-		{Provider: "openai", Model: "o3", InputPerM: 2, OutputPerM: 8, CachedInputPerM: 0.5, CacheWritePerM: 2, ReasoningPerM: 8},
-		{Provider: "openai", Model: "o3-mini", InputPerM: 1.1, OutputPerM: 4.4, CachedInputPerM: 0.55, CacheWritePerM: 1.1, ReasoningPerM: 4.4},
-		{Provider: "openai", Model: "o4-mini", InputPerM: 1.1, OutputPerM: 4.4, CachedInputPerM: 0.275, CacheWritePerM: 1.1, ReasoningPerM: 4.4},
-		// Older models (no prompt caching)
-		{Provider: "openai", Model: "gpt-4-turbo", InputPerM: 10, OutputPerM: 30},
-		{Provider: "openai", Model: "gpt-4", InputPerM: 30, OutputPerM: 60},
-		{Provider: "openai", Model: "gpt-3.5-turbo", InputPerM: 0.5, OutputPerM: 1.5},
-		// Embeddings
-		{Provider: "openai", Model: "text-embedding-3-small", InputPerM: 0.02, OutputPerM: 0},
-		{Provider: "openai", Model: "text-embedding-3-large", InputPerM: 0.13, OutputPerM: 0},
-		{Provider: "openai", Model: "text-embedding-ada-002", InputPerM: 0.1, OutputPerM: 0},
-	}
-}
+// The tables below keep retired or aliased models that the current catalog no
+// longer lists, so historical usage remains priced.
 
 func anthropicModelPrices() []ModelPrice {
+	// Anthropic: cache read 0.1x input, 5-minute write 1.25x, 1-hour write 2x.
+	claude := func(model string, in, out float64) ModelPrice {
+		return ModelPrice{Provider: "anthropic", Model: model, InputPerM: in, OutputPerM: out,
+			CachedInputPerM: in * 0.1, CacheWritePerM: in * 1.25, CacheWrite1hPerM: in * 2}
+	}
 	return []ModelPrice{
-		// Claude 4 family — cache write = 1.25x standard input
-		{Provider: "anthropic", Model: "claude-opus-4-20250514", InputPerM: 15, OutputPerM: 75, CachedInputPerM: 1.875, CacheWritePerM: 18.75},
-		{Provider: "anthropic", Model: "claude-opus-4-7", InputPerM: 15, OutputPerM: 75, CachedInputPerM: 1.875, CacheWritePerM: 18.75},
-		{Provider: "anthropic", Model: "claude-sonnet-4-20250514", InputPerM: 3, OutputPerM: 15, CachedInputPerM: 0.375, CacheWritePerM: 3.75},
-		{Provider: "anthropic", Model: "claude-sonnet-4-6", InputPerM: 3, OutputPerM: 15, CachedInputPerM: 0.375, CacheWritePerM: 3.75},
-		{Provider: "anthropic", Model: "claude-haiku-4-5-20251001", InputPerM: 0.8, OutputPerM: 4, CachedInputPerM: 0.08, CacheWritePerM: 1.0},
-		// Claude 3.5 family
-		{Provider: "anthropic", Model: "claude-3-5-sonnet-20241022", InputPerM: 3, OutputPerM: 15, CachedInputPerM: 0.375, CacheWritePerM: 3.75},
-		{Provider: "anthropic", Model: "claude-3-5-sonnet-latest", InputPerM: 3, OutputPerM: 15, CachedInputPerM: 0.375, CacheWritePerM: 3.75},
-		{Provider: "anthropic", Model: "claude-3-5-haiku-20241022", InputPerM: 0.8, OutputPerM: 4, CachedInputPerM: 0.08, CacheWritePerM: 1.0},
-		// Claude 3 family
-		{Provider: "anthropic", Model: "claude-3-opus-20240229", InputPerM: 15, OutputPerM: 75, CachedInputPerM: 1.875, CacheWritePerM: 18.75},
-		{Provider: "anthropic", Model: "claude-3-sonnet-20240229", InputPerM: 3, OutputPerM: 15, CachedInputPerM: 0.375, CacheWritePerM: 3.75},
-		{Provider: "anthropic", Model: "claude-3-haiku-20240307", InputPerM: 0.25, OutputPerM: 1.25, CachedInputPerM: 0.03, CacheWritePerM: 0.3125},
+		claude("claude-opus-4-1-20250805", 15, 75),
+		claude("claude-opus-4-1", 15, 75),
+		claude("claude-opus-4-20250514", 15, 75),
+		claude("claude-sonnet-4-20250514", 3, 15),
+		claude("claude-3-7-sonnet-20250219", 3, 15),
+		claude("claude-3-5-sonnet-20241022", 3, 15),
+		claude("claude-3-5-sonnet-latest", 3, 15),
+		claude("claude-3-5-haiku-20241022", 0.8, 4),
+		claude("claude-3-opus-20240229", 15, 75),
+		claude("claude-3-sonnet-20240229", 3, 15),
+		claude("claude-3-haiku-20240307", 0.25, 1.25),
 	}
 }
 
 func deepseekModelPrices() []ModelPrice {
 	return []ModelPrice{
-		{Provider: "deepseek", Model: "deepseek-chat", InputPerM: 0.14, OutputPerM: 0.28, CachedInputPerM: 0.0028, CacheWritePerM: 0.14, ReasoningPerM: 0.28},
-		{Provider: "deepseek", Model: "deepseek-reasoner", InputPerM: 0.14, OutputPerM: 0.28, CachedInputPerM: 0.0028, CacheWritePerM: 0.14, ReasoningPerM: 0.28},
-		{Provider: "deepseek", Model: "deepseek-r1", InputPerM: 0.14, OutputPerM: 0.28, CachedInputPerM: 0.0028, CacheWritePerM: 0.14, ReasoningPerM: 0.28},
-		{Provider: "deepseek", Model: "deepseek-v3.2-chat", InputPerM: 0.14, OutputPerM: 0.28, CachedInputPerM: 0.0028, CacheWritePerM: 0.14, ReasoningPerM: 0.28},
-		{Provider: "deepseek", Model: "deepseek-v3.2-reasoner", InputPerM: 0.14, OutputPerM: 0.28, CachedInputPerM: 0.0028, CacheWritePerM: 0.14, ReasoningPerM: 0.28},
-		{Provider: "deepseek", Model: "deepseek-v4-flash", InputPerM: 0.14, OutputPerM: 0.28, CachedInputPerM: 0.0028, CacheWritePerM: 0.14, ReasoningPerM: 0.28},
-		{Provider: "deepseek", Model: "deepseek-v4-pro", InputPerM: 0.435, OutputPerM: 0.87, CachedInputPerM: 0.003625, CacheWritePerM: 0.435, ReasoningPerM: 0.87},
-		{Provider: "deepseek", Model: "deepseek-v4-pro-max", InputPerM: 0.435, OutputPerM: 0.87, CachedInputPerM: 0.003625, CacheWritePerM: 0.435, ReasoningPerM: 0.87},
-		{Provider: "deepseek", Model: "deepseek-v4-pro-none", InputPerM: 0.435, OutputPerM: 0.87, CachedInputPerM: 0.003625, CacheWritePerM: 0.435, ReasoningPerM: 0.87},
+		// Aliases of deepseek-chat / deepseek-reasoner.
+		{Provider: "deepseek", Model: "deepseek-v3.2-chat", InputPerM: 0.28, OutputPerM: 0.42, CachedInputPerM: 0.028},
+		{Provider: "deepseek", Model: "deepseek-v3.2-reasoner", InputPerM: 0.28, OutputPerM: 0.42, CachedInputPerM: 0.028},
+		// Effort variant of deepseek-v4-pro ("-none" resolves via suffix stripping).
+		{Provider: "deepseek", Model: "deepseek-v4-pro-max", InputPerM: 1.32, OutputPerM: 3.96, CachedInputPerM: 0.044},
 	}
 }
 
 func geminiModelPrices() []ModelPrice {
 	return []ModelPrice{
-		// Gemini 2.5 — cache write = standard input
-		{Provider: "gemini", Model: "gemini-2.5-pro", InputPerM: 1.25, OutputPerM: 10, CachedInputPerM: 0.3125, CacheWritePerM: 1.25},
-		{Provider: "gemini", Model: "gemini-2.5-flash", InputPerM: 0.15, OutputPerM: 0.6, CachedInputPerM: 0.0375, CacheWritePerM: 0.15},
-		{Provider: "gemini", Model: "gemini-2.5-flash-lite", InputPerM: 0.075, OutputPerM: 0.3, CachedInputPerM: 0.01875, CacheWritePerM: 0.075},
-		// Gemini 2.0
 		{Provider: "gemini", Model: "gemini-2.0-flash", InputPerM: 0.1, OutputPerM: 0.4, CachedInputPerM: 0.025, CacheWritePerM: 0.1},
 		{Provider: "gemini", Model: "gemini-2.0-flash-lite", InputPerM: 0.075, OutputPerM: 0.3, CachedInputPerM: 0.01875, CacheWritePerM: 0.075},
-		// Gemini 1.5
 		{Provider: "gemini", Model: "gemini-1.5-pro", InputPerM: 1.25, OutputPerM: 5, CachedInputPerM: 0.3125, CacheWritePerM: 1.25},
 		{Provider: "gemini", Model: "gemini-1.5-flash", InputPerM: 0.075, OutputPerM: 0.3, CachedInputPerM: 0.01875, CacheWritePerM: 0.075},
 	}
@@ -316,30 +381,12 @@ func groqModelPrices() []ModelPrice {
 	}
 }
 
-func mistralModelPrices() []ModelPrice {
-	return []ModelPrice{
-		{Provider: "mistral", Model: "mistral-large-latest", InputPerM: 2, OutputPerM: 6},
-		{Provider: "mistral", Model: "mistral-small-latest", InputPerM: 0.1, OutputPerM: 0.3},
-		{Provider: "mistral", Model: "codestral-latest", InputPerM: 0.3, OutputPerM: 0.9},
-		{Provider: "mistral", Model: "pixtral-large-latest", InputPerM: 2, OutputPerM: 6},
-	}
-}
-
 func xaiModelPrices() []ModelPrice {
 	return []ModelPrice{
 		{Provider: "xai", Model: "grok-3", InputPerM: 3, OutputPerM: 15, CachedInputPerM: 0.75, CacheWritePerM: 3},
 		{Provider: "xai", Model: "grok-3-fast", InputPerM: 5, OutputPerM: 25, CachedInputPerM: 1.25, CacheWritePerM: 5},
 		{Provider: "xai", Model: "grok-3-mini", InputPerM: 0.3, OutputPerM: 0.5, CachedInputPerM: 0.075, CacheWritePerM: 0.3, ReasoningPerM: 0.5},
 		{Provider: "xai", Model: "grok-2", InputPerM: 2, OutputPerM: 10, CachedInputPerM: 0.5, CacheWritePerM: 2},
-	}
-}
-
-func perplexityModelPrices() []ModelPrice {
-	return []ModelPrice{
-		{Provider: "perplexity", Model: "sonar-pro", InputPerM: 3, OutputPerM: 15},
-		{Provider: "perplexity", Model: "sonar", InputPerM: 1, OutputPerM: 1},
-		{Provider: "perplexity", Model: "sonar-reasoning-pro", InputPerM: 2, OutputPerM: 8},
-		{Provider: "perplexity", Model: "sonar-deep-research", InputPerM: 2, OutputPerM: 8},
 	}
 }
 
@@ -353,27 +400,6 @@ func cohereModelPrices() []ModelPrice {
 func togetherModelPrices() []ModelPrice {
 	return []ModelPrice{
 		{Provider: "together", Model: "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo", InputPerM: 3.5, OutputPerM: 3.5},
-		{Provider: "together", Model: "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo", InputPerM: 0.88, OutputPerM: 0.88},
-		{Provider: "together", Model: "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo", InputPerM: 0.18, OutputPerM: 0.18},
-		{Provider: "together", Model: "deepseek-ai/DeepSeek-V3", InputPerM: 1.25, OutputPerM: 1.25},
-		{Provider: "together", Model: "Qwen/Qwen2.5-72B-Instruct-Turbo", InputPerM: 1.2, OutputPerM: 1.2},
-	}
-}
-
-func fireworksModelPrices() []ModelPrice {
-	return []ModelPrice{
-		{Provider: "fireworks", Model: "accounts/fireworks/models/llama-v3p1-405b-instruct", InputPerM: 3, OutputPerM: 3},
-		{Provider: "fireworks", Model: "accounts/fireworks/models/llama-v3p1-70b-instruct", InputPerM: 0.9, OutputPerM: 0.9},
-		{Provider: "fireworks", Model: "accounts/fireworks/models/llama-v3p1-8b-instruct", InputPerM: 0.2, OutputPerM: 0.2},
-		{Provider: "fireworks", Model: "accounts/fireworks/models/deepseek-v3", InputPerM: 0.9, OutputPerM: 0.9},
-	}
-}
-
-func cerebrasModelPrices() []ModelPrice {
-	return []ModelPrice{
-		{Provider: "cerebras", Model: "llama3.1-8b", InputPerM: 0.1, OutputPerM: 0.1},
-		{Provider: "cerebras", Model: "llama3.1-70b", InputPerM: 0.6, OutputPerM: 0.6},
-		{Provider: "cerebras", Model: "llama-3.3-70b", InputPerM: 0.6, OutputPerM: 0.6},
 	}
 }
 
@@ -381,7 +407,6 @@ func nebiusModelPrices() []ModelPrice {
 	return []ModelPrice{
 		{Provider: "nebius", Model: "Meta-Llama-3.1-405B-Instruct", InputPerM: 1, OutputPerM: 1},
 		{Provider: "nebius", Model: "Meta-Llama-3.1-70B-Instruct", InputPerM: 0.13, OutputPerM: 0.13},
-		{Provider: "nebius", Model: "Qwen/Qwen2.5-72B-Instruct", InputPerM: 0.13, OutputPerM: 0.13},
 	}
 }
 
@@ -406,14 +431,23 @@ func openrouterModelPrices() []ModelPrice {
 		}
 	}
 	return []ModelPrice{
-		estimated("anthropic/claude-opus-4-7", 15, 75, 1.875, 18.75),
-		estimated("anthropic/claude-sonnet-4-6", 3, 15, 0.375, 3.75),
-		estimated("openai/gpt-5", 2.5, 10, 1.25, 2.5),
-		estimated("openai/gpt-4o", 2.5, 10, 1.25, 2.5),
-		estimated("openai/gpt-4o-mini", 0.15, 0.6, 0.075, 0.15),
-		estimated("deepseek/deepseek-chat", 0.27, 1.1, 0.07, 0.27),
-		estimated("google/gemini-2.5-pro", 1.25, 10, 0.3125, 1.25),
-		estimated("google/gemini-2.5-flash", 0.15, 0.6, 0.0375, 0.15),
+		estimated("anthropic/claude-fable-5.1", 10, 50, 0.25, 12.5),
+		estimated("anthropic/claude-opus-5.5", 4, 20, 0.2, 5),
+		estimated("anthropic/claude-sonnet-5.5", 2, 10, 0.1, 2.5),
+		estimated("anthropic/claude-haiku-5.5", 0.1, 0.5, 0.01, 0.125),
+		estimated("anthropic/claude-opus-4.8", 5, 25, 0.5, 6.25),
+		estimated("anthropic/claude-opus-4-7", 5, 25, 0.5, 6.25),
+		estimated("anthropic/claude-sonnet-4-6", 3, 15, 0.3, 3.75),
+		estimated("openai/gpt-6-sol", 2, 10, 0.2, 2.5),
+		estimated("openai/gpt-5.5", 5, 30, 0.5, 0),
+		estimated("openai/gpt-5", 1.25, 10, 0.125, 0),
+		estimated("openai/gpt-4o", 2.5, 10, 1.25, 0),
+		estimated("openai/gpt-4o-mini", 0.15, 0.6, 0.075, 0),
+		estimated("deepseek/deepseek-chat", 0.28, 0.42, 0.028, 0),
+		estimated("google/gemini-3.1-pro-preview", 2, 12, 0.2, 0),
+		estimated("google/gemini-2.5-pro", 1.25, 10, 0.125, 0),
+		estimated("google/gemini-2.5-flash", 0.3, 2.5, 0.03, 0),
+		estimated("x-ai/grok-4.5", 2, 6, 0.3, 0),
 		estimated("meta-llama/llama-3.3-70b-instruct", 0.1, 0.1, 0, 0),
 	}
 }
@@ -422,8 +456,6 @@ func minimaxModelPrices() []ModelPrice {
 	return []ModelPrice{
 		{Provider: "minimax", Model: "MiniMax-Text-01", InputPerM: 0.2, OutputPerM: 1.1},
 		{Provider: "minimax", Model: "MiniMax-M1", InputPerM: 0.2, OutputPerM: 1.1, ReasoningPerM: 1.1},
-		{Provider: "minimax", Model: "MiniMax-M2.5", InputPerM: 0.3, OutputPerM: 1.1},
-		{Provider: "minimax", Model: "MiniMax-M3", InputPerM: 0.4, OutputPerM: 1.6, ReasoningPerM: 1.6},
 	}
 }
 
@@ -436,25 +468,31 @@ func glmModelPrices() []ModelPrice {
 }
 
 func mimoModelPrices() []ModelPrice {
-	// MiMo standard/pro/omni values are admitted retail-equivalent estimates,
-	// not authoritative token invoices. Keep that provenance explicit so they
-	// never appear as exact catalog spend.
-	estimated := func(provider, model string, input, output float64) ModelPrice {
+	// Token Plan rates are admitted retail-equivalent estimates, not
+	// authoritative token invoices. Keep that provenance explicit so they never
+	// appear as exact catalog spend.
+	estimated := func(provider, model string, input, output, cached float64) ModelPrice {
 		return ModelPrice{
-			Provider: provider, Model: model, InputPerM: input, OutputPerM: output,
+			Provider: provider, Model: model, InputPerM: input, OutputPerM: output, CachedInputPerM: cached,
 			Source: "retail_equivalent", Estimated: true,
 		}
 	}
 	var out []ModelPrice
 	for _, provider := range []string{"xiaomi-mimo", "xiaomi-tokenplan"} {
 		out = append(out,
-			estimated(provider, "mimo-v2.5-pro", 1.0, 3.0),
-			estimated(provider, "mimo-v2.5", 0.2, 0.6),
-			estimated(provider, "mimo-v2-pro", 0.5, 1.5),
-			estimated(provider, "mimo-v2-omni", 0.2, 0.6),
-			estimated(provider, "mimo-v2-flash", 0.1, 0.3),
+			estimated(provider, "mimo-v2.5-pro", 1.0, 3.0, 0),
+			estimated(provider, "mimo-v2.5", 0.2, 0.6, 0),
+			estimated(provider, "mimo-v2-pro", 0.5, 1.5, 0),
+			estimated(provider, "mimo-v2-omni", 0.2, 0.6, 0),
+			estimated(provider, "mimo-v2-flash", 0.1, 0.3, 0),
 		)
 	}
+	// MiMo V2.6 list prices apply to the Token Plan as estimates; the direct
+	// API rates live in the catalog.
+	out = append(out,
+		estimated("xiaomi-tokenplan", "mimo-v2.6-pro", 0.435, 0.87, 0.0036),
+		estimated("xiaomi-tokenplan", "mimo-v2.6-flash", 0.14, 0.28, 0.0028),
+	)
 	// This connector is intentionally a zero-charge tier, not an unknown price.
 	out = append(out, ModelPrice{
 		Provider: "mimo-free", Model: "mimo-auto", Source: "catalog", ExplicitFree: true,

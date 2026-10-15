@@ -38,6 +38,47 @@ func (c *Anthropic) baseURL(creds core.Credentials) string {
 }
 
 func (c *Anthropic) headers(creds core.Credentials, model string) map[string]string {
+	return c.headersFor(creds, model, nil)
+}
+
+// headersFor builds the upstream headers, merging the client's anthropic-beta
+// flags (context-1m, interleaved-thinking, output-128k, ...) with whatever the
+// credential type requires. API-key users otherwise lose the features their
+// client relies on because the gateway re-renders the request.
+func (c *Anthropic) headersFor(creds core.Credentials, model string, clientBetas []string) map[string]string {
+	h := c.baseHeaders(creds, model)
+	if len(clientBetas) > 0 {
+		h["anthropic-beta"] = mergeBetaFlags(h["anthropic-beta"], clientBetas)
+	}
+	return h
+}
+
+// mergeBetaFlags unions comma-separated beta flags, preserving order and
+// dropping duplicates.
+func mergeBetaFlags(existing string, extra []string) string {
+	seen := make(map[string]struct{}, len(extra)+4)
+	var out []string
+	add := func(flag string) {
+		flag = strings.TrimSpace(flag)
+		if flag == "" {
+			return
+		}
+		if _, dup := seen[flag]; dup {
+			return
+		}
+		seen[flag] = struct{}{}
+		out = append(out, flag)
+	}
+	for _, f := range strings.Split(existing, ",") {
+		add(f)
+	}
+	for _, f := range extra {
+		add(f)
+	}
+	return strings.Join(out, ",")
+}
+
+func (c *Anthropic) baseHeaders(creds core.Credentials, model string) map[string]string {
 	h := map[string]string{"anthropic-version": anthropicVersion}
 	// Anthropic uses x-api-key for keys and Authorization: Bearer for OAuth.
 	switch {
@@ -67,7 +108,7 @@ func (c *Anthropic) Chat(ctx context.Context, req *core.ChatRequest, creds core.
 	body, toolNameMap := applyClaudeCloaking(body, creds.AccessToken)
 
 	url := joinURL(c.baseURL(creds), "messages")
-	respBody, err := doJSON(ctx, c.id, req.Model, url, body, c.headers(creds, req.Model))
+	respBody, err := doJSON(ctx, c.id, req.Model, url, body, c.headersFor(creds, req.Model, req.Metadata.ClientBetas))
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +208,7 @@ func (c *Anthropic) StreamRaw(ctx context.Context, req *core.ChatRequest, creds 
 	body, _ = applyClaudeCloaking(body, creds.AccessToken)
 
 	url := joinURL(c.baseURL(creds), "messages")
-	resp, err := openStream(ctx, c.id, req.Model, url, body, c.headers(creds, req.Model))
+	resp, err := openStream(ctx, c.id, req.Model, url, body, c.headersFor(creds, req.Model, req.Metadata.ClientBetas))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -186,55 +227,26 @@ func (c *Anthropic) Stream(ctx context.Context, req *core.ChatRequest, creds cor
 	body, toolNameMap := applyClaudeCloaking(body, creds.AccessToken)
 
 	url := joinURL(c.baseURL(creds), "messages")
-	resp, err := openStream(ctx, c.id, req.Model, url, body, c.headers(creds, req.Model))
+	resp, err := openStream(ctx, c.id, req.Model, url, body, c.headersFor(creds, req.Model, req.Metadata.ClientBetas))
 	if err != nil {
 		return nil, err
 	}
 
 	out := make(chan core.StreamChunk, 16)
-	go func() {
-		defer close(out)
-		defer resp.Body.Close()
-
-		ttft := newTTFTTracker(cfg)
-
-		scanner := sseScanner(resp.Body)
-		for scanner.Scan() {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			payload, ok := parseSSEData(scanner.Text())
-			if !ok {
-				continue
-			}
-			chunks, perr := c.codec.ParseStreamLine([]byte(payload), req.Model)
-			if perr != nil {
-				continue
-			}
-			for _, ch := range chunks {
-				// Decloak streamed tool-call names ("foo_ide" → "foo").
-				if ch.Type == core.ChunkToolCall && ch.ToolCall != nil && len(toolNameMap) > 0 {
-					if orig, ok := toolNameMap[ch.ToolCall.Name]; ok {
-						ch.ToolCall.Name = orig
-					}
-				}
-				ttft.maybeReport(ch)
-				select {
-				case out <- ch:
-				case <-ctx.Done():
-					return
+	go streamSSE(ctx, c.id, req.Model, resp.Body, out, cfg, sseDataLines, func(payload []byte) ([]core.StreamChunk, error) {
+		chunks, err := c.codec.ParseStreamLine(payload, req.Model)
+		if err != nil || len(toolNameMap) == 0 {
+			return chunks, err
+		}
+		for i, ch := range chunks {
+			// Decloak streamed tool-call names ("foo_ide" → "foo").
+			if ch.Type == core.ChunkToolCall && ch.ToolCall != nil {
+				if orig, ok := toolNameMap[ch.ToolCall.Name]; ok {
+					chunks[i].ToolCall.Name = orig
 				}
 			}
 		}
-		if err := scanner.Err(); err != nil {
-			out <- core.StreamChunk{
-				Type: core.ChunkError,
-				Err:  &core.ProviderError{Kind: core.ErrTimeout, Provider: c.id, Model: req.Model, Message: err.Error(), Cause: err},
-			}
-		}
-	}()
+		return chunks, nil
+	})
 	return out, nil
 }

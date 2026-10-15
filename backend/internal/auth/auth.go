@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/crypto"
@@ -44,6 +45,16 @@ type Service struct {
 	settings   *store.SettingsRepo
 	signingKey []byte
 	ttl        time.Duration
+
+	// defaultMu guards the memoized UsingDefaultPassword answer. Each argon2id
+	// verification allocates 64 MiB, and the dashboard asks on every auth
+	// status check, so the answer is cached against the stored hash: any writer
+	// (password change, import, restore) changes the hash and misses the cache.
+	// Holding the lock during verification also stops concurrent status checks
+	// from stacking 64 MiB allocations.
+	defaultMu   sync.Mutex
+	defaultHash string
+	defaultVal  bool
 }
 
 // New builds an auth Service. configKey, when non-empty, overrides the persisted
@@ -138,8 +149,18 @@ func (s *Service) SetPassword(ctx context.Context, newPassword string) error {
 // UsingDefaultPassword reports whether the current password still matches the
 // seeded default, so the UI can nudge the operator to change it.
 func (s *Service) UsingDefaultPassword(ctx context.Context) bool {
-	ok, err := s.VerifyPassword(ctx, DefaultPassword)
-	return err == nil && ok
+	hash, err := s.settings.Get(ctx, keyPasswordHash)
+	if err != nil {
+		return false
+	}
+	s.defaultMu.Lock()
+	defer s.defaultMu.Unlock()
+	if hash != "" && hash == s.defaultHash {
+		return s.defaultVal
+	}
+	ok, err := crypto.VerifyPassword(DefaultPassword, hash)
+	s.defaultHash, s.defaultVal = hash, err == nil && ok
+	return s.defaultVal
 }
 
 // OnboardingComplete reports whether the operator finished onboarding.

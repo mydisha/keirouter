@@ -39,8 +39,11 @@ func (c *OpenAICompatible) Embeddings(ctx context.Context, req *core.EmbeddingRe
 		return nil, &core.ProviderError{Kind: core.ErrInternal, Provider: c.id, Model: req.Model, Message: err.Error(), Cause: err}
 	}
 
-	url := joinURL(c.baseURL(creds), "embeddings")
-	respBody, err := doJSON(ctx, c.id, req.Model, url, body, c.headers(creds))
+	headers, err := c.authHeaders(ctx, creds)
+	if err != nil {
+		return nil, err
+	}
+	respBody, err := doJSON(ctx, c.id, req.Model, c.endpointURL(creds, "embeddings"), body, headers)
 	if err != nil {
 		return nil, err
 	}

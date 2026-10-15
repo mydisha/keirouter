@@ -120,6 +120,28 @@ func (r *AccountRepo) ListByTenant(ctx context.Context, tenantID string) ([]Acco
 	return r.queryList(ctx, q, tenantID)
 }
 
+// CountByProxyPool returns how many accounts, across every tenant, are bound
+// to each proxy pool. Pools are global, so a per-tenant count would let a pool
+// still serving another tenant be deleted out from under it.
+func (r *AccountRepo) CountByProxyPool(ctx context.Context) (map[string]int, error) {
+	rows, err := r.db.sql.QueryContext(ctx,
+		`SELECT proxy_pool_id, COUNT(*) FROM accounts WHERE proxy_pool_id <> '' GROUP BY proxy_pool_id`)
+	if err != nil {
+		return nil, fmt.Errorf("store: count accounts by pool: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 // SetCooldown marks an account unavailable until the given time (used by the
 // dispatcher after a rate-limit / quota error).
 func (r *AccountRepo) SetCooldown(ctx context.Context, id string, until time.Time) error {
@@ -248,18 +270,18 @@ func (r *AccountRepo) queryList(ctx context.Context, q string, args ...any) ([]A
 // shared Scan signature.
 func scanAccountRow(scan func(dest ...any) error) (Account, error) {
 	var (
-		a              Account
-		authKind       string
-		secretDEK      sql.NullString
-		secretCT       sql.NullString
-		tokenDEK       sql.NullString
-		tokenCT        sql.NullString
-		refreshDEK     sql.NullString
-		refreshCT      sql.NullString
-		tokenExpires   sql.NullString
-		backoffLevel   int
-		cooldown       sql.NullString
-		disabled       int
+		a                Account
+		authKind         string
+		secretDEK        sql.NullString
+		secretCT         sql.NullString
+		tokenDEK         sql.NullString
+		tokenCT          sql.NullString
+		refreshDEK       sql.NullString
+		refreshCT        sql.NullString
+		tokenExpires     sql.NullString
+		backoffLevel     int
+		cooldown         sql.NullString
+		disabled         int
 		proxyPoolID      sql.NullString
 		needsReconnect   int
 		creditsExhausted int

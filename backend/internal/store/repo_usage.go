@@ -72,7 +72,9 @@ const usageColumns = `id, request_id, tenant_id, project_id, api_key_id, provide
 	cache_write_rate_per_m, output_rate_per_m, reasoning_rate_per_m, fallback_rate_per_m, cache_hit, latency_ms,
 	upstream_latency_ms, end_to_end_latency_ms, ttft_ms, slim_bytes_saved, slim_tokens_saved,
 	slim_rules, slim_active, caveman_active, terse_active, headroom_tokens_saved,
-	headroom_bytes_saved, headroom_active, ponytail_active, chain_id, created_at`
+	headroom_bytes_saved, headroom_active, ponytail_active, chain_id, fallback_count, created_at,
+	cache_write_1h_tokens, web_search_requests, tool_cost_nanos, guardrail_action, guardrail_detector,
+	guardrail_direction, guardrail_mid_stream, guardrail_ms`
 
 func insertUsageBatch(ctx context.Context, tx *sql.Tx, rebind func(string) string, records []UsageRecord) error {
 	argsPerRow := len(usageArgs(UsageRecord{}))
@@ -135,7 +137,9 @@ func usageArgs(u UsageRecord) []any {
 		u.SlimBytesSaved, u.SlimTokensSaved, u.SlimRules,
 		boolToInt(u.SlimActive), boolToInt(u.CavemanActive), boolToInt(u.TerseActive),
 		u.HeadroomTokensSaved, u.HeadroomBytesSaved, boolToInt(u.HeadroomActive), boolToInt(u.PonytailActive),
-		u.ChainID, formatTime(u.CreatedAt),
+		u.ChainID, u.FallbackCount, formatTime(u.CreatedAt),
+		u.CacheWrite1hTokens, u.WebSearchRequests, u.ToolCostNanos,
+		u.GuardrailAction, u.GuardrailDetector, u.GuardrailDirection, boolToInt(u.GuardrailMidStream), u.GuardrailMS,
 	}
 }
 
@@ -147,6 +151,9 @@ func (r *UsageRepo) SpendSince(ctx context.Context, scope BudgetScope, scopeID s
 		return 0, fmt.Errorf("store: unknown budget scope %q", scope)
 	}
 
+	// Every nanos→micros rollup casts the SUM to BIGINT before dividing:
+	// Postgres sums BIGINT into NUMERIC, so an uncast division is fractional
+	// and cannot scan into int64. The cast keeps integer division on both engines.
 	q := r.db.rebind(fmt.Sprintf(
 		`SELECT (CAST(COALESCE(SUM(CASE WHEN pricing_backfilled=0 THEN cost_nanos ELSE 0 END), 0) AS BIGINT) + 500) / 1000 FROM usage_records WHERE %s = ? AND created_at >= ?`,
 		column))
@@ -273,7 +280,8 @@ type Summary struct {
 	CacheHits        int64
 	AvgTTFTMS        int64 // average time-to-first-token for streaming requests
 	AvgLatencyMS     int64 // average latency for non-cache requests
-	SuccessCount     int64 // requests that succeeded (latency > 0 or cache hit)
+	SuccessCount     int64 // requests that succeeded (status success or cache_hit)
+	FailureCount     int64 // requests that failed (excludes guardrail blocks and cancellations)
 	SlimBytesSaved   int64 // total bytes saved by RTK slimmer
 	SlimTokensSaved  int64 // total estimated tokens saved by RTK
 	CavemanRequests  int64 // requests where caveman was active
@@ -297,7 +305,8 @@ func (r *UsageRepo) Summarize(ctx context.Context, tenantID string, since time.T
 			COALESCE(SUM(cache_hit), 0),
 			COALESCE(CAST(AVG(CASE WHEN ttft_ms > 0 THEN ttft_ms END) AS INTEGER), 0),
 			COALESCE(CAST(AVG(CASE WHEN latency_ms > 0 THEN latency_ms END) AS INTEGER), 0),
-			COUNT(CASE WHEN latency_ms > 0 OR cache_hit = 1 THEN 1 END),
+			COUNT(CASE WHEN ` + sqlUsageSucceeded + ` THEN 1 END),
+			COUNT(CASE WHEN ` + sqlUsageFailed + ` THEN 1 END),
 			COALESCE(SUM(slim_bytes_saved), 0),
 			COALESCE(SUM(slim_tokens_saved), 0),
 			COALESCE(SUM(caveman_active), 0),
@@ -311,7 +320,7 @@ func (r *UsageRepo) Summarize(ctx context.Context, tenantID string, since time.T
 	err := r.db.sql.QueryRowContext(ctx, q, tenantID, formatTime(since)).Scan(
 		&s.TotalRequests, &s.PromptTokens, &s.CompletionTokens,
 		&s.CachedTokens, &s.CacheWriteTokens, &s.CostMicros, &s.CacheHits, &s.AvgTTFTMS,
-		&s.AvgLatencyMS, &s.SuccessCount,
+		&s.AvgLatencyMS, &s.SuccessCount, &s.FailureCount,
 		&s.SlimBytesSaved, &s.SlimTokensSaved, &s.CavemanRequests, &s.TerseRequests,
 		&s.HeadroomTokensSaved, &s.HeadroomRequests, &s.PonytailRequests)
 	if err != nil {
@@ -334,7 +343,8 @@ func (r *UsageRepo) SummarizeByKey(ctx context.Context, keyID string, since time
 			COALESCE(SUM(cache_hit), 0),
 			COALESCE(CAST(AVG(CASE WHEN ttft_ms > 0 THEN ttft_ms END) AS INTEGER), 0),
 			COALESCE(CAST(AVG(CASE WHEN latency_ms > 0 THEN latency_ms END) AS INTEGER), 0),
-			COUNT(CASE WHEN latency_ms > 0 OR cache_hit = 1 THEN 1 END),
+			COUNT(CASE WHEN ` + sqlUsageSucceeded + ` THEN 1 END),
+			COUNT(CASE WHEN ` + sqlUsageFailed + ` THEN 1 END),
 			COALESCE(SUM(slim_bytes_saved), 0),
 			COALESCE(SUM(slim_tokens_saved), 0),
 			COALESCE(SUM(caveman_active), 0),
@@ -348,7 +358,7 @@ func (r *UsageRepo) SummarizeByKey(ctx context.Context, keyID string, since time
 	err := r.db.sql.QueryRowContext(ctx, q, keyID, formatTime(since)).Scan(
 		&s.TotalRequests, &s.PromptTokens, &s.CompletionTokens,
 		&s.CachedTokens, &s.CacheWriteTokens, &s.CostMicros, &s.CacheHits, &s.AvgTTFTMS,
-		&s.AvgLatencyMS, &s.SuccessCount,
+		&s.AvgLatencyMS, &s.SuccessCount, &s.FailureCount,
 		&s.SlimBytesSaved, &s.SlimTokensSaved, &s.CavemanRequests, &s.TerseRequests,
 		&s.HeadroomTokensSaved, &s.HeadroomRequests, &s.PonytailRequests)
 	if err != nil {

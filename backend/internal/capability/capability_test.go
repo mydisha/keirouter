@@ -63,6 +63,8 @@ func TestOf(t *testing.T) {
 				core.CapStreaming,
 				core.CapToolCalling,
 				core.CapVision,
+				core.CapDocumentInput,
+				core.CapStructuredOutput,
 				core.CapAudioInput,
 				core.CapVideoInput,
 				core.CapReasoning,
@@ -77,6 +79,7 @@ func TestOf(t *testing.T) {
 				core.CapStreaming,
 				core.CapToolCalling,
 				core.CapVision,
+				core.CapDocumentInput,
 				core.CapReasoning,
 				core.CapWebSearch,
 				core.CapStructuredOutput,
@@ -124,20 +127,65 @@ func TestOf(t *testing.T) {
 // TestOfProviderOverride verifies that a provider-scoped override takes
 // precedence over exact-id and pattern matches.
 func TestOfProviderOverride(t *testing.T) {
-	// Without provider context, glm-5v-turbo matches no specific entry and
-	// falls through the glm pattern (no vision).
-	bare := Of("glm-5v-turbo")
+	// Without provider context, minimax-m2.7 falls through the text-only
+	// MiniMax M2.7 pattern (no vision).
+	bare := Of("minimax-m2.7")
 	if bare.Has(core.CapVision) {
-		t.Fatalf("expected bare glm-5v-turbo to lack vision, got %v", bare)
+		t.Fatalf("expected bare minimax-m2.7 to lack vision, got %v", bare)
 	}
 
 	// With the codebuddy provider, the override grants vision.
-	scoped := OfProvider("codebuddy", "glm-5v-turbo")
+	scoped := OfProvider("codebuddy", "minimax-m2.7")
 	if !scoped.Has(core.CapVision) {
-		t.Errorf("expected codebuddy/glm-5v-turbo to have vision, got %v", scoped)
+		t.Errorf("expected codebuddy/minimax-m2.7 to have vision, got %v", scoped)
 	}
 	if !scoped.Has(core.CapReasoning) {
-		t.Errorf("expected codebuddy/glm-5v-turbo to have reasoning, got %v", scoped)
+		t.Errorf("expected codebuddy/minimax-m2.7 to have reasoning, got %v", scoped)
+	}
+}
+
+// TestLatestFamilyProfiles pins the capability profile of current model
+// families, including dashed/dated ids and always-on thinking.
+func TestLatestFamilyProfiles(t *testing.T) {
+	cases := []struct {
+		model    string
+		format   string
+		locked   bool
+		ctx      int
+		vision   bool
+		pdf      bool
+		noTools  bool
+		thinking bool
+	}{
+		{"claude-opus-5-5", "claude-adaptive", true, 1000000, true, true, false, true},
+		{"anthropic/claude-sonnet-5.5", "claude-adaptive", true, 1000000, true, true, false, true},
+		{"claude-sonnet-5", "claude-adaptive", false, 1000000, true, true, false, true},
+		{"claude-haiku-5-5", "claude-adaptive", false, 1000000, true, true, false, true},
+		{"claude-fable-5-1", "claude-adaptive", true, 1000000, true, true, false, true},
+		{"claude-mythos-5", "claude-adaptive", true, 1000000, true, true, false, true},
+		{"claude-opus-4-7-20260416", "claude-adaptive", false, 1000000, true, true, false, true},
+		{"claude-opus-4-6-thinking", "claude-adaptive", false, 1000000, true, true, false, true},
+		{"claude-opus-4-5-20251101", "claude-budget", false, 200000, true, true, false, true},
+		{"gpt-6-sol", "openai", false, 922000, true, true, false, true},
+		{"gpt-5.6-terra", "openai", false, 922000, true, true, false, true},
+		{"gpt-5.5", "openai", false, 1050000, true, true, false, true},
+		{"gemini-3.8-flash", "gemini-level", true, 1048576, true, true, false, true},
+		{"grok-4.20-non-reasoning", "", false, 1000000, true, false, false, false},
+		{"grok-4.5", "openai", false, 500000, true, false, false, true},
+		{"kimi-k3", "kimi", false, 1048576, true, false, false, true},
+		{"glm-5.3", "zai", false, 1000000, false, false, false, true},
+		{"qwen3.7-max", "qwen", false, 991808, false, false, false, true},
+		{"deepseek-v4-flash", "deepseek", false, 1000000, true, false, false, true},
+		{"deepseek-v4-pro", "deepseek", false, 1000000, false, false, false, true},
+		{"mistral-large-4", "", false, 1048576, true, false, false, true},
+		{"gemini-omni-flash-preview", "", false, 1048576, true, false, true, true},
+	}
+	for _, tc := range cases {
+		p := ResolveProfile("", tc.model)
+		if p.ThinkingFormat != tc.format || p.ThinkingCanDisable == tc.locked || p.ContextWindow != tc.ctx ||
+			p.Vision != tc.vision || p.PDF != tc.pdf || p.Tools == tc.noTools || p.Reasoning != tc.thinking {
+			t.Errorf("%s = %+v", tc.model, p)
+		}
 	}
 }
 

@@ -233,3 +233,70 @@ func TestPipelineRepairReroutesAndAccountsForBothAttempts(t *testing.T) {
 		"original\n\ncomplete the previous response",
 	}, conn.systems)
 }
+
+func TestAttemptPlannerRetriesSameAttemptWhenChainExhausted(t *testing.T) {
+	ctx := context.Background()
+	d := newPlannerDispatcherWithAccounts(t, "acc-only")
+	targets := []dispatch.Target{{Provider: "openai", Model: "gpt-4o"}}
+	initial, err := d.PlanWith(ctx, store.DefaultTenantID, targets, core.NewCapabilitySet(), dispatch.PlanOptions{})
+	require.NoError(t, err)
+
+	planner := newAttemptPlanner(d, store.DefaultTenantID, targets, core.NewCapabilitySet(), dispatch.PlanOptions{}, initial)
+	var slept []time.Duration
+	planner.sleep = func(_ context.Context, d time.Duration) bool {
+		slept = append(slept, d)
+		return true
+	}
+	first, ok := planner.Current()
+	require.True(t, ok)
+
+	transient := &core.ProviderError{Kind: core.ErrUpstream, Scope: core.FailureScopeProvider, StatusCode: 502}
+	retry, ok := planner.AfterFailure(ctx, first, transient)
+	require.True(t, ok, "a lone transient fault on a single-account chain is retried")
+	require.Equal(t, first.Account.ID, retry.Account.ID)
+
+	retry, ok = planner.AfterFailure(ctx, retry, transient)
+	require.True(t, ok)
+	require.Equal(t, first.Account.ID, retry.Account.ID)
+
+	_, ok = planner.AfterFailure(ctx, retry, transient)
+	require.False(t, ok, "retries are bounded")
+
+	require.Len(t, slept, maxSameAttemptRetries)
+	require.GreaterOrEqual(t, slept[0], sameRetryInitialDelay)
+	require.LessOrEqual(t, slept[0], sameRetryInitialDelay+sameRetryJitter)
+	require.GreaterOrEqual(t, slept[1], 2*sameRetryInitialDelay)
+}
+
+func TestAttemptPlannerDoesNotRetrySameAttemptForNonTransientErrors(t *testing.T) {
+	ctx := context.Background()
+	d := newPlannerDispatcherWithAccounts(t, "acc-only")
+	targets := []dispatch.Target{{Provider: "openai", Model: "gpt-4o"}}
+	initial, err := d.PlanWith(ctx, store.DefaultTenantID, targets, core.NewCapabilitySet(), dispatch.PlanOptions{})
+	require.NoError(t, err)
+
+	for _, pe := range []*core.ProviderError{
+		{Kind: core.ErrAuth},
+		{Kind: core.ErrRateLimit},
+		{Kind: core.ErrContextWindow},
+		{Kind: core.ErrTimeout, Scope: core.FailureScopeRequest, Cause: context.DeadlineExceeded},
+	} {
+		planner := newAttemptPlanner(d, store.DefaultTenantID, targets, core.NewCapabilitySet(), dispatch.PlanOptions{}, initial)
+		planner.sleep = func(context.Context, time.Duration) bool { t.Fatal("must not sleep"); return false }
+		first, _ := planner.Current()
+		_, ok := planner.AfterFailure(ctx, first, pe)
+		require.False(t, ok, "kind %s", pe.Kind)
+	}
+}
+
+func TestSameRetryDelayHonoursShortRetryAfter(t *testing.T) {
+	d := sameRetryDelay(0, 3*time.Second)
+	require.GreaterOrEqual(t, d, 3*time.Second)
+	require.LessOrEqual(t, d, 3*time.Second+sameRetryJitter)
+
+	d = sameRetryDelay(0, 10*time.Minute) // too long: fall back to exponential
+	require.LessOrEqual(t, d, sameRetryInitialDelay+sameRetryJitter)
+
+	d = sameRetryDelay(10, 0)
+	require.LessOrEqual(t, d, sameRetryMaxDelay+sameRetryJitter)
+}

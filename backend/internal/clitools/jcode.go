@@ -1,17 +1,17 @@
 package clitools
 
-import (
-	"os"
-
-	toml "github.com/pelletier/go-toml/v2"
-)
-
-// JcodeTool auto-configures jcode (~/.jcode/config.toml + env file).
+// JcodeTool auto-configures jcode (~/.jcode/config.toml + an env file holding
+// the key).
 type JcodeTool struct{}
 
-func (t *JcodeTool) ID() string      { return "jcode" }
-func (t *JcodeTool) Name() string    { return "jcode" }
-func (t *JcodeTool) Command() string { return "jcode" }
+func (t *JcodeTool) ID() string           { return "jcode" }
+func (t *JcodeTool) Name() string         { return "jcode" }
+func (t *JcodeTool) Commands() []string   { return []string{"jcode"} }
+func (t *JcodeTool) Extensions() []string { return nil }
+func (t *JcodeTool) ModelRequired() bool  { return true }
+func (t *JcodeTool) ConfigFiles(h string) []string {
+	return []string{t.configPath(h), t.envPath(h)}
+}
 
 func (t *JcodeTool) configPath(homeDir string) string {
 	return expandHome(homeDir, "~/.jcode/config.toml")
@@ -20,84 +20,65 @@ func (t *JcodeTool) envPath(homeDir string) string {
 	return expandHome(homeDir, "~/.config/jcode/provider-keirouter.env")
 }
 
-func (t *JcodeTool) DetectStatus(homeDir string) (bool, bool, string, error) {
-	path := t.configPath(homeDir)
-	if !fileExists(path) {
-		return false, false, path, nil
+const (
+	jcodeProvider = "keirouter"
+	jcodeKeyVar   = "JCODE_KEIROUTER_API_KEY"
+)
+
+func (t *JcodeTool) Read(homeDir string) (*Settings, error) {
+	cfg, exists, err := loadTOML(t.configPath(homeDir))
+	if err != nil || !exists {
+		return nil, err
 	}
-	raw, err := readString(path)
+	base := str(cfg, "providers", jcodeProvider, "base_url")
+	if base == "" {
+		return nil, nil
+	}
+	envFile := str(cfg, "providers", jcodeProvider, "env_file")
+	if envFile == "" {
+		envFile = t.envPath(homeDir)
+	}
+	key, err := readEnvValue(expandHome(homeDir, envFile), jcodeKeyVar)
 	if err != nil {
-		return true, false, path, nil
+		return nil, err
 	}
-	configured := containsKeiRouter(raw)
-	return true, configured, path, nil
+	return &Settings{BaseURL: base, APIKey: key, Model: str(cfg, "providers", jcodeProvider, "default_model")}, nil
 }
 
-func (t *JcodeTool) Configure(homeDir, baseURL, apiKey string, models []string) error {
-	configPath := t.configPath(homeDir)
-	envP := t.envPath(homeDir)
-
-	model := "gpt-4o"
-	if len(models) > 0 {
-		model = models[0]
-	}
-
-	cfg := make(map[string]any)
-	if raw, err := readString(configPath); err == nil {
-		_ = toml.Unmarshal([]byte(raw), &cfg)
-	}
-
-	providers, _ := cfg["providers"].(map[string]any)
-	if providers == nil {
-		providers = make(map[string]any)
-	}
-	providers["keirouter"] = map[string]any{
-		"type":          "openai-compatible",
-		"base_url":      ensureSuffix(baseURL, "/v1"),
-		"auth":          "bearer",
-		"api_key_env":   "JCODE_KEIROUTER_API_KEY",
-		"env_file":      envP,
-		"default_model": model,
-	}
-	cfg["providers"] = providers
-
-	data, err := toml.Marshal(cfg)
+func (t *JcodeTool) Configure(homeDir string, s Settings) error {
+	path, envP := t.configPath(homeDir), t.envPath(homeDir)
+	cfg, _, err := loadTOML(path)
 	if err != nil {
 		return err
 	}
-	if err := writeString(configPath, string(data)); err != nil {
+	child(cfg, "providers")[jcodeProvider] = map[string]any{
+		"type":          "openai-compatible",
+		"base_url":      v1URL(s.BaseURL),
+		"auth":          "bearer",
+		"api_key_env":   jcodeKeyVar,
+		"env_file":      envP,
+		"default_model": s.Model,
+	}
+	if err := saveTOML(path, cfg); err != nil {
 		return err
 	}
-
-	return writeString(envP, "JCODE_KEIROUTER_API_KEY="+apiKey+"\n")
+	return setEnvValue(envP, jcodeKeyVar, s.APIKey)
 }
 
 func (t *JcodeTool) Remove(homeDir string) error {
-	configPath := t.configPath(homeDir)
-	envP := t.envPath(homeDir)
-
-	if fileExists(configPath) {
-		raw, err := readString(configPath)
-		if err == nil {
-			cfg := make(map[string]any)
-			_ = toml.Unmarshal([]byte(raw), &cfg)
-			if providers, ok := cfg["providers"].(map[string]any); ok {
-				delete(providers, "keirouter")
-				if len(providers) == 0 {
-					delete(cfg, "providers")
-				}
-			}
-			if len(cfg) == 0 {
-				os.Remove(configPath)
-			} else {
-				data, _ := toml.Marshal(cfg)
-				writeString(configPath, string(data))
-			}
+	path := t.configPath(homeDir)
+	cfg, exists, err := loadTOML(path)
+	if err != nil {
+		return err
+	}
+	if exists {
+		if providers, ok := cfg["providers"].(map[string]any); ok {
+			delete(providers, jcodeProvider)
+			pruneEmpty(cfg, "providers")
+		}
+		if err := saveOrRemove(path, cfg, saveTOML); err != nil {
+			return err
 		}
 	}
-
-	if fileExists(envP) {
-		os.Remove(envP)
-	}
-	return nil
+	return setEnvValue(t.envPath(homeDir), jcodeKeyVar, "")
 }

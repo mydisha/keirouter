@@ -32,6 +32,39 @@ export interface Provider {
   base_url?: string;
   // custom marks user-defined dynamic provider instances (editable/deletable).
   custom?: boolean;
+  // Provider-specific connect-form inputs (cloud region, project id, extra
+  // secrets). Values are sent as AccountInput.fields keyed by field key.
+  fields?: CredentialField[];
+  // api_key_mode: absent = key required, "optional" = other fields may
+  // authenticate instead, "hidden" = no key input at all.
+  api_key_mode?: "optional" | "hidden";
+  // api_key_when shows the key input only for some values of a select field.
+  api_key_when?: FieldCondition;
+  api_key_label?: string;
+  api_key_placeholder?: string;
+  // base_url_required marks built-in providers that need a per-account URL.
+  base_url_required?: boolean;
+  base_url_placeholder?: string;
+}
+
+export interface FieldCondition {
+  field: string;
+  values: string[];
+}
+
+export interface CredentialField {
+  key: string;
+  label: string;
+  placeholder?: string;
+  hint?: string;
+  required?: boolean;
+  secret?: boolean;
+  multiline?: boolean;
+  url?: boolean;
+  advanced?: boolean;
+  default?: string;
+  options?: { value: string; label: string }[];
+  when?: FieldCondition;
 }
 
 // ProviderModel is a single model entry returned by providerModels(). Custom
@@ -141,6 +174,13 @@ export interface EndpointSettings {
   outbound_no_proxy: string;
   observability_enabled?: boolean;
   rate_limits_enabled: boolean;
+  // Rate-limit tuning. The server fills unset values from config.yaml.
+  tpm_reconcile_enabled?: boolean;
+  tpm_output_floor?: number;
+  tpm_output_reserve_cap?: number;
+  concurrency_retry_after_ms?: number;
+  auth_failures_per_minute?: number;
+  login_attempts_per_minute?: number;
   stream_stall_timeout_ms: number;
   response_header_timeout_ms: number;
   request_timeout_ms: number;
@@ -263,6 +303,7 @@ export interface APIKey {
   plan_id: string;
   plan_name?: string;
   created_at: string;
+  last_used_at?: string | null;
   allowed_models?: string[];
   models_source?: "key" | "plan" | "all";
 }
@@ -312,6 +353,7 @@ export interface AccountInput {
   azure_deployment?: string;
   azure_api_version?: string;
   azure_organization?: string;
+  fields?: Record<string, string>;
   proxy_pool_id?: string;
   priority?: number;
 }
@@ -334,6 +376,7 @@ export interface BulkAccountInput {
   azure_deployment?: string;
   azure_api_version?: string;
   azure_organization?: string;
+  fields?: Record<string, string>;
   priority?: number;
   proxy_pool_id?: string;
   validate?: boolean;
@@ -410,6 +453,8 @@ export interface BudgetStatus {
   pct_used: number;
   tokens_pct_used: number;
   period_start: string;
+  /** When the budget window resets; null for "total" budgets. */
+  resets_at: string | null;
 }
 
 export interface KeyTopup {
@@ -477,6 +522,8 @@ export interface ProviderUsage {
   total_requests: number;
   successful_requests: number;
   failed_requests: number;
+  /** Guardrail blocks; excluded from success_rate and failed_requests. */
+  blocked_requests: number;
   success_rate: number;
   prompt_tokens: number;
   completion_tokens: number;
@@ -503,6 +550,13 @@ export interface ProviderUsage {
 export interface RecentActivity {
   id: string;
   request_id: string;
+  api_key_id: string;
+  /** Resolved key name; empty when the key was deleted or the request was unauthenticated. */
+  api_key_name: string;
+  account_id: string;
+  account_label: string;
+  /** Calling client detected from the request (e.g. "claude-code"). */
+  client: string;
   provider: string;
   provider_name: string;
   provider_color: string;
@@ -608,6 +662,8 @@ export interface ModelUsage {
   total_requests: number;
   successful_requests: number;
   failed_requests: number;
+  /** Guardrail blocks; excluded from success_rate and failed_requests. */
+  blocked_requests: number;
   success_rate: number;
   prompt_tokens: number;
   completion_tokens: number;
@@ -645,16 +701,71 @@ export interface SeriesPoint {
   start: string;
   count: number;
   requests: number;
+  /** Succeeded requests; guardrail blocks and cancellations are in neither this nor failures. */
+  successes?: number;
   failures: number;
   prompt_tokens: number;
   completion_tokens: number;
   cost_usd: number;
+  /** Optimizer savings (input compression + semantic-cache avoided cost). */
+  saved_usd: number;
+  cache_hits: number;
+  /** Mean end-to-end latency of successful requests in the bucket. */
+  avg_latency_ms: number;
+}
+
+/** One chain step's share of the chain's traffic, from persisted usage rows. */
+export interface ChainStepUsage {
+  position: number;
+  provider: string;
+  model: string;
+  /** True for the chain's configured last-resort fallback model. */
+  is_fallback: boolean;
+  requests: number;
+  share: number;
+  success_rate: number;
+  cost_usd: number;
+}
+
+export interface ChainUsage {
+  chain_id: string;
+  name: string;
+  strategy: string;
+  requests: number;
+  success_rate: number;
+  /** Requests that reached their serving target only after failing over. */
+  fallback_requests: number;
+  fallback_rate: number;
+  cost_usd: number;
+  steps: ChainStepUsage[];
+  /** Targets that served traffic but are no longer steps of the chain. */
+  other_targets: { provider: string; model: string; requests: number; share: number }[];
+}
+
+/** Headline rollup of the equal-length window immediately before the period. */
+export interface PreviousPeriodSummary {
+  since: string;
+  until: string;
+  total_requests: number;
+  successful_requests: number;
+  failed_requests: number;
+  /** Guardrail blocks; excluded from success_rate and failed_requests. */
+  blocked_requests: number;
+  success_rate: number;
+  total_tokens: number;
+  cost_usd: number;
+  usd_saved: number;
+  cache_hits: number;
+  avg_latency_ms: number;
+  p50_latency_ms: number;
 }
 
 export interface UsageInsightsSummary {
   total_requests: number;
   successful_requests: number;
   failed_requests: number;
+  /** Guardrail blocks; excluded from success_rate and failed_requests. */
+  blocked_requests: number;
   prompt_tokens: number;
   completion_tokens: number;
   cached_tokens: number;
@@ -667,6 +778,8 @@ export interface UsageInsightsSummary {
   cache_hits: number;
   success_rate: number;
   avg_latency_ms: number;
+  p50_latency_ms: number;
+  p95_latency_ms: number;
   avg_ttft_ms: number;
   pricing_eligible_requests: number;
   priced_requests: number;
@@ -688,6 +801,7 @@ export interface UsageInsights {
   since: string;
   generated_at: string;
   summary: UsageInsightsSummary;
+  previous: PreviousPeriodSummary;
   savings: TokenSavings;
   providers: ProviderUsage[];
   recent: RecentActivity[];
@@ -784,12 +898,32 @@ export interface QuotaAccount {
 
 // Console log uses structured entries streamed via SSE (/api/console/stream)
 // and fetched as history from /api/console, which returns { logs: ConsoleLogEntry[] }.
+// Request lines share `req`; exactly one of them is `final` and summarizes the
+// outcome. Other kinds (oauth, health, tunnel, admin) are background events.
 export interface ConsoleLogEntry {
   seq: number;
   time: string; // HH:MM:SS.mmm
+  ts?: number; // unix ms
   level: string; // DEBUG | INFO | WARN | ERROR | LOG
   msg: string; // human-readable summary
   detail?: string; // optional technical detail, revealed on expand
+  hint?: string; // plain-language explanation for operators
+  kind?: string; // request | admin | oauth | health | tunnel | ...
+  req?: string; // request ID
+  endpoint?: string; // "POST /v1/chat/completions"
+  client?: string;
+  key?: string; // API key name
+  model?: string; // model the client asked for
+  provider?: string;
+  target?: string; // provider/model that served (or failed) the request
+  status?: number; // HTTP status returned to the client (499 = client disconnected)
+  ms?: number; // elapsed since the request arrived
+  tokens?: number;
+  cost_micros?: number;
+  fallbacks?: number;
+  stream?: boolean;
+  cache?: boolean;
+  final?: boolean;
 }
 
 export interface ProxyPool {
@@ -803,6 +937,15 @@ export interface ProxyPool {
   test_status: string; // unknown | testing | active | error
   last_tested?: string;
   last_error?: string;
+  /** Accounts (any tenant) routed through this pool. */
+  bound_connection_count?: number;
+}
+
+/** Limits which requests a skill applies to; empty lists mean "any". */
+export interface SkillScope {
+  plans?: string[];
+  keys?: string[];
+  models?: string[];
 }
 
 export interface Skill {
@@ -811,8 +954,16 @@ export interface Skill {
   description: string;
   prompt: string;
   enabled: boolean;
+  /** Clients may drop it with the X-KeiRouter-Skip-Skills header. */
+  optional: boolean;
+  scope?: SkillScope;
+  /** Values for {{name}} placeholders in prompt, filled in by the gateway. */
+  variables?: Record<string, string>;
   created_at: string;
+  updated_at?: string;
 }
+
+export type SkillInput = { name?: string; description?: string; prompt?: string; enabled?: boolean; optional?: boolean; scope?: SkillScope; variables?: Record<string, string> };
 
 export interface AccessSettings {
   local_enabled: boolean;
@@ -874,6 +1025,18 @@ export interface TailscaleEnableResult {
   error?: string;
 }
 
+/** Connection currently stored in a CLI tool's config. The plaintext key never
+ *  leaves the server — only a masked hint and whether it authenticates. */
+export interface CLIToolSettings {
+  base_url: string;
+  model?: string;
+  api_key_hint?: string;
+  key_status: "valid" | "invalid" | "disabled" | "missing";
+  key_name?: string;
+  /** The stored endpoint addresses this gateway. */
+  endpoint_match: boolean;
+}
+
 export interface CLITool {
   id: string;
   name: string;
@@ -881,8 +1044,22 @@ export interface CLITool {
   instructions: string;
   snippet: string;
   installed: boolean;
+  /** Install signals that matched, strongest first. */
+  detected_via?: ("binary" | "extension" | "config")[];
+  /** The config points at a gateway (see settings.endpoint_match for which). */
   configured: boolean;
   config_path: string;
+  config_files?: string[];
+  /** Copy of the primary config taken before KeiRouter first edited it. */
+  backup_path?: string;
+  binary_path?: string;
+  /** Installed IDE extension, e.g. "github.copilot-chat@0.31.2 in Cursor". */
+  extension?: string;
+  version?: string;
+  model_required: boolean;
+  settings?: CLIToolSettings;
+  /** Detection problem other than "not installed" (unreadable config, timeout). */
+  error?: string;
 }
 
 export interface CLIToolsResponse {
@@ -898,12 +1075,23 @@ export interface AuthStatus {
 }
 
 export interface SystemSnapshot {
+  /** Epoch seconds of the collector tick these numbers come from. */
+  sampled_at: number;
+  /** Seconds the CPU percentages are averaged over. */
+  window_s: number;
   cpu_pct: number;
   cpu_per_core: number[];
+  cpu_count: number;
+  cpu_model?: string;
+  /** 1, 5 and 15 minute load average; absent on Windows. */
+  load_avg?: number[];
   mem_total_mb: number;
   mem_used_mb: number;
   mem_available_mb: number;
   mem_pct: number;
+  swap_total_mb: number;
+  swap_used_mb: number;
+  disk_path: string;
   disk_total_gb: number;
   disk_used_gb: number;
   disk_free_gb: number;
@@ -913,21 +1101,28 @@ export interface SystemSnapshot {
   heap_sys_mb: number;
   heap_inuse_mb: number;
   heap_idle_mb: number;
+  next_gc_mb: number;
   gc_pause_total_ms: number;
   gc_pause_last_ms: number;
   gc_cycles: number;
-  open_fds: number;
-  net_conns: number;
   uptime_s: number;
+  host_uptime_s: number;
   pid: number;
   host: string;
   os: string;
   arch: string;
+  go_version: string;
   // Process-level metrics
+  /** Share of the whole machine's CPU capacity, 0–100. */
   proc_cpu_pct: number;
+  /** Cores' worth of CPU in use. */
+  proc_cpu_cores: number;
   proc_rss_mb: number;
   proc_threads: number;
   proc_open_fds: number;
+  proc_fd_limit?: number;
+  proc_conns: number;
+  proc_conns_established: number;
 }
 
 export interface SystemSample {
@@ -939,8 +1134,8 @@ export interface SystemSample {
   cpu_spike?: boolean;
   mem_spike?: boolean;
   // Process-level metrics
-  proc_cpu_pct?: number;
-  proc_rss_mb?: number;
+  proc_cpu_pct: number;
+  proc_rss_mb: number;
   proc_threads?: number;
   proc_open_fds?: number;
 }
@@ -948,8 +1143,27 @@ export interface SystemSample {
 export interface SystemHistory {
   interval_sec: number;
   max_size: number;
+  thresholds: { cpu_pct: number; mem_pct: number; disk_pct: number };
   spikes: SystemSample[];
   samples: SystemSample[];
+}
+
+/** One aggregated slice of the persisted resource timeline (7-day retention). */
+export interface SystemResourceBucket {
+  ts: number;
+  proc_cpu_avg: number;
+  proc_cpu_max: number;
+  host_cpu_avg: number;
+  host_cpu_max: number;
+  proc_rss_avg_mb: number;
+  proc_rss_max_bytes: number;
+  host_mem_pct_avg: number;
+  host_mem_pct_max: number;
+  goroutines_avg: number;
+  goroutines_max: number;
+  heap_avg_mb: number;
+  heap_max_bytes: number;
+  samples: number;
 }
 
 // ============================================================================
@@ -968,12 +1182,38 @@ export interface PIIConfig {
   min_score?: number;
   scan_output?: boolean;
   engine?: string;
+  /** Entities that refuse the request whatever the strategy. */
+  block_types?: string[];
+  /** Exact values never treated as PII (case-insensitive). */
+  allow_list?: string[];
+  /** Which parts of the conversation are scanned. Defaults to "all". */
+  scope?: "all" | "user" | "last_user";
 }
 
 export interface InjectionConfig {
   enabled: boolean;
   severity_threshold?: GuardrailSeverity;
   action?: GuardrailAction;
+  /** Also inspect tool results for indirect prompt injection. */
+  scan_tool_results?: boolean;
+  /** ML classifier layer (Prompt Guard 2 sidecar). */
+  classifier?: boolean;
+  /** Injection probability treated as an attack (0–1, default 0.9). */
+  classifier_threshold?: number;
+  /** Embedding match against known attacks. */
+  semantic?: boolean;
+  /** Cosine similarity treated as a match (0–1, default 0.85). */
+  semantic_threshold?: number;
+  /** LLM judge mode. */
+  judge?: "off" | "suspicious" | "always";
+  /** Model, alias or chain the judge runs on. */
+  judge_model?: string;
+  /** Wrap tool results in secret delimiters marked as data. */
+  spotlight?: boolean;
+  /** Plant a canary in the system prompt and block responses that leak it. */
+  canary?: boolean;
+  /** Refuse tool calls after tool results that look injected. */
+  guard_tool_calls?: boolean;
 }
 
 export interface TopicsConfig {
@@ -981,8 +1221,10 @@ export interface TopicsConfig {
   mode?: "allow" | "block";
   topics?: string[];
   action?: GuardrailAction;
-  engine?: "keyword" | "embedding";
+  engine?: "keyword" | "embedding" | "llm";
   similarity_threshold?: number;
+  /** Model, alias or chain the "llm" engine runs on. */
+  model?: string;
 }
 
 export interface ToxicityConfig {
@@ -1042,6 +1284,8 @@ export interface GuardrailTestResult {
   action: GuardrailAction;
   reason: string;
   decisions: GuardrailDecision[];
+  /** The sample as it would reach the provider after masking, when changed. */
+  masked_text?: string | null;
 }
 
 export interface GuardrailLogEntry {
@@ -1058,6 +1302,145 @@ export interface GuardrailLogEntry {
   reason: string;
   findings: GuardrailFinding[] | null;
   created_at: string;
+}
+
+// GuardrailLogFilter narrows the audit log; the stats view drills down with it.
+export interface GuardrailLogFilter {
+  api_key_id?: string;
+  detector?: string;
+  action?: string;
+  direction?: string;
+  model?: string;
+  chain_id?: string;
+  request_id?: string;
+  /** Report period token (24h, 7d, …); bounds created_at. */
+  period?: string;
+}
+
+export interface GuardrailTargetStat {
+  key: string;
+  requests: number;
+  blocked: number;
+  masked: number;
+  warned: number;
+  log_only: number;
+}
+
+// GuardrailStats is the monitoring payload. Request counts are per request
+// (usage_records) and exclude LLM judge calls, which are reported in `judge`.
+export interface GuardrailStats {
+  since: string;
+  buckets: number;
+  totals: {
+    requests: number;
+    /** Requests a guardrail policy applied to. */
+    evaluated: number;
+    blocked: number;
+    blocked_inbound: number;
+    blocked_outbound: number;
+    /** Streams cut after part of the answer reached the client. */
+    blocked_mid_stream: number;
+    masked: number;
+    warned: number;
+    log_only: number;
+    block_rate: number;
+    mask_rate: number;
+    warn_rate: number;
+    overhead_avg_ms: number;
+    overhead_p50_ms: number;
+    overhead_p95_ms: number;
+  };
+  judge: { calls: number; tokens: number; cost_nanos: number; avg_latency_ms: number };
+  timeline: { bucket: number; requests: number; blocked: number; masked: number; warned: number; log_only: number }[];
+  by_detector: { detector: string; direction: "inbound" | "outbound"; action: GuardrailAction; decisions: number; requests: number }[];
+  top_reasons: { detector: string; action: GuardrailAction; reason: string; requests: number }[];
+  top_entities: { entity: string; count: number }[];
+  top_api_keys: GuardrailTargetStat[];
+  top_models: GuardrailTargetStat[];
+  data_quality: {
+    audit_dropped: number;
+    log_retention_days: number;
+    logs_truncated: boolean;
+    entities_sampled: boolean;
+  };
+}
+
+// ── Audit log ───────────────────────────────────────────────────────────────
+
+export type AuditOutcome = "success" | "failure" | "denied";
+
+export interface AuditEntry {
+  id: string;
+  time: string;
+  /** e.g. keys.create, auth.login, settings.endpoint */
+  action: string;
+  outcome: AuditOutcome;
+  severity: "INFO" | "WARN" | "ERROR";
+  actor_type: "dashboard" | "api_key" | "system" | "";
+  actor_id: string;
+  client_ip: string;
+  user_agent: string;
+  method: string;
+  route: string;
+  status_code: number;
+  resource_type: string;
+  resource_id: string;
+  request_id: string;
+  trace_id: string;
+  span_id: string;
+  details: Record<string, string>;
+  chain_id: string;
+  chain_seq: number;
+  hash: string;
+}
+
+export interface AuditFilter {
+  action?: string;
+  outcome?: string;
+  q?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface AuditStatus {
+  stats: {
+    enabled: boolean;
+    chain_id?: string;
+    queued: number;
+    written: number;
+    failed: number;
+    dropped: number;
+    otlp?: {
+      endpoint: string;
+      queued: number;
+      exported: number;
+      failed: number;
+      dropped: number;
+      last_error?: string;
+      last_ok?: string;
+    };
+  };
+  retention_days: number;
+}
+
+export interface AuditVerifyReport {
+  ok: boolean;
+  chains: number;
+  entries: number;
+  breaks: { chain_id: string; seq: number; entry_id: string; reason: string }[];
+  verified_at: string;
+  truncated?: boolean;
+}
+
+function auditQuery(f: AuditFilter = {}): string {
+  const qs = new URLSearchParams();
+  if (f.action) qs.set("action", f.action);
+  if (f.outcome) qs.set("outcome", f.outcome);
+  if (f.q) qs.set("q", f.q);
+  if (f.cursor) qs.set("cursor", f.cursor);
+  if (f.limit) qs.set("limit", String(f.limit));
+  const s = qs.toString();
+  return s ? `?${s}` : "";
 }
 
 export interface EffectiveGuardrail {
@@ -1304,7 +1687,7 @@ export interface PortalRecentRequest {
 export async function fetchPortalBranding(): Promise<BrandingSettings> {
   const resp = await fetch("/v1/portal/branding");
   if (!resp.ok) {
-    return { name: "KeiRouter", logo_url: "", favicon_url: "", tagline: "", color_palette: "sage-terra", api_key_prefix: "kr_" };
+    return { name: "KeiRouter", logo_url: "", favicon_url: "", tagline: "", color_palette: "kei", api_key_prefix: "kr_" };
   }
   return resp.json();
 }
@@ -1375,6 +1758,15 @@ export async function claimPortalKey(apiKey: string): Promise<{ ok: boolean; key
 /**
  * Usage for the signed-in portal user's claimed key (cookie-authenticated).
  */
+/**
+ * Fetch a key's owner-portal usage payload from the admin API (session auth).
+ * The public by-id portal lookup is not exposed; portal usage needs SSO.
+ */
+export async function fetchKeyUsageById(id: string, days?: number): Promise<KeyUsageData> {
+  const qs = days ? `?days=${days}` : "";
+  return request<KeyUsageData>("GET", `/keys/${encodeURIComponent(id)}/usage${qs}`);
+}
+
 export async function fetchPortalUsage(days?: number): Promise<KeyUsageData> {
   const qs = days ? `?days=${days}` : "";
   const resp = await fetch(`/portal/api/usage${qs}`);
@@ -1571,6 +1963,10 @@ export const api = {
   completeOnboarding: () => request<{ ok: boolean }>("POST", "/auth/onboarding/complete"),
 
   providers: () => request<{ providers: Provider[] }>("GET", "/providers"),
+  // Every listed provider's models in one request. `pending` names providers
+  // whose live discovery was still running; fetch those with providerModels().
+  allProviderModels: () =>
+    request<{ providers: Record<string, ProviderModel[]>; pending: string[] }>("GET", "/providers/models"),
   providerModels: (id: string, kind?: string) =>
     request<{ models: ProviderModel[] }>(
       "GET",
@@ -1755,8 +2151,14 @@ export const api = {
     request<{ adjustment: KeyLimitAdjustment }>("POST", `/keys/${keyId}/limit`, input),
 
   usage: (period: string) => request<UsageSummary>("GET", `/usage?period=${period}&tz=${browserTZ()}`),
-  usageInsights: (period: string) =>
-    request<UsageInsights>("GET", `/usage/insights?period=${period}&tz=${browserTZ()}`),
+  usageInsights: (period: string, opts: { limit?: number; buckets?: number } = {}) => {
+    const qs = new URLSearchParams({ period, tz: browserTZ() });
+    if (opts.limit) qs.set("limit", String(opts.limit));
+    if (opts.buckets) qs.set("buckets", String(opts.buckets));
+    return request<UsageInsights>("GET", `/usage/insights?${qs.toString()}`);
+  },
+  chainUsage: (period: string) =>
+    request<{ period: string; since: string; chains: ChainUsage[] }>("GET", `/usage/chains?period=${period}&tz=${browserTZ()}`),
   modelUsage: (period: string) =>
     request<ModelUsageResponse>("GET", `/usage/models?period=${period}&tz=${browserTZ()}`),
 
@@ -1765,14 +2167,16 @@ export const api = {
   quotaByProvider: (provider: string) =>
     request<{ accounts: QuotaAccount[]; since: string }>("GET", `/quota?period=today&tz=${browserTZ()}&provider=${provider}`),
 
-  consoleLog: () => request<{ logs: ConsoleLogEntry[] }>("GET", "/console"),
+  consoleLog: () => request<{ epoch: string; logs: ConsoleLogEntry[] }>("GET", "/console"),
 
   cliTools: (model?: string) =>
     request<CLIToolsResponse>("GET", model ? `/cli-tools?model=${encodeURIComponent(model)}` : "/cli-tools"),
-  cliToolConfigure: (toolId: string, body: { base_url: string; api_key: string; models?: string[] }) =>
-    request<{ ok: boolean }>("POST", `/cli-tools/${toolId}/configure`, body),
+  cliTool: (toolId: string) => request<CLITool>("GET", `/cli-tools/${encodeURIComponent(toolId)}`),
+  /** Omit api_key to keep the key already stored in the tool's config. */
+  cliToolConfigure: (toolId: string, body: { base_url: string; api_key?: string; model?: string }) =>
+    request<{ ok: boolean; tool: CLITool }>("POST", `/cli-tools/${encodeURIComponent(toolId)}/configure`, body),
   cliToolRemove: (toolId: string) =>
-    request<{ ok: boolean }>("POST", `/cli-tools/${toolId}/remove`),
+    request<{ ok: boolean; tool: CLITool }>("POST", `/cli-tools/${encodeURIComponent(toolId)}/remove`),
 
   listProxyPools: () => request<{ pools: ProxyPool[] }>("GET", "/proxy-pools"),
   createProxyPool: (input: { name: string; type?: string; proxy_url: string; no_proxy?: string; strict?: boolean; is_active?: boolean }) =>
@@ -1784,10 +2188,10 @@ export const api = {
   deleteProxyPool: (id: string) => request<void>("DELETE", `/proxy-pools/${id}`),
 
   listSkills: () => request<{ skills: Skill[] }>("GET", "/skills"),
-  createSkill: (input: { name: string; description?: string; prompt?: string; enabled?: boolean }) =>
+  createSkill: (input: SkillInput & { name: string }) =>
     request<Skill>("POST", "/skills", input),
-  updateSkill: (id: string, patch: { enabled?: boolean }) =>
-    request<void>("POST", `/skills/${id}`, patch),
+  updateSkill: (id: string, patch: SkillInput) =>
+    request<Skill>("POST", `/skills/${id}`, patch),
   deleteSkill: (id: string) => request<void>("DELETE", `/skills/${id}`),
 
   endpointSettings: () => request<EndpointSettings>("GET", "/settings/endpoint"),
@@ -1906,7 +2310,7 @@ export const api = {
 
   // Proxy pool test.
   testProxyPool: (id: string) =>
-    request<{ status: string; last_tested?: string; elapsed_ms?: number; error?: string }>("POST", `/proxy-pools/${id}/test`),
+    request<{ status: string; last_tested?: string; elapsed_ms?: number; error?: string; egress_ip?: string }>("POST", `/proxy-pools/${id}/test`),
 
   // OAuth provider connections.
   oauthProviders: () => request<{ providers: OAuthProvider[] }>("GET", "/oauth/providers"),
@@ -2000,6 +2404,8 @@ export const api = {
   // System monitoring.
   systemMonitor: () => request<SystemSnapshot>("GET", "/system"),
   systemHistory: () => request<SystemHistory>("GET", "/system/history"),
+  systemResources: (hours: number, interval: string) =>
+    request<SystemResourceBucket[]>("GET", `/system/resources?hours=${hours}&interval=${encodeURIComponent(interval)}`),
 
   // Guardrails (content-safety policies).
   listGuardrails: (scope?: GuardrailScope) =>
@@ -2041,17 +2447,29 @@ export const api = {
   },
   listGuardrailEntities: () =>
     request<{ entities: string[] }>("GET", "/guardrails/entities"),
-  listGuardrailLogs: (filter?: {
-    api_key_id?: string;
-    detector?: string;
-    action?: string;
-    limit?: number;
-  }) => {
+  /** Optional engines this server can run, per detector (e.g. injection.classifier). */
+  getGuardrailCapabilities: () =>
+    request<{ capabilities: Record<string, Record<string, boolean>> }>("GET", "/guardrails/capabilities"),
+  listAudit: (filter?: AuditFilter) =>
+    request<{ entries: AuditEntry[]; next_cursor?: string }>("GET", `/audit${auditQuery(filter)}`),
+  auditStatus: () => request<AuditStatus>("GET", "/audit/status"),
+  verifyAudit: () => request<AuditVerifyReport>("GET", "/audit/verify"),
+  /** JSON Lines of every matching entry (cursor/limit are ignored). */
+  exportAudit: (filter?: AuditFilter) =>
+    requestBlob("GET", `/audit/export${auditQuery({ ...filter, cursor: undefined, limit: undefined })}`),
+  guardrailStats: (period: string, opts: { buckets?: number; api_key_id?: string; model?: string; chain_id?: string } = {}) => {
+    const qs = new URLSearchParams({ period, tz: browserTZ() });
+    for (const [k, v] of Object.entries(opts)) {
+      if (v) qs.set(k, String(v));
+    }
+    return request<GuardrailStats>("GET", `/guardrails/stats?${qs.toString()}`);
+  },
+  listGuardrailLogs: (filter?: GuardrailLogFilter & { limit?: number }) => {
     const qs = new URLSearchParams();
-    if (filter?.api_key_id) qs.set("api_key_id", filter.api_key_id);
-    if (filter?.detector) qs.set("detector", filter.detector);
-    if (filter?.action) qs.set("action", filter.action);
-    if (filter?.limit) qs.set("limit", String(filter.limit));
+    for (const [k, v] of Object.entries(filter ?? {})) {
+      if (v) qs.set(k, String(v));
+    }
+    if (filter?.period) qs.set("tz", browserTZ());
     const suffix = qs.toString();
     return request<{ logs: GuardrailLogEntry[] }>(
       "GET",
@@ -2097,6 +2515,11 @@ export const api = {
       `/health/overview?range=${encodeURIComponent(range)}${status ? `&status=${encodeURIComponent(status)}` : ""}`,
     ),
 
+  healthTimeline: (range = "24h", buckets = 24) =>
+    request<HealthTimeline>("GET", `/health/timeline?range=${encodeURIComponent(range)}&buckets=${buckets}`),
+
+  gatewayInfo: () => request<GatewayInfo>("GET", "/gateway/info"),
+
   healthProviderDetail: (provider: string, range = "24h") =>
     request<HealthProviderDetail>(
       "GET",
@@ -2136,6 +2559,50 @@ export const api = {
 
 // ---- Provider health types ----
 
+export type HealthTimelineStatus = "ok" | "degraded" | "down" | "idle";
+
+export interface HealthTimelineBucket {
+  start: string;
+  requests: number;
+  failures: number;
+  rate_limited: number;
+  p95_ms: number;
+  status: HealthTimelineStatus;
+}
+
+export interface HealthTimelineProvider {
+  provider: string;
+  display_name: string;
+  color: string;
+  icon: string;
+  requests: number;
+  failures: number;
+  fallbacks: number;
+  rate_limited: number;
+  success_rate: number;
+  worst_p95_ms: number;
+  buckets: HealthTimelineBucket[];
+}
+
+export interface HealthTimeline {
+  since: string;
+  until: string;
+  bucket_seconds: number;
+  providers: HealthTimelineProvider[];
+}
+
+export interface GatewayInfo {
+  name: string;
+  version: string;
+  uptime_s: number;
+  started_at: string;
+  listen_addr: string;
+  dialect: "sqlite" | "postgres" | string;
+  go_version: string;
+  os: string;
+  arch: string;
+}
+
 export type HealthStatus = "healthy" | "degraded" | "unhealthy" | "unknown" | "disabled";
 
 export interface HealthSummary {
@@ -2164,10 +2631,18 @@ export interface HealthProviderRow {
   last_probe_at?: string;
   main_issue?: string;
   recommendation?: string;
+  /** Historical ranges only: request volume, status over the whole range, and the live status. */
+  requests?: number;
+  range_status?: HealthStatus;
+  live_status?: HealthStatus;
+  rate_limited_count?: number;
+  final_failure_count?: number;
+  last_seen_at?: string;
 }
 
 export interface HealthOverviewWindow {
-  kind: "rolling_current";
+  /** rolling_current: the live telemetry window; historical: persisted snapshots over the requested range. */
+  kind: "rolling_current" | "historical";
   duration_seconds: number;
   requested_range: string;
   generated_at: string;
@@ -2236,6 +2711,8 @@ export interface HealthModelRow {
   fallback_count: number;
   main_issue?: string;
   last_updated_at?: string;
+  requests?: number;
+  recommendation?: string;
 }
 
 export interface HealthChainRow {

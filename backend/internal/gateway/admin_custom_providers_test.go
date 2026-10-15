@@ -182,3 +182,23 @@ func TestDeleteCustomProvider_RepoReturnsNotFoundForMissing(t *testing.T) {
 	code, body := deleteCustomProvider(t, s, "custom-anthropic-ghost")
 	require.Equal(t, http.StatusNotFound, code, body)
 }
+
+func TestResolveCustomAliasAllowsOwnAlias(t *testing.T) {
+	const id = "custom-openai-own-alias-test"
+	connectors.RegisterDynamicProvider(connectors.DynamicProvider{
+		ID: id, DisplayName: "LM Studio", Alias: "lm-studio", Dialect: core.DialectOpenAI, BaseURL: "http://192.0.2.10:1234/v1",
+	})
+	t.Cleanup(func() { connectors.UnregisterDynamicProvider(id) })
+
+	// Editing the provider re-submits its current alias; that is not a clash,
+	// even though a built-in provider now uses the same ID.
+	alias, err := resolveCustomAlias("lm-studio", "LM Studio", id)
+	require.NoError(t, err)
+	require.Equal(t, "lm-studio", alias)
+
+	// A different custom provider still cannot take it, nor a built-in alias.
+	_, err = resolveCustomAlias("lm-studio", "Other", "custom-openai-other")
+	require.Error(t, err)
+	_, err = resolveCustomAlias("openai", "Other", "custom-openai-other")
+	require.Error(t, err)
+}

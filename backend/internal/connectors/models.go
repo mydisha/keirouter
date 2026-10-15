@@ -43,10 +43,16 @@ func emb(id, name string, dims int) ModelSpec {
 // model id, so their listed set here is only a discovery hint, not an allow-list.
 var providerModels = map[string][]ModelSpec{
 	"openai": {
-		m("gpt-5.4", "GPT-5.4"), m("gpt-5.4-mini", "GPT-5.4 Mini"), m("gpt-5.2", "GPT-5.2"),
+		m("gpt-6.1-sol", "GPT-6.1 Sol"), m("gpt-6-astra", "GPT-6 Astra"), m("gpt-6-sol", "GPT-6 Sol"),
+		m("gpt-6-luna", "GPT-6 Luna"),
+		m("gpt-5.6-sol", "GPT-5.6 Sol"), m("gpt-5.6-terra", "GPT-5.6 Terra"), m("gpt-5.6-luna", "GPT-5.6 Luna"),
+		m("gpt-5.5", "GPT-5.5"), m("gpt-5.5-pro", "GPT-5.5 Pro"),
+		m("gpt-5.4", "GPT-5.4"), m("gpt-5.4-pro", "GPT-5.4 Pro"), m("gpt-5.4-mini", "GPT-5.4 Mini"),
+		m("gpt-5.4-nano", "GPT-5.4 Nano"), m("gpt-5.2", "GPT-5.2"), m("gpt-5.1", "GPT-5.1"),
 		m("gpt-5", "GPT-5"), m("gpt-5-mini", "GPT-5 Mini"), m("gpt-4o", "GPT-4o"),
-		m("gpt-4o-mini", "GPT-4o Mini"), m("gpt-4.1", "GPT-4.1"), m("o3", "o3"), m("o3-mini", "o3 Mini"),
-		m("o1", "o1"),
+		m("gpt-4o-mini", "GPT-4o Mini"), m("gpt-4.1", "GPT-4.1"), m("gpt-4.1-mini", "GPT-4.1 Mini"),
+		m("gpt-4.1-nano", "GPT-4.1 Nano"), m("o3-pro", "o3 Pro"), m("o3", "o3"), m("o4-mini", "o4 Mini"),
+		m("o3-mini", "o3 Mini"), m("o1", "o1"),
 		emb("text-embedding-3-large", "Text Embedding 3 Large", 3072),
 		emb("text-embedding-3-small", "Text Embedding 3 Small", 1536),
 		emb("text-embedding-ada-002", "Text Embedding Ada 002", 1536),
@@ -54,7 +60,9 @@ var providerModels = map[string][]ModelSpec{
 		k("gpt-4o-mini-tts", "GPT-4o Mini TTS", core.ServiceTTS),
 		k("whisper-1", "Whisper 1", core.ServiceSTT), k("gpt-4o-transcribe", "GPT-4o Transcribe", core.ServiceSTT),
 		k("gpt-4o-mini-transcribe", "GPT-4o Mini Transcribe", core.ServiceSTT),
-		k("gpt-image-1", "GPT Image 1", core.ServiceImage), k("dall-e-3", "DALL-E 3", core.ServiceImage),
+		k("gpt-image-2", "GPT Image 2", core.ServiceImage), k("gpt-image-1.5", "GPT Image 1.5", core.ServiceImage),
+		k("gpt-image-1", "GPT Image 1", core.ServiceImage), k("gpt-image-1-mini", "GPT Image 1 Mini", core.ServiceImage),
+		k("dall-e-3", "DALL-E 3", core.ServiceImage),
 		k("dall-e-2", "DALL-E 2", core.ServiceImage),
 	},
 	"codex": {
@@ -72,12 +80,19 @@ var providerModels = map[string][]ModelSpec{
 		k("gpt-5.3-image", "GPT-5.3 Image", core.ServiceImage), k("gpt-5.2-image", "GPT-5.2 Image", core.ServiceImage),
 	},
 	"anthropic": {
+		m("claude-fable-5-1", "Claude Fable 5.1"), m("claude-mythos-5-1", "Claude Mythos 5.1"),
+		m("claude-opus-5-5", "Claude Opus 5.5"), m("claude-sonnet-5-5", "Claude Sonnet 5.5"),
+		m("claude-haiku-5-5", "Claude Haiku 5.5"), m("claude-opus-5", "Claude Opus 5"),
+		m("claude-sonnet-5", "Claude Sonnet 5"), m("claude-opus-4-8", "Claude Opus 4.8"),
+		m("claude-opus-4-7", "Claude Opus 4.7"), m("claude-opus-4-6", "Claude Opus 4.6"),
+		m("claude-sonnet-4-6", "Claude Sonnet 4.6"),
 		m("claude-opus-4-5-20251101", "Claude Opus 4.5"),
 		m("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5"),
 		m("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
 		m("claude-sonnet-4-20250514", "Claude Sonnet 4"),
 		m("claude-opus-4-20250514", "Claude Opus 4"),
 		m("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet"),
+		k("claude-sonnet-5-5", "Claude Sonnet 5.5 (Vision)", core.ServiceImageToText),
 		k("claude-opus-4-5-20251101", "Claude Opus 4.5 (Vision)", core.ServiceImageToText),
 	},
 	"deepseek": {
@@ -85,9 +100,13 @@ var providerModels = map[string][]ModelSpec{
 		m("deepseek-v4-pro-none", "DeepSeek V4 Pro No Thinking"), m("deepseek-v4-flash", "DeepSeek V4 Flash"),
 		m("deepseek-chat", "DeepSeek V3.2 Chat"), m("deepseek-reasoner", "DeepSeek V3.2 Reasoner"),
 	},
-	"glm":    {m("glm-5.1", "GLM 5.1"), m("glm-5", "GLM 5"), m("glm-4.7", "GLM 4.7"), m("glm-4.6v", "GLM 4.6V (Vision)")},
+	"glm": {
+		m("glm-5.3", "GLM 5.3"), m("glm-5.3-flash", "GLM 5.3 Flash"), m("glm-5.2", "GLM 5.2"),
+		m("glm-5.1", "GLM 5.1"), m("glm-5-code", "GLM 5 Code"), m("glm-5", "GLM 5"), m("glm-4.7", "GLM 4.7"),
+		m("glm-4.6v", "GLM 4.6V (Vision)"),
+	},
 	"glm-cn": {m("glm-5.1", "GLM 5.1"), m("glm-5", "GLM 5"), m("glm-4.7", "GLM-4.7"), m("glm-4.6", "GLM-4.6"), m("glm-4.5-air", "GLM-4.5-Air")},
-	"kimi":   {m("kimi-k2.6", "Kimi K2.6"), m("kimi-k2.5", "Kimi K2.5"), m("kimi-k2.5-thinking", "Kimi K2.5 Thinking"), m("kimi-latest", "Kimi Latest")},
+	"kimi":   {m("kimi-k3", "Kimi K3"), m("kimi-k2.7-code", "Kimi K2.7 Code"), m("kimi-k2.6", "Kimi K2.6"), m("kimi-k2.5", "Kimi K2.5"), m("kimi-k2.5-thinking", "Kimi K2.5 Thinking"), m("kimi-latest", "Kimi Latest")},
 	"minimax": {
 		m("MiniMax-M3", "MiniMax M3"),
 		m("MiniMax-M2.7", "MiniMax M2.7"), m("MiniMax-M2.5", "MiniMax M2.5"), m("MiniMax-M2.1", "MiniMax M2.1"),
@@ -97,13 +116,18 @@ var providerModels = map[string][]ModelSpec{
 	"minimax-cn": {m("MiniMax-M2.7", "MiniMax M2.7"), m("MiniMax-M2.5", "MiniMax M2.5"), m("MiniMax-M2.1", "MiniMax M2.1")},
 	"groq": {
 		m("llama-3.3-70b-versatile", "Llama 3.3 70B"), m("meta-llama/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick"),
-		m("qwen/qwen3-32b", "Qwen3 32B"), m("openai/gpt-oss-120b", "GPT-OSS 120B"),
+		m("qwen/qwen3.8-27b", "Qwen3.8 27B"), m("qwen/qwen3-32b", "Qwen3 32B"),
+		m("openai/gpt-oss-120b", "GPT-OSS 120B"), m("openai/gpt-oss-20b", "GPT-OSS 20B"),
 		k("whisper-large-v3", "Whisper Large v3", core.ServiceSTT),
 		k("whisper-large-v3-turbo", "Whisper Large v3 Turbo", core.ServiceSTT),
 		k("distil-whisper-large-v3-en", "Distil Whisper Large v3 EN", core.ServiceSTT),
 		k("meta-llama/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick (Vision)", core.ServiceImageToText),
 	},
 	"xai": {
+		m("grok-4.7", "Grok 4.7"), m("grok-4.6", "Grok 4.6"), m("grok-4.5", "Grok 4.5"),
+		m("grok-4.3", "Grok 4.3"), m("grok-4.20-reasoning", "Grok 4.20 Reasoning"),
+		m("grok-4.20-non-reasoning", "Grok 4.20 Non-Reasoning"), m("grok-4.20-multi-agent", "Grok 4.20 Multi-Agent"),
+		m("grok-build-latest", "Grok Build"),
 		m("grok-4", "Grok 4"), m("grok-4-fast-reasoning", "Grok 4 Fast Reasoning"),
 		m("grok-code-fast-1", "Grok Code Fast"), m("grok-3", "Grok 3"),
 		k("grok-2-image-1212", "Grok 2 Image", core.ServiceImage),
@@ -111,18 +135,30 @@ var providerModels = map[string][]ModelSpec{
 		k("grok-imagine-video", "Grok Imagine Video", core.ServiceVideo),
 	},
 	"mistral": {
-		m("mistral-large-latest", "Mistral Large 3"), m("codestral-latest", "Codestral"),
-		m("mistral-medium-latest", "Mistral Medium 3"), emb("mistral-embed", "Mistral Embed", 1024),
+		m("mistral-large-4", "Mistral Large 4"), m("mistral-large-latest", "Mistral Large 3"),
+		m("mistral-medium-3.5", "Mistral Medium 3.5"), m("mistral-medium-latest", "Mistral Medium"),
+		m("mistral-small-latest", "Mistral Small"), m("magistral-medium-latest", "Magistral Medium"),
+		m("devstral-latest", "Devstral"), m("codestral-latest", "Codestral"),
+		m("ministral-14b-latest", "Ministral 14B"), emb("mistral-embed", "Mistral Embed", 1024),
+		k("voxtral-small-latest", "Voxtral Small (Audio)", core.ServiceSTT),
 		k("pixtral-large-latest", "Pixtral Large (Vision)", core.ServiceImageToText),
 	},
-	"perplexity": {m("sonar-pro", "Sonar Pro"), m("sonar", "Sonar")},
+	"perplexity": {
+		m("sonar-pro", "Sonar Pro"), m("sonar", "Sonar"), m("sonar-reasoning-pro", "Sonar Reasoning Pro"),
+		m("sonar-deep-research", "Sonar Deep Research"),
+	},
 	"together": {
 		m("meta-llama/Llama-3.3-70B-Instruct-Turbo", "Llama 3.3 70B Turbo"),
 		m("deepseek-ai/DeepSeek-R1", "DeepSeek R1"), m("Qwen/Qwen3-235B-A22B", "Qwen3 235B"),
+		m("MiniMaxAI/MiniMax-M3", "MiniMax M3"),
 		emb("BAAI/bge-large-en-v1.5", "BGE Large EN v1.5", 1024),
 		emb("togethercomputer/m2-bert-80M-8k-retrieval", "M2 BERT 80M 8K", 768),
 	},
 	"fireworks": {
+		m("accounts/fireworks/models/kimi-k3", "Kimi K3"),
+		m("accounts/fireworks/models/glm-5p3", "GLM 5.3"),
+		m("accounts/fireworks/models/minimax-m3", "MiniMax M3"),
+		m("accounts/fireworks/models/qwen3p8-max", "Qwen3.8 Max"),
 		m("accounts/fireworks/models/deepseek-v3p1", "DeepSeek V3.1"),
 		m("accounts/fireworks/models/llama-v3p3-70b-instruct", "Llama 3.3 70B"),
 		m("accounts/fireworks/models/qwen3-235b-a22b", "Qwen3 235B"),
@@ -131,7 +167,7 @@ var providerModels = map[string][]ModelSpec{
 	"cerebras": {
 		m("gpt-oss-120b", "GPT OSS 120B"), m("zai-glm-4.7", "ZAI GLM 4.7"),
 		m("llama-3.3-70b", "Llama 3.3 70B"), m("qwen-3-235b-a22b-instruct-2507", "Qwen3 235B A22B"),
-		m("qwen-3-32b", "Qwen3 32B"),
+		m("qwen-3-32b", "Qwen3 32B"), m("qwen-3.8-27b", "Qwen3.8 27B"), m("gemma-4-31b", "Gemma 4 31B"),
 	},
 	"cohere": {m("command-a-03-2025", "Command A"), m("command-r-plus-08-2024", "Command R+"), m("command-r-08-2024", "Command R")},
 	"nvidia": {
@@ -166,7 +202,7 @@ var providerModels = map[string][]ModelSpec{
 	},
 	"alicode-intl": {m("qwen3.5-plus", "Qwen3.5 Plus"), m("kimi-k2.5", "Kimi K2.5"), m("glm-5", "GLM 5"), m("qwen3-coder-plus", "Qwen3 Coder Plus")},
 	"mimo-free":    {m("mimo-auto", "MiMo Auto")},
-	"xiaomi-mimo":  {m("mimo-v2.5-pro", "MiMo V2.5 Pro"), m("mimo-v2.5", "MiMo V2.5"), m("mimo-v2-omni", "MiMo V2 Omni"), m("mimo-v2-flash", "MiMo V2 Flash")},
+	"xiaomi-mimo":  {m("mimo-v2.6-pro", "MiMo V2.6 Pro"), m("mimo-v2.6-flash", "MiMo V2.6 Flash"), m("mimo-v2.5-pro", "MiMo V2.5 Pro"), m("mimo-v2.5", "MiMo V2.5"), m("mimo-v2-omni", "MiMo V2 Omni"), m("mimo-v2-flash", "MiMo V2 Flash")},
 	"xiaomi-tokenplan": {
 		m("mimo-v2.5-pro", "MiMo V2.5 Pro"), m("mimo-v2.5", "MiMo V2.5"), m("mimo-v2-pro", "MiMo V2 Pro"), m("mimo-v2-omni", "MiMo V2 Omni"),
 		k("mimo-v2-tts", "MiMo V2 TTS", core.ServiceTTS), k("mimo-v2.5-tts", "MiMo V2.5 TTS", core.ServiceTTS),
@@ -203,13 +239,23 @@ var providerModels = map[string][]ModelSpec{
 		// DeepSeek
 		m("@cf/deepseek-ai/deepseek-r1-distill-qwen-32b", "DeepSeek R1 Distill Qwen 32B"),
 		// Kimi
+		m("@cf/moonshotai/kimi-k2.7-code", "Kimi K2.7 Code"),
+		m("@cf/moonshotai/kimi-k2.6", "Kimi K2.6"),
 		m("@cf/moonshotai/kimi-k2.5", "Kimi K2.5"),
+		// OpenAI open-weight
+		m("@cf/openai/gpt-oss-120b", "GPT-OSS 120B"),
+		m("@cf/openai/gpt-oss-20b", "GPT-OSS 20B"),
+		// Google / NVIDIA
+		m("@cf/google/gemma-4-26b-a4b-it", "Gemma 4 26B A4B"),
+		m("@cf/nvidia/nemotron-3-120b-a12b", "Nemotron 3 120B A12B"),
 		// GLM
+		m("@cf/zai-org/glm-5.2", "GLM 5.2"),
 		m("@cf/zai-org/glm-4.7-flash", "GLM 4.7 Flash"),
 		m("@cf/zai-org/glm-5.3-flash", "GLM 5.3 Flash"),
 		// Qwen
 		m("@cf/qwen/qwq-32b", "QwQ 32B"),
 		m("@cf/qwen/qwen2.5-coder-32b-instruct", "Qwen 2.5 Coder 32B"),
+		m("@cf/qwen/qwen3-30b-a3b-fp8", "Qwen3 30B A3B"),
 		// Image models
 		k("@cf/black-forest-labs/flux-1-schnell", "FLUX.1 Schnell", core.ServiceImage),
 		k("@cf/stabilityai/stable-diffusion-xl-base-1.0", "Stable Diffusion XL", core.ServiceImage),
@@ -379,8 +425,12 @@ var providerModels = map[string][]ModelSpec{
 	"ollama":       {m("gpt-oss:120b", "GPT OSS 120B"), m("kimi-k2.5", "Kimi K2.5"), m("glm-5", "GLM 5"), m("qwen3.5", "Qwen3.5")},
 	"ollama-local": {m("llama3.2", "Llama 3.2"), m("qwen2.5-coder", "Qwen 2.5 Coder")},
 	"gemini": {
-		m("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"), m("gemini-3-flash-preview", "Gemini 3 Flash Preview"),
-		m("gemini-2.5-pro", "Gemini 2.5 Pro"), m("gemini-2.5-flash", "Gemini 2.5 Flash"),
+		m("gemini-pro-latest", "Gemini Pro (Latest)"), m("gemini-flash-latest", "Gemini Flash (Latest)"),
+		m("gemini-3.8-flash", "Gemini 3.8 Flash"), m("gemini-3.7-flash", "Gemini 3.7 Flash"),
+		m("gemini-3.6-flash", "Gemini 3.6 Flash"), m("gemini-3.5-flash", "Gemini 3.5 Flash"),
+		m("gemini-3.5-flash-lite", "Gemini 3.5 Flash Lite"), m("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"),
+		m("gemini-3.1-flash-lite", "Gemini 3.1 Flash Lite"), m("gemini-3-flash-preview", "Gemini 3 Flash Preview"),
+		m("gemma-4-31b-it", "Gemma 4 31B"), m("gemini-2.5-pro", "Gemini 2.5 Pro"), m("gemini-2.5-flash", "Gemini 2.5 Flash"),
 		emb("gemini-embedding-001", "Gemini Embedding 001", 768), emb("text-embedding-004", "Text Embedding 004", 768),
 		k("gemini-2.5-flash-image", "Gemini 2.5 Flash Image (Nano Banana)", core.ServiceImage),
 		k("gemini-2.5-pro-preview-tts", "Gemini 2.5 Pro TTS", core.ServiceTTS),
@@ -456,12 +506,12 @@ type ProviderModel struct {
 	Model    ModelSpec
 }
 
-// ModelsByKind collects every model of the given kind across all non-hidden
-// providers in the catalog.
+// ModelsByKind collects every model of the given kind across all non-hidden,
+// drivable providers in the catalog.
 func ModelsByKind(kind core.ServiceKind) []ProviderModel {
 	var out []ProviderModel
 	for _, spec := range Catalog() {
-		if spec.Hidden {
+		if spec.Hidden || !Drivable(spec) {
 			continue
 		}
 		if !core.HasServiceKind(spec.ServiceKinds, kind) {
@@ -559,7 +609,7 @@ func (s *AnthropicCompatibleModelSource) ListModels(ctx context.Context, creds c
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := sharedClient.Do(req)
+	resp, err := proxyDo(egressCtx(ctx, creds), req)
 	if err != nil {
 		return nil, err
 	}

@@ -1,82 +1,201 @@
-import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useId, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
-  ArrowRight,
-  CalendarDays,
   Check,
+  ChevronDown,
   Copy,
-  Cpu,
-  KeyRound,
-  Layers3,
-  Save,
-  Settings as SettingsIcon,
-  Shield,
+  ExternalLink,
+  History,
+  Link2,
+  MoreHorizontal,
+  Plus,
+  Search,
   SlidersHorizontal,
+  Trash2,
   Wallet,
+  X,
+  type LucideIcon,
 } from "lucide-react";
 import {
   api,
+  fetchKeyUsageById,
   type APIKey,
   type GuardrailPolicyConfig,
+  type KeyUsageData,
   type Plan,
 } from "../lib/api";
 import { dashboard } from "../lib/dashboardRoutes";
-import { formatSpendUSD } from "../lib/format";
+import { microsToUSD, formatTokens, formatDateTime, formatSpendUSD } from "../lib/format";
+import { cn } from "@/lib/utils";
 import { useToast } from "../components/Toast";
+import { CodeBlock } from "../components/ui/code-block";
 import { GuardrailEditor } from "../components/GuardrailEditor";
-import { ModelAccessList, ModelMultiSelect } from "../components/ModelSelect";
-import {
-  Badge,
-  Button,
-  Card,
-  CardHeader,
-  EmptyState,
-  Field,
-  Input,
-  Modal,
-  Spinner,
-  TabBar,
-  Toggle,
-} from "../components/ui";
+import { GuardrailKeyStats } from "../components/GuardrailMonitor";
+import { useModelCatalog, type ModelCatalogOption } from "../components/ModelSelect";
+import { ProviderLogo } from "../components/ProviderLogo";
+import { Badge, Button, Field, IconTile, Input, Kpi, KpiGrid, Modal, ModalFooter, SectionTitle, Select, Skeleton, TablePagination, Toggle, useClientPagination, EmptyState } from "../components/ui";
+import { ICONS } from "../lib/icons";
+import { useConfirm } from "../components/ui/confirm-dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 
 type Tab = "general" | "models" | "budget" | "guardrails";
+const TAB_VALUES: Tab[] = ["general", "models", "budget", "guardrails"];
+const TAB_LABELS: Record<Tab, string> = { general: "Overview", models: "Models", budget: "Budget", guardrails: "Guardrails" };
 
-const TABS = [
-  { value: "general" as const, label: "General", icon: SettingsIcon },
-  { value: "models" as const, label: "Models", icon: Cpu },
-  { value: "budget" as const, label: "Budget", icon: Wallet },
-  { value: "guardrails" as const, label: "Guardrails", icon: Shield },
-];
+const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const USAGE_DAYS = 30;
 
-function useHashTab(defaultTab: Tab): [Tab, (t: Tab) => void] {
-  const valid: Tab[] = TABS.map((t) => t.value);
-  const read = (): Tab => {
-    const hash = window.location.hash.replace("#", "");
-    return valid.includes(hash as Tab) ? (hash as Tab) : defaultTab;
-  };
-  const [tab, setTab] = useState<Tab>(read);
-  useEffect(() => {
-    const onHash = () => setTab(read());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-  return [
-    tab,
-    (next: Tab) => {
-      window.history.replaceState(null, "", `#${next}`);
-      setTab(next);
-    },
-  ];
+// ── Local helpers ────────────────────────────────────────────────────────────
+
+function usedAt(iso?: string | null): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  // Go's zero time ("0001-01-01…") parses to a negative epoch: treat as never.
+  return Number.isFinite(t) && t > 0 ? t : null;
 }
+
+function relativeTime(iso?: string | null): string {
+  const t = usedAt(iso);
+  if (t === null) return "Never";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 45) return "Just now";
+  const m = s / 60;
+  if (m < 60) return `${Math.max(1, Math.round(m))} min ago`;
+  const h = m / 60;
+  if (h < 24) return `${Math.round(h)} h ago`;
+  const d = h / 24;
+  if (d < 30) return `${Math.round(d)} d ago`;
+  return new Date(t).toLocaleDateString();
+}
+
+function useCopy() {
+  const toast = useToast();
+  return useCallback(
+    (value: string, title: string, description?: string) =>
+      navigator.clipboard.writeText(value).then(
+        () => {
+          toast.success(title, description);
+          return true;
+        },
+        () => {
+          toast.error("Copy failed", "Your browser blocked clipboard access. Select the text and copy it manually.");
+          return false;
+        },
+      ),
+    [toast],
+  );
+}
+
+function fmtUSD(v: number): string {
+  const n = v || 0;
+  if (n === 0) return "$0.00";
+  if (n < 0.01) return `$${n.toPrecision(2)}`;
+  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function periodLabel(period: string): string {
+  if (period === "total") return "All-time";
+  return period.charAt(0).toUpperCase() + period.slice(1);
+}
+
+function CopyIconButton({ label, value, title, description }: { label: string; value: string; title: string; description?: string }) {
+  const copy = useCopy();
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        copy(value, title, description).then((ok) => {
+          if (!ok) return;
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1400);
+        })
+      }
+      aria-label={label}
+      title={label}
+      className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg sm:h-7 sm:w-7", FOCUS_RING)}
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-ok" strokeWidth={1.75} aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />}
+    </button>
+  );
+}
+
+function SettingsRow({ label, labelId, description, children }: { label: string; labelId?: string; description?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-8 sm:px-5">
+      <div className="min-w-0 sm:max-w-[45%]">
+        <p id={labelId} className="text-[13px] font-medium text-fg">{label}</p>
+        {description && <p className="mt-0.5 text-[12px] leading-5 text-fg-muted">{description}</p>}
+      </div>
+      <div className="flex min-w-0 items-center gap-2 sm:justify-end">{children}</div>
+    </div>
+  );
+}
+
+function PanelCard({ icon, title, action, children, footer }: { icon: LucideIcon; title: ReactNode; action?: ReactNode; children: ReactNode; footer?: ReactNode }) {
+  const headingId = useId();
+  return (
+    <section aria-labelledby={headingId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="border-b border-line px-4 py-3 sm:px-5">
+        <SectionTitle icon={icon} title={title} id={headingId} action={action} />
+      </div>
+      {children}
+      {footer}
+    </section>
+  );
+}
+
+// Phones: status on top, buttons stacked full width with the save action first.
+function SaveBar({ status, children }: { status: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2 border-t border-line bg-subtle px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:px-5">
+      <div role="status" className="min-w-0 flex-1 text-[12.5px]">{status}</div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center [&>button]:w-full sm:[&>button]:w-auto">{children}</div>
+    </div>
+  );
+}
+
+function planBudgetText(plan: Plan): string {
+  const parts: string[] = [];
+  if (plan.limit_micros > 0) parts.push(microsToUSD(plan.limit_micros));
+  if (plan.limit_tokens > 0) parts.push(`${formatTokens(plan.limit_tokens)} tokens`);
+  if (parts.length === 0) return "No spend limit";
+  return `${parts.join(" + ")} / ${plan.period}${plan.hard_cutoff ? " · hard cutoff" : ""}`;
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 export function KeyDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const toast = useToast();
-  const [tab, setTab] = useHashTab("general");
-  const [copied, setCopied] = useState(false);
+  const confirm = useConfirm();
+  const copy = useCopy();
+  const tabsId = useId();
+  const [params, setParams] = useSearchParams();
+  const rawTab = params.get("tab");
+  const tab: Tab = TAB_VALUES.includes(rawTab as Tab) ? (rawTab as Tab) : "general";
+  const setTab = useCallback(
+    (t: Tab) =>
+      setParams((p) => {
+        if (t === "general") p.delete("tab");
+        else p.set("tab", t);
+        return p;
+      }, { replace: true }),
+    [setParams],
+  );
+
+  // Older links used #models / #guardrails; carry them over to ?tab=.
+  useEffect(() => {
+    const hash = window.location.hash.replace("#", "") as Tab;
+    if (!params.get("tab") && hash !== "general" && TAB_VALUES.includes(hash)) {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      setTab(hash);
+    }
+  }, []);
 
   const keys = useQuery({ queryKey: ["keys"], queryFn: () => api.listKeys() });
   const plans = useQuery({ queryKey: ["plans"], queryFn: () => api.listPlans() });
@@ -89,125 +208,373 @@ export function KeyDetailPage() {
     [plans.data, key?.plan_id],
   );
 
+  const toggle = useMutation({
+    mutationFn: (k: APIKey) => api.updateKey(k.id, { disabled: !k.disabled }),
+    onSuccess: (updated) => {
+      qc.invalidateQueries({ queryKey: ["keys"] });
+      toast.success(updated.disabled ? "Key disabled" : "Key enabled", updated.disabled ? "Requests using this key are rejected." : "This key can authenticate requests again.");
+    },
+    onError: (error) => toast.error("Couldn't update key", error instanceof Error ? error.message : "Please try again."),
+  });
+
+  const revoke = useMutation({
+    mutationFn: (keyId: string) => api.deleteKey(keyId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["keys"] });
+      toast.success("Key revoked", "It can no longer authenticate requests.");
+      navigate(dashboard("/keys"));
+    },
+    onError: (e: Error) => toast.error("Couldn't revoke key", e.message),
+  });
+
   if (keys.isLoading) {
-    return <Spinner />;
+    return (
+      <div className="space-y-4" aria-busy="true" aria-label="Loading key">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-14 w-full max-w-lg" />
+        <Skeleton className="h-9 w-72" />
+        <Skeleton className="h-80 w-full rounded-2xl" />
+      </div>
+    );
   }
   if (!key) {
     return (
-      <Card>
-        <EmptyState title="API key not found" hint="The key may have been revoked. Return to API Keys to choose another key." />
-        <div className="flex justify-center pb-8">
-          <Button variant="ghost" onClick={() => navigate(dashboard("/keys"))}>Back to API keys</Button>
-        </div>
-      </Card>
+      <EmptyState
+        variant="card"
+        titleAs="h1"
+        icon={ICONS.keys}
+        title="API key not found"
+        hint="It may have been revoked."
+        action={<Button onClick={() => navigate(dashboard("/keys"))}>Back to API keys</Button>}
+      />
     );
   }
 
-  const copyIdentifier = () => {
-    navigator.clipboard.writeText(key.display).then(
-      () => {
-        setCopied(true);
-        toast.success("Key identifier copied");
-        window.setTimeout(() => setCopied(false), 1600);
-      },
-      () => toast.error("Copy failed", "Your browser blocked clipboard access."),
-    );
+  // The customer portal signs owners in with Google and resolves their own key,
+  // so the link carries no key id.
+  const portalUrl = `${window.location.origin}/portal`;
+
+  const revokeKey = async () => {
+    if (!(await confirm({ title: `Revoke ${key.name}?`, description: "Tools using this key stop authenticating immediately. This cannot be undone.", confirmLabel: "Revoke", tone: "danger" }))) return;
+    revoke.mutate(key.id);
+  };
+
+  const onTabKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const i = TAB_VALUES.indexOf(tab);
+    const next =
+      event.key === "Home" ? 0
+        : event.key === "End" ? TAB_VALUES.length - 1
+          : (i + (event.key === "ArrowRight" ? 1 : -1) + TAB_VALUES.length) % TAB_VALUES.length;
+    setTab(TAB_VALUES[next]);
+    document.getElementById(`${tabsId}-tab-${TAB_VALUES[next]}`)?.focus();
   };
 
   return (
-    <div className="space-y-4">
-      <button
-        type="button"
-            onClick={() => navigate(dashboard("/keys"))}
-        className="inline-flex min-h-10 items-center gap-2 rounded-lg px-2 text-sm font-medium text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        API keys
-      </button>
+    <>
+      <nav aria-label="Breadcrumb" className="mb-3 text-[13px] text-fg-muted">
+        <ol className="flex items-center gap-1.5">
+          <li>
+            <Link to={dashboard("/keys")} className={cn("inline-flex items-center gap-1.5 rounded-md hover:text-fg", FOCUS_RING)}>
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+              API keys
+            </Link>
+          </li>
+          <li aria-hidden="true" className="text-fg-faint">/</li>
+          <li className="min-w-0">
+            <span aria-current="page" className="block truncate text-fg">{key.name}</span>
+          </li>
+        </ol>
+      </nav>
 
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-4">
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-secondary-200/70 bg-secondary-50 text-secondary-700 shadow-sm dark:border-secondary-900/60 dark:bg-secondary-950/30 dark:text-secondary-200">
-            <KeyRound className="h-5 w-5" />
-          </div>
+      <header className="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+        <div className="flex min-w-0 items-center gap-3.5">
+          <IconTile icon={ICONS.keys} size="lg" />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="truncate text-2xl font-semibold tracking-tight text-[var(--text)]">{key.name}</h1>
-              <Badge tone={key.disabled ? "danger" : "success"}>{key.disabled ? "Disabled" : "Active"}</Badge>
+              <h1 className="min-w-0 max-w-full truncate text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{key.name}</h1>
+              {key.disabled ? <Badge tone="neutral">Disabled</Badge> : <Badge tone="success">Active</Badge>}
             </div>
-            <button
-              type="button"
-              onClick={copyIdentifier}
-              className="group mt-1 inline-flex min-h-8 max-w-full items-center gap-2 rounded-lg text-sm text-[var(--text-muted)] transition-colors hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
-            >
-              <span className="truncate font-mono">{key.display}</span>
-              {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5 opacity-60 group-hover:opacity-100" />}
-            </button>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
+              <button
+                type="button"
+                onClick={() => copy(key.display, "Masked key copied")}
+                aria-label={`Copy masked key ${key.display}`}
+                className={cn("group inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-md font-mono text-[12.5px] hover:text-fg", FOCUS_RING)}
+              >
+                <span className="truncate">{key.display}</span>
+                <Copy className="h-3 w-3 shrink-0 text-fg-faint" aria-hidden="true" />
+              </button>
+              <span aria-hidden="true" className="text-fg-faint">·</span>
+              <span title={new Date(key.created_at).toLocaleString()}>Created {new Date(key.created_at).toLocaleDateString()}</span>
+            </p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-[var(--text-muted)]">
-          <span className="inline-flex items-center gap-1.5"><Layers3 className="h-3.5 w-3.5" />{key.plan_name || "Custom plan"}</span>
-          <span className="inline-flex items-center gap-1.5"><CalendarDays className="h-3.5 w-3.5" />Created {new Date(key.created_at).toLocaleDateString()}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" onClick={() => copy(portalUrl, "Portal link copied", "Share it with the key owner.")}>
+            <Link2 aria-hidden="true" />
+            Copy portal link
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              aria-label="More key actions"
+              className={cn("flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg", FOCUS_RING)}
+            >
+              <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => copy(key.id, "Key ID copied")}>
+                <Copy aria-hidden="true" />
+                Copy internal ID
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => window.open(portalUrl, "_blank", "noopener,noreferrer")}>
+                <ExternalLink aria-hidden="true" />
+                Open owner portal
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem tone="danger" onSelect={revokeKey} disabled={revoke.isPending}>
+                <Trash2 aria-hidden="true" />
+                Revoke key
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
+      </header>
+
+      <div className="mb-5 flex gap-1 overflow-x-auto border-b border-line [scrollbar-width:none]" role="tablist" aria-label={`${key.name} sections`} onKeyDown={onTabKeyDown}>
+        {TAB_VALUES.map((value) => {
+          const active = tab === value;
+          return (
+            <button
+              key={value}
+              id={`${tabsId}-tab-${value}`}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              aria-controls={`${tabsId}-panel-${value}`}
+              tabIndex={active ? 0 : -1}
+              onClick={() => setTab(value)}
+              className={cn(
+                "relative -mb-px inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors",
+                FOCUS_RING,
+                active ? "text-fg" : "text-fg-muted hover:text-fg",
+              )}
+            >
+              {TAB_LABELS[value]}
+              {active && <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
+            </button>
+          );
+        })}
       </div>
 
-      <TabBar tabs={TABS} active={tab} onChange={setTab} />
-
-      {tab === "general" && <GeneralTab apiKey={key} />}
-      {tab === "models" && <ModelsTab apiKey={key} plan={plan} plansLoading={plans.isLoading} />}
-      {tab === "budget" && <BudgetTab apiKey={key} />}
-      {tab === "guardrails" && <GuardrailsTab apiKey={key} />}
-    </div>
+      <div role="tabpanel" id={`${tabsId}-panel-${tab}`} aria-labelledby={`${tabsId}-tab-${tab}`}>
+        {tab === "general" && (
+          <GeneralTab apiKey={key} plan={plan} portalUrl={portalUrl} onToggle={() => toggle.mutate(key)} togglePending={toggle.isPending} />
+        )}
+        {tab === "models" && <ModelsTab apiKey={key} plan={plan} plansLoading={plans.isLoading} />}
+        {tab === "budget" && <BudgetTab apiKey={key} />}
+        {tab === "guardrails" && <GuardrailsTab apiKey={key} />}
+      </div>
+    </>
   );
 }
 
-function InfoItem({ label, value, mono = false }: { label: string; value: React.ReactNode; mono?: boolean }) {
-  return (
-    <div className="min-w-0 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
-      <dt className="text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</dt>
-      <dd className={`mt-1.5 break-words text-sm font-medium text-[var(--text)] ${mono ? "font-mono text-xs" : ""}`}>{value}</dd>
-    </div>
-  );
+// ── Overview: usage, limits, settings ────────────────────────────────────────
+
+type LimitRow = { id: string; title: string; used: string; limit: string; pct: number; alert: boolean };
+
+function limitRows(budgets: KeyUsageData["budgets"]): LimitRow[] {
+  return budgets.flatMap((b, i) => {
+    const out: LimitRow[] = [];
+    if (b.limit_usd > 0) {
+      out.push({ id: `${i}-usd`, title: `${periodLabel(b.period)} spend`, used: fmtUSD(b.spent_usd), limit: fmtUSD(b.limit_usd), pct: b.usd_pct_used, alert: b.alert });
+    }
+    if (b.limit_tokens > 0) {
+      out.push({ id: `${i}-tokens`, title: `${periodLabel(b.period)} tokens`, used: formatTokens(b.tokens_used), limit: formatTokens(b.limit_tokens), pct: b.tokens_pct_used, alert: b.alert });
+    }
+    return out;
+  });
 }
 
-function GeneralTab({ apiKey }: { apiKey: APIKey }) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const toggle = useMutation({
-    mutationFn: () => api.updateKey(apiKey.id, { disabled: !apiKey.disabled }),
-    onSuccess: (updated) => {
-      qc.invalidateQueries({ queryKey: ["keys"] });
-      toast.success(updated.disabled ? "Key disabled" : "Key enabled", updated.disabled ? "New requests using this key will be rejected." : "This key can authenticate requests again.");
-    },
-    onError: (error) => toast.error("Key update failed", error instanceof Error ? error.message : "Please try again."),
+function GeneralTab({
+  apiKey,
+  plan,
+  portalUrl,
+  onToggle,
+  togglePending,
+}: {
+  apiKey: APIKey;
+  plan?: Plan;
+  portalUrl: string;
+  onToggle: () => void;
+  togglePending: boolean;
+}) {
+  const acceptId = useId();
+  const usageId = useId();
+  const lastUsed = usedAt(apiKey.last_used_at);
+  // Same query (and cache entry) the owner portal uses for a shared portal ID.
+  const usage = useQuery({
+    queryKey: ["key-usage", apiKey.id, true, USAGE_DAYS],
+    queryFn: () => fetchKeyUsageById(apiKey.id, USAGE_DAYS),
+    retry: false,
   });
 
+  const totals = useMemo(
+    () =>
+      (usage.data?.daily ?? []).reduce(
+        (acc, dp) => ({
+          requests: acc.requests + dp.requests,
+          prompt: acc.prompt + dp.prompt_tokens,
+          completion: acc.completion + dp.completion_tokens,
+          cost: acc.cost + dp.cost_usd,
+        }),
+        { requests: 0, prompt: 0, completion: 0, cost: 0 },
+      ),
+    [usage.data],
+  );
+  const rows = limitRows(usage.data?.budgets ?? []);
+  const dash = usage.isLoading ? "…" : usage.isError ? "—" : null;
+
+  const daily = usage.data?.daily ?? [];
+  const kpis: { label: string; icon: LucideIcon; value: string; hint?: string; title?: string; trend?: number[] }[] = [
+    { label: "Requests", icon: ICONS.requests, value: dash ?? totals.requests.toLocaleString(), trend: daily.map((d) => d.requests) },
+    { label: "Spend", icon: ICONS.spend, value: dash ?? fmtUSD(totals.cost), trend: daily.map((d) => d.cost_usd) },
+    {
+      label: "Tokens",
+      icon: ICONS.tokens,
+      value: dash ?? formatTokens(totals.prompt + totals.completion),
+      hint: dash ? undefined : `${formatTokens(totals.prompt)} in · ${formatTokens(totals.completion)} out`,
+      trend: daily.map((d) => d.prompt_tokens + d.completion_tokens),
+    },
+    {
+      label: "Last used",
+      icon: History,
+      value: relativeTime(apiKey.last_used_at),
+      title: lastUsed ? formatDateTime(lastUsed) : undefined,
+    },
+  ];
+
   return (
-    <Card>
-      <CardHeader
-        title="Key overview"
-        description="Identity, assignment, and authentication status for this key."
-        action={
-          <Button variant={apiKey.disabled ? "primary" : "danger"} onClick={() => toggle.mutate()} disabled={toggle.isPending}>
-            {apiKey.disabled ? "Enable key" : "Disable key"}
-          </Button>
-        }
-      />
-      <dl className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 sm:p-5">
-        <InfoItem label="Name" value={apiKey.name} />
-        <InfoItem label="Status" value={<Badge tone={apiKey.disabled ? "danger" : "success"}>{apiKey.disabled ? "Disabled" : "Active"}</Badge>} />
-        <InfoItem label="Plan" value={apiKey.plan_name || "Custom plan"} />
-        <InfoItem label="Key identifier" value={apiKey.display} mono />
-        <InfoItem label="Internal ID" value={apiKey.id} mono />
-        <InfoItem label="Created" value={new Date(apiKey.created_at).toLocaleString()} />
-      </dl>
-    </Card>
+    <div className="space-y-6">
+      <section aria-labelledby={usageId} className="space-y-3">
+        <SectionTitle
+          icon={ICONS.usage}
+          title="Usage"
+          subtitle={`Last ${USAGE_DAYS} days`}
+          id={usageId}
+          action={
+            <a href={portalUrl} target="_blank" rel="noopener noreferrer" className={cn("inline-flex min-h-6 items-center gap-1 rounded-md text-[12.5px] font-medium text-link hover:underline", FOCUS_RING)}>
+              Owner portal
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+          }
+        />
+        <div aria-busy={usage.isLoading}>
+          <KpiGrid cols={4} label={`Usage, last ${USAGE_DAYS} days`}>
+            {kpis.map((k) => (
+              <Kpi
+                key={k.label}
+                icon={k.icon}
+                label={k.label}
+                value={<span title={k.title}>{k.value}</span>}
+                hint={k.hint}
+                trend={k.trend}
+              />
+            ))}
+          </KpiGrid>
+        </div>
+        {usage.isError && (
+          <p role="status" className="text-[12.5px] text-fg-muted">Usage couldn't be loaded. Try again later.</p>
+        )}
+      </section>
+
+      <PanelCard icon={ICONS.budget} title="Limits">
+        <div className="divide-y divide-line">
+          <SettingsRow
+            label="Plan"
+            description={
+              plan
+                ? planBudgetText(plan)
+                : apiKey.plan_id || usage.isLoading
+                  ? undefined
+                  : rows.length > 0
+                    ? "Limits set on this key"
+                    : "No spend or token limit"
+            }
+          >
+            <span className="truncate text-[13px] text-fg">{apiKey.plan_name || "Custom"}</span>
+            <Link to={dashboard("/plans")} className={cn("shrink-0 rounded-md text-[12.5px] font-medium text-link hover:underline", FOCUS_RING)}>
+              Manage plans
+            </Link>
+          </SettingsRow>
+          {usage.isLoading ? (
+            <div className="px-4 py-3 sm:px-5" aria-hidden="true">
+              <Skeleton className="h-8 w-full" />
+            </div>
+          ) : (
+            rows.map((r) => {
+              const pct = Math.min(Math.max(r.pct, 0), 100);
+              const tone: "bad" | "warn" | "ok" = r.pct >= 100 ? "bad" : r.alert || r.pct > 80 ? "warn" : "ok";
+              const pctText = r.pct >= 100 ? "Limit reached" : `${r.pct.toFixed(r.pct < 10 ? 1 : 0)}%`;
+              return (
+                <div key={r.id} className="space-y-1.5 px-4 py-3 sm:px-5">
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[13px]">
+                    <span className="font-medium text-fg">{r.title}</span>
+                    <span className="tabular-nums text-fg-muted">
+                      {r.used} of {r.limit}
+                    </span>
+                    <span className={cn("ml-auto text-[12.5px] font-medium tabular-nums", tone === "bad" ? "text-bad" : tone === "warn" ? "text-warn" : "text-fg")}>
+                      {pctText}
+                    </span>
+                  </div>
+                  <div
+                    className="h-1.5 overflow-hidden rounded-full bg-track"
+                    role="progressbar"
+                    aria-label={r.title}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(pct)}
+                    aria-valuetext={`${r.used} of ${r.limit} · ${pctText}`}
+                  >
+                    <div className={cn("h-full rounded-full", tone === "bad" ? "bg-bad" : tone === "warn" ? "bg-warn" : "bg-accent-500")} style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </PanelCard>
+
+      <PanelCard icon={ICONS.settings} title="Settings">
+        <div className="divide-y divide-line">
+          <SettingsRow label="Accept requests" labelId={acceptId} description="Off rejects every request with this key.">
+            <Toggle checked={!apiKey.disabled} onChange={onToggle} disabled={togglePending} aria-labelledby={acceptId} />
+          </SettingsRow>
+          <SettingsRow label="Internal ID">
+            <span className="truncate font-mono text-[12.5px] text-fg">{apiKey.id}</span>
+            <CopyIconButton label="Copy internal ID" value={apiKey.id} title="Key ID copied" />
+          </SettingsRow>
+          <SettingsRow label="Owner portal">
+            <span className="truncate font-mono text-[12.5px] text-fg" title={portalUrl}>{portalUrl}</span>
+            <CopyIconButton label="Copy portal link" value={portalUrl} title="Portal link copied" description="Share it with the key owner." />
+          </SettingsRow>
+        </div>
+      </PanelCard>
+    </div>
   );
 }
+
+// ── Models ───────────────────────────────────────────────────────────────────
+
+type ModelRowData = { id: string; option?: ModelCatalogOption };
 
 function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan; plansLoading: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const catalog = useModelCatalog();
+  const uid = useId();
   const keyModels = apiKey.allowed_models ?? [];
   // allowed_models is the effective access list (override, plan, or all) and
   // models_source identifies where it came from. Fall back to inference for
@@ -217,6 +584,10 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
   const effectiveModels = keyModels;
   const [models, setModels] = useState<string[]>(keyModels);
   const [editing, setEditing] = useState(false);
+  const [query, setQuery] = useState("");
+  const [providerFilter, setProviderFilter] = useState("all");
+  const [show, setShow] = useState<"all" | "selected">("all");
+  const [pattern, setPattern] = useState("");
 
   useEffect(() => {
     setModels(keyModels);
@@ -228,87 +599,373 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
       qc.invalidateQueries({ queryKey: ["keys"] });
       setModels(next);
       setEditing(false);
-      toast.success(next.length > 0 ? "Model access updated" : "Model override removed", next.length > 0 ? `${next.length} models are available to this key.` : "This key now follows its plan's model access.");
+      toast.success(next.length > 0 ? "Model access updated" : "Model override removed", next.length > 0 ? `${next.length} models allowed.` : "This key now follows its plan.");
     },
-    onError: (error) => toast.error("Model access update failed", error instanceof Error ? error.message : "Please try again."),
+    onError: (error) => toast.error("Couldn't update model access", error instanceof Error ? error.message : "Please try again."),
   });
 
-  if (plansLoading) return <Spinner />;
+  const lookup = useMemo(() => {
+    const map = new Map<string, ModelCatalogOption>();
+    for (const m of catalog.models) if (!map.has(m.id)) map.set(m.id, m);
+    return map;
+  }, [catalog.models]);
+
+  const providerOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    catalog.models.forEach((m) => map.set(m.providerId, m.providerName));
+    return Array.from(map, ([pid, pname]) => ({ id: pid, name: pname }));
+  }, [catalog.models]);
+
+  const selectedSet = useMemo(() => new Set(models), [models]);
+
+  // Rows: read mode lists the effective allowlist; edit mode lists selected
+  // patterns that aren't in the catalog first, then the whole catalog.
+  const rows = useMemo<ModelRowData[]>(() => {
+    const base: ModelRowData[] = editing
+      ? [
+          ...models.filter((m) => !lookup.has(m)).map((m) => ({ id: m })),
+          ...Array.from(lookup.values()).map((option) => ({ id: option.id, option })),
+        ]
+      : effectiveModels.map((m) => ({ id: m, option: lookup.get(m) }));
+    const q = query.trim().toLowerCase();
+    return base.filter((r) => {
+      if (editing && show === "selected" && !selectedSet.has(r.id)) return false;
+      if (providerFilter !== "all" && r.option?.providerId !== providerFilter) return false;
+      if (!q) return true;
+      return (
+        r.id.toLowerCase().includes(q) ||
+        (r.option?.name ?? "").toLowerCase().includes(q) ||
+        (r.option?.providerName ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [editing, models, lookup, effectiveModels.join("\u0000"), query, show, providerFilter, selectedSet]);
+
+  const { page, pages, paged, setPage, total } = useClientPagination(rows, 25);
+  useEffect(() => setPage(1), [query, show, providerFilter, editing, setPage]);
+
+  if (plansLoading) return <Skeleton className="h-72 w-full rounded-2xl" />;
+
+  const toggleModel = (mid: string) => setModels(models.includes(mid) ? models.filter((v) => v !== mid) : [...models, mid]);
+  const allRowsSelected = rows.length > 0 && rows.every((r) => selectedSet.has(r.id));
+  const someRowsSelected = rows.some((r) => selectedSet.has(r.id));
+  const toggleAllRows = () => {
+    if (allRowsSelected) {
+      const drop = new Set(rows.map((r) => r.id));
+      setModels(models.filter((m) => !drop.has(m)));
+    } else {
+      const next = [...models];
+      rows.forEach((r) => {
+        if (!next.includes(r.id)) next.push(r.id);
+      });
+      setModels(next);
+    }
+  };
+  const addPattern = () => {
+    const t = pattern.trim();
+    if (t && !models.includes(t)) setModels([...models, t]);
+    setPattern("");
+  };
+  const startEditing = () => {
+    setModels(effectiveModels);
+    setQuery("");
+    setShow("all");
+    setProviderFilter("all");
+    setEditing(true);
+  };
+  const cancelEditing = () => {
+    setModels(keyModels);
+    setQuery("");
+    setShow("all");
+    setProviderFilter("all");
+    setEditing(false);
+  };
+  const dirty = JSON.stringify(models) !== JSON.stringify(keyModels);
+
+  const sourceBadge = (
+    <Badge tone={source === "key" ? "warning" : "neutral"}>
+      {source === "key" ? "Key override" : source === "plan" ? `From ${plan?.name || "plan"}` : "No restriction"}
+    </Badge>
+  );
 
   return (
-    <Card>
-      <CardHeader
-        title="Model access"
-        description="Choose whether this key follows its plan or uses a narrower model allowlist."
-        action={!editing ? (
-          <Button variant="ghost" onClick={() => { setModels(effectiveModels); setEditing(true); }}>
-            {source === "all" ? "Restrict models" : "Edit access"}
-            <ArrowRight className="h-4 w-4" />
+    <PanelCard
+      icon={ICONS.model}
+      title={
+        <span className="inline-flex flex-wrap items-center gap-2">
+          {editing ? "Edit allowed models" : source === "all" ? "All models allowed" : `${effectiveModels.length} model${effectiveModels.length === 1 ? "" : "s"} allowed`}
+          {!editing && sourceBadge}
+        </span>
+      }
+      action={!editing ? (
+        <Button variant="secondary" onClick={startEditing}>
+          {source === "all" ? "Restrict models" : "Edit access"}
+        </Button>
+      ) : undefined}
+      footer={editing ? (
+        <SaveBar
+          status={
+            models.length === 0 ? (
+              <span className="text-warn">Select at least one model.</span>
+            ) : (
+              <span className="text-fg-muted">
+                <span className="tabular-nums text-fg">{models.length}</span> selected{dirty ? " · Unsaved changes" : ""}
+              </span>
+            )
+          }
+        >
+          {source === "key" && (
+            <Button variant="ghost" onClick={() => update.mutate([])} disabled={update.isPending}>Use plan defaults</Button>
+          )}
+          <Button variant="ghost" onClick={cancelEditing} disabled={update.isPending}>Discard</Button>
+          <Button onClick={() => update.mutate(models)} disabled={update.isPending || models.length === 0 || JSON.stringify(models) === JSON.stringify(keyModels)}>
+            {update.isPending ? "Saving…" : "Save access"}
           </Button>
-        ) : undefined}
-      />
-      <div className="space-y-5 p-4 sm:p-5">
-        {!editing ? (
-          <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-            <div className="flex items-start gap-3">
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-secondary-100 text-secondary-700 dark:bg-secondary-900/40 dark:text-secondary-200">
-                <Cpu className="h-4 w-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-sm font-semibold text-[var(--text)]">
-                    {source === "all" ? "All available models" : `${effectiveModels.length} model${effectiveModels.length === 1 ? "" : "s"} available`}
-                  </h3>
-                  <Badge tone={source === "key" ? "warning" : "neutral"}>{source === "key" ? "Key override" : source === "plan" ? "Inherited from plan" : "No restriction"}</Badge>
-                </div>
-                <p className="mt-1 text-sm leading-5 text-[var(--text-muted)]">
-                  {source === "all"
-                    ? "This key can use every model available through its assigned plan."
-                    : source === "plan"
-                      ? `Access follows the ${plan?.name || "assigned"} plan. Add an override only when this key needs a narrower list.`
-                      : "This key uses its own model allowlist instead of the plan default."}
-                </p>
-              </div>
+        </SaveBar>
+      ) : undefined}
+    >
+      {!editing && source === "all" ? (
+        <div className="px-6 py-10 text-center">
+          <IconTile icon={ICONS.model} size="lg" className="mx-auto mb-3" />
+          <h3 className="text-[13px] font-semibold text-fg">No model restriction</h3>
+          <p className="mx-auto mt-1 max-w-md text-[12.5px] text-fg-muted">Every routable model works with this key.</p>
+        </div>
+      ) : (
+        <>
+          <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5 sm:px-5">
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Filter models"
+                aria-label="Filter models"
+                className={cn("h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500", FOCUS_RING)}
+              />
             </div>
-            {effectiveModels.length > 0 && (
-              <div className="mt-4 border-t border-[var(--border)] pt-4">
-                <ModelAccessList value={effectiveModels} />
+            {providerOptions.length > 1 && (
+              <Select value={providerFilter} onChange={(e) => setProviderFilter(e.target.value)} aria-label="Filter by provider" className="h-8 min-h-8 w-full py-0 text-[12.5px] sm:w-44">
+                <option value="all">All providers</option>
+                {providerOptions.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </Select>
+            )}
+            {editing && (
+              <div className="flex gap-1" role="radiogroup" aria-label="Show">
+                {(["all", "selected"] as const).map((f) => (
+                  <button
+                    key={f}
+                    type="button"
+                    role="radio"
+                    aria-checked={show === f}
+                    onClick={() => setShow(f)}
+                    className={cn(
+                      "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium",
+                      FOCUS_RING,
+                      show === f ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
+                    )}
+                  >
+                    {f === "all" ? "All" : `Selected · ${models.length}`}
+                  </button>
+                ))}
               </div>
             )}
+            <span role="status" className="ml-auto text-[12.5px] tabular-nums text-fg-muted">
+              {catalog.loading ? "Loading catalog…" : `${rows.length} shown`}
+            </span>
           </div>
-        ) : (
-          <>
-            <div>
-              <div className="mb-2 flex flex-wrap items-end justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-semibold">Allowed models</h3>
-                  <p className="mt-0.5 text-xs text-[var(--text-muted)]">The catalog is loaded from your connected providers. Custom patterns are also supported.</p>
-                </div>
-                <Badge tone={models.length > 0 ? "warning" : "neutral"}>{models.length} selected</Badge>
-              </div>
-              <ModelMultiSelect value={models} onChange={setModels} />
-              {models.length === 0 && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">Select at least one model, or cancel to keep current access.</p>}
+
+          {editing && (
+            <div className="flex flex-wrap items-center gap-2 border-b border-line bg-subtle px-4 py-2 sm:px-5">
+              <label htmlFor={`${uid}-pattern`} className="text-[12.5px] font-medium text-fg">Add pattern</label>
+              <input
+                id={`${uid}-pattern`}
+                value={pattern}
+                onChange={(e) => setPattern(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addPattern();
+                  }
+                }}
+                placeholder="e.g. gpt-4o*"
+                className={cn("h-8 w-full min-w-0 flex-1 rounded-lg border border-input bg-surface px-2.5 font-mono text-[12.5px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 sm:max-w-xs", FOCUS_RING)}
+              />
+              <Button variant="ghost" className="min-h-8 py-1" onClick={addPattern} disabled={!pattern.trim()}>
+                <Plus aria-hidden="true" />
+                Add
+              </Button>
             </div>
-            <div className="flex flex-col-reverse gap-2 border-t border-[var(--border)] pt-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                {source === "key" && (
-                  <Button variant="ghost" onClick={() => update.mutate([])} disabled={update.isPending}>Use plan defaults</Button>
-                )}
-              </div>
-              <div className="flex gap-2 sm:justify-end">
-                <Button variant="ghost" onClick={() => { setModels(keyModels); setEditing(false); }} disabled={update.isPending}>Cancel</Button>
-                <Button onClick={() => update.mutate(models)} disabled={update.isPending || models.length === 0 || JSON.stringify(models) === JSON.stringify(keyModels)}>
-                  <Save className="h-4 w-4" />
-                  {update.isPending ? "Saving…" : "Save access"}
-                </Button>
-              </div>
+          )}
+
+          {catalog.loading && editing && rows.length === 0 ? (
+            <div className="space-y-2 p-4" aria-busy="true" aria-label="Loading models">
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
+              <Skeleton className="h-8 w-full" />
             </div>
-          </>
-        )}
-      </div>
-    </Card>
+          ) : rows.length === 0 ? (
+            <p className="px-6 py-10 text-center text-[13px] text-fg-muted">
+              {editing && show === "selected" ? "Nothing selected yet." : "No models match."}
+            </p>
+          ) : (
+            <>
+            {/* Phones: one row per model; in edit mode the whole row toggles it. */}
+            <ul className="divide-y divide-line md:hidden" aria-label={editing ? "Models to allow" : "Allowed models"}>
+              {paged.map((r) => {
+                const checked = selectedSet.has(r.id);
+                const isPattern = !r.option;
+                return (
+                  <li key={`${r.option?.providerId ?? "custom"}:${r.id}`} className={cn("flex items-center gap-1 pr-2", editing && checked && "bg-accent-500/5")}>
+                    {editing ? (
+                      <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-2.5 pl-4">
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleModel(r.id)}
+                          aria-label={`Allow ${r.option?.name || r.id}`}
+                          className="h-4 w-4 shrink-0 rounded border-input accent-accent-500"
+                        />
+                        <ModelSummary row={r} resolving={catalog.loading} />
+                      </label>
+                    ) : (
+                      <div className="min-w-0 flex-1 py-2.5 pl-4">
+                        <ModelSummary row={r} resolving={catalog.loading} />
+                      </div>
+                    )}
+                    {editing && isPattern && (
+                      <button
+                        type="button"
+                        onClick={() => setModels(models.filter((m) => m !== r.id))}
+                        aria-label={`Remove ${r.id}`}
+                        className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg", FOCUS_RING)}
+                      >
+                        <X className="h-4 w-4" aria-hidden="true" />
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full min-w-[620px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                    {editing && (
+                      <th scope="col" className="w-10 px-4 py-2 sm:pl-5">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all shown models"
+                          className="h-4 w-4 rounded border-input accent-accent-500"
+                          checked={allRowsSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someRowsSelected && !allRowsSelected;
+                          }}
+                          onChange={toggleAllRows}
+                        />
+                      </th>
+                    )}
+                    <th scope="col" className={cn("py-2 font-medium", editing ? "px-2" : "px-4 sm:px-5")}>Model</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Provider</th>
+                    {editing && <th scope="col" className="w-10 px-2 py-2"><span className="sr-only">Remove</span></th>}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {paged.map((r) => {
+                    const checked = selectedSet.has(r.id);
+                    const isPattern = !r.option;
+                    return (
+                      <tr
+                        key={`${r.option?.providerId ?? "custom"}:${r.id}`}
+                        className={cn("transition-colors", editing && "cursor-pointer", editing && checked ? "bg-accent-500/5" : "hover:bg-hover")}
+                        onClick={editing ? () => toggleModel(r.id) : undefined}
+                      >
+                        {editing && (
+                          <td className="px-4 py-2 sm:pl-5" onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleModel(r.id)}
+                              aria-label={`Allow ${r.option?.name || r.id}`}
+                              className="h-4 w-4 rounded border-input accent-accent-500"
+                            />
+                          </td>
+                        )}
+                        <td className={cn("max-w-[380px] py-2", editing ? "px-2" : "px-4 sm:px-5")}>
+                          <span className="block truncate font-medium text-fg" title={r.option?.name || r.id}>
+                            {isPattern ? <span className="font-mono text-[12.5px]">{r.id}</span> : r.option!.name}
+                          </span>
+                          {!isPattern && r.option!.name !== r.id && <span className="block truncate font-mono text-[11.5px] text-fg-faint">{r.id}</span>}
+                        </td>
+                        <td className="px-4 py-2">
+                          {r.option ? (
+                            <span className="inline-flex min-w-0 items-center gap-2 text-fg-muted">
+                              <ProviderLogo icon={r.option.icon} name={r.option.providerName} size={18} />
+                              <span className="truncate">{r.option.providerName}</span>
+                            </span>
+                          ) : (
+                            <span className="text-[12.5px] text-fg-muted">
+                              {catalog.loading ? "Resolving…" : r.id.includes("*") ? "Wildcard pattern" : "Custom model"}
+                            </span>
+                          )}
+                        </td>
+                        {editing && (
+                          <td className="px-2 py-2" onClick={(e) => e.stopPropagation()}>
+                            {isPattern && (
+                              <button
+                                type="button"
+                                onClick={() => setModels(models.filter((m) => m !== r.id))}
+                                aria-label={`Remove ${r.id}`}
+                                className={cn("flex h-7 w-7 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg", FOCUS_RING)}
+                              >
+                                <X className="h-3.5 w-3.5" aria-hidden="true" />
+                              </button>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            </>
+          )}
+          {pages > 1 && <TablePagination page={page} pages={pages} total={total} onPage={setPage} />}
+        </>
+      )}
+    </PanelCard>
   );
 }
+
+/** Phone row content: model name, then provider and id on one muted line. */
+function ModelSummary({ row: r, resolving }: { row: ModelRowData; resolving: boolean }) {
+  if (!r.option) {
+    return (
+      <span className="min-w-0 flex-1">
+        <span className="block break-all font-mono text-[12.5px] font-medium text-fg">{r.id}</span>
+        <span className="block text-[12px] text-fg-muted">
+          {resolving ? "Resolving…" : r.id.includes("*") ? "Wildcard pattern" : "Custom model"}
+        </span>
+      </span>
+    );
+  }
+  return (
+    <span className="flex min-w-0 flex-1 items-center gap-2.5">
+      <ProviderLogo icon={r.option.icon} name={r.option.providerName} size={18} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium text-fg" title={r.option.name}>{r.option.name}</span>
+        <span className="block truncate text-[12px] text-fg-muted">
+          {r.option.providerName}
+          {r.option.name !== r.id && <span className="font-mono text-fg-faint"> · {r.id}</span>}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+// ── Guardrails ───────────────────────────────────────────────────────────────
 
 function enabledDetectors(config: GuardrailPolicyConfig | undefined) {
   if (!config) return [];
@@ -407,101 +1064,107 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader
-          title="Budget"
-          description="Spend limit for this key. Top-ups increase the limit and are recorded below."
-          action={
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={openAdjust}>
-                <SlidersHorizontal className="h-4 w-4" />Adjust limit
-              </Button>
-              <Button onClick={openModal}><Wallet className="h-4 w-4" />Top up</Button>
-            </div>
-          }
-        />
-        <div className="space-y-4 p-4 sm:p-5">
+      <PanelCard
+        icon={Wallet}
+        title="Budget"
+        action={
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={openAdjust}>
+              <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />Adjust limit
+            </Button>
+            <Button onClick={openModal}><Wallet className="h-4 w-4" aria-hidden="true" />Top up</Button>
+          </div>
+        }
+      >
+        <div className="space-y-4 px-4 py-4 sm:px-5">
+          <p className="text-[12.5px] text-fg-muted">Spend limit for this key. Top-ups increase the limit and are recorded below.</p>
           {status.isLoading ? (
-            <Spinner />
+            <Skeleton className="h-12 w-full" />
           ) : !budget ? (
-            <p className="text-sm text-[var(--text-muted)]">This key has no budget yet. Top up to create one.</p>
+            <p className="text-[13px] text-fg-muted">This key has no budget yet. Top up to create one.</p>
           ) : (
             <>
-              <div className="flex flex-wrap items-center gap-2 text-sm">
+              <div className="flex flex-wrap items-center gap-2 text-[13px]">
                 <Badge tone={pct >= (budget.alert_pct || 100) ? "danger" : "neutral"}>{budget.period} limit</Badge>
-                <span className="text-[var(--text-muted)]">Alert at {budget.alert_pct}%</span>
+                <span className="text-fg-muted">Alert at {budget.alert_pct}%</span>
               </div>
               <div>
-                <div className="mb-1 flex items-baseline justify-between text-sm">
-                  <span className="font-medium text-[var(--text)]">{formatSpendUSD(spent)} spent</span>
-                  <span className="text-[var(--text-muted)]">of {formatSpendUSD(limit)} · {formatSpendUSD(remaining)} left</span>
+                <div className="mb-1 flex items-baseline justify-between text-[13px]">
+                  <span className="font-medium tabular-nums text-fg">{formatSpendUSD(spent)} spent</span>
+                  <span className="tabular-nums text-fg-muted">of {formatSpendUSD(limit)} · {formatSpendUSD(remaining)} left</span>
                 </div>
-                <div className="h-2.5 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-                  <div className={`h-full rounded-full ${pct >= 100 ? "bg-red-500" : pct >= (budget.alert_pct || 100) ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width: `${pct}%` }} />
+                <div className="h-2.5 overflow-hidden rounded-full bg-subtle">
+                  <div className={cn("h-full rounded-full", pct >= 100 ? "bg-bad" : pct >= (budget.alert_pct || 100) ? "bg-warn" : "bg-ok")} style={{ width: `${pct}%` }} />
                 </div>
               </div>
             </>
           )}
         </div>
-      </Card>
+      </PanelCard>
 
-      <Card>
-        <CardHeader title="Top-up history" description="Every top-up is append-only and ordered newest first." />
-        <div className="p-4 sm:p-5">
-          {topups.isLoading ? <Spinner /> : !topups.data?.topups?.length ? (
+      <PanelCard icon={History} title="Top-up history">
+        <div className="px-4 py-3 sm:px-5">
+          {topups.isLoading ? <Skeleton className="h-10 w-full" /> : !topups.data?.topups?.length ? (
             <EmptyState title="No top-ups yet" hint="Top-ups for this key will appear here with their reason and before/after limit." />
           ) : (
-            <div className="divide-y divide-[var(--border)]">
+            <div className="divide-y divide-line">
               {topups.data.topups.map((t) => (
-                <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
+                <div key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-[13px]">
                   <div className="min-w-0">
-                    <p className="font-medium text-[var(--text)]">+${t.amount_usd.toFixed(2)}</p>
-                    <p className="truncate text-xs text-[var(--text-muted)]">{t.reason || "No reason provided"}</p>
+                    <p className="font-medium tabular-nums text-fg">+${t.amount_usd.toFixed(2)}</p>
+                    <p className="truncate text-[12px] text-fg-muted">{t.reason || "No reason provided"}</p>
                   </div>
-                  <div className="text-right text-xs text-[var(--text-muted)]">
+                  <div className="text-right text-[12px] text-fg-muted">
                     <p className="tabular-nums">${t.limit_before_usd.toFixed(2)} → ${t.limit_after_usd.toFixed(2)}</p>
-                    <p>{new Date(t.created_at).toLocaleString()}</p>
+                    <p>{formatDateTime(t.created_at)}</p>
                   </div>
                 </div>
               ))}
             </div>
           )}
         </div>
-      </Card>
+      </PanelCard>
 
-      <Card>
-        <CardHeader title="Limit adjustments" description="Manual corrections to this key's limit, newest first." />
-        <div className="p-4 sm:p-5">
-          {adjustments.isLoading ? <Spinner /> : !adjustments.data?.adjustments?.length ? (
+      <PanelCard icon={SlidersHorizontal} title="Limit adjustments">
+        <div className="px-4 py-3 sm:px-5">
+          {adjustments.isLoading ? <Skeleton className="h-10 w-full" /> : !adjustments.data?.adjustments?.length ? (
             <EmptyState title="No adjustments yet" hint="Manual corrections to the spend limit will appear here with their reason and before/after limit." />
           ) : (
-            <div className="divide-y divide-[var(--border)]">
+            <div className="divide-y divide-line">
               {adjustments.data.adjustments.map((a) => (
-                <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
+                <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 py-3 text-[13px]">
                   <div className="min-w-0">
-                    <p className={`font-medium ${a.delta_usd < 0 ? "text-red-600 dark:text-red-400" : "text-[var(--text)]"}`}>
+                    <p className={cn("font-medium tabular-nums", a.delta_usd < 0 ? "text-bad" : "text-fg")}>
                       {a.delta_usd < 0 ? "−" : "+"}${Math.abs(a.delta_usd).toFixed(2)}
                     </p>
-                    <p className="truncate text-xs text-[var(--text-muted)]">{a.reason || "No reason provided"}</p>
+                    <p className="truncate text-[12px] text-fg-muted">{a.reason || "No reason provided"}</p>
                   </div>
-                  <div className="text-right text-xs text-[var(--text-muted)]">
+                  <div className="text-right text-[12px] text-fg-muted">
                     <p className="tabular-nums">${a.limit_before_usd.toFixed(2)} → ${a.limit_after_usd.toFixed(2)}</p>
-                    <p>{new Date(a.created_at).toLocaleString()}</p>
+                    <p>{formatDateTime(a.created_at)}</p>
                   </div>
                 </div>
               ))}
             </div>
           )}
         </div>
-      </Card>
+      </PanelCard>
 
       <Modal
         open={open}
         onClose={() => setOpen(false)}
         title="Top up budget"
         subtitle={`Add credit to ${apiKey.name}. This increases the key's spend limit immediately.`}
+        footer={
+          <ModalFooter>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={submit.isPending}>Cancel</Button>
+            <Button onClick={() => submit.mutate()} disabled={!valid || submit.isPending}>
+              {submit.isPending ? "Topping up…" : "Top up"}
+            </Button>
+          </ModalFooter>
+        }
       >
-        <div className="space-y-4 px-6 py-5">
+        <div className="space-y-4 px-5 py-4">
           <Field label="Amount (USD)">
             <Input
               type="number"
@@ -523,18 +1186,12 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
             />
           </Field>
           {budget && valid && (
-            <div className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3 text-sm">
-              <span className="text-[var(--text-muted)]">New limit</span>
-              <span className="font-semibold tabular-nums text-[var(--text)]">${(limit + parsed).toFixed(2)}</span>
+            <div className="flex items-center justify-between rounded-xl border border-line bg-subtle px-4 py-3 text-[13px]">
+              <span className="text-fg-muted">New limit</span>
+              <span className="font-semibold tabular-nums text-fg">${(limit + parsed).toFixed(2)}</span>
             </div>
           )}
-          {error && <p className="text-sm text-red-600 dark:text-red-400">{error}</p>}
-        </div>
-        <div className="flex justify-end gap-2 border-t border-[var(--border)] px-6 py-4">
-          <Button variant="ghost" onClick={() => setOpen(false)} disabled={submit.isPending}>Cancel</Button>
-          <Button onClick={() => submit.mutate()} disabled={!valid || submit.isPending}>
-            {submit.isPending ? "Topping up…" : "Top up"}
-          </Button>
+          {error && <p role="alert" className="text-[13px] text-bad">{error}</p>}
         </div>
       </Modal>
 
@@ -543,8 +1200,19 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
         onClose={() => setAdjustOpen(false)}
         title="Adjust limit"
         subtitle={`Set ${apiKey.name}'s spend limit to an exact amount. Use this to undo a mistaken top-up.`}
+        footer={
+          <ModalFooter>
+            <Button variant="ghost" onClick={() => setAdjustOpen(false)} disabled={adjust.isPending}>Cancel</Button>
+            <Button
+              onClick={() => adjust.mutate()}
+              disabled={!limitValid || adjustReason.trim() === "" || adjust.isPending}
+            >
+              {adjust.isPending ? "Adjusting…" : "Adjust limit"}
+            </Button>
+          </ModalFooter>
+        }
       >
-        <div className="space-y-4 px-6 py-5">
+        <div className="space-y-4 px-5 py-4">
           <Field label="New limit (USD)">
             <Input
               type="number"
@@ -558,9 +1226,9 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
             />
           </Field>
           {budget && limitValid && (
-            <div className="flex items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3 text-sm">
-              <span className="text-[var(--text-muted)]">Change</span>
-              <span className="font-semibold tabular-nums text-[var(--text)]">
+            <div className="flex items-center justify-between rounded-xl border border-line bg-subtle px-4 py-3 text-[13px]">
+              <span className="text-fg-muted">Change</span>
+              <span className="font-semibold tabular-nums text-fg">
                 ${limit.toFixed(2)} → ${parsedLimit.toFixed(2)}
               </span>
             </div>
@@ -573,16 +1241,7 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
               maxLength={500}
             />
           </Field>
-          {adjustError && <p className="text-sm text-red-600 dark:text-red-400">{adjustError}</p>}
-        </div>
-        <div className="flex justify-end gap-2 border-t border-[var(--border)] px-6 py-4">
-          <Button variant="ghost" onClick={() => setAdjustOpen(false)} disabled={adjust.isPending}>Cancel</Button>
-          <Button
-            onClick={() => adjust.mutate()}
-            disabled={!limitValid || adjustReason.trim() === "" || adjust.isPending}
-          >
-            {adjust.isPending ? "Adjusting…" : "Adjust limit"}
-          </Button>
+          {adjustError && <p role="alert" className="text-[13px] text-bad">{adjustError}</p>}
         </div>
       </Modal>
     </div>
@@ -590,8 +1249,10 @@ function BudgetTab({ apiKey }: { apiKey: APIKey }) {
 }
 
 function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
+  const uid = useId();
   const policies = useQuery({
     queryKey: ["guardrails", "apikey"],
     queryFn: () => api.listGuardrails("apikey"),
@@ -604,6 +1265,7 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
   const [config, setConfig] = useState<GuardrailPolicyConfig>({});
   const [enabled, setEnabled] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [showMerged, setShowMerged] = useState(false);
 
   useEffect(() => {
     if (existing) {
@@ -630,9 +1292,9 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
         qc.invalidateQueries({ queryKey: ["guardrails", "effective", apiKey.id] }),
       ]);
       setEditing(false);
-      toast.success("Key guardrails saved", enabled ? "The per-key override is active." : "The override is saved but currently paused.");
+      toast.success("Guardrails saved", enabled ? "The override is active." : "The override is saved but paused.");
     },
-    onError: (error) => toast.error("Guardrail save failed", error instanceof Error ? error.message : "Please try again."),
+    onError: (error) => toast.error("Couldn't save guardrails", error instanceof Error ? error.message : "Please try again."),
   });
 
   const remove = useMutation({
@@ -645,84 +1307,128 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
       setConfig({});
       setEnabled(true);
       setEditing(false);
-      toast.success("Override removed", "This key now inherits the upstream guardrail policy.");
+      toast.success("Override removed", "This key now inherits upstream policies.");
     },
-    onError: (error) => toast.error("Override removal failed", error instanceof Error ? error.message : "Please try again."),
+    onError: (error) => toast.error("Couldn't remove override", error instanceof Error ? error.message : "Please try again."),
   });
 
-  if (policies.isLoading) return <Spinner />;
+  if (policies.isLoading) {
+    return (
+      <div className="space-y-4" aria-busy="true" aria-label="Loading guardrails">
+        <Skeleton className="h-36 w-full rounded-2xl" />
+        <Skeleton className="h-40 w-full rounded-2xl" />
+      </div>
+    );
+  }
   if (policies.isError) {
     return (
-      <Card>
-        <EmptyState title="Unable to load key guardrails" hint="The existing override could not be verified. Retry before making changes." />
-        <div className="flex justify-center pb-8">
-          <Button variant="ghost" onClick={() => policies.refetch()}>Retry</Button>
-        </div>
-      </Card>
+      <EmptyState
+        variant="card"
+        titleAs="h2"
+        icon={ICONS.errors}
+        tone="bad"
+        title="Couldn't load key guardrails"
+        hint="Retry before making changes."
+        action={<Button variant="secondary" onClick={() => policies.refetch()}>Retry</Button>}
+      />
     );
   }
 
+  const discard = () => {
+    setConfig(existing?.config ?? {});
+    setEnabled(existing?.enabled ?? true);
+    setEditing(false);
+  };
+  const removeOverride = async () => {
+    if (await confirm({ title: "Remove this per-key override?", description: "The key will inherit upstream policies (global, provider, model and chain). This cannot be undone.", confirmLabel: "Remove", tone: "danger" })) remove.mutate();
+  };
+
   const activeEffective = enabledDetectors(effective.data?.policy);
+  const statusTitle = existing ? (enabled ? "Override active" : "Override paused") : editing ? "New override" : "Inherited";
+  const statusHint = existing ? "Takes priority for this key" : editing ? undefined : "Global, provider, model and chain policies apply";
+  const applyId = `${uid}-apply`;
+  const mergedId = `${uid}-merged`;
+
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader
-          title="Per-key guardrails"
-          description="Add a key-specific layer only when this key needs different protection from upstream policies."
-          action={!editing ? (
-            <Button variant="ghost" onClick={() => setEditing(true)}>{existing ? "Edit override" : "Create override"}</Button>
-          ) : (
-            <div className="flex items-center gap-2">
-              {existing && (
-                <Button variant="danger" onClick={() => { if (confirm("Remove this per-key override? The key will inherit upstream policies.")) remove.mutate(); }} disabled={remove.isPending}>Remove</Button>
-              )}
-              <Button onClick={() => save.mutate()} disabled={save.isPending || !dirty}>
-                <Save className="h-4 w-4" />
-                {save.isPending ? "Saving…" : "Save override"}
+      <GuardrailKeyStats apiKeyId={apiKey.id} />
+      <PanelCard
+        icon={ICONS.guardrails}
+        title="Per-key override"
+        action={!editing ? (
+          <Button variant="secondary" onClick={() => setEditing(true)}>{existing ? "Edit override" : "Create override"}</Button>
+        ) : undefined}
+        footer={editing ? (
+          <SaveBar status={dirty ? <span className="text-fg">Unsaved changes</span> : <span className="text-fg-muted">No changes yet</span>}>
+            {existing && (
+              <Button variant="danger" onClick={removeOverride} disabled={remove.isPending}>
+                <Trash2 aria-hidden="true" />
+                Remove override
               </Button>
-            </div>
-          )}
-        />
-        <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
-          <div className="flex items-center gap-3">
-            <div className={`h-2.5 w-2.5 rounded-full ${existing && enabled ? "bg-emerald-500" : "bg-ink-300 dark:bg-ink-600"}`} />
-            <div>
-              <p className="text-sm font-semibold">{existing ? (enabled ? "Override active" : "Override paused") : editing ? "New override" : "Inherited policy"}</p>
-              <p className="mt-0.5 text-xs text-[var(--text-muted)]">{existing ? "Changes here take priority for this API key." : editing ? "Configure detectors, test the policy, then save." : "Global, provider, model, and chain policies continue to apply."}</p>
-            </div>
-          </div>
+            )}
+            <Button variant="ghost" onClick={discard} disabled={save.isPending}>Discard</Button>
+            <Button onClick={() => save.mutate()} disabled={save.isPending || !dirty}>
+              {save.isPending ? "Saving…" : "Save override"}
+            </Button>
+          </SaveBar>
+        ) : undefined}
+      >
+        <div className="divide-y divide-line">
+          <SettingsRow label="Status" description={statusHint}>
+            <Badge tone={existing && enabled ? "success" : existing ? "warning" : "neutral"}>{statusTitle}</Badge>
+          </SettingsRow>
           {editing && (
-            <label className="flex min-h-10 items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-3 text-sm font-medium">
-              Apply this override
-              <Toggle checked={enabled} onChange={setEnabled} />
-            </label>
+            <SettingsRow label="Apply this override" labelId={applyId} description="Paused overrides are kept but not enforced.">
+              <Toggle checked={enabled} onChange={setEnabled} aria-labelledby={applyId} />
+            </SettingsRow>
           )}
         </div>
-      </Card>
+      </PanelCard>
 
       {editing && <GuardrailEditor value={config} onChange={setConfig} compact />}
 
-      <Card>
-        <CardHeader title="Effective protection" description="The final policy after all applicable guardrail layers are merged." />
-        <div className="p-4 sm:p-5">
+      <PanelCard icon={ICONS.checklist} title="Effective protection">
+        <div className="px-4 py-3 sm:px-5">
           {effective.isLoading ? (
-            <Spinner />
+            <Skeleton className="h-6 w-64" />
           ) : effective.isError ? (
-            <p className="text-sm text-red-600 dark:text-red-400">Unable to load the effective policy.</p>
+            <p className="text-[13px] text-bad">Couldn't load the effective policy.</p>
           ) : (
-            <div className="space-y-4">
-              <div className="flex flex-wrap items-center gap-2">
-                {activeEffective.length > 0 ? activeEffective.map((name) => <Badge key={name} tone="success">{name}</Badge>) : <Badge tone="neutral">No detectors active</Badge>}
-                <span className="text-xs text-[var(--text-muted)]">{activeEffective.length} active detector{activeEffective.length === 1 ? "" : "s"}</span>
-              </div>
-              <details className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)]">
-                <summary className="flex min-h-10 cursor-pointer items-center px-4 text-sm font-medium text-[var(--text)]">View merged configuration</summary>
-                <pre className="max-h-72 overflow-auto border-t border-[var(--border)] px-4 py-3 text-[11px] leading-5 text-[var(--text-muted)]">{JSON.stringify(effective.data?.policy ?? {}, null, 2)}</pre>
-              </details>
-            </div>
+            <ul className="flex flex-wrap items-center gap-2" aria-label="Active detectors">
+              {activeEffective.length > 0 ? (
+                activeEffective.map((name) => (
+                  <li key={name}>
+                    <Badge tone="success">{name}</Badge>
+                  </li>
+                ))
+              ) : (
+                <li>
+                  <Badge tone="neutral">No detectors active</Badge>
+                </li>
+              )}
+            </ul>
           )}
         </div>
-      </Card>
+        {!effective.isLoading && !effective.isError && (
+          <div className="border-t border-line">
+            <button
+              type="button"
+              onClick={() => setShowMerged((v) => !v)}
+              aria-expanded={showMerged}
+              aria-controls={mergedId}
+              className={cn("flex min-h-10 w-full items-center justify-between px-4 py-2.5 text-left text-[12.5px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg sm:px-5", FOCUS_RING)}
+            >
+              Merged configuration
+              <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showMerged && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+            {showMerged && (
+              <div id={mergedId} className="border-t border-line">
+                <CodeBlock bare code={JSON.stringify(effective.data?.policy ?? {}, null, 2)} language="json" aria-label="Merged configuration" copyToast="Configuration copied" bodyClassName="max-h-72 sm:px-5" />
+              </div>
+            )}
+          </div>
+        )}
+      </PanelCard>
     </div>
   );
 }

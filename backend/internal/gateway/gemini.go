@@ -55,6 +55,7 @@ func (s *Server) handleGeminiGenerate(w http.ResponseWriter, r *http.Request) {
 	// The Gemini body carries no model; it comes from the URL path.
 	req.Model = model
 	req.Stream = stream
+	s.traceOf(r).setRequest(model, stream)
 
 	req.Metadata = core.RequestMetadata{
 		ClientKind:    detectClient(r),
@@ -92,7 +93,7 @@ func (s *Server) handleGeminiGenerate(w http.ResponseWriter, r *http.Request) {
 		}
 		resolved.Targets = filtered
 	}
-
+	s.traceOf(r).routed(resolved.Targets)
 	affinityKey := requestAffinityKey(r, req)
 	req.Metadata.ContextAffinityKey = affinityKey
 
@@ -104,11 +105,12 @@ func (s *Server) handleGeminiGenerate(w http.ResponseWriter, r *http.Request) {
 		Caveman:  s.cavemanConfig(),
 		Headroom: s.headroomConfig(),
 		Ponytail: s.ponytailConfig(),
+		Skills:   s.skillsConfig(r, key, req.Model, resolved.Targets),
 	}
 
 	if req.Stream {
-		s.streamChat(w, r, codec, req, opts, key.Name, s.bansosNoticeText(r.Context(), key.ID))
+		s.streamChat(w, r, codec, req, opts, s.bansosNoticeText(r.Context(), key.ID))
 		return
 	}
-	s.unaryChat(w, r, codec, req, opts, key.Name, s.bansosNoticeText(r.Context(), key.ID))
+	s.unaryChat(w, r, codec, req, opts, s.bansosNoticeText(r.Context(), key.ID))
 }

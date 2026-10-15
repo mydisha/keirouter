@@ -148,3 +148,47 @@ func TestSealerAccessor(t *testing.T) {
 		t.Fatal("Sealer() returned nil")
 	}
 }
+
+func TestSealOpenSecretFields(t *testing.T) {
+	v := newTestVault(t)
+	var acc store.Account
+	secret := NewSecret{
+		APIKey:       "",
+		Metadata:     map[string]string{"aws_region": "eu-west-1", "aws_access_key_id": "AKID"},
+		SecretFields: map[string]string{"aws_secret_access_key": "s3cr3t", "aws_session_token": ""},
+	}
+	if err := v.Seal(&acc, secret); err != nil {
+		t.Fatalf("Seal: %v", err)
+	}
+	if acc.SecretCiphertext == "" {
+		t.Fatal("secret fields were not sealed")
+	}
+	creds, err := v.Open(acc)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if creds.APIKey != "" {
+		t.Fatalf("APIKey = %q, want empty", creds.APIKey)
+	}
+	if creds.Extra["aws_secret_access_key"] != "s3cr3t" || creds.Extra["aws_region"] != "eu-west-1" {
+		t.Fatalf("Extra = %v", creds.Extra)
+	}
+	if _, ok := creds.Extra["aws_session_token"]; ok {
+		t.Fatal("empty secret fields must not be stored")
+	}
+}
+
+func TestSealSecretFieldsKeepsPlainKeyFormat(t *testing.T) {
+	v := newTestVault(t)
+	var acc store.Account
+	if err := v.Seal(&acc, NewSecret{APIKey: "sk-1", SecretFields: map[string]string{"x": ""}}); err != nil {
+		t.Fatal(err)
+	}
+	blob, err := v.Sealer().OpenString(crypto.Sealed{WrappedDEK: acc.SecretWrappedDEK, Ciphertext: acc.SecretCiphertext})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blob != "sk-1" {
+		t.Fatalf("plain keys must stay unwrapped, got %q", blob)
+	}
+}

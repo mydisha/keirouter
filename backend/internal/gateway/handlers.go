@@ -9,8 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
@@ -42,53 +45,24 @@ func (s *Server) readRequestBody(w http.ResponseWriter, r *http.Request) ([]byte
 		return body, true
 	}
 
+	tr := s.traceOf(r)
 	var maxErr *http.MaxBytesError
 	if errors.As(err, &maxErr) {
 		message := fmt.Sprintf("request body exceeds maximum allowed size of %s", humanBytes(int(limit)))
-		if s.consoleLog != nil {
-			s.consoleLog.Log("WARN", "Request body too large", message)
-		}
+		tr.reject(http.StatusRequestEntityTooLarge, "Rejected · request body too large", message,
+			statusHint(http.StatusRequestEntityTooLarge))
 		writeError(w, http.StatusRequestEntityTooLarge, message)
 		return nil, false
 	}
 
-	if s.consoleLog != nil {
-		s.consoleLog.Log("ERROR", "Failed to read request body", err.Error())
+	if isClientDisconnect(err) || errors.Is(err, io.ErrUnexpectedEOF) {
+		tr.reject(499, "Client disconnected while sending the request", err.Error(),
+			"The connection closed before the full body arrived.")
+	} else {
+		tr.reject(http.StatusBadRequest, "Rejected · failed to read request body", err.Error(), "")
 	}
 	writeError(w, http.StatusBadRequest, "failed to read request body")
 	return nil, false
-}
-
-// logRequest logs a completed request to the console log buffer.
-func (s *Server) logRequest(keyName, provider, model string, tokens int, costMicros int64, latencyMs int, cacheHit bool, err error) {
-	if s.consoleLog == nil {
-		return
-	}
-
-	if err != nil {
-		detail := fmt.Sprintf("Key:      %s\nProvider: %s\nModel:    %s\nLatency:  %dms\n\n%v",
-			keyName, provider, model, latencyMs, err)
-		s.consoleLog.Log("ERROR",
-			fmt.Sprintf("Request failed · %s · %s", model, humanDuration(latencyMs)),
-			detail)
-		return
-	}
-
-	level := "INFO"
-	if latencyMs > 8000 {
-		level = "WARN"
-	}
-	cost := float64(costMicros) / 1_000_000
-	cacheNote := ""
-	if cacheHit {
-		cacheNote = " · cache hit"
-	}
-	msg := fmt.Sprintf("Request completed · %s · %s tokens · $%.6f · %s%s",
-		model, humanInt(tokens), cost, humanDuration(latencyMs), cacheNote)
-	detail := fmt.Sprintf(
-		"Key:      %s\nProvider: %s\nModel:    %s\nTokens:   %s\nCost:     $%.6f\nLatency:  %dms\nCache:    %v",
-		keyName, provider, model, humanInt(tokens), cost, latencyMs, cacheHit)
-	s.consoleLog.Log(level, msg, detail)
 }
 
 // handleOpenAIChat serves /v1/chat/completions in the OpenAI dialect.
@@ -152,15 +126,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 	key, _ := authedKey(r.Context())
 	tenantID := tenantOf(key)
 	client := detectClient(r)
-
-	s.consoleLog.Log("DEBUG",
-		fmt.Sprintf("New request from %q (%s API)", client, dialect),
-		fmt.Sprintf("Method: %s\nPath:   %s\nClient: %s\nDialect: %s\nKey:    %s (%s)",
-			r.Method, r.URL.Path, client, dialect, key.Name, key.ID))
+	tr := s.traceOf(r)
 
 	codec, err := s.codecs.Codec(dialect)
 	if err != nil {
-		s.consoleLog.Log("ERROR", fmt.Sprintf("Unsupported API dialect: %s", dialect), "")
+		tr.reject(http.StatusInternalServerError, fmt.Sprintf("Unsupported API dialect: %s", dialect), "", "")
 		writeError(w, http.StatusInternalServerError, "unsupported dialect")
 		return
 	}
@@ -169,14 +139,16 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 	if !ok {
 		return
 	}
-	s.consoleLog.Log("DEBUG", fmt.Sprintf("Read request body (%s)", humanBytes(len(body))), "")
+	bodySize := len(body)
 
 	req, err := codec.ParseRequest(body)
 	if err != nil {
-		s.consoleLog.Log("ERROR", "Failed to parse request body", err.Error())
+		tr.reject(http.StatusBadRequest, "Rejected · request body is not valid "+string(dialect)+" JSON", err.Error(),
+			"The client sent a body KeiRouter could not parse for this endpoint. Check that the client uses the matching API format.")
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
+	tr.setRequest(req.Model, req.Stream)
 
 	// Attach routing metadata.
 	req.Metadata = core.RequestMetadata{
@@ -186,26 +158,34 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 		TenantID:      tenantID,
 		ProjectID:     key.ProjectID,
 		RequestID:     chimiddleware.GetReqID(r.Context()),
+		ClientBetas:   parseAnthropicBetaHeader(r.Header.Get("anthropic-beta")),
 	}
 
-	streamNote := ""
+	mode := "standard"
 	if req.Stream {
-		streamNote = " · streaming"
+		mode = "streaming"
 	}
-	s.consoleLog.Log("DEBUG",
-		fmt.Sprintf("Routing %q · %d message%s%s", req.Model, len(req.Messages), plural(len(req.Messages)), streamNote),
-		fmt.Sprintf("Model:    %s\nMessages: %d\nStream:   %v\nTenant:   %s\nKey:      %s (%s)",
-			req.Model, len(req.Messages), req.Stream, tenantID, key.Name, key.ID))
+	tr.step(
+		fmt.Sprintf("Received · %s · %d message%s · %s · %s", req.Model, len(req.Messages), plural(len(req.Messages)), mode, humanBytes(bodySize)),
+		fmt.Sprintf("Client: %s\nAPI format: %s\nMessages: %d\nTools: %d\nBody: %s\nTenant: %s",
+			client, dialect, len(req.Messages), len(req.Tools), humanBytes(bodySize), tenantID))
 
 	resolved, err := s.resolveTargets(r.Context(), tenantID, req.Model)
 	if err != nil {
 		var bad badModelError
 		if errors.As(err, &bad) {
-			s.consoleLog.Log("WARN", fmt.Sprintf("Unknown model %q", req.Model), bad.Error())
-			writeError(w, bad.HTTPStatus(), bad.Error())
+			status := bad.HTTPStatus()
+			title := fmt.Sprintf("Rejected · unknown model %q", req.Model)
+			hint := "No provider model, alias or chain has this name. Check the client's model setting against the Models page."
+			if status == http.StatusServiceUnavailable {
+				title = fmt.Sprintf("Rejected · model %q is sold out", req.Model)
+				hint = "No market offer currently clears this chain's price floor. It becomes available again once one does."
+			}
+			tr.reject(status, title, bad.Error(), hint)
+			writeError(w, status, bad.Error())
 			return
 		}
-		s.consoleLog.Log("ERROR", fmt.Sprintf("Failed to resolve model %q", req.Model), err.Error())
+		tr.reject(http.StatusInternalServerError, fmt.Sprintf("Failed to resolve model %q", req.Model), err.Error(), "")
 		writeError(w, http.StatusInternalServerError, "failed to resolve model")
 		return
 	}
@@ -224,42 +204,28 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 	if len(resolved.Targets) > 0 {
 		filtered, ferr := s.filterAllowedTargets(r.Context(), key.ID, key.PlanID, req.Model, resolved.PlanOpts.ChainID != "", resolved.Targets)
 		if ferr != nil {
-			s.consoleLog.Log("ERROR", "Model access check failed", ferr.Error())
+			tr.reject(http.StatusInternalServerError, "Model access check failed", ferr.Error(), "")
 			writeError(w, http.StatusInternalServerError, "model access check failed")
 			return
 		}
 		if len(filtered) == 0 {
-			s.consoleLog.Log("WARN",
-				fmt.Sprintf("Access denied · key %q may not use %q", key.Name, req.Model),
-				fmt.Sprintf("Key:   %s (%s)\nModel: %s", key.Name, key.ID, req.Model))
+			tr.reject(http.StatusForbidden,
+				fmt.Sprintf("Rejected · key %q may not use %q", key.Name, req.Model), "",
+				"The key's model restrictions exclude every target of this model. Allow the model on the Keys page or use another key.")
 			writeError(w, http.StatusForbidden, "access denied: this API key is not permitted to use model "+req.Model)
 			return
 		}
 		resolved.Targets = filtered
 	}
 
-	if len(resolved.Targets) > 0 {
-		primary := resolved.Targets[0]
-		var tb strings.Builder
-		for i, t := range resolved.Targets {
-			if i > 0 {
-				tb.WriteByte('\n')
-			}
-			fmt.Fprintf(&tb, "%d. %s/%s", i+1, t.Provider, t.Model)
-		}
-		msg := fmt.Sprintf("Resolved to %s/%s", primary.Provider, primary.Model)
-		if len(resolved.Targets) > 1 {
-			msg = fmt.Sprintf("%s (+%d fallback%s)", msg, len(resolved.Targets)-1, plural(len(resolved.Targets)-1))
-		}
-		s.consoleLog.Log("DEBUG", msg, tb.String())
-	}
+	tr.routed(resolved.Targets)
 	affinityKey := requestAffinityKey(r, req)
 	req.Metadata.ContextAffinityKey = affinityKey
 	body = nil // release body for GC — no longer needed
 
 	effectiveLimits, err := s.effectiveLimits(r.Context(), key)
 	if err != nil {
-		s.consoleLog.Log("ERROR", "Failed to resolve rate limits", err.Error())
+		tr.reject(http.StatusInternalServerError, "Failed to resolve rate limits", err.Error(), "")
 		writeError(w, http.StatusInternalServerError, "limit resolution failed")
 		return
 	}
@@ -272,16 +238,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 		Caveman:  s.cavemanConfig(),
 		Headroom: s.headroomConfig(),
 		Ponytail: s.ponytailConfig(),
+		Skills:   s.skillsConfig(r, key, req.Model, resolved.Targets),
 		Limits:   effectiveLimits,
 	}
 
 	if req.Stream {
-		s.consoleLog.Log("DEBUG", "Dispatching as streaming response", "")
-		s.streamChat(w, r, codec, req, opts, key.Name, s.bansosNoticeText(r.Context(), key.ID))
+		s.streamChat(w, r, codec, req, opts, s.bansosNoticeText(r.Context(), key.ID))
 		return
 	}
-	s.consoleLog.Log("DEBUG", "Dispatching as standard response", "")
-	s.unaryChat(w, r, codec, req, opts, key.Name, s.bansosNoticeText(r.Context(), key.ID))
+	s.unaryChat(w, r, codec, req, opts, s.bansosNoticeText(r.Context(), key.ID))
 }
 
 func (s *Server) effectiveLimits(ctx context.Context, key store.APIKey) (limits.EffectiveLimits, error) {
@@ -304,15 +269,13 @@ func (s *Server) effectiveLimits(ctx context.Context, key store.APIKey) (limits.
 }
 
 // unaryChat runs a non-streaming request and renders the response.
-func (s *Server) unaryChat(w http.ResponseWriter, r *http.Request, codec transform.Codec, req *core.ChatRequest, opts pipeline.Options, keyName string, notice string) {
-	start := time.Now()
-	s.consoleLog.Log("DEBUG", "Sending request to provider…", "")
+func (s *Server) unaryChat(w http.ResponseWriter, r *http.Request, codec transform.Codec, req *core.ChatRequest, opts pipeline.Options, notice string) {
+	tr := s.traceOf(r)
+	tr.setRequest(req.Model, false)
 	result, err := s.pipeline.Chat(r.Context(), req, opts)
-	latency := int(time.Since(start).Milliseconds())
 	if err != nil {
-		s.consoleLog.Log("ERROR", fmt.Sprintf("Provider request failed after %s", humanDuration(latency)), err.Error())
-		s.logRequest(keyName, req.Model, req.Model, 0, 0, latency, false, err)
-		s.writeProviderError(w, err)
+		tr.complete(outcome{fallbacks: req.Metadata.FallbackCount, err: err})
+		s.writeProviderErrorAs(w, req.Metadata.SourceDialect, err)
 		return
 	}
 
@@ -321,16 +284,20 @@ func (s *Server) unaryChat(w http.ResponseWriter, r *http.Request, codec transfo
 	}
 	out, err := codec.RenderResponse(result.Response)
 	if err != nil {
-		s.consoleLog.Log("ERROR", "Failed to render provider response", err.Error())
+		tr.complete(outcome{provider: result.Provider, model: result.Model,
+			err: &core.ProviderError{Kind: core.ErrInternal, Message: "failed to render provider response", Cause: err}})
 		writeError(w, http.StatusInternalServerError, "failed to render response")
 		return
 	}
-	tokens := result.Response.Usage.PromptTokens + result.Response.Usage.CompletionTokens
-	s.consoleLog.Log("DEBUG",
-		fmt.Sprintf("Response from %s/%s · %s tokens · %s", result.Provider, result.Model, humanInt(tokens), humanDuration(latency)),
-		fmt.Sprintf("Provider: %s\nModel:    %s\nTokens:   %s\nAccount:  %s\nCache:    %v\nLatency:  %dms",
-			result.Provider, result.Model, humanInt(tokens), result.AccountID, result.CacheHit, latency))
-	s.logRequest(keyName, result.Provider, result.Model, tokens, result.CostMicros, latency, result.CacheHit, nil)
+	tr.complete(outcome{
+		provider:   result.Provider,
+		model:      result.Model,
+		account:    result.AccountID,
+		tokens:     result.Response.Usage.PromptTokens + result.Response.Usage.CompletionTokens,
+		costMicros: result.CostMicros,
+		cacheHit:   result.CacheHit,
+		fallbacks:  req.Metadata.FallbackCount,
+	})
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("X-KeiRouter-Provider", result.Provider)
 	w.Header().Set("X-KeiRouter-Model", result.Model)
@@ -343,7 +310,9 @@ func (s *Server) unaryChat(w http.ResponseWriter, r *http.Request, codec transfo
 
 // streamChat runs a streaming request and relays SSE events in the client's
 // dialect, honoring client disconnects and the configured stall timeout.
-func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transform.Codec, req *core.ChatRequest, opts pipeline.Options, keyName string, notice string) {
+func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transform.Codec, req *core.ChatRequest, opts pipeline.Options, notice string) {
+	tr := s.traceOf(r)
+	tr.setRequest(req.Model, true)
 	streamCodec, ok := codec.(transform.StreamCodec)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "dialect does not support streaming")
@@ -356,19 +325,19 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 		return
 	}
 
-	start := time.Now()
-	s.consoleLog.Log("DEBUG", "Opening stream to provider…", "")
 	result, err := s.pipeline.Stream(r.Context(), req, opts)
 	if err != nil {
-		latency := int(time.Since(start).Milliseconds())
-		s.consoleLog.Log("ERROR", fmt.Sprintf("Stream failed to start after %s", humanDuration(latency)), err.Error())
-		s.logRequest(keyName, req.Model, req.Model, 0, 0, latency, false, err)
+		tr.complete(outcome{fallbacks: req.Metadata.FallbackCount, err: err})
 		s.writeProviderError(w, err)
 		return
 	}
-	s.consoleLog.Log("DEBUG",
-		fmt.Sprintf("Streaming from %s/%s", result.Provider, result.Model),
-		fmt.Sprintf("Provider: %s\nModel:    %s\nAccount:  %s", result.Provider, result.Model, result.AccountID))
+	streamPath := "translated"
+	if result.DirectBody != nil {
+		streamPath = "zero-copy passthrough"
+	}
+	tr.step(
+		fmt.Sprintf("Streaming from %s/%s · first response after %s", result.Provider, result.Model, humanDuration(tr.elapsedMs())),
+		fmt.Sprintf("Provider: %s\nModel: %s\nAccount: %s\nPath: %s", result.Provider, result.Model, result.AccountID, streamPath))
 
 	if req.Metadata.SourceDialect == core.DialectOllama {
 		w.Header().Set("Content-Type", "application/x-ndjson")
@@ -420,8 +389,14 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 			hw.stop()
 		}
 		if cpErr != nil && !isClientDisconnect(cpErr) {
-			s.consoleLog.Log("ERROR", fmt.Sprintf("Stream interrupted after %s", humanBytes(int(n))), cpErr.Error())
 			s.log.Warn("direct stream error", "bytes", n, "err", cpErr)
+			// The upstream read failed (stall, reset, truncated body). Tell the
+			// client in its own dialect instead of silently closing the
+			// stream, which strict clients treat as "retry the whole request".
+			var readErr *streamReadError
+			if errors.As(cpErr, &readErr) {
+				_, _ = dst.Write(streamErrorEvent(req.Metadata.SourceDialect, sanitizeUpstreamError(readErr.err)))
+			}
 		}
 		flusher.Flush()
 		// Complete direct-stream accounting exactly once. Client disconnects do
@@ -435,27 +410,32 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 		if result.DirectCompleteFunc != nil {
 			result.DirectCompleteFunc(completionErr)
 		}
-		latency := int(time.Since(start).Milliseconds())
-		if cpErr != nil {
-			s.logRequest(keyName, result.Provider, result.Model, 0, 0, latency, false, cpErr)
-			return
+		o := outcome{provider: result.Provider, model: result.Model, account: result.AccountID,
+			bytes: n, fallbacks: req.Metadata.FallbackCount, err: cpErr}
+		if result.DirectStats != nil {
+			o.tokens = result.DirectStats.Tokens
+			o.costMicros = result.DirectStats.CostMicros
 		}
-		s.consoleLog.Log("DEBUG", fmt.Sprintf("Stream finished · %s · %s", humanBytes(int(n)), humanDuration(latency)), "")
-		s.logRequest(keyName, result.Provider, result.Model, 0, 0, latency, false, nil)
+		tr.complete(o)
 		return
 	}
 
 	// Wrap the response writer in a bufio.Writer to batch small SSE writes
 	// into fewer syscalls. The pool avoids allocating a new writer per request.
 	bw := core.SSEWriterPool.Get().(*bufio.Writer)
-	defer core.SSEWriterPool.Put(bw)
+	defer func() {
+		bw.Reset(nil)
+		core.SSEWriterPool.Put(bw)
+	}()
 	bw.Reset(w)
 
 	state := &transform.StreamState{Model: result.Model}
 	transform.ResetStreamState(state)
-	streamStart := time.Now()
 	var totalTokens int
 	var chunkCount int
+	// clientGone is set on the first failed write so the rest of the stream
+	// is drained quietly instead of logging once per chunk.
+	var clientGone error
 
 	// ToolArgSanitizer buffers streaming tool call arguments and emits
 	// sanitized JSON when each tool call completes. This fixes malformed
@@ -490,13 +470,13 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 				}
 				for _, ev := range events {
 					if _, werr := bw.Write(ev); werr != nil {
-						s.consoleLog.Log("WARN", fmt.Sprintf("Client disconnected after %d chunks", chunkCount), "")
+						if clientGone == nil {
+							clientGone = &streamWriteError{err: werr}
+						}
 						return
 					}
 				}
 			}
-			bw.Flush()
-			flusher.Flush()
 			return
 		}
 		events, rerr := streamCodec.RenderStreamChunk(cleaned, state)
@@ -506,12 +486,18 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 		}
 		for _, ev := range events {
 			if _, werr := bw.Write(ev); werr != nil {
-				s.consoleLog.Log("WARN", fmt.Sprintf("Client disconnected after %d chunks", chunkCount), "")
+				if clientGone == nil {
+					clientGone = &streamWriteError{err: werr}
+				}
 				return
 			}
 		}
-		// Flush the buffered writer to the underlying http.ResponseWriter,
-		// then flush the HTTP flusher to push bytes to the client.
+	}
+	// flushToClient pushes buffered events to the socket. It is called after
+	// each chunk only when no further chunk is already queued, so a burst of
+	// deltas costs one write+flush syscall pair instead of one per delta,
+	// while a lone delta still reaches the client immediately.
+	flushToClient := func() {
 		bw.Flush()
 		flusher.Flush()
 	}
@@ -539,7 +525,6 @@ streamLoop:
 				if streamErr == nil {
 					streamErr = &core.ProviderError{Kind: core.ErrUpstream, Message: "provider stream failed"}
 				}
-				s.consoleLog.Log("ERROR", "Provider stream error", fmt.Sprintf("%v", streamErr))
 				s.log.Warn("stream error", "err", streamErr)
 				_, _ = bw.Write(streamErrorEvent(req.Metadata.SourceDialect, sanitizeUpstreamError(streamErr)))
 				// Emit terminal events so strict clients (Claude Code, Cline) see a
@@ -568,6 +553,9 @@ streamLoop:
 			}
 			chunkCount++
 			sanitizer.Process(chunk, renderChunk)
+			if len(result.Chunks) == 0 {
+				flushToClient()
+			}
 		case <-heartbeatC:
 			// Only beat when the stream has actually been silent; steady chunk
 			// traffic is its own keep-alive.
@@ -587,9 +575,15 @@ streamLoop:
 		}
 	}
 
-	latency := int(time.Since(streamStart).Milliseconds())
+	finish := func(err error) {
+		if err == nil && clientGone != nil {
+			err = clientGone
+		}
+		tr.complete(outcome{provider: result.Provider, model: result.Model, account: result.AccountID,
+			tokens: totalTokens, chunks: chunkCount, fallbacks: req.Metadata.FallbackCount, err: err})
+	}
 	if streamErr != nil {
-		s.logRequest(keyName, result.Provider, result.Model, totalTokens, 0, latency, false, streamErr)
+		finish(streamErr)
 		return
 	}
 
@@ -636,11 +630,7 @@ streamLoop:
 	bw.Flush()
 	flusher.Flush()
 
-	s.consoleLog.Log("DEBUG",
-		fmt.Sprintf("Stream complete · %d chunks · %s tokens · %s", chunkCount, humanInt(totalTokens), humanDuration(latency)),
-		fmt.Sprintf("Provider: %s\nModel:    %s\nChunks:   %d\nTokens:   %s\nLatency:  %dms",
-			result.Provider, result.Model, chunkCount, humanInt(totalTokens), latency))
-	s.logRequest(keyName, result.Provider, result.Model, totalTokens, 0, latency, false, nil)
+	finish(nil)
 }
 
 // appendNoticePart appends the bansos warning as a trailing text part on the
@@ -659,6 +649,12 @@ type providerStreamEventError struct{ detail string }
 
 func (e *providerStreamEventError) Error() string { return "provider stream error: " + e.detail }
 
+// maxDirectStreamEventBytes bounds one buffered SSE event on the zero-copy
+// path so a misbehaving upstream cannot grow the event buffer without limit.
+const maxDirectStreamEventBytes = 16 << 20
+
+var errDirectStreamEventTooLarge = errors.New("upstream stream event exceeds the maximum supported size")
+
 type streamReadError struct{ err error }
 
 func (e *streamReadError) Error() string { return e.err.Error() }
@@ -672,8 +668,34 @@ func (e *streamWriteError) Unwrap() error { return e.err }
 // copySanitizedStream keeps the direct-stream path lightweight by framing SSE
 // events without decoding successful chunks. Only potential error events are
 // decoded; those are replaced with a dialect-compatible generic event.
+// directReaderPool reuses the 64 KiB read buffers of the zero-copy path; one
+// per concurrent stream otherwise churns through the allocator.
+var directReaderPool = sync.Pool{
+	New: func() any { return bufio.NewReaderSize(nil, 64*1024) },
+}
+
 func copySanitizedStream(dst io.Writer, src io.Reader, dialect core.Dialect, flush func()) (int64, error) {
-	reader := bufio.NewReaderSize(src, 64*1024)
+	reader := directReaderPool.Get().(*bufio.Reader)
+	reader.Reset(src)
+	defer func() {
+		reader.Reset(nil)
+		directReaderPool.Put(reader)
+	}()
+	if flush != nil {
+		// Defer the flush only while another complete frame is already
+		// buffered: a burst of frames that arrived together goes out in one
+		// syscall, but a frame followed by a partial one is pushed at once so
+		// the client never waits on bytes we already hold.
+		inner := flush
+		flush = func() {
+			if n := reader.Buffered(); n > 0 {
+				if pending, err := reader.Peek(n); err == nil && bytes.Contains(pending, []byte("\n\n")) {
+					return
+				}
+			}
+			inner()
+		}
+	}
 	if dialect == core.DialectOllama {
 		return copySanitizedNDJSON(dst, reader, dialect, flush)
 	}
@@ -683,6 +705,9 @@ func copySanitizedStream(dst io.Writer, src io.Reader, dialect core.Dialect, flu
 	for {
 		line, readErr := reader.ReadSlice('\n')
 		if len(line) > 0 {
+			if event.Len()+len(line) > maxDirectStreamEventBytes {
+				return written, &streamReadError{err: errDirectStreamEventTooLarge}
+			}
 			_, _ = event.Write(line)
 			if len(bytes.TrimRight(line, "\r\n")) == 0 {
 				n, err := writeSanitizedFrame(dst, event.Bytes(), dialect, flush)
@@ -917,7 +942,7 @@ func copySanitizedNDJSON(dst io.Writer, reader *bufio.Reader, dialect core.Diale
 }
 
 func writeSanitizedFrame(dst io.Writer, raw []byte, dialect core.Dialect, flush func()) (int64, error) {
-	providerErr := hasStreamErrorMarker(raw) && isProviderStreamError(string(raw))
+	providerErr := hasStreamErrorMarker(raw) && isProviderStreamError(raw)
 	out := raw
 	if providerErr {
 		out = streamErrorEvent(dialect, "upstream provider request failed")
@@ -942,43 +967,70 @@ func writeSanitizedFrame(dst io.Writer, raw []byte, dialect core.Dialect, flush 
 	return int64(n), nil
 }
 
+// hasStreamErrorMarker is the cheap pre-filter for frames that might carry a
+// provider error. A tool-call frame full of Go source matches "error" on
+// nearly every line, so instead of six substring scans it looks for the
+// shapes an error frame actually has: an SSE "event:" line mentioning error
+// or failure, or the quoted JSON keys/values an error envelope uses.
 func hasStreamErrorMarker(frame []byte) bool {
-	return bytes.Contains(frame, []byte("error")) || bytes.Contains(frame, []byte("Error")) ||
-		bytes.Contains(frame, []byte("ERROR")) || bytes.Contains(frame, []byte("failed")) ||
-		bytes.Contains(frame, []byte("Failed")) || bytes.Contains(frame, []byte("FAILED"))
-}
-
-func isProviderStreamError(event string) bool {
-	lowerEvent := strings.ToLower(event)
-	if !strings.Contains(lowerEvent, "error") && !strings.Contains(lowerEvent, "failed") {
-		return false
+	if bytes.Contains(frame, []byte(`"error"`)) || bytes.Contains(frame, []byte(`"failed"`)) ||
+		bytes.Contains(frame, []byte(`error"`)) {
+		return true
 	}
-
-	var data strings.Builder
-	for _, line := range strings.Split(event, "\n") {
-		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
-		switch {
-		case strings.HasPrefix(line, "event:"):
-			name := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "event:")))
-			if strings.Contains(name, "error") || strings.Contains(name, "failed") {
+	// event: error / event: response.failed
+	for rest := frame; len(rest) > 0; {
+		nl := bytes.IndexByte(rest, '\n')
+		line := rest
+		if nl >= 0 {
+			line = rest[:nl]
+			rest = rest[nl+1:]
+		} else {
+			rest = nil
+		}
+		if bytes.HasPrefix(line, []byte("event:")) {
+			name := bytes.ToLower(bytes.TrimSpace(line[6:]))
+			if bytes.Contains(name, []byte("error")) || bytes.Contains(name, []byte("fail")) {
 				return true
 			}
-		case strings.HasPrefix(line, "data:"):
-			payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if payload != "" && payload != "[DONE]" {
-				if data.Len() > 0 {
-					data.WriteByte('\n')
+		}
+	}
+	return false
+}
+
+func isProviderStreamError(event []byte) bool {
+	var data []byte
+	for rest := event; len(rest) > 0; {
+		nl := bytes.IndexByte(rest, '\n')
+		line := rest
+		if nl >= 0 {
+			line = rest[:nl]
+			rest = rest[nl+1:]
+		} else {
+			rest = nil
+		}
+		line = bytes.TrimSpace(line)
+		switch {
+		case bytes.HasPrefix(line, []byte("event:")):
+			name := bytes.ToLower(bytes.TrimSpace(line[6:]))
+			if bytes.Contains(name, []byte("error")) || bytes.Contains(name, []byte("failed")) {
+				return true
+			}
+		case bytes.HasPrefix(line, []byte("data:")):
+			payload := bytes.TrimSpace(line[5:])
+			if len(payload) > 0 && !bytes.Equal(payload, []byte("[DONE]")) {
+				if len(data) > 0 {
+					data = append(data, '\n')
 				}
-				data.WriteString(payload)
+				data = append(data, payload...)
 			}
 		}
 	}
-	if data.Len() == 0 {
-		standalone := strings.TrimSpace(event)
-		if !strings.HasPrefix(standalone, "{") {
+	if len(data) == 0 {
+		standalone := bytes.TrimSpace(event)
+		if len(standalone) == 0 || standalone[0] != '{' {
 			return false
 		}
-		data.WriteString(standalone)
+		data = standalone
 	}
 
 	var envelope struct {
@@ -986,7 +1038,7 @@ func isProviderStreamError(event string) bool {
 		Status string          `json:"status"`
 		Error  json.RawMessage `json:"error"`
 	}
-	if err := json.Unmarshal([]byte(data.String()), &envelope); err != nil {
+	if err := json.Unmarshal(data, &envelope); err != nil {
 		return false
 	}
 	typeName := strings.ToLower(envelope.Type)
@@ -1041,30 +1093,25 @@ func truncateStreamEvent(event string) string {
 }
 
 // writeProviderError maps a structured provider error to an HTTP status while
-// keeping the provider's original message in internal logs only.
+// keeping the provider's original message in internal logs only. The body is
+// OpenAI-shaped; use writeProviderErrorAs when the client's dialect is known.
 func (s *Server) writeProviderError(w http.ResponseWriter, err error) {
+	s.writeProviderErrorAs(w, core.DialectOpenAI, err)
+}
+
+// writeProviderErrorAs renders the error in the client's own dialect so SDK
+// retry logic keeps working: Claude Code reads Anthropic's
+// {"type":"error","error":{"type":"overloaded_error"}} to decide whether to
+// retry, and Gemini clients expect a google.rpc.Status-shaped envelope.
+func (s *Server) writeProviderErrorAs(w http.ResponseWriter, dialect core.Dialect, err error) {
 	pe := core.AsProviderError(err)
-	status := http.StatusBadGateway
-	switch pe.Kind {
-	case core.ErrBadRequest, core.ErrCapability:
-		status = http.StatusBadRequest
-	case core.ErrModelUnavailable:
-		status = http.StatusNotFound
-	case core.ErrAuth:
-		status = http.StatusUnauthorized
-	case core.ErrRateLimit:
-		status = http.StatusTooManyRequests
-		if pe.RetryAfter > 0 {
-			w.Header().Set("Retry-After", fmt.Sprintf("%.0f", pe.RetryAfter.Seconds()))
-		}
-	case core.ErrQuotaExhausted, core.ErrBudgetBlocked:
-		status = http.StatusPaymentRequired
-	case core.ErrPolicyBlocked:
-		status = http.StatusForbidden
-	case core.ErrTimeout:
-		status = http.StatusGatewayTimeout
-	case core.ErrInternal:
-		status = http.StatusInternalServerError
+	status := providerErrorStatus(pe)
+	// Retry-After tells well-behaved clients (Claude Code, the OpenAI SDKs)
+	// how long to back off. It is meaningful for throttling and for upstream
+	// faults where the provider or the dispatcher knows the recovery window.
+	if pe.RetryAfter > 0 && (status == http.StatusTooManyRequests || status == http.StatusBadGateway ||
+		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
+		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", math.Ceil(pe.RetryAfter.Seconds())))
 	}
 
 	if s.log != nil {
@@ -1075,7 +1122,121 @@ func (s *Server) writeProviderError(w http.ResponseWriter, err error) {
 			"upstream_status", pe.StatusCode,
 			"error", err)
 	}
-	writeError(w, status, sanitizeUpstreamError(pe))
+	writeDialectError(w, dialect, status, sanitizeUpstreamError(pe))
+}
+
+// writeDialectError writes an error envelope in the given client dialect.
+func writeDialectError(w http.ResponseWriter, dialect core.Dialect, status int, message string) {
+	switch dialect {
+	case core.DialectAnthropic:
+		writeJSON(w, status, map[string]any{
+			"type":  "error",
+			"error": map[string]any{"type": anthropicErrorType(status), "message": message},
+		})
+	case core.DialectGemini:
+		writeJSON(w, status, map[string]any{
+			"error": map[string]any{"code": status, "message": message, "status": googleStatusName(status)},
+		})
+	case core.DialectOllama:
+		writeJSON(w, status, map[string]any{"error": message})
+	default:
+		writeError(w, status, message)
+	}
+}
+
+// anthropicErrorType maps an HTTP status to Anthropic's error type vocabulary.
+func anthropicErrorType(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "invalid_request_error"
+	case http.StatusUnauthorized:
+		return "authentication_error"
+	case http.StatusForbidden, http.StatusPaymentRequired:
+		return "permission_error"
+	case http.StatusNotFound:
+		return "not_found_error"
+	case http.StatusRequestEntityTooLarge:
+		return "request_too_large"
+	case http.StatusTooManyRequests:
+		return "rate_limit_error"
+	case http.StatusServiceUnavailable, 529:
+		return "overloaded_error"
+	default:
+		return "api_error"
+	}
+}
+
+// googleStatusName maps an HTTP status to the google.rpc.Code name Gemini
+// clients expect in error.status.
+func googleStatusName(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "INVALID_ARGUMENT"
+	case http.StatusUnauthorized:
+		return "UNAUTHENTICATED"
+	case http.StatusForbidden, http.StatusPaymentRequired:
+		return "PERMISSION_DENIED"
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	case http.StatusTooManyRequests:
+		return "RESOURCE_EXHAUSTED"
+	case http.StatusGatewayTimeout:
+		return "DEADLINE_EXCEEDED"
+	case http.StatusServiceUnavailable, http.StatusBadGateway:
+		return "UNAVAILABLE"
+	default:
+		return "INTERNAL"
+	}
+}
+
+// parseAnthropicBetaHeader splits a client's anthropic-beta header into the
+// individual feature flags, keeping only well-formed identifiers
+// (name-YYYY-MM-DD) so arbitrary header text never reaches the upstream.
+func parseAnthropicBetaHeader(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		flag := strings.ToLower(strings.TrimSpace(part))
+		if flag == "" || !anthropicBetaFlagRe.MatchString(flag) {
+			continue
+		}
+		out = append(out, flag)
+	}
+	return out
+}
+
+var anthropicBetaFlagRe = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*-\d{4}-\d{2}-\d{2}$`)
+
+// providerErrorStatus maps an error kind to the HTTP status returned to the
+// client.
+func providerErrorStatus(pe *core.ProviderError) int {
+	switch pe.Kind {
+	case core.ErrBadRequest, core.ErrCapability, core.ErrContextWindow, core.ErrContentFilter:
+		return http.StatusBadRequest
+	case core.ErrModelUnavailable:
+		return http.StatusNotFound
+	case core.ErrAuth:
+		return http.StatusUnauthorized
+	case core.ErrRateLimit:
+		return http.StatusTooManyRequests
+	case core.ErrQuotaExhausted, core.ErrBudgetBlocked:
+		return http.StatusPaymentRequired
+	case core.ErrPolicyBlocked:
+		return http.StatusForbidden
+	case core.ErrTimeout:
+		return http.StatusGatewayTimeout
+	case core.ErrInternal:
+		return http.StatusInternalServerError
+	case core.ErrUpstream:
+		// 529/503 from the provider means "overloaded, try again": surface it
+		// as 503 so SDK retry policies treat it as transient.
+		if pe.StatusCode == 529 || pe.StatusCode == http.StatusServiceUnavailable {
+			return http.StatusServiceUnavailable
+		}
+	}
+	return http.StatusBadGateway
 }
 
 // isClientDisconnect reports whether cancellation or a downstream response

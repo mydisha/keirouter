@@ -135,6 +135,9 @@ const (
 	MutatedFieldMessages MutatedField = "messages"
 	MutatedFieldSystem   MutatedField = "system"
 	MutatedFieldResponse MutatedField = "response"
+	// MutatedFieldInPlace means the detector already rewrote every affected
+	// field of the live request or response itself; Mutated is unused.
+	MutatedFieldInPlace MutatedField = "in_place"
 )
 
 // MarshalDecisionFindings serializes findings into the JSON column shape used

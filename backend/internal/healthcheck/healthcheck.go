@@ -2,7 +2,10 @@ package healthcheck
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"math/rand/v2"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,7 +41,19 @@ type Checker struct {
 	health   *store.HealthRepo
 	conns    ConnectorSource
 	vault    *vault.Vault
+	// prepare, when set, builds credentials exactly as routed traffic gets
+	// them (proxy pool / global proxy, OAuth refresh). Without it probes
+	// would leave from the server's own IP, bypassing the account's pool.
+	prepare CredentialPreparer
 }
+
+// CredentialPreparer resolves an account's egress route and secrets the same
+// way the dispatcher does for real requests.
+type CredentialPreparer func(ctx context.Context, acc store.Account) (store.Account, core.Credentials, error)
+
+// SetCredentialPreparer installs the dispatcher's credential preparation so
+// probes honour the account's proxy pool.
+func (c *Checker) SetCredentialPreparer(p CredentialPreparer) { c.prepare = p }
 
 // New builds a Checker.
 func New(cfg Config, log *slog.Logger, accounts *store.AccountRepo, health *store.HealthRepo, conns ConnectorSource, vault *vault.Vault) *Checker {
@@ -98,10 +113,17 @@ func (c *Checker) CheckOnce(ctx context.Context, tenantID string) {
 		return
 	}
 	recent, _ := c.health.RecentAccountModels(ctx, tenantID, time.Now().Add(-c.cfg.RecentModelWindow), len(accounts)*c.cfg.MaxModelsPerProvider)
+	// Real traffic is the strongest health signal: a pair that served a
+	// successful request within the staleness window needs no synthetic
+	// probe; only pairs that have gone quiet are probed.
+	provenHealthy, _ := c.health.RecentSuccessfulAccountModels(ctx, tenantID, time.Now().Add(-c.stalenessWindow()))
 
 	modelsByAccount := map[string][]string{}
 	for _, h := range recent {
 		if len(modelsByAccount[h.AccountID]) >= c.cfg.MaxModelsPerProvider {
+			continue
+		}
+		if _, proven := provenHealthy[h.AccountID+"\x00"+h.Model]; proven {
 			continue
 		}
 		modelsByAccount[h.AccountID] = appendUnique(modelsByAccount[h.AccountID], h.Model)
@@ -109,12 +131,21 @@ func (c *Checker) CheckOnce(ctx context.Context, tenantID string) {
 
 	sem := make(chan struct{}, c.cfg.MaxParallel)
 	var wg sync.WaitGroup
+	now := time.Now()
 	for _, acc := range accounts {
 		if acc.Disabled || acc.NeedsReconnect {
 			continue
 		}
+		// An account on cooldown is already known to be unavailable; probing
+		// it burns quota and only extends the cooldown.
+		if acc.CooldownUntil != nil && acc.CooldownUntil.After(now) {
+			continue
+		}
 		models := modelsByAccount[acc.ID]
 		if len(models) == 0 {
+			if _, proven := provenHealthy[acc.ID+"\x00__all__"]; proven || c.accountProvenHealthy(acc.ID, provenHealthy) {
+				continue
+			}
 			models = []string{"__all__"}
 		}
 		for _, model := range models {
@@ -123,6 +154,12 @@ func (c *Checker) CheckOnce(ctx context.Context, tenantID string) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				// Spread probes over the cycle instead of bursting them at
+				// the tick, which both smooths provider load and keeps
+				// several replicas from probing in lockstep.
+				if !sleepJitter(ctx, c.probeSpread()) {
+					return
+				}
 				select {
 				case sem <- struct{}{}:
 					defer func() { <-sem }()
@@ -136,19 +173,76 @@ func (c *Checker) CheckOnce(ctx context.Context, tenantID string) {
 	wg.Wait()
 }
 
+// stalenessWindow is how long a real-traffic success keeps a pair exempt from
+// probing: two intervals.
+func (c *Checker) stalenessWindow() time.Duration {
+	return 2 * c.cfg.Interval
+}
+
+// probeSpread is the maximum random delay before a probe starts.
+func (c *Checker) probeSpread() time.Duration {
+	spread := c.cfg.Interval / 4
+	if spread > 30*time.Second {
+		spread = 30 * time.Second
+	}
+	return spread
+}
+
+// accountProvenHealthy reports whether any model on the account served
+// successful traffic recently, which makes a credential-only probe redundant.
+func (c *Checker) accountProvenHealthy(accountID string, proven map[string]time.Time) bool {
+	prefix := accountID + "\x00"
+	for key := range proven {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func sleepJitter(ctx context.Context, max time.Duration) bool {
+	if max <= 0 {
+		return ctx.Err() == nil
+	}
+	t := time.NewTimer(time.Duration(rand.Int64N(int64(max))))
+	defer t.Stop()
+	select {
+	case <-t.C:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// probeMaxTokens picks the smallest completion budget the model family
+// accepts: OpenAI reasoning models reject anything below 16.
+func probeMaxTokens(provider, model string) int {
+	m := strings.ToLower(model)
+	if strings.HasPrefix(m, "gpt-5") || strings.HasPrefix(m, "o1") || strings.HasPrefix(m, "o3") ||
+		strings.HasPrefix(m, "o4") || provider == "openai" || provider == "azure" {
+		return 16
+	}
+	return 8
+}
+
 func (c *Checker) probe(ctx context.Context, acc store.Account, model string) {
 	conn, err := c.conns.Get(acc.Provider)
 	if err != nil {
 		c.record(ctx, acc, model, 0, err)
 		return
 	}
-	creds, err := c.vault.Open(acc)
+	var creds core.Credentials
+	if c.prepare != nil {
+		acc, creds, err = c.prepare(ctx, acc)
+	} else {
+		creds, err = c.vault.Open(acc)
+	}
 	if err != nil {
 		c.record(ctx, acc, model, 0, err)
 		return
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, c.cfg.Timeout)
+	probeCtx, cancel := context.WithTimeout(core.WithProxy(ctx, creds), c.cfg.Timeout)
 	defer cancel()
 
 	start := time.Now()
@@ -159,7 +253,7 @@ func (c *Checker) probe(ctx context.Context, acc store.Account, model string) {
 			err = nil
 		}
 	} else {
-		max := 8
+		max := probeMaxTokens(acc.Provider, model)
 		req := &core.ChatRequest{
 			Model: model,
 			Messages: []core.Message{{
@@ -180,7 +274,35 @@ func (c *Checker) probe(ctx context.Context, acc store.Account, model string) {
 	c.record(ctx, acc, model, int(time.Since(start).Milliseconds()), err)
 }
 
+// neutralProbeError reports whether a probe failure says nothing about the
+// account's health: throttling (the probe itself may have caused it), our own
+// probe deadline on a slow-but-working model, or shutdown cancellation.
+func neutralProbeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	switch core.AsProviderError(err).Kind {
+	case core.ErrRateLimit, core.ErrClientCanceled, core.ErrContextWindow, core.ErrContentFilter:
+		return true
+	case core.ErrTimeout:
+		return true
+	case core.ErrModelUnavailable, core.ErrCapability, core.ErrBadRequest:
+		// A model this account cannot serve, or a probe payload the model
+		// rejects, says nothing about the credential's health. The dispatcher
+		// handles model availability per request.
+		return true
+	}
+	return false
+}
+
 func (c *Checker) record(ctx context.Context, acc store.Account, model string, latencyMS int, probeErr error) {
+	if neutralProbeError(probeErr) {
+		c.log.Debug("health check: inconclusive probe", "account", acc.ID, "model", model, "err", probeErr)
+		return
+	}
 	now := time.Now()
 	prev, err := c.health.Get(ctx, acc.ID, model)
 	if err != nil && err != store.ErrNotFound {

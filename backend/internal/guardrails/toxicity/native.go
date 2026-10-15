@@ -2,164 +2,90 @@ package toxicity
 
 import (
 	"context"
-	"regexp"
 	"strings"
-	"sync"
+
+	"github.com/mydisha/keirouter/backend/internal/guardrails"
 )
 
-// nativeEngine is the default, offline toxicity scorer. It maintains a
-// keyword catalog per category covering id + en, scores each category as
-// (hit_count × per-term weight), and normalizes the result to 0–100.
+// nativeEngine is the default, offline toxicity scorer. Each category is a
+// weighted lexicon (see lexicon.go) matched against the folded word view of
+// the text, so leetspeak ("f4ck"), censoring ("f*ck"), stretched letters
+// ("fuuuck"), spaced letters ("f u c k"), homoglyphs and zero-width
+// characters all reduce to the same form before matching.
 //
-// The catalog favors precision over recall: terms are unambiguous, common
-// slurs and profanity. Borderline cases (sarcasm, reclaimed language,
-// quotation) are out of scope — users who want richer behavior route via
-// engine="openai".
+// A category's score is the weight of its strongest hit plus a small bonus
+// per additional distinct term. Insults aimed at someone ("dasar goblok",
+// "you idiot") score their directed weight and also count as harassment.
 type nativeEngine struct {
-	categories map[string]*nativeCategory
-	once       sync.Once
+	categories []nativeCategory
 }
 
-// nativeCategory is a compiled keyword catalog for one category.
 type nativeCategory struct {
-	Name    string
-	Pattern *regexp.Regexp
-	// Cap is the hit count at which the category is considered "saturated"
-	// and maps to score 100. One severe hit is often enough on its own —
-	// tune per-category below.
-	Cap int
+	name string
+	lex  *guardrails.Lexicon
 }
 
 func newNativeEngine() *nativeEngine {
-	e := &nativeEngine{}
-	e.init()
-	return e
-}
-
-func (e *nativeEngine) init() {
-	e.once.Do(func() {
-		e.categories = map[string]*nativeCategory{
-			"profanity":   compileCategory("profanity", profanityTerms, 3),
-			"hate":        compileCategory("hate", hateTerms, 1),
-			"hate_speech": compileCategory("hate_speech", hateTerms, 1), // alias
-			"harassment":  compileCategory("harassment", harassmentTerms, 2),
-			"violence":    compileCategory("violence", violenceTerms, 1),
-			"sexual":      compileCategory("sexual", sexualTerms, 2),
-		}
-	})
+	return &nativeEngine{categories: []nativeCategory{
+		{"profanity", guardrails.CompileLexicon(profanityTerms)},
+		{"hate", guardrails.CompileLexicon(hateTerms)},
+		{"harassment", guardrails.CompileLexicon(harassmentTerms)},
+		{"violence", guardrails.CompileLexicon(violenceTerms)},
+		{"sexual", guardrails.CompileLexicon(sexualTerms)},
+		{"self_harm", guardrails.CompileLexicon(selfHarmTerms)},
+	}}
 }
 
 // Score implements engine.
 func (e *nativeEngine) Score(_ context.Context, text string, allowed map[string]bool) ([]CategoryScore, error) {
-	if text == "" {
+	if strings.TrimSpace(text) == "" {
 		return nil, nil
 	}
-	// Match against lowercased text — patterns are written lowercase + use
-	// word boundaries so this stays accurate while avoiding (?i) overhead.
-	lower := strings.ToLower(text)
+	view := guardrails.Fold(text, guardrails.FoldOptions{Lower: true, Words: true})
+	type acc struct {
+		best  int
+		terms map[string]bool
+		hits  []Hit
+	}
+	byCat := map[string]*acc{}
+	note := func(cat string, weight int, h Hit) {
+		if allowed != nil && !allowed[cat] {
+			return
+		}
+		a := byCat[cat]
+		if a == nil {
+			a = &acc{terms: map[string]bool{}}
+			byCat[cat] = a
+		}
+		a.best = max(a.best, weight)
+		a.terms[h.Term] = true
+		h.Weight = weight
+		a.hits = append(a.hits, h)
+	}
 
-	out := make([]CategoryScore, 0, len(e.categories))
-	seen := make(map[string]bool, len(e.categories))
-	for name, cat := range e.categories {
-		if allowed != nil && !allowed[name] {
-			continue
+	toks := guardrails.LexTokens(view.Text)
+	for _, cat := range e.categories {
+		for _, m := range cat.lex.FindAllTokens(toks) {
+			s, en := view.Span(m.Start, m.End)
+			if s < 0 {
+				continue
+			}
+			h := Hit{Term: m.Term.Phrase, Start: s, End: en, Text: text[s:en]}
+			weight := m.Term.Weight
+			if m.Term.Directed > 0 && guardrails.IsDirected(view.Text, m.Start, m.End) {
+				weight = m.Term.Directed
+				if cat.name != "harassment" {
+					note("harassment", weight, h)
+				}
+			}
+			note(cat.name, weight, h)
 		}
-		// Avoid double-counting hate/hate_speech (they share a catalog).
-		base := canonicalCategory(name)
-		if seen[base] {
-			continue
-		}
-		seen[base] = true
+	}
 
-		hits := cat.Pattern.FindAllStringIndex(lower, -1)
-		if len(hits) == 0 {
-			continue
-		}
-		score := (len(hits) * 100) / cat.Cap
-		if score > 100 {
-			score = 100
-		}
-		out = append(out, CategoryScore{Category: base, Score: score})
+	out := make([]CategoryScore, 0, len(byCat))
+	for cat, a := range byCat {
+		score := a.best + 10*min(len(a.terms)-1, 2)
+		out = append(out, CategoryScore{Category: cat, Score: min(score, 100), Hits: a.hits})
 	}
 	return out, nil
-}
-
-// canonicalCategory collapses aliases (hate ↔ hate_speech) to a single name
-// so audit log entities stay stable.
-func canonicalCategory(name string) string {
-	if name == "hate_speech" {
-		return "hate"
-	}
-	return name
-}
-
-// compileCategory builds a single alternation regex from the catalog. Each
-// term is wrapped in `\b` to avoid matching inside larger words (so "ass"
-// in "assignment" does not count).
-func compileCategory(name string, terms []string, cap int) *nativeCategory {
-	if cap <= 0 {
-		cap = 1
-	}
-	escaped := make([]string, 0, len(terms))
-	for _, t := range terms {
-		t = strings.TrimSpace(t)
-		if t == "" {
-			continue
-		}
-		escaped = append(escaped, regexp.QuoteMeta(strings.ToLower(t)))
-	}
-	pat := `\b(?:` + strings.Join(escaped, "|") + `)\b`
-	return &nativeCategory{
-		Name:    name,
-		Pattern: regexp.MustCompile(pat),
-		Cap:     cap,
-	}
-}
-
-// The keyword catalogs below are intentionally short and unambiguous. They
-// are not meant to be exhaustive — users who need broader coverage should
-// switch to engine="openai" which calls a maintained moderation model.
-
-var profanityTerms = []string{
-	// English
-	"shit", "fuck", "fucking", "asshole", "bastard", "bitch", "dick", "piss",
-	"damn it", "goddamn",
-	// Indonesian
-	"anjing", "bangsat", "babi", "kontol", "memek", "tolol", "goblok",
-	"brengsek", "tai", "asu",
-}
-
-var hateTerms = []string{
-	// English — generic slurs and explicit hate phrases. Kept tight.
-	"kill all", "death to", "subhuman", "inferior race", "racial purity",
-	"white power", "ethnic cleansing",
-	// Indonesian
-	"bunuh semua", "matikan semua", "ras rendah", "ras unggul",
-	"pembersihan etnis",
-}
-
-var harassmentTerms = []string{
-	// English
-	"you are worthless", "kill yourself", "kys", "i hate you", "loser",
-	"piece of shit", "waste of space", "stupid idiot",
-	// Indonesian
-	"bunuh diri saja", "matilah", "tidak berguna", "sampah masyarakat",
-	"goblok banget", "idiot banget",
-}
-
-var violenceTerms = []string{
-	// English
-	"how to kill", "make a bomb", "build a bomb", "shoot up", "stab to death",
-	"beat to death", "behead", "lynching",
-	// Indonesian
-	"cara membunuh", "buat bom", "membuat bom", "tembak mati", "tikam mati",
-	"penggal kepala",
-}
-
-var sexualTerms = []string{
-	// English — explicit-only; avoid ambiguous anatomical words.
-	"explicit sex", "pornographic", "child porn", "underage sex",
-	"rape fantasy",
-	// Indonesian
-	"porno anak", "seks anak", "pemerkosaan", "fantasi perkosaan",
 }

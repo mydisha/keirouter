@@ -16,10 +16,12 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  // node:test unit tests run under `npm test`; TS 6 no longer pulls in
+  // @types/node implicitly, so keep them out of the browser build.
+  "exclude": ["src/**/*.test.ts"]
 }

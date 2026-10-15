@@ -10,7 +10,9 @@ package budget
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/core"
@@ -40,11 +42,36 @@ const budgetCacheTTL = 10 * time.Second
 // service. A key holding less cannot make requests, which prevents abuse of
 // near-zero starter credit.
 const minKeyBalanceMicros int64 = 50_000 // $0.05
+// budgetSource and spendSource are the store slices the engine reads; the
+// concrete repos satisfy them.
+type budgetSource interface {
+	ListByScope(ctx context.Context, kind store.BudgetScope, scopeID string) ([]store.Budget, error)
+}
+
+type spendSource interface {
+	SpendAndTokensBatch(ctx context.Context, scopes []store.SpendScope) ([]store.SpendResult, error)
+}
 
 // Engine evaluates budgets against recorded usage.
 type Engine struct {
-	budgets *store.BudgetRepo
-	usage   *store.UsageRepo
+	budgets budgetSource
+	usage   spendSource
+
+	// Shared counter mode (see EnableSharedCounter). Nil counter means every
+	// check sums the usage table.
+	counter       Counter
+	counterTTL    time.Duration
+	counterPrefix string
+	deltas        chan Delta
+	deltaDropped  atomic.Int64
+	counterErrors atomic.Int64
+	// counterOpenUntil (unix nanos) routes reads to the usage table for a
+	// few seconds after a counter failure, so an unreachable redis costs one
+	// timeout per cooldown instead of one per request.
+	counterOpenUntil atomic.Int64
+	stopCounter      context.CancelFunc
+	counterDone      chan struct{}
+	log              *slog.Logger
 
 	// reservations tracks estimated spend for in-flight requests, keyed by
 	// scope ID. Prevents concurrent requests from overshooting hard limits.
@@ -64,6 +91,7 @@ func New(budgets *store.BudgetRepo, usage *store.UsageRepo) *Engine {
 		usage:        usage,
 		reservations: make(map[string]*reservation),
 		budgetCache:  make(map[string]*budgetCacheEntry),
+		log:          slog.Default(),
 	}
 }
 
@@ -122,8 +150,18 @@ func (e *Engine) cachedListByScope(ctx context.Context, kind store.BudgetScope, 
 }
 
 // InvalidateBudgetCache clears the cached budget definitions. Call this after
-// budget CRUD operations so the next request sees fresh data immediately.
+// budget CRUD operations so the next request sees fresh data immediately. In
+// shared counter mode every other replica clears its cache too.
 func (e *Engine) InvalidateBudgetCache() {
+	e.invalidateLocal()
+	if e.counter != nil {
+		if err := e.counter.PublishInvalidate(context.Background()); err != nil {
+			e.log.Warn("budget: broadcast cache invalidation failed; other replicas refresh within 10s", "err", err)
+		}
+	}
+}
+
+func (e *Engine) invalidateLocal() {
 	e.budgetMu.Lock()
 	// Clear all entries; budget mutations are infrequent so a full flush is fine.
 	for k := range e.budgetCache {
@@ -139,6 +177,10 @@ func (e *Engine) InvalidateBudgetCacheForScope(kind store.BudgetScope, scopeID s
 	e.budgetMu.Lock()
 	delete(e.budgetCache, key)
 	e.budgetMu.Unlock()
+	if e.counter != nil {
+		// Other replicas cannot tell which scope changed; they flush all.
+		_ = e.counter.PublishInvalidate(context.Background())
+	}
 }
 
 // Check evaluates all budgets applicable to a scope and reports whether the
@@ -189,10 +231,11 @@ func (e *Engine) Check(ctx context.Context, scope Scope) (Decision, error) {
 		return dec, nil
 	}
 
-	// Phase 2: fetch all spend data in a single SQL round-trip.
-	spendResults, err := e.usage.SpendAndTokensBatch(ctx, spendScopes)
+	// Phase 2: fetch all spend data in one round trip — to the shared
+	// counters when enabled, else a single batched SQL query.
+	spendResults, err := e.spend(ctx, spendScopes)
 	if err != nil {
-		return Decision{}, fmt.Errorf("budget: batch spend: %w", err)
+		return Decision{}, err
 	}
 
 	// Phase 3: evaluate limits using the pre-fetched results.
@@ -361,6 +404,21 @@ func (e *Engine) getReserved(kind store.BudgetScope, scopeID string) int64 {
 }
 
 // PeriodStart returns the start of the current budget window for a period.
+// PeriodEnd returns when a budget window that began at start resets. A
+// "total" budget never resets and yields the zero time.
+func PeriodEnd(period string, start time.Time) time.Time {
+	switch period {
+	case "daily":
+		return start.AddDate(0, 0, 1)
+	case "weekly":
+		return start.AddDate(0, 0, 7)
+	case "monthly":
+		return start.AddDate(0, 1, 0)
+	default:
+		return time.Time{}
+	}
+}
+
 func PeriodStart(period string, now time.Time) time.Time {
 	now = now.UTC()
 	switch period {

@@ -91,6 +91,25 @@ func (r *ProxyPoolRepo) Update(ctx context.Context, p ProxyPool) error {
 	return err
 }
 
+// RecordTest stores a connectivity-test outcome without touching the pool's
+// operator-managed fields (name, URL, bypass list, strict). Tests run for
+// seconds, so a full-row Update from a stale copy would silently revert any
+// edit saved in the meantime. activate, when non-nil, also sets is_active;
+// only the relay readiness monitor uses it to enable a freshly deployed relay.
+func (r *ProxyPoolRepo) RecordTest(ctx context.Context, id, status string, tested time.Time, lastError string, activate *bool) error {
+	now := formatTime(time.Now())
+	if activate != nil {
+		q := r.db.rebind(`UPDATE proxy_pools SET test_status = ?, last_tested = ?, last_error = ?,
+			is_active = ?, updated_at = ? WHERE id = ?`)
+		_, err := r.db.sql.ExecContext(ctx, q, status, formatTime(tested), lastError, boolToInt(*activate), now, id)
+		return err
+	}
+	q := r.db.rebind(`UPDATE proxy_pools SET test_status = ?, last_tested = ?, last_error = ?,
+		updated_at = ? WHERE id = ?`)
+	_, err := r.db.sql.ExecContext(ctx, q, status, formatTime(tested), lastError, now, id)
+	return err
+}
+
 // Delete removes a proxy pool.
 func (r *ProxyPoolRepo) Delete(ctx context.Context, id string) error {
 	q := r.db.rebind("DELETE FROM proxy_pools WHERE id = ?")

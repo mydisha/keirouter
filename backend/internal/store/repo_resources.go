@@ -52,9 +52,11 @@ func (r *ResourceRepo) ResourceBuckets(ctx context.Context, since time.Time, int
 			AVG(host_cpu_percent), MAX(host_cpu_percent),
 			AVG(CAST(proc_rss_bytes AS REAL)) / 1048576.0, MAX(proc_rss_bytes),
 			AVG(CAST(host_mem_used_bytes AS REAL)) / 1048576.0, MAX(host_mem_used_bytes),
+			COALESCE(AVG(CAST(host_mem_used_bytes AS REAL) * 100.0 / NULLIF(host_mem_total_bytes, 0)), 0),
+			COALESCE(MAX(CAST(host_mem_used_bytes AS REAL) * 100.0 / NULLIF(host_mem_total_bytes, 0)), 0),
 			AVG(CAST(goroutines AS REAL)), MAX(goroutines),
 			AVG(CAST(heap_alloc_bytes AS REAL)) / 1048576.0, MAX(heap_alloc_bytes),
-			0, 0,
+			MAX(host_net_sent_bytes) - MIN(host_net_sent_bytes), MAX(host_net_recv_bytes) - MIN(host_net_recv_bytes),
 			AVG(CAST(gc_pause_ns AS REAL)) / 1e6, MAX(gc_pause_ns),
 			AVG(CAST(inflight_requests AS REAL)), MAX(inflight_requests),
 			COUNT(*)
@@ -71,23 +73,20 @@ func (r *ResourceRepo) ResourceBuckets(ctx context.Context, since time.Time, int
 
 	var out []ResourceBucket
 	for rows.Next() {
-		var (
-			b       ResourceBucket
-			_       int64 // bucket timestamp (unused, derived from Bucket)
-			count   int
-		)
+		var b ResourceBucket
 		if err := rows.Scan(
 			&b.Bucket,
 			&b.ProcCPUAvg, &b.ProcCPUMax,
 			&b.HostCPUAvg, &b.HostCPUMax,
 			&b.ProcRSSAvg, &b.ProcRSSMax,
 			&b.HostMemUsedAvg, &b.HostMemUsedMax,
+			&b.HostMemPctAvg, &b.HostMemPctMax,
 			&b.GoroutinesAvg, &b.GoroutinesMax,
 			&b.HeapAllocAvg, &b.HeapAllocMax,
 			&b.NetSentDelta, &b.NetRecvDelta,
 			&b.GCPauseAvg, &b.GCPauseMax,
 			&b.InflightAvg, &b.InflightMax,
-			&count,
+			&b.Samples,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan resource bucket: %w", err)
 		}

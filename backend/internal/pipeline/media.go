@@ -96,7 +96,7 @@ func (p *Pipeline) Embeddings(ctx context.Context, req *core.EmbeddingRequest, o
 		}
 		r := *req
 		r.Model = a.Target.Model
-		resp, callErr := conn.Embeddings(ctx, &r, a.Creds)
+		resp, callErr := conn.Embeddings(core.WithProxy(ctx, a.Creds), &r, a.Creds)
 		if callErr != nil {
 			if !p.noteMediaFailure(ctx, a, callErr) {
 				return nil, "", callErr
@@ -130,7 +130,7 @@ func (p *Pipeline) GenerateImage(ctx context.Context, req *core.ImageRequest, op
 		}
 		r := *req
 		r.Model = a.Target.Model
-		resp, callErr := conn.GenerateImage(ctx, &r, a.Creds)
+		resp, callErr := conn.GenerateImage(core.WithProxy(ctx, a.Creds), &r, a.Creds)
 		if callErr != nil {
 			if !p.noteMediaFailure(ctx, a, callErr) {
 				return nil, "", callErr
@@ -164,7 +164,7 @@ func (p *Pipeline) Transcribe(ctx context.Context, req *core.TranscriptionReques
 		}
 		r := *req
 		r.Model = a.Target.Model
-		resp, callErr := conn.Transcribe(ctx, &r, a.Creds)
+		resp, callErr := conn.Transcribe(core.WithProxy(ctx, a.Creds), &r, a.Creds)
 		if callErr != nil {
 			if !p.noteMediaFailure(ctx, a, callErr) {
 				return nil, "", callErr
@@ -198,7 +198,7 @@ func (p *Pipeline) Synthesize(ctx context.Context, req *core.SpeechRequest, opts
 		}
 		r := *req
 		r.Model = a.Target.Model
-		resp, callErr := conn.Synthesize(ctx, &r, a.Creds)
+		resp, callErr := conn.Synthesize(core.WithProxy(ctx, a.Creds), &r, a.Creds)
 		if callErr != nil {
 			if !p.noteMediaFailure(ctx, a, callErr) {
 				return nil, "", callErr
@@ -232,7 +232,7 @@ func (p *Pipeline) Search(ctx context.Context, req *core.SearchRequest, opts Med
 		}
 		r := *req
 		r.Model = a.Target.Model
-		resp, callErr := conn.Search(ctx, &r, a.Creds)
+		resp, callErr := conn.Search(core.WithProxy(ctx, a.Creds), &r, a.Creds)
 		if callErr != nil {
 			if !p.noteMediaFailure(ctx, a, callErr) {
 				return nil, "", callErr
@@ -266,7 +266,7 @@ func (p *Pipeline) Fetch(ctx context.Context, req *core.FetchRequest, opts Media
 		}
 		r := *req
 		r.Model = a.Target.Model
-		resp, callErr := conn.Fetch(ctx, &r, a.Creds)
+		resp, callErr := conn.Fetch(core.WithProxy(ctx, a.Creds), &r, a.Creds)
 		if callErr != nil {
 			if !p.noteMediaFailure(ctx, a, callErr) {
 				return nil, "", callErr
@@ -304,7 +304,7 @@ func (p *Pipeline) GenerateVideo(ctx context.Context, req *core.VideoRequest, op
 		}
 		r := *req
 		r.Model = a.Target.Model
-		resp, callErr := conn.GenerateVideo(ctx, &r, a.Creds)
+		resp, callErr := conn.GenerateVideo(core.WithProxy(ctx, a.Creds), &r, a.Creds)
 		if callErr != nil {
 			// Record the failure for cooldown accounting but never retry the
 			// submission on another attempt — that could create a duplicate job.
@@ -339,7 +339,7 @@ func (p *Pipeline) PollVideo(ctx context.Context, req *core.VideoStatusRequest, 
 		}
 		r := *req
 		r.Model = a.Target.Model
-		resp, callErr := conn.PollVideo(ctx, &r, a.Creds)
+		resp, callErr := conn.PollVideo(core.WithProxy(ctx, a.Creds), &r, a.Creds)
 		if callErr != nil {
 			if !p.noteMediaFailure(ctx, a, callErr) {
 				return nil, "", callErr
@@ -386,7 +386,7 @@ func (p *Pipeline) UnderstandImage(ctx context.Context, req *core.ImageUnderstan
 
 func understandImage(ctx context.Context, attempt dispatch.Attempt, req *core.ImageUnderstandingRequest) (*core.ImageUnderstandingResponse, error) {
 	if conn, ok := attempt.Conn.(core.ImageUnderstandingConnector); ok {
-		return conn.UnderstandImage(ctx, req, attempt.Creds)
+		return conn.UnderstandImage(core.WithProxy(ctx, attempt.Creds), req, attempt.Creds)
 	}
 
 	content := make([]core.ContentPart, 0, len(req.Images)+1)
@@ -406,7 +406,7 @@ func understandImage(ctx context.Context, attempt dispatch.Attempt, req *core.Im
 		value := req.MaxTokens
 		maxTokens = &value
 	}
-	chatResp, err := attempt.Conn.Chat(ctx, &core.ChatRequest{
+	chatResp, err := attempt.Conn.Chat(core.WithProxy(ctx, attempt.Creds), &core.ChatRequest{
 		Model:     req.Model,
 		MaxTokens: maxTokens,
 		Messages: []core.Message{{
@@ -473,6 +473,7 @@ func (p *Pipeline) noteMediaFailure(ctx context.Context, a dispatch.Attempt, err
 	}
 	p.log.Warn("media attempt failed, falling back",
 		"provider", a.Target.Provider, "model", a.Target.Model, "kind", pe.Kind)
+	noteAttemptFailed(ctx, a.Target.Provider, a.Target.Model, pe)
 	return true
 }
 

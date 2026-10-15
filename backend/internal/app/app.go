@@ -12,15 +12,20 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mydisha/keirouter/backend/internal/audit"
 	"github.com/mydisha/keirouter/backend/internal/auth"
 	"github.com/mydisha/keirouter/backend/internal/budget"
 	"github.com/mydisha/keirouter/backend/internal/cache"
 	"github.com/mydisha/keirouter/backend/internal/config"
 	"github.com/mydisha/keirouter/backend/internal/connectors"
+	"github.com/mydisha/keirouter/backend/internal/consolelog"
 	"github.com/mydisha/keirouter/backend/internal/core"
 	"github.com/mydisha/keirouter/backend/internal/crypto"
 
@@ -70,6 +75,11 @@ type App struct {
 	marketURL          string
 	surplusURL         string
 	marketCache        *market.SnapshotCache
+	audit              *audit.Recorder
+	auditSweeper       *audit.Sweeper
+	// sharedState releases the redis limiter/budget resources; nil with the
+	// memory backend.
+	sharedState func()
 
 	// bg tracks long-lived background workers that touch the DB (oauth
 	// keepalive, health checker, cooldown sweeper) so shutdown can wait for
@@ -80,6 +90,7 @@ type App struct {
 // Build constructs the application from configuration. It opens the database,
 // applies migrations, initializes the crypto root, and wires the gateway.
 func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version string) (*App, error) {
+	applyMemoryLimit(log)
 	httputil.SetAllowPrivateBaseURL(cfg.Security.AllowPrivateBaseURL)
 
 	dataDir, err := resolveDataDir(cfg)
@@ -115,6 +126,8 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		return nil, fmt.Errorf("app: build sealer: %w", err)
 	}
 
+	auditRec, auditSweeper := buildAudit(cfg, db, masterKey, version, log)
+
 	// Construct services.
 	v := vault.New(sealer)
 	connRegistry := connectors.DefaultRegistry()
@@ -140,13 +153,20 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	pricing := buildPricing()
 	modelPrices := buildModelPrices(ctx, db, log)
 	mtr := meter.New(db.Usage(), pricing, modelPrices)
-	// Reprice deterministic legacy rows before serving analytics. Unknown or
-	// subscription-only models remain visibly unpriced instead of silently free.
-	if updated, backfillErr := mtr.BackfillUnpriced(ctx); backfillErr != nil {
-		log.Warn("usage price backfill failed", "err", backfillErr, "updated", updated)
-	} else if updated > 0 {
-		log.Info("usage price backfill completed", "updated", updated)
-	}
+	// Reprice deterministic legacy rows in the background so a large usage
+	// history (e.g. after a database restore) never delays the server from
+	// listening. Unknown or subscription-only models remain visibly unpriced
+	// instead of silently free.
+	go func() {
+		started := time.Now()
+		if updated, backfillErr := mtr.BackfillUnpriced(ctx); backfillErr != nil {
+			if ctx.Err() == nil {
+				log.Warn("usage price backfill failed", "err", backfillErr, "updated", updated)
+			}
+		} else if updated > 0 {
+			log.Info("usage price backfill completed", "updated", updated, "took", time.Since(started).Round(time.Millisecond))
+		}
+	}()
 	mtr.EnableAsync(meter.AsyncConfig{
 		Enabled:              cfg.Meter.Async,
 		BatchSize:            cfg.Meter.BatchSize,
@@ -158,6 +178,9 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	})
 	uh := usagehub.New()
 	mtr.SetHub(uh)
+	if auditRec.ExportsRequests() {
+		mtr.AddRecordObserver(auditRec.ObserveUsage)
+	}
 	bud := budget.New(db.Budgets(), db.Usage())
 	disp := dispatch.New(connRegistry, db.Accounts(), v)
 	// Refresh expiring OAuth access tokens just-in-time before each upstream
@@ -243,6 +266,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	}
 	proxyNotifier := gateway.NewProxyNotifier(proxyEnabled, proxyURL, noProxy)
 	disp.SetGlobalProxy(proxyNotifier)
+	oauth.SetGlobalProxy(proxyNotifier)
 
 	cfg.Limits.Enabled = true
 	if raw, err := db.Settings().Get(ctx, "endpoint_settings"); err == nil && raw != "" {
@@ -287,6 +311,31 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		})
 		log.Info("guardrails: PII Presidio engine enabled", "analyzer", cfg.Guardrails.PII.PresidioAnalyzerURL)
 	}
+	// Prompt injection: pattern layers always run. The ML classifier needs a
+	// sidecar URL, the semantic layer a real embeddings API (the hashing
+	// fallback can't measure meaning), and the LLM judge is attached once the
+	// gateway exists because it routes through KeiRouter's own providers.
+	injCfg := injection.Config{Logger: log}
+	if cfg.Guardrails.Injection.ClassifierURL != "" {
+		injCfg.Classifier = injection.NewClassifier(injection.ClassifierConfig{
+			URL:     cfg.Guardrails.Injection.ClassifierURL,
+			Timeout: cfg.Guardrails.Injection.ClassifierTimeout,
+			Labels:  cfg.Guardrails.Injection.ClassifierLabels,
+			APIKey:  cfg.Guardrails.Injection.ClassifierAPIKey,
+		})
+		log.Info("guardrails: injection classifier enabled", "url", cfg.Guardrails.Injection.ClassifierURL)
+	}
+	if cfg.Cache.EmbeddingProvider == "api" && cfg.Cache.EmbeddingAPIKey != "" {
+		injCfg.Embedder = embedder
+	}
+	injectionDetector := injection.NewWithConfig(injCfg)
+	// Topics: the embedding engine only makes sense with a real embeddings
+	// API; the LLM engine is attached with the gateway below.
+	var topicsEmbedder topics.Embedder
+	if cfg.Cache.EmbeddingProvider == "api" && cfg.Cache.EmbeddingAPIKey != "" {
+		topicsEmbedder = embedder
+	}
+	topicsDetector := topics.New(topics.Config{Embedder: topicsEmbedder})
 	// Per-tenant guardrails settings (currently just allow_external_engines).
 	guardrailTenantPolicy := guardrails.NewSettingsTenantPolicy(db.Settings(), 30*time.Second)
 	guardrailEngine := guardrails.NewEngine(guardrails.EngineConfig{
@@ -294,8 +343,8 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		Audit:    guardrailAudit,
 		Detectors: []guardrails.Detector{
 			pii.NewWithConfig(piiCfg),
-			injection.New(),
-			topics.New(topics.Config{Embedder: embedder}),
+			injectionDetector,
+			topicsDetector,
 			toxicity.New(toxCfg),
 			bias.New(),
 		},
@@ -313,14 +362,21 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		log.Info("guardrails: audit retention sweeper started", "days", cfg.Guardrails.AuditRetentionDays)
 	}
 
-	limiter := limits.NewMemory(limits.MemoryConfig{
-		Enabled:         cfg.Limits.Enabled,
-		Window:          cfg.Limits.Window,
-		CleanupInterval: cfg.Limits.CleanupInterval,
-	})
+	// Tunable options start from config.yaml; the gateway overlays any
+	// dashboard overrides when it is constructed.
+	limiter, sharedState, err := buildLimiter(ctx, cfg, bud, mtr, log)
+	if err != nil {
+		return nil, err
+	}
 
 	// Actionable provider health dashboard: real-traffic telemetry aggregation
 	// + synthetic probe runner. Best-effort, never blocks the request path.
+	// Dashboard console: background components mirror their warnings into it
+	// so operators see refresh failures, health and tunnel problems next to
+	// request traffic.
+	conLog := consolelog.New()
+	sysLog := func(source string) *slog.Logger { return consolelog.Tee(log, conLog, slog.LevelWarn, source) }
+
 	healthSvc := health.New(health.Config{
 		Enabled:              cfg.ProviderHealth.Enabled,
 		QueueSize:            cfg.ProviderHealth.QueueSize,
@@ -328,9 +384,10 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		SnapshotInterval:     cfg.ProviderHealth.SnapshotInterval,
 		RollingWindow:        cfg.ProviderHealth.RollingWindow,
 		LatencyThresholds:    cfg.ProviderHealth.LatencyThresholds,
-	}, log, db.ProviderHealth())
-	probeRunner := health.NewProbeRunner(log, db.ProviderHealth(), db.Accounts(), connRegistry, v,
+	}, sysLog("health"), db.ProviderHealth())
+	probeRunner := health.NewProbeRunner(sysLog("health"), db.ProviderHealth(), db.Accounts(), connRegistry, v,
 		cfg.ProviderHealth.LatencyThresholds, cfg.ProviderHealth.ProbeTimeout)
+	probeRunner.SetCredentialPreparer(disp)
 
 	pipe := pipeline.New(pipeline.Deps{
 		Dispatcher:         disp,
@@ -357,12 +414,13 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	}
 
 	// Tunnel managers for Cloudflare quick tunnel and Tailscale funnel.
-	cfManager := cloudflare.NewManager(dataDir, cfg.Server.Port, log)
-	tsManager := tailscale.NewManager(dataDir, cfg.Server.Port, log)
+	cfManager := cloudflare.NewManager(dataDir, cfg.Server.Port, sysLog("tunnel"))
+	tsManager := tailscale.NewManager(dataDir, cfg.Server.Port, sysLog("tunnel"))
 
 	// Background OAuth token keepalive. Proactively refreshes near-expiry
 	// tokens every 30 minutes so requests never hit a stale token.
-	keepAlive := oauth.NewKeepAlive(tokenRefresher, db.Accounts(), store.DefaultTenantID, log)
+	keepAlive := oauth.NewKeepAlive(tokenRefresher, db.Accounts(), store.DefaultTenantID, sysLog("oauth"))
+	keepAlive.SetEgress(disp.EgressContext)
 
 	healthChecker := healthcheck.New(healthcheck.Config{
 		Enabled:              cfg.Health.Enabled,
@@ -373,7 +431,8 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		SuccessThreshold:     cfg.Health.SuccessThreshold,
 		RecentModelWindow:    cfg.Health.RecentModelWindow,
 		MaxModelsPerProvider: cfg.Health.MaxModelsPerProvider,
-	}, log, db.Accounts(), db.Health(), connRegistry, v)
+	}, sysLog("health"), db.Accounts(), db.Health(), connRegistry, v)
+	healthChecker.SetCredentialPreparer(disp.PrepareCredentials)
 
 	reloadPricing := func(reloadCtx context.Context) error {
 		mtr.ReplacePrices(buildPricing(), buildModelPrices(reloadCtx, db, log))
@@ -392,48 +451,51 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	app := &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, reloadPricing: reloadPricing, marketURL: "", surplusURL: "", marketCache: marketCache}
 
 	gw := gateway.New(gateway.Deps{
-		Config:               cfg,
-		Logger:               log,
-		Version:              version,
-		Updates:              update.NewChecker(version, ""),
-		DB:                   db,
-		Identity:             idSvc,
-		Auth:                 authSvc,
-		Pipeline:             pipe,
-		Conns:                connRegistry,
-		Chains:               db.Chains(),
-		Aliases:              db.Aliases(),
-		Accounts:             db.Accounts(),
-		Pools:                db.ProxyPools(),
-		Budgets:              db.Budgets(),
-		BudgetEngine:         bud,
-		Usage:                db.Usage(),
-		Resources:            db.Resources(),
-		Settings:             db.Settings(),
-		Vault:                v,
-		Codecs:               codecs,
-		Metrics:              metrics,
-		FrontendDir:          frontendDir,
-		DataDir:              dataDir,
-		CfManager:            cfManager,
-		TsManager:            tsManager,
-		UsageHub:             uh,
-		TimeoutNotifier:      timeoutNotifier,
-		ProxyNotifier:        proxyNotifier,
-		RateLimiter:          limiter,
-		Refresher:            tokenRefresher,
-		ReloadPricing:        reloadPricing,
-		SyncMarketPrices:     app.syncChainMarketPrices,
-		MarketCache:          app.MarketCache(),
-		Guardrails:           guardrailEngine,
-		GuardrailRepo:        db.Guardrails(),
-		GuardrailLogs:        db.GuardrailLogs(),
-		GuardrailHub:         guardrailLogHub,
-		GuardrailTenantFlags: guardrailTenantPolicy,
-		Health:               db.Health(),
-		HealthChecker:        healthChecker,
-		ProviderHealth:       healthSvc,
-		ProbeRunner:          probeRunner,
+		Config:                 cfg,
+		Logger:                 log,
+		ConsoleLog:             conLog,
+		Version:                version,
+		Updates:                update.NewChecker(version, ""),
+		DB:                     db,
+		Identity:               idSvc,
+		Auth:                   authSvc,
+		Audit:                  auditRec,
+		Pipeline:               pipe,
+		Conns:                  connRegistry,
+		Chains:                 db.Chains(),
+		Aliases:                db.Aliases(),
+		Accounts:               db.Accounts(),
+		Pools:                  db.ProxyPools(),
+		Budgets:                db.Budgets(),
+		BudgetEngine:           bud,
+		Usage:                  db.Usage(),
+		Resources:              db.Resources(),
+		Settings:               db.Settings(),
+		Vault:                  v,
+		Codecs:                 codecs,
+		Metrics:                metrics,
+		FrontendDir:            frontendDir,
+		DataDir:                dataDir,
+		CfManager:              cfManager,
+		TsManager:              tsManager,
+		UsageHub:               uh,
+		TimeoutNotifier:        timeoutNotifier,
+		ProxyNotifier:          proxyNotifier,
+		RateLimiter:            limiter,
+		Refresher:              tokenRefresher,
+		ReloadPricing:          reloadPricing,
+		SyncMarketPrices:       app.syncChainMarketPrices,
+		MarketCache:            app.MarketCache(),
+		Guardrails:             guardrailEngine,
+		GuardrailRepo:          db.Guardrails(),
+		GuardrailLogs:          db.GuardrailLogs(),
+		GuardrailHub:           guardrailLogHub,
+		GuardrailTenantFlags:   guardrailTenantPolicy,
+		GuardrailRetentionDays: cfg.Guardrails.AuditRetentionDays,
+		Health:                 db.Health(),
+		HealthChecker:          healthChecker,
+		ProviderHealth:         healthSvc,
+		ProbeRunner:            probeRunner,
 	})
 
 	srv := &http.Server{
@@ -442,15 +504,132 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		ReadHeaderTimeout: 15 * time.Second,
 		// No WriteTimeout: streaming responses are long-lived; the stall
 		// timeout is enforced per-stream inside the connectors instead.
+		// IdleTimeout reaps keep-alive client connections that went quiet so
+		// abandoned SDK pools do not pin file descriptors forever.
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
+
+	// The LLM judges (prompt injection, topics) route through the gateway's
+	// own model resolution, so they can only be attached now.
+	injectionDetector.SetCompleter(gw)
+	topicsDetector.SetCompleter(gw)
 
 	// Auto-seed accounts for free, no-auth providers so they are immediately
 	// usable without a manual "connect" step in the dashboard.
 	seedFreeAccounts(ctx, db.Accounts(), log)
 
-	app = &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), server: srv, keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, reloadPricing: reloadPricing, marketURL: "", surplusURL: "", marketCache: marketCache}
+	app = &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), server: srv, keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, reloadPricing: reloadPricing, marketURL: "", surplusURL: "", marketCache: marketCache, audit: auditRec, auditSweeper: auditSweeper, sharedState: sharedState}
 
 	return app, nil
+}
+
+// keyLimiter is the per-key limiter surface the pipeline and gateway need.
+type keyLimiter interface {
+	limits.Limiter
+	gateway.RateLimitController
+}
+
+// buildLimiter builds the per-key limiter. With limits.backend=redis it also
+// moves budget spend onto shared redis counters, so every replica behind a
+// load balancer enforces the same RPM/TPM windows, concurrency pool and
+// budgets. The returned closer releases the redis resources (nil for memory).
+func buildLimiter(ctx context.Context, cfg config.Config, bud *budget.Engine, mtr *meter.Meter, log *slog.Logger) (keyLimiter, func(), error) {
+	opts := limits.Options{
+		ReconcileTokens:       cfg.Limits.ReconcileTokens,
+		OutputTokenFloor:      cfg.Limits.OutputTokenFloor,
+		OutputReserveCap:      cfg.Limits.OutputReserveCap,
+		ConcurrencyRetryAfter: cfg.Limits.ConcurrencyRetryAfter,
+	}
+	if cfg.Limits.Backend != "redis" {
+		return limits.NewMemory(limits.MemoryConfig{
+			Enabled:         cfg.Limits.Enabled,
+			Window:          cfg.Limits.Window,
+			CleanupInterval: cfg.Limits.CleanupInterval,
+			Options:         opts,
+		}), nil, nil
+	}
+
+	ropts, err := redis.ParseURL(cfg.Limits.RedisURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("app: limits.redis_url: %w", err)
+	}
+	// Honour the per-call deadlines on the request path instead of the
+	// client's multi-second socket timeouts.
+	ropts.ContextTimeoutEnabled = true
+	client := redis.NewClient(ropts)
+	pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	if err := client.Ping(pingCtx).Err(); err != nil {
+		// Not fatal: requests follow limits.fail_mode until redis answers.
+		log.Warn("limits: redis unreachable at startup", "addr", ropts.Addr, "fail_mode", cfg.Limits.FailMode, "err", err)
+	}
+
+	rl := limits.NewRedis(limits.RedisConfig{
+		Client:   client,
+		Enabled:  cfg.Limits.Enabled,
+		Window:   cfg.Limits.Window,
+		Options:  opts,
+		LeaseTTL: cfg.Limits.LeaseTTL,
+		Timeout:  cfg.Limits.RedisTimeout,
+		FailMode: cfg.Limits.FailMode,
+		Logger:   log,
+	})
+	bud.EnableSharedCounter(budget.NewRedisCounter(client, cfg.Limits.RedisTimeout, log), cfg.Limits.BudgetCounterTTL, log)
+	mtr.AddRecordObserver(bud.ObserveUsage)
+	log.Info("limits: shared redis backend (rate limits, concurrency, budgets)",
+		"addr", ropts.Addr, "fail_mode", cfg.Limits.FailMode)
+	return rl, func() {
+		bud.Close()
+		rl.Close()
+		_ = client.Close()
+	}, nil
+}
+
+// buildAudit starts the audit recorder (and its OTLP exporter and retention
+// sweeper) when audit.enabled is set; both results are nil otherwise.
+func buildAudit(cfg config.Config, db *store.DB, masterKey []byte, version string, log *slog.Logger) (*audit.Recorder, *audit.Sweeper) {
+	if !cfg.Audit.Enabled {
+		return nil, nil
+	}
+	instanceID := audit.NewInstanceID()
+	var exp audit.Exporter
+	otlpCfg, ok, err := audit.ResolveOTLPConfig(cfg.Audit.OTLP, version, instanceID, os.Getenv)
+	switch {
+	case err != nil:
+		log.Warn("audit: OTLP export disabled", "err", err)
+	case ok:
+		otlpCfg.Logger = log
+		exp = audit.NewOTLPExporter(otlpCfg)
+		log.Info("audit: exporting events as OTLP logs", "endpoint", otlpCfg.URL)
+	}
+	var requests audit.UsageExporter
+	if exp != nil && cfg.Audit.OTLP.IncludeRequests {
+		requests = audit.NewOTLPExporter(audit.RequestExporterConfig(otlpCfg))
+		log.Info("audit: exporting every gateway request as OTLP logs", "endpoint", otlpCfg.URL)
+	} else if cfg.Audit.OTLP.IncludeRequests {
+		log.Warn("audit: include_requests is set but no OTLP endpoint is configured; requests are not exported")
+	}
+	rec := audit.New(db.Audit(), exp, audit.Config{
+		BufferSize:      cfg.Audit.BufferSize,
+		Key:             audit.DeriveKey(masterKey),
+		InstanceID:      instanceID,
+		DefaultTenantID: store.DefaultTenantID,
+		Requests:        requests,
+		Logger:          log,
+	})
+	rec.Record(audit.Event{
+		Action: "system.start", ActorType: audit.ActorSystem, ActorID: "system", ResourceType: "system",
+		Details: map[string]string{
+			"version":        version,
+			"instance_id":    instanceID,
+			"database":       cfg.Database.Driver,
+			"limits_backend": cfg.Limits.Backend,
+		},
+	})
+	sweeper := audit.NewSweeper(db.Audit(), log, time.Duration(cfg.Audit.RetentionDays)*24*time.Hour)
+	sweeper.Start()
+	return rec, sweeper
 }
 
 // seedFreeAccounts auto-creates a default account for providers that are free
@@ -575,8 +754,14 @@ func (a *App) Run(ctx context.Context) error {
 		a.log.Info("shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
+		// A long-lived stream can outlast the grace period. That is not a
+		// reason to skip draining usage, telemetry and audit queues: the
+		// connections are closed forcibly and the drain still runs.
+		var shutdownErr error
 		if err := a.server.Shutdown(shutdownCtx); err != nil {
-			return err
+			a.log.Warn("graceful shutdown exceeded grace period; closing active connections", "err", err)
+			_ = a.server.Close()
+			shutdownErr = err
 		}
 		// Wait for background workers that query the DB (oauth keepalive, health
 		// checker, cooldown sweeper) to return before closing the store. They
@@ -595,10 +780,19 @@ func (a *App) Run(ctx context.Context) error {
 		if a.meter != nil {
 			a.meter.Close(a.cfg.Meter.ShutdownFlushTimeout)
 		}
+		a.auditSweeper.Stop(2 * time.Second)
+		a.audit.Record(audit.Event{Action: "system.stop", ActorType: audit.ActorSystem, ActorID: "system", ResourceType: "system"})
+		a.audit.Stop(5 * time.Second)
+		if a.sharedState != nil {
+			a.sharedState()
+		}
 		if a.providerHealth != nil {
 			a.providerHealth.Close(5 * time.Second)
 		}
-		return a.db.Close()
+		if err := a.db.Close(); err != nil {
+			return err
+		}
+		return shutdownErr
 	case err := <-errCh:
 		return err
 	}
@@ -749,6 +943,14 @@ func loadCustomProviders(ctx context.Context, db *store.DB, log *slog.Logger) {
 		connectors.RegisterDynamicProvider(connectors.DynamicProvider{
 			ID: p.ID, DisplayName: p.DisplayName, Alias: p.Alias, Dialect: dialect, BaseURL: p.BaseURL,
 		})
+		// A release may add a built-in provider whose ID or alias matches an
+		// existing custom alias. The custom provider keeps the alias (see
+		// connectors.SpecByAlias); say so, since the built-in is then only
+		// reachable by renaming the custom alias.
+		if b, ok := connectors.BuiltinSpecByAlias(p.Alias); ok && p.Alias != "" {
+			log.Warn("custom provider alias shadows a built-in provider; "+p.Alias+"/<model> keeps routing to the custom provider. Rename the custom alias to use the built-in.",
+				"custom_provider", p.DisplayName, "alias", p.Alias, "builtin_provider", b.ID)
+		}
 	}
 
 	models, err := repo.ListModels(ctx, store.DefaultTenantID)
@@ -825,6 +1027,26 @@ func (a *App) runCooldownSweeper(ctx context.Context) {
 	}
 }
 
+// applyProviderPriceDefaults fills price classes the catalogue entries do not
+// spell out but the provider bills: Anthropic 1h cache writes at 2× input and
+// web search at $10 per 1,000 searches; Gemini grounding at $35 per 1,000
+// grounded prompts. Explicit catalogue values win.
+func applyProviderPriceDefaults(provider, model string, p *meter.Price) {
+	switch provider {
+	case "anthropic", "claude", "claude-code":
+		if p.CacheWrite1hPerM == 0 && p.InputPerM > 0 {
+			p.CacheWrite1hPerM = p.InputPerM * 2
+		}
+		if p.WebSearchPerK == 0 && strings.HasPrefix(strings.ToLower(model), "claude") {
+			p.WebSearchPerK = 10
+		}
+	case "gemini", "gemini-cli", "vertex":
+		if p.WebSearchPerK == 0 && strings.HasPrefix(strings.ToLower(model), "gemini") {
+			p.WebSearchPerK = 35
+		}
+	}
+}
+
 // buildModelPrices builds the per-model pricing table from the connector model prices.
 func buildModelPrices(ctx context.Context, db *store.DB, log *slog.Logger) map[string]meter.Price {
 	out := make(map[string]meter.Price)
@@ -834,15 +1056,17 @@ func buildModelPrices(ctx context.Context, db *store.DB, log *slog.Logger) map[s
 			source = "catalog"
 		}
 		estimated := mp.Estimated || mp.Provider == "kiro"
-		out[mp.Provider+"/"+mp.Model] = meter.Price{
+		price := meter.Price{
 			InputPerM: mp.InputPerM, OutputPerM: mp.OutputPerM,
 			CachedInputPerM: mp.CachedInputPerM, CacheWritePerM: mp.CacheWritePerM,
-			ReasoningPerM:        mp.ReasoningPerM,
+			ReasoningPerM: mp.ReasoningPerM, CacheWrite1hPerM: mp.CacheWrite1hPerM, WebSearchPerK: mp.WebSearchPerK,
 			LongContextThreshold: mp.LongContextThreshold,
 			LongInputPerM:        mp.LongInputPerM, LongOutputPerM: mp.LongOutputPerM,
 			LongCachedInputPerM: mp.LongCachedInputPerM, LongCacheWritePerM: mp.LongCacheWritePerM,
 			Source: source, SourceURL: mp.SourceURL, Estimated: estimated, ExplicitFree: mp.ExplicitFree,
 		}
+		applyProviderPriceDefaults(mp.Provider, mp.Model, &price)
+		out[mp.Provider+"/"+mp.Model] = price
 	}
 	// User-entered custom prices are the highest-priority exact match. Imported
 	// zero values mean "unknown", not free, and intentionally do not override a

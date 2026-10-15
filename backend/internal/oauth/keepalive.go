@@ -2,10 +2,14 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
@@ -31,6 +35,22 @@ type KeepAlive struct {
 	tenantID    string
 	log         *slog.Logger
 	maxParallel int
+
+	// lastFailSig fingerprints the previous pass's failures so an unchanged,
+	// persistent failure set is logged once instead of every interval.
+	// Only touched from the serial refresh path.
+	lastFailSig    string
+	failedRepeated bool
+
+	// egress, when set, routes each refresh through the account's proxy
+	// pool so background refreshes leave from the same IP as its traffic.
+	egress func(ctx context.Context, acc store.Account) (context.Context, error)
+}
+
+// SetEgress installs the per-account egress resolver (the dispatcher's
+// EgressContext).
+func (k *KeepAlive) SetEgress(fn func(ctx context.Context, acc store.Account) (context.Context, error)) {
+	k.egress = fn
 }
 
 // NewKeepAlive builds a KeepAlive.
@@ -93,7 +113,11 @@ func (k *KeepAlive) refreshAll(ctx context.Context) {
 	refreshed, skipped, failed, reconnect := k.refreshAccounts(ctx, accs)
 
 	if refreshed > 0 || failed > 0 || reconnect > 0 {
-		k.log.Info("oauth keepalive pass complete",
+		level := slog.LevelInfo
+		if refreshed == 0 && k.failedRepeated {
+			level = slog.LevelDebug
+		}
+		k.log.Log(ctx, level, "oauth keepalive pass complete",
 			"refreshed", refreshed,
 			"skipped", skipped,
 			"failed", failed,
@@ -108,7 +132,7 @@ func (k *KeepAlive) refreshAccounts(ctx context.Context, accs []store.Account) (
 		maxParallel = DefaultKeepAliveMaxParallel
 	}
 	sem := make(chan struct{}, maxParallel)
-	results := make(chan bool, len(accs))
+	results := make(chan refreshResult, len(accs))
 	var wg sync.WaitGroup
 
 	for _, acc := range accs {
@@ -140,32 +164,116 @@ func (k *KeepAlive) refreshAccounts(ctx context.Context, accs []store.Account) (
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				results <- false
+				results <- refreshResult{acc: acc, err: ctx.Err()}
 				return
 			}
 
-			_, err := k.tokenMgr.ForceRefresh(ctx, acc)
-			if err != nil {
-				k.log.Warn("oauth keepalive: refresh failed",
-					"account", acc.ID,
-					"provider", acc.Provider,
-					"err", err,
-				)
-				results <- false
-				return
+			refreshCtx := ctx
+			if k.egress != nil {
+				ectx, err := k.egress(ctx, acc)
+				if err != nil {
+					results <- refreshResult{acc: acc, err: err}
+					return
+				}
+				refreshCtx = ectx
 			}
-			k.log.Debug("oauth keepalive: refreshed", "account", acc.ID, "provider", acc.Provider)
-			results <- true
+			_, err := k.tokenMgr.ForceRefresh(refreshCtx, acc)
+			if err == nil {
+				k.log.Debug("oauth keepalive: refreshed", "account", acc.ID, "provider", acc.Provider)
+			}
+			results <- refreshResult{acc: acc, err: err}
 		}()
 	}
 	wg.Wait()
 	close(results)
-	for ok := range results {
-		if ok {
+	var fails []refreshResult
+	for res := range results {
+		if res.err == nil {
 			refreshed++
 		} else {
 			failed++
+			fails = append(fails, res)
 		}
 	}
+	k.reportFailures(fails)
 	return refreshed, skipped, failed, reconnect
+}
+
+type refreshResult struct {
+	acc store.Account
+	err error
+}
+
+// reportFailures logs one line per distinct failure cause instead of one per
+// account, so a shared root cause (e.g. a rotated master key) doesn't flood the
+// console. A failure set identical to the previous pass is demoted to debug.
+func (k *KeepAlive) reportFailures(fails []refreshResult) {
+	type group struct {
+		cause     string
+		accounts  []string
+		providers []string
+	}
+	byCause := map[string]*group{}
+	var order []string
+	for _, f := range fails {
+		cause := failureCause(f.acc, f.err)
+		g, ok := byCause[cause]
+		if !ok {
+			g = &group{cause: cause}
+			byCause[cause] = g
+			order = append(order, cause)
+		}
+		g.accounts = append(g.accounts, f.acc.ID)
+		if !containsString(g.providers, f.acc.Provider) {
+			g.providers = append(g.providers, f.acc.Provider)
+		}
+	}
+	sort.Strings(order)
+
+	var sig strings.Builder
+	for _, c := range order {
+		g := byCause[c]
+		sort.Strings(g.accounts)
+		sig.WriteString(c)
+		sig.WriteString(strings.Join(g.accounts, ","))
+		sig.WriteByte(';')
+	}
+	k.failedRepeated = len(fails) > 0 && sig.String() == k.lastFailSig
+	k.lastFailSig = sig.String()
+
+	level := slog.LevelWarn
+	if k.failedRepeated {
+		level = slog.LevelDebug
+	}
+	for _, c := range order {
+		g := byCause[c]
+		sort.Strings(g.providers)
+		attrs := []any{"provider", strings.Join(g.providers, ",")}
+		if len(g.accounts) == 1 {
+			attrs = append(attrs, "account", g.accounts[0])
+		} else {
+			attrs = append(attrs, "accounts", len(g.accounts))
+		}
+		attrs = append(attrs, "err", g.cause)
+		k.log.Log(context.Background(), level, "oauth keepalive: refresh failed", attrs...)
+	}
+}
+
+// failureCause turns a refresh error into an account-independent, readable
+// cause so failures sharing a root cause group together.
+func failureCause(acc store.Account, err error) string {
+	if errors.Is(err, crypto.ErrMalformedCiphertext) {
+		return "stored refresh token cannot be decrypted (master key changed?) — reconnect the account"
+	}
+	msg := strings.ReplaceAll(err.Error(), " for account "+acc.ID, "")
+	return strings.ReplaceAll(msg, acc.ID, "<account>")
+}
+
+func containsString(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

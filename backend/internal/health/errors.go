@@ -56,8 +56,11 @@ func ClassifyError(pe *core.ProviderError) ProviderErrorType {
 		}
 		return ProviderErrorProvider5xx
 	case core.ErrModelUnavailable, core.ErrCapability:
+		if isAccountRoutingMessage(pe.Message) {
+			return ProviderErrorAuth
+		}
 		return ProviderErrorUnsupported
-	case core.ErrBadRequest:
+	case core.ErrBadRequest, core.ErrContextWindow, core.ErrContentFilter:
 		if isUnsupportedMessage(pe.Message) {
 			return ProviderErrorUnsupported
 		}
@@ -78,6 +81,16 @@ func isUnsupportedMessage(msg string) bool {
 		strings.Contains(m, "not supported") ||
 		strings.Contains(m, "unsupported model") ||
 		strings.Contains(m, "model_not_found")
+}
+
+// isAccountRoutingMessage detects a 404 caused by a wrong or missing account
+// identifier in the upstream URL rather than by the model. Cloudflare answers
+// an unknown account id with error 7003 "Could not route to
+// /client/v4/accounts/<id>/..., perhaps your object identifier is invalid?";
+// the fix is the account's credentials, not the model choice.
+func isAccountRoutingMessage(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "could not route to") && strings.Contains(m, "object identifier")
 }
 
 // ErrorSeverityScore returns the 0-100 quality score contribution for an error

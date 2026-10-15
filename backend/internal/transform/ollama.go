@@ -74,7 +74,7 @@ type ollamaResponse struct {
 
 func (OllamaCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	var raw ollamaRequest
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := json.UnmarshalNoCopy(body, &raw); err != nil {
 		return nil, fmt.Errorf("ollama: parse request: %w", err)
 	}
 
@@ -240,7 +240,7 @@ func renderOllamaMessage(m core.Message, idToName map[string]string) []ollamaMes
 
 func (OllamaCodec) ParseResponse(body []byte, model string) (*core.ChatResponse, error) {
 	var raw ollamaResponse
-	if err := json.Unmarshal(body, &raw); err != nil {
+	if err := json.UnmarshalNoCopy(body, &raw); err != nil {
 		return nil, fmt.Errorf("ollama: parse response: %w", err)
 	}
 
@@ -344,7 +344,7 @@ func (OllamaCodec) ParseStreamLine(line []byte, model string) ([]core.StreamChun
 		return nil, nil
 	}
 	var raw ollamaResponse
-	if err := json.Unmarshal(line, &raw); err != nil {
+	if err := json.UnmarshalNoCopy(line, &raw); err != nil {
 		return nil, fmt.Errorf("ollama: parse stream line: %w", err)
 	}
 

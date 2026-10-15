@@ -14,7 +14,9 @@ import (
 	"database/sql"
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib" // database/sql driver registered as "pgx"
@@ -113,14 +115,42 @@ func Open(ctx context.Context, cfg config.DatabaseConfig, dataDir string) (*DB, 
 		return nil, fmt.Errorf("store: ping %s: %w", dialect, err)
 	}
 
-	db := &DB{sql: sqlDB, dialect: dialect, sqlitePath: sqliteFilePath}
-	if dialect == DialectSQLite {
-		if err := db.applySQLitePragmas(ctx); err != nil {
-			_ = sqlDB.Close()
-			return nil, err
+	return &DB{sql: sqlDB, dialect: dialect, sqlitePath: sqliteFilePath}, nil
+}
+
+// SQLite connection pragmas. They are per-connection state, so they travel in
+// the DSN and the driver applies them to every connection the pool opens;
+// running them once through *sql.DB would only reach whichever connection
+// happened to serve that statement.
+const (
+	// sqliteCacheKiB is the page cache per connection (negative cache_size is
+	// KiB). The pool holds up to max(GOMAXPROCS, 8) connections and each cache
+	// fills lazily, so 8 MiB keeps the worst case near 100 MiB.
+	sqliteCacheKiB = 8 * 1024
+	// sqliteMmapBytes caps memory-mapped reads. Mapped pages are file-backed
+	// and reclaimable but still show up as process RSS, so the window stays
+	// modest rather than covering a large usage history.
+	sqliteMmapBytes = 64 << 20
+)
+
+// sqliteConnPragmas apply to file and in-memory databases alike.
+var sqliteConnPragmas = []string{
+	"busy_timeout(5000)",
+	"foreign_keys(ON)",
+	"temp_store(MEMORY)",
+	fmt.Sprintf("cache_size(-%d)", sqliteCacheKiB),
+}
+
+func sqlitePragmaQuery(pragmas []string) string {
+	var b strings.Builder
+	for i, p := range pragmas {
+		if i > 0 {
+			b.WriteByte('&')
 		}
+		b.WriteString("_pragma=")
+		b.WriteString(p)
 	}
-	return db, nil
+	return b.String()
 }
 
 // sqliteDSN builds the SQLite connection string. An empty DSN defaults to a
@@ -146,29 +176,16 @@ func sqliteDSNFromPath(path string) string {
 		// cross-test UNIQUE-constraint violations.
 		b := make([]byte, 8)
 		_, _ = rand.Read(b)
-		return fmt.Sprintf("file:mem_%x?mode=memory&cache=shared", b)
+		return fmt.Sprintf("file:mem_%x?mode=memory&cache=shared&%s", b, sqlitePragmaQuery(sqliteConnPragmas))
 	}
-	// WAL + busy timeout improve concurrent read/write behavior.
-	return "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(ON)"
-}
-
-func (db *DB) applySQLitePragmas(ctx context.Context) error {
-	pragmas := []string{
-		"PRAGMA foreign_keys = ON;",
-		"PRAGMA journal_mode = WAL;",
-		"PRAGMA synchronous = NORMAL;",
-		"PRAGMA temp_store = MEMORY;",
-		"PRAGMA cache_size = -32768;",
-	}
-	if db.sqlitePath != ":memory:" {
-		pragmas = append(pragmas, "PRAGMA mmap_size = 268435456;")
-	}
-	for _, p := range pragmas {
-		if _, err := db.sql.ExecContext(ctx, p); err != nil {
-			return fmt.Errorf("store: pragma %q: %w", p, err)
-		}
-	}
-	return nil
+	// WAL lets readers proceed during a write; synchronous=NORMAL is the
+	// durable-enough pairing for WAL and avoids an fsync on every commit.
+	pragmas := append(slices.Clone(sqliteConnPragmas),
+		"journal_mode(WAL)",
+		"synchronous(NORMAL)",
+		fmt.Sprintf("mmap_size(%d)", sqliteMmapBytes),
+	)
+	return "file:" + path + "?" + sqlitePragmaQuery(pragmas)
 }
 
 // SQL exposes the underlying handle for repositories within this package.
@@ -192,9 +209,12 @@ func (db *DB) Close() error { return db.sql.Close() }
 // epochExpr returns a dialect-specific SQL expression that converts a TEXT
 // RFC3339 timestamp (column or placeholder) to unix-epoch seconds. SQLite has
 // strftime; Postgres needs an explicit cast to timestamptz before EXTRACT.
+// The Postgres result is cast to BIGINT because EXTRACT yields NUMERIC: bucket
+// math like CAST((a-b)/? AS INTEGER) would then round instead of truncating
+// the way SQLite's integer division does, shifting rows into the next bucket.
 func (db *DB) epochExpr(operand string) string {
 	if db.dialect == DialectPostgres {
-		return "EXTRACT(EPOCH FROM " + operand + "::timestamptz)"
+		return "CAST(EXTRACT(EPOCH FROM " + operand + "::timestamptz) AS BIGINT)"
 	}
 	return "strftime('%s', " + operand + ")"
 }

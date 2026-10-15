@@ -259,11 +259,11 @@ func newGuardrailTestRateLimiter(capacity int, window time.Duration) *guardrailT
 	}
 }
 
-// allow consumes one token from the bucket for key. Returns false when the
-// bucket is empty.
-func (l *guardrailTestRateLimiter) allow(key string) bool {
+// allow consumes one token from the bucket for key. When the bucket is
+// empty it returns false and how long until the next token is available.
+func (l *guardrailTestRateLimiter) allow(key string) (bool, time.Duration) {
 	if l == nil || key == "" {
-		return true
+		return true, 0
 	}
 	now := time.Now()
 	l.mu.Lock()
@@ -274,18 +274,17 @@ func (l *guardrailTestRateLimiter) allow(key string) bool {
 		l.buckets[key] = b
 	}
 	// Refill since last call.
-	elapsed := now.Sub(b.last).Seconds()
-	refill := elapsed * float64(l.capacity) / l.window.Seconds()
-	b.tokens += refill
+	perSecond := float64(l.capacity) / l.window.Seconds()
+	b.tokens += now.Sub(b.last).Seconds() * perSecond
 	if b.tokens > float64(l.capacity) {
 		b.tokens = float64(l.capacity)
 	}
 	b.last = now
 	if b.tokens < 1 {
-		return false
+		return false, time.Duration((1 - b.tokens) / perSecond * float64(time.Second))
 	}
 	b.tokens--
-	return true
+	return true, 0
 }
 
 // rateLimitKeyFor derives a per-caller bucket key. We prefer the dashboard

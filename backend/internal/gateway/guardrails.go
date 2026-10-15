@@ -5,7 +5,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,11 +36,13 @@ func (s *Server) mountGuardrails(r chi.Router) {
 	r.Post("/guardrails", s.adminCreateGuardrail)
 	r.Get("/guardrails/effective", s.adminEffectiveGuardrail)
 	r.Get("/guardrails/entities", s.adminListGuardrailEntities)
+	r.Get("/guardrails/capabilities", s.adminGuardrailCapabilities)
 	r.Get("/guardrails/templates", s.adminListGuardrailTemplates)
 	r.Get("/guardrails/export", s.adminExportGuardrails)
 	r.Post("/guardrails/import", s.adminImportGuardrails)
 	r.Get("/guardrails/tenant-flags", s.adminGetGuardrailTenantFlags)
 	r.Put("/guardrails/tenant-flags", s.adminPutGuardrailTenantFlags)
+	r.Get("/guardrails/stats", s.adminGuardrailStats)
 	r.Get("/guardrails/logs", s.adminListGuardrailLogs)
 	r.Get("/guardrails/logs/stream", s.adminGuardrailLogStream)
 	r.Post("/guardrails/test", s.adminTestGuardrail)
@@ -48,14 +53,14 @@ func (s *Server) mountGuardrails(r chi.Router) {
 
 // guardrailDTO is the JSON shape exchanged with the dashboard.
 type guardrailDTO struct {
-	ID        string             `json:"id"`
-	Name      string             `json:"name"`
-	Scope     string             `json:"scope"`
-	ScopeID   string             `json:"scope_id"`
-	Enabled   bool               `json:"enabled"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	Scope     string            `json:"scope"`
+	ScopeID   string            `json:"scope_id"`
+	Enabled   bool              `json:"enabled"`
 	Config    guardrails.Policy `json:"config"`
-	CreatedAt string             `json:"created_at"`
-	UpdatedAt string             `json:"updated_at"`
+	CreatedAt string            `json:"created_at"`
+	UpdatedAt string            `json:"updated_at"`
 }
 
 func toDTO(p store.GuardrailPolicy) guardrailDTO {
@@ -250,9 +255,18 @@ func (s *Server) adminListGuardrailLogs(w http.ResponseWriter, r *http.Request) 
 	}
 	q := r.URL.Query()
 	f := store.GuardrailLogFilter{
-		APIKeyID: q.Get("api_key_id"),
-		Detector: q.Get("detector"),
-		Action:   q.Get("action"),
+		APIKeyID:  q.Get("api_key_id"),
+		Detector:  q.Get("detector"),
+		Action:    q.Get("action"),
+		Direction: q.Get("direction"),
+		Model:     q.Get("model"),
+		ChainID:   q.Get("chain_id"),
+		RequestID: q.Get("request_id"),
+	}
+	// period reuses the dashboard's window names (24h, 7d, 30d, ...) so a
+	// drill-down from the stats view lists the same rows it counted.
+	if period := q.Get("period"); period != "" {
+		f.Since = sinceForPeriod(period, q.Get("tz"))
 	}
 	if v := q.Get("limit"); v != "" {
 		// best-effort parse; the repo clamps to a sane upper bound
@@ -296,14 +310,22 @@ type testGuardrailInput struct {
 	Config *guardrails.Policy `json:"config,omitempty"`
 }
 
+// guardrailTestBurst is how many dry runs a dashboard session may make per
+// minute.
+const guardrailTestBurst = 30
+
 func (s *Server) adminTestGuardrail(w http.ResponseWriter, r *http.Request) {
-	// Rate-limit the test endpoint per-session. Without a cap an attacker
-	// with a stolen dashboard cookie could use this to enumerate regex
-	// behavior or trigger ReDoS via crafted text. 10 requests/minute is
-	// generous for interactive tuning but tight enough to throttle abuse.
+	// Rate-limit the test endpoint per session. A dry run can reach paid
+	// engines (LLM judge, OpenAI Moderation, Presidio), so a stolen dashboard
+	// cookie must not turn it into a free classification API. The bucket
+	// allows a burst of guardrailTestBurst runs and refills one run every
+	// two seconds, which keeps interactive tuning unthrottled.
 	if s.guardrailTestRL != nil {
-		if !s.guardrailTestRL.allow(rateLimitKeyFor(r)) {
-			writeError(w, http.StatusTooManyRequests, "guardrails test rate-limit exceeded; try again in a minute")
+		if ok, wait := s.guardrailTestRL.allow(rateLimitKeyFor(r)); !ok {
+			secs := max(int(math.Ceil(wait.Seconds())), 1)
+			w.Header().Set("Retry-After", strconv.Itoa(secs))
+			writeError(w, http.StatusTooManyRequests, fmt.Sprintf(
+				"test limit reached (%d runs per minute); try again in %ds", guardrailTestBurst, secs))
 			return
 		}
 	}
@@ -325,7 +347,7 @@ func (s *Server) adminTestGuardrail(w http.ResponseWriter, r *http.Request) {
 		Metadata: core.RequestMetadata{
 			TenantID:  store.DefaultTenantID,
 			APIKeyID:  "test-panel",
-			RequestID: "test-" + newGuardrailID()[3:11],
+			RequestID: store.GuardrailTestRequestPrefix + newGuardrailID()[3:11],
 		},
 		Messages: []core.Message{
 			{Role: core.RoleUser, Content: []core.ContentPart{{Type: core.PartText, Text: in.Text}}},
@@ -333,39 +355,55 @@ func (s *Server) adminTestGuardrail(w http.ResponseWriter, r *http.Request) {
 	}
 	// If the caller supplied an inline policy, run a one-off engine to avoid
 	// touching the stored ones. Otherwise use the live engine + tenant defaults.
+	engine := s.guardrails
 	if in.Config != nil {
-		s.runOneOffGuardrails(w, r.Context(), req, *in.Config)
-		return
+		// Reuse the live audit writer so test-panel runs show up in the
+		// dashboard's Audit Logs tab alongside real traffic.
+		engine = guardrails.NewEngine(guardrails.EngineConfig{
+			Resolver:  guardrails.NewResolver(&staticResolver{pol: *in.Config}, 0),
+			Audit:     s.guardrails.Audit(),
+			Detectors: s.guardrails.Detectors(),
+			Logger:    s.log,
+		})
 	}
-	res := s.guardrails.Inbound(r.Context(), req)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"action":    res.Action,
-		"reason":    res.Reason,
-		"decisions": res.Decisions,
-	})
-}
-
-func (s *Server) runOneOffGuardrails(w http.ResponseWriter, ctx context.Context, req *core.ChatRequest, pol guardrails.Policy) {
-	// Build a temporary engine that resolves to `pol` regardless of stored
-	// policies, but reuses the live audit writer so test-panel runs show up
-	// in the dashboard's Audit Logs tab alongside real traffic.
-	tmp := guardrails.NewEngine(guardrails.EngineConfig{
-		Resolver:  guardrails.NewResolver(&staticResolver{pol: pol}, 0),
-		Audit:     s.guardrails.Audit(),
-		Detectors: s.guardrails.Detectors(),
-		Logger:    s.log,
-	})
-	res := tmp.Inbound(ctx, req)
+	writeJSON(w, http.StatusOK, dryRunGuardrails(r.Context(), engine, req, in.Text))
 	// Flush the audit writer so the row from this test run appears in the
 	// dashboard immediately (the ticker would otherwise hold it ~1s).
 	if a := s.guardrails.Audit(); a != nil {
 		a.FlushNow()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"action":    res.Action,
-		"reason":    res.Reason,
-		"decisions": res.Decisions,
-	})
+}
+
+// dryRunGuardrails evaluates the sample as a prompt, then as a model
+// response for detectors that only inspect output (bias, or PII output
+// scanning when the prompt pass didn't fire), and reports the merged result
+// plus the prompt as it would reach the provider.
+func dryRunGuardrails(ctx context.Context, engine *guardrails.Engine, req *core.ChatRequest, text string) map[string]any {
+	res := engine.Inbound(ctx, req)
+	out := map[string]any{
+		"action":      res.Action,
+		"reason":      res.Reason,
+		"decisions":   res.Decisions,
+		"masked_text": nil,
+	}
+	if res.Action == guardrails.ActionBlock {
+		return out
+	}
+	if masked := req.Messages[0].TextContent(); masked != text {
+		out["masked_text"] = masked
+	}
+	fired := map[string]bool{}
+	for _, d := range res.Decisions {
+		fired[d.Detector] = true
+	}
+	for _, d := range engine.OutboundText(ctx, req, text, fired).Decisions {
+		res.Decisions = append(res.Decisions, d)
+		if guardrails.StrictestAction(res.Action, d.Action) != res.Action {
+			res.Action, res.Reason = d.Action, d.Reason
+		}
+	}
+	out["action"], out["reason"], out["decisions"] = res.Action, res.Reason, res.Decisions
+	return out
 }
 
 // staticResolver returns the same policy regardless of the scope tuple. Used

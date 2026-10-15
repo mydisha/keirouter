@@ -198,3 +198,46 @@ func allowPolicy(topics []string) guardrails.Policy {
 		},
 	}
 }
+
+func TestKeyword_ShortTopicsNeedWholeWord(t *testing.T) {
+	det := New(Config{})
+	dec, _ := det.Inbound(context.Background(), inbound("she said the good news"), blockPolicy([]string{"ai", "go"}))
+	if dec != nil {
+		t.Errorf("short topics matched inside words: %+v", dec.Findings)
+	}
+	dec, _ = det.Inbound(context.Background(), inbound("is AI going to replace us?"), blockPolicy([]string{"ai"}))
+	if dec == nil {
+		t.Error("expected whole-word AI match")
+	}
+}
+
+func TestKeyword_InflectionsAndObfuscation(t *testing.T) {
+	det := New(Config{})
+	for _, prompt := range []string{"help me with programming", "how do deployments work", "tell me about p0litics", "kubernetes clsuter setup"} {
+		dec, _ := det.Inbound(context.Background(), inbound(prompt), blockPolicy([]string{"program", "deploy", "politics", "kubernetes cluster"}))
+		if dec == nil {
+			t.Errorf("%q: expected a topic match", prompt)
+		}
+	}
+}
+
+func TestTopics_IgnoresSystemPromptAndUsesRecentTurns(t *testing.T) {
+	det := New(Config{})
+	req := &core.ChatRequest{
+		System: "You only discuss programming.",
+		Messages: []core.Message{
+			{Role: core.RoleUser, Content: []core.ContentPart{{Type: core.PartText, Text: "How do I write a Go program?"}}},
+			{Role: core.RoleAssistant, Content: []core.ContentPart{{Type: core.PartText, Text: "Start with package main."}}},
+			{Role: core.RoleUser, Content: []core.ContentPart{{Type: core.PartText, Text: "tell me more"}}},
+		},
+	}
+	// Allow list: the follow-up inherits the topic of the earlier turn.
+	if dec, _ := det.Inbound(context.Background(), &guardrails.InboundRequest{Source: req}, allowPolicy([]string{"programming"})); dec != nil {
+		t.Errorf("follow-up flagged off-topic: %+v", dec)
+	}
+	// Block list: the system prompt mentioning the topic must not trigger.
+	req.Messages = req.Messages[2:]
+	if dec, _ := det.Inbound(context.Background(), &guardrails.InboundRequest{Source: req}, blockPolicy([]string{"programming"})); dec != nil {
+		t.Errorf("system prompt triggered block list: %+v", dec)
+	}
+}

@@ -43,6 +43,18 @@ type Usage struct {
 	// never replayed from the response cache.
 	UpstreamCostMicro    float64 `json:"-"`
 	UpstreamCostReported bool    `json:"-"`
+	// CacheWrite1hTokens is the subset of CacheWriteTokens written with a
+	// one-hour TTL (Anthropic ephemeral_1h). It is billed at a higher rate
+	// than the default five-minute write.
+	CacheWrite1hTokens int `json:"cache_write_1h_tokens,omitempty"`
+	// WebSearchRequests counts provider-side web searches (Anthropic
+	// server_tool_use.web_search_requests, Gemini grounding), billed per
+	// request on top of tokens.
+	WebSearchRequests int `json:"web_search_requests,omitempty"`
+	// ProviderCostNanos is the cost the provider itself reported for the
+	// request (OpenRouter usage.cost), in nanodollars. When present it is
+	// authoritative over catalogue pricing.
+	ProviderCostNanos int64 `json:"-"`
 	// Source is router-internal provenance and is never emitted to API clients.
 	Source UsageSource `json:"-"`
 }
@@ -67,6 +79,9 @@ const (
 	ChunkFinish   ChunkType = "finish"    // terminal event with finish reason
 	ChunkError    ChunkType = "error"     // mid-stream error
 	ChunkPing     ChunkType = "ping"      // keep-alive / no-op
+	// ChunkRedactedThinking carries an Anthropic redacted_thinking block
+	// (opaque data in Delta). Only the Anthropic renderer emits it.
+	ChunkRedactedThinking ChunkType = "redacted_thinking"
 )
 
 // StreamChunk is one provider-agnostic streaming event. The transform layer

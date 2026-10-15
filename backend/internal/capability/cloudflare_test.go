@@ -21,3 +21,17 @@ func TestCloudflareVisionResolution(t *testing.T) {
 		t.Fatal("generic GLM 5.2 must not gain vision")
 	}
 }
+
+func TestCloudflareSeededCapabilities(t *testing.T) {
+	qwq := Resolve("cloudflare-ai", "@cf/qwen/qwq-32b")
+	if qwq.Source != SourceProvider || qwq.Profile.Tools || !qwq.Profile.Reasoning || qwq.Profile.ContextWindow != 24000 {
+		t.Fatalf("qwq resolution = %+v", qwq)
+	}
+	scout := Resolve("cloudflare-ai", "@cf/meta/llama-4-scout-17b-16e-instruct")
+	if !scout.Profile.Vision || !scout.Profile.Tools || scout.VisionState != SupportSupported {
+		t.Fatalf("llama-4-scout resolution = %+v", scout)
+	}
+	if ImagePolicy("cloudflare-ai", "@cf/meta/llama-3.3-70b-instruct-fp8-fast") != ImageStrip {
+		t.Fatal("known text-only Cloudflare model must strip images rather than probe optimistically")
+	}
+}

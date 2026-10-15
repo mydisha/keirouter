@@ -92,8 +92,8 @@ func TestNativeEngine_RespectsCategoryFilter(t *testing.T) {
 
 func TestNativeEngine_RespectsThreshold(t *testing.T) {
 	det := New(Config{})
-	// "anjing" alone produces ~33/100 (1 hit / cap 3 × 100); threshold 50 must drop it.
-	dec, err := det.Inbound(context.Background(), inbound("anjing."), enabledPolicy(50))
+	// "anjing" alone (also just "dog") weighs 55; threshold 60 must drop it.
+	dec, err := det.Inbound(context.Background(), inbound("anjing."), enabledPolicy(60))
 	if err != nil {
 		t.Fatalf("unexpected err: %v", err)
 	}

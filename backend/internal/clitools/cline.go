@@ -1,17 +1,19 @@
 package clitools
 
-import (
-	"os"
-)
-
-// ClineTool auto-configures Cline/Roo (~/.cline/data/globalState.json + secrets.json).
+// ClineTool auto-configures Cline (~/.cline/data/globalState.json +
+// secrets.json), the shared state the Cline CLI reads.
 type ClineTool struct{}
 
-func (t *ClineTool) ID() string   { return "cline" }
-func (t *ClineTool) Name() string { return "Cline / Roo" }
-
-// Command returns "" — Cline is a VS Code extension, not a standalone CLI.
-func (t *ClineTool) Command() string { return "" }
+func (t *ClineTool) ID() string          { return "cline" }
+func (t *ClineTool) Name() string        { return "Cline / Roo" }
+func (t *ClineTool) Commands() []string  { return []string{"cline"} }
+func (t *ClineTool) ModelRequired() bool { return true }
+func (t *ClineTool) Extensions() []string {
+	return []string{"saoudrizwan.claude-dev", "rooveterinaryinc.roo-cline"}
+}
+func (t *ClineTool) ConfigFiles(h string) []string {
+	return []string{t.globalStatePath(h), t.secretsPath(h)}
+}
 
 func (t *ClineTool) globalStatePath(homeDir string) string {
 	return expandHome(homeDir, "~/.cline/data/globalState.json")
@@ -20,76 +22,79 @@ func (t *ClineTool) secretsPath(homeDir string) string {
 	return expandHome(homeDir, "~/.cline/data/secrets.json")
 }
 
-func (t *ClineTool) DetectStatus(homeDir string) (bool, bool, string, error) {
-	path := t.globalStatePath(homeDir)
-	if !fileExists(path) {
-		return false, false, path, nil
-	}
-	var cfg map[string]any
-	if err := readJSONC(path, &cfg); err != nil {
-		return true, false, path, nil
-	}
-	v, _ := cfg["openAiBaseUrl"].(string)
-	configured := v != "" && containsLocalhost(v)
-	return true, configured, path, nil
+// clineStateKeys are the globalState entries KeiRouter owns.
+var clineStateKeys = []string{
+	"actModeApiProvider", "planModeApiProvider",
+	"openAiBaseUrl", "openAiModelId", "planModeOpenAiModelId",
 }
 
-func (t *ClineTool) Configure(homeDir, baseURL, apiKey string, models []string) error {
-	gsPath := t.globalStatePath(homeDir)
-	secPath := t.secretsPath(homeDir)
-
-	cfg := make(map[string]any)
-	_ = readJSON(gsPath, &cfg)
-
-	cfg["actModeApiProvider"] = "openai"
-	cfg["planModeApiProvider"] = "openai"
-	cfg["openAiBaseUrl"] = stripSuffix(baseURL, "/v1")
-	if len(models) > 0 {
-		cfg["openAiModelId"] = models[0]
-		cfg["planModeOpenAiModelId"] = models[0]
+func (t *ClineTool) Read(homeDir string) (*Settings, error) {
+	cfg, exists, err := loadJSONObject(t.globalStatePath(homeDir))
+	if err != nil || !exists {
+		return nil, err
 	}
+	// The OpenAI-compatible base URL only matters while that provider is the
+	// active one.
+	if str(cfg, "actModeApiProvider") != "openai" {
+		return nil, nil
+	}
+	base := str(cfg, "openAiBaseUrl")
+	if base == "" {
+		return nil, nil
+	}
+	sec, _, err := loadJSONObject(t.secretsPath(homeDir))
+	if err != nil {
+		return nil, err
+	}
+	return &Settings{BaseURL: base, APIKey: str(sec, "openAiApiKey"), Model: str(cfg, "openAiModelId")}, nil
+}
 
-	if err := writeJSON(gsPath, cfg); err != nil {
+func (t *ClineTool) Configure(homeDir string, s Settings) error {
+	gsPath, secPath := t.globalStatePath(homeDir), t.secretsPath(homeDir)
+	cfg, _, err := loadJSONObject(gsPath)
+	if err != nil {
+		return err
+	}
+	sec, _, err := loadJSONObject(secPath)
+	if err != nil {
 		return err
 	}
 
-	sec := make(map[string]any)
-	_ = readJSON(secPath, &sec)
-	sec["openAiApiKey"] = apiKey
-	return writeJSON(secPath, sec)
+	cfg["actModeApiProvider"] = "openai"
+	cfg["planModeApiProvider"] = "openai"
+	// Cline's OpenAI-compatible provider hands this to the OpenAI SDK, which
+	// appends /chat/completions — so it must include /v1.
+	cfg["openAiBaseUrl"] = v1URL(s.BaseURL)
+	cfg["openAiModelId"] = s.Model
+	cfg["planModeOpenAiModelId"] = s.Model
+	if err := saveJSON(gsPath, cfg); err != nil {
+		return err
+	}
+	sec["openAiApiKey"] = s.APIKey
+	return saveJSON(secPath, sec)
 }
 
 func (t *ClineTool) Remove(homeDir string) error {
-	gsPath := t.globalStatePath(homeDir)
-	secPath := t.secretsPath(homeDir)
-
-	if fileExists(gsPath) {
-		var cfg map[string]any
-		if err := readJSON(gsPath, &cfg); err == nil {
-			for _, k := range []string{
-				"actModeApiProvider", "planModeApiProvider",
-				"openAiBaseUrl", "openAiModelId", "planModeOpenAiModelId",
-			} {
-				delete(cfg, k)
-			}
-			if len(cfg) == 0 {
-				os.Remove(gsPath)
-			} else {
-				writeJSON(gsPath, cfg)
-			}
+	gsPath, secPath := t.globalStatePath(homeDir), t.secretsPath(homeDir)
+	cfg, cfgExists, err := loadJSONObject(gsPath)
+	if err != nil {
+		return err
+	}
+	sec, secExists, err := loadJSONObject(secPath)
+	if err != nil {
+		return err
+	}
+	if cfgExists {
+		for _, k := range clineStateKeys {
+			delete(cfg, k)
+		}
+		if err := saveOrRemove(gsPath, cfg, saveJSONObject); err != nil {
+			return err
 		}
 	}
-
-	if fileExists(secPath) {
-		var sec map[string]any
-		if err := readJSON(secPath, &sec); err == nil {
-			delete(sec, "openAiApiKey")
-			if len(sec) == 0 {
-				os.Remove(secPath)
-			} else {
-				writeJSON(secPath, sec)
-			}
-		}
+	if secExists {
+		delete(sec, "openAiApiKey")
+		return saveOrRemove(secPath, sec, saveJSONObject)
 	}
 	return nil
 }

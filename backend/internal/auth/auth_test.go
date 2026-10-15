@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/config"
+	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/store"
 	"github.com/stretchr/testify/require"
 )
@@ -56,6 +57,21 @@ func TestSetPassword(t *testing.T) {
 	ok, err = svc.VerifyPassword(ctx, DefaultPassword)
 	require.NoError(t, err)
 	require.False(t, ok, "old default must no longer verify")
+}
+
+func TestUsingDefaultPassword_TracksStoredHash(t *testing.T) {
+	svc, ctx := newTestAuth(t)
+	require.True(t, svc.UsingDefaultPassword(ctx))
+	require.True(t, svc.UsingDefaultPassword(ctx), "cached answer must stay correct")
+
+	require.NoError(t, svc.SetPassword(ctx, "a-strong-password"))
+	require.False(t, svc.UsingDefaultPassword(ctx), "password change must invalidate the cache")
+
+	// A writer outside the service (import, restore) must also be observed.
+	hash, err := crypto.HashPassword(DefaultPassword)
+	require.NoError(t, err)
+	require.NoError(t, svc.settings.Set(ctx, keyPasswordHash, hash))
+	require.True(t, svc.UsingDefaultPassword(ctx))
 }
 
 func TestOnboardingFlow(t *testing.T) {

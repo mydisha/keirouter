@@ -1,62 +1,106 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
-import {
-  Activity,
-  AlertTriangle,
-  ArrowUpRight,
-  Database,
-  DollarSign,
-  Layers3,
-  RefreshCw,
-  ShieldCheck,
-  Timer,
-  TrendingUp,
-  Wallet,
-  type LucideIcon,
-} from "lucide-react";
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate } from "react-router-dom";
+import { AlertTriangle, ArrowRight, Check, Inbox, Plus, RefreshCw, type LucideIcon } from "lucide-react";
 import {
   api,
-  type ProviderUsage,
+  connectUsageStream,
+  type BudgetStatus,
+  type ChainUsage,
+  type HealthTimelineProvider,
+  type ModelUsage,
   type RecentActivity,
-  type SeriesPoint,
   type UsageInsights,
-  type UsageTerminalStatus,
 } from "../lib/api";
-import { dashboard } from "../lib/dashboardRoutes";
-import { microsToUSD } from "../lib/format";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
-import {
-  Badge,
-  Card,
-  EmptyState,
-  ErrorCard,
-  SegmentedControl,
-  Skeleton,
-  TablePagination,
-  useClientPagination,
-} from "../components/ui";
+import { ProviderLogo } from "../components/ProviderLogo";
+import { TrafficCard } from "../components/charts/TrafficChart";
+import { GuardrailsNotice } from "../components/GuardrailMonitor";
+import { Badge, DeltaBadge, ErrorCard, IconTile, Kpi, KpiGrid, SectionTitle, Skeleton, EmptyState } from "../components/ui";
+import { formatDateTime, ptsDelta, relDelta, type Delta } from "../lib/format";
+import { ICONS } from "../lib/icons";
+import { CopyButton, HighlightedCode } from "../components/ui/code-block";
+import type { CodeLanguage } from "../lib/highlight";
+import { dashboard } from "../lib/dashboardRoutes";
 
-const PERIODS = [
-  { value: "today", label: "Today" },
-  { value: "week", label: "7D" },
-  { value: "month", label: "30D" },
-];
+// ── Period model ─────────────────────────────────────────────────────────────
+
+type PeriodKey = "24h" | "7d" | "30d" | "90d";
+
+const PERIODS: Record<PeriodKey, { label: string; buckets: number; text: string; vs: string }> = {
+  "24h": { label: "24h", buckets: 24, text: "Last 24 hours", vs: "compared with the 24 hours before" },
+  "7d": { label: "7d", buckets: 42, text: "Last 7 days", vs: "compared with the 7 days before" },
+  "30d": { label: "30d", buckets: 30, text: "Last 30 days", vs: "compared with the 30 days before" },
+  "90d": { label: "90d", buckets: 45, text: "Last 90 days", vs: "compared with the 90 days before" },
+};
+const PERIOD_KEYS = Object.keys(PERIODS) as PeriodKey[];
+const PERIOD_STORAGE_KEY = "kr.overview.period";
+
+const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+
+function readStoredPeriod(): PeriodKey {
+  try {
+    const raw = localStorage.getItem(PERIOD_STORAGE_KEY);
+    if (raw && raw in PERIODS) return raw as PeriodKey;
+  } catch {
+    /* storage unavailable: fall through to the default */
+  }
+  return "7d";
+}
+
+// Arrow / Home / End move between the radios or tabs of a group and select
+// the one they land on (roving tabindex, as the ARIA patterns expect).
+function onGroupArrowKeys(event: ReactKeyboardEvent<HTMLElement>, role: "radio" | "tab") {
+  if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+  const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(`[role="${role}"]`));
+  const current = items.indexOf(document.activeElement as HTMLButtonElement);
+  if (current < 0 || items.length === 0) return;
+  event.preventDefault();
+  const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
+  const next =
+    event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : (current + (forward ? 1 : -1) + items.length) % items.length;
+  items[next]?.focus();
+  items[next]?.click();
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 export function OverviewPage() {
-  const [period, setPeriod] = useState("week");
+  const [period, setPeriodState] = useState<PeriodKey>(readStoredPeriod);
+  const setPeriod = (p: PeriodKey) => {
+    setPeriodState(p);
+    try {
+      localStorage.setItem(PERIOD_STORAGE_KEY, p);
+    } catch {
+      /* non-essential */
+    }
+  };
+  const cfg = PERIODS[period];
+  const qc = useQueryClient();
+
+  const insightsKey = ["usage-insights", period, "overview"] as const;
   const insights = useQuery({
-    queryKey: ["usage-insights", period],
-    queryFn: () => api.usageInsights(period),
+    queryKey: insightsKey,
+    queryFn: () => api.usageInsights(period, { limit: 8, buckets: cfg.buckets }),
+    staleTime: 15_000,
+    placeholderData: (previous) => previous,
+  });
+  const models = useQuery({
+    queryKey: ["model-usage", period],
+    queryFn: () => api.modelUsage(period),
+    staleTime: 30_000,
+    placeholderData: (previous) => previous,
+  });
+  const timeline = useQuery({
+    queryKey: ["health-timeline", "24h"],
+    queryFn: () => api.healthTimeline("24h", 24),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+  const chains = useQuery({
+    queryKey: ["chain-usage", period],
+    queryFn: () => api.chainUsage(period),
     staleTime: 30_000,
     placeholderData: (previous) => previous,
   });
@@ -65,504 +109,495 @@ export function OverviewPage() {
     queryFn: () => api.budgetStatus(),
     staleTime: 30_000,
     refetchInterval: 60_000,
-    placeholderData: (previous) => previous,
   });
 
-  const alerts = (budgets.data?.budgets ?? []).filter((budget) => budget.pct_used >= budget.alert_pct);
-  const blocked = alerts.filter((budget) => budget.pct_used >= 100 && budget.hard_cutoff);
-  const warnings = alerts.filter((budget) => budget.pct_used < 100 || !budget.hard_cutoff);
-  const isRefreshing = insights.isFetching && !insights.isLoading;
+  // Live: the usage stream is an invalidation signal. Coalesce bursts so a
+  // busy gateway refreshes the page at most every few seconds.
+  const [live, setLive] = useState(false);
+  const lastRefresh = useRef(0);
+  useEffect(() => {
+    let timer: number | undefined;
+    const stop = connectUsageStream(() => {
+      setLive(true);
+      const wait = Math.max(0, 4_000 - (Date.now() - lastRefresh.current));
+      if (timer !== undefined) return;
+      timer = window.setTimeout(() => {
+        timer = undefined;
+        lastRefresh.current = Date.now();
+        qc.invalidateQueries({ queryKey: ["usage-insights"] });
+        qc.invalidateQueries({ queryKey: ["model-usage"] });
+        qc.invalidateQueries({ queryKey: ["chain-usage"] });
+      }, wait);
+    });
+    return () => {
+      stop();
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [qc]);
+
+  const data = insights.data;
+  const firstRun = !!data && data.summary.total_requests === 0 && (data.previous?.total_requests ?? 0) === 0;
+  const refreshing = insights.isFetching && !insights.isLoading;
+
+  const refreshAll = () => {
+    qc.invalidateQueries({ queryKey: ["usage-insights"] });
+    qc.invalidateQueries({ queryKey: ["model-usage"] });
+    qc.invalidateQueries({ queryKey: ["health-timeline"] });
+    qc.invalidateQueries({ queryKey: ["chain-usage"] });
+    qc.invalidateQueries({ queryKey: ["budget-status"] });
+  };
 
   return (
     <>
       <PageHeader
-        title="Overview"
-        icon={Activity}
-        description="A concise view of traffic, spend, and routing performance."
+        title={firstRun ? "Welcome to KeiRouter" : "Overview"}
+        description={firstRun ? "Finish setup to start routing your tools." : `${cfg.text}, ${cfg.vs}`}
         action={
-          <div className="flex items-center gap-2">
-            <SegmentedControl value={period} onChange={setPeriod} options={PERIODS} />
-            <button
-              type="button"
-              onClick={() => insights.refetch()}
-              disabled={insights.isFetching}
-              aria-label="Refresh overview"
-              title="Refresh overview"
-              className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-muted)] shadow-sm transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] disabled:opacity-60"
-            >
-              <RefreshCw className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} />
-            </button>
-          </div>
+          <>
+            <BaseUrlChip />
+            {!firstRun && (
+              // On phones this is one full-width row (live, range, refresh, then
+              // the primary action pushed right); it falls back to wrapping at 320px.
+              <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+                {live && (
+                  <span
+                    role="status"
+                    title="Updates as traffic arrives"
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12px] font-medium text-fg-muted sm:h-8"
+                  >
+                    <span className="live-dot h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
+                    <span className="sr-only sm:not-sr-only">Live</span>
+                  </span>
+                )}
+                <PeriodSelect value={period} onChange={setPeriod} />
+                <button
+                  type="button"
+                  onClick={refreshAll}
+                  aria-label="Refresh overview"
+                  aria-busy={refreshing}
+                  className={cn(
+                    "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg sm:h-8 sm:w-8",
+                    FOCUS_RING,
+                  )}
+                >
+                  <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+                <Link
+                  to={dashboard("/providers")}
+                  className={cn(
+                    "ml-auto inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-action px-3 text-[13px] font-medium text-action-fg transition-colors hover:bg-action-hover focus-visible:ring-offset-2 sm:ml-0 sm:h-8",
+                    FOCUS_RING,
+                  )}
+                >
+                  <Plus className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
+                  <span>
+                    Connect<span className="sr-only sm:not-sr-only"> provider</span>
+                  </span>
+                </Link>
+              </div>
+            )}
+          </>
         }
       />
 
-      <BudgetNotice blocked={blocked} warnings={warnings} />
+      <BudgetNotice budgets={budgets.data?.budgets ?? []} />
+      {!firstRun && <GuardrailsNotice period={period} periodText={cfg.text} />}
 
       {insights.isLoading ? (
         <OverviewSkeleton />
-      ) : insights.isError ? (
-        <ErrorCard message="Failed to load overview data. Is the backend running?" />
-      ) : insights.data ? (
-        <InsightsDashboard data={insights.data} />
-      ) : null}
+      ) : insights.isError || !data ? (
+        <ErrorCard message="Couldn't load the overview. Check that the gateway is running, then refresh." />
+      ) : firstRun ? (
+        <FirstRun />
+      ) : (
+        <div className="space-y-6">
+          <KpiStrip data={data} prevLabel={`the previous ${cfg.label}`} />
+
+          <div className="grid gap-4 xl:grid-cols-3">
+            <TrafficCard data={data} className="xl:col-span-2" />
+            <ProviderHealthCard providers={timeline.data?.providers} loading={timeline.isLoading} />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-3">
+            <TopModelsCard models={models.data?.models} loading={models.isLoading} className="xl:col-span-2" />
+            <CostCard data={data} budgets={budgets.data?.budgets} budgetsLoading={budgets.isLoading} />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-3">
+            <RecentRequestsCard recent={data.recent} period={period} className="xl:col-span-2" />
+            <ChainsCard chains={chains.data?.chains} loading={chains.isLoading} />
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
-function BudgetNotice({
-  blocked,
-  warnings,
-}: {
-  blocked: Array<{ scope_name: string; limit_micros: number; period: string }>;
-  warnings: Array<{ scope_name: string; pct_used: number }>;
-}) {
-  if (blocked.length === 0 && warnings.length === 0) return null;
-  const isBlocked = blocked.length > 0;
-  const items = isBlocked
-    ? blocked.map((budget) => `${budget.scope_name} · ${microsToUSD(budget.limit_micros)} ${budget.period}`)
-    : warnings.map((budget) => `${budget.scope_name} · ${budget.pct_used.toFixed(0)}% used`);
+// ── Header controls ──────────────────────────────────────────────────────────
 
+function PeriodSelect({ value, onChange }: { value: PeriodKey; onChange: (p: PeriodKey) => void }) {
   return (
-    <div className={`mb-6 flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center ${
-      isBlocked
-        ? "border-red-300/70 bg-red-50/60 dark:border-red-700/50 dark:bg-red-950/20"
-        : "border-amber-300/70 bg-amber-50/60 dark:border-amber-700/50 dark:bg-amber-950/20"
-    }`}>
-      {isBlocked
-        ? <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
-        : <Wallet className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />}
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold text-[var(--text)]">
-          {isBlocked ? "Plan limit reached" : "Plan threshold reached"}
-        </p>
-        <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]" title={items.join(", ")}>
-          {items.join(" · ")}
-        </p>
-      </div>
-      <Link
-              to={dashboard("/plans")}
-        className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-[var(--text)] hover:text-accent-600"
-      >
-        Manage plans <ArrowUpRight className="h-3.5 w-3.5" />
+    <div
+      className="inline-flex h-9 shrink-0 items-center rounded-xl border border-line bg-subtle p-0.5 sm:h-8"
+      role="radiogroup"
+      aria-label="Time range"
+      onKeyDown={(e) => onGroupArrowKeys(e, "radio")}
+    >
+      {PERIOD_KEYS.map((key) => {
+        const active = key === value;
+        return (
+          <button
+            key={key}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            tabIndex={active ? 0 : -1}
+            onClick={() => onChange(key)}
+            className={cn(
+              "h-full min-w-8 rounded-lg px-2 font-mono text-[12px] font-medium transition-colors sm:px-2.5",
+              FOCUS_RING,
+              active ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
+            )}
+          >
+            {PERIODS[key].label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// The base URL is the single most-copied value in the app. In production the
+// dashboard is served by the gateway itself and in development Vite proxies
+// /v1, so the page origin is always the correct client-facing endpoint.
+function BaseUrlChip() {
+  const url = `${window.location.origin}/v1`;
+  return (
+    // Hidden on phones: copying an endpoint is a desktop job, and the header
+    // row there is reserved for range, refresh and the primary action.
+    <div className="hidden h-8 max-w-full items-center overflow-hidden rounded-lg border border-line bg-surface md:inline-flex">
+      <span className="flex h-full shrink-0 items-center border-r border-line px-2.5 text-[12px] text-fg-muted">Base URL</span>
+      <span className="min-w-0 truncate px-2.5 font-mono text-[12px] text-fg" title={url}>{url}</span>
+      <CopyButton value={url} label="Copy base URL" toast="Base URL copied" className="h-full w-8 rounded-none border-l border-line bg-subtle focus-visible:ring-inset" />
+    </div>
+  );
+}
+
+function BudgetNotice({ budgets }: { budgets: BudgetStatus[] }) {
+  const over = budgets.filter((b) => usedPct(b) >= 100 && b.hard_cutoff);
+  const near = budgets.filter((b) => usedPct(b) >= b.alert_pct && !(usedPct(b) >= 100 && b.hard_cutoff));
+  if (over.length === 0 && near.length === 0) return null;
+  const blocked = over.length > 0;
+  const list = (blocked ? over : near).map((b) => `${b.scope_name} · ${Math.round(usedPct(b))}%`).join("  ·  ");
+  return (
+    <div
+      role="status"
+      className={cn(
+        "mb-6 flex items-center gap-3 rounded-2xl border px-4 py-2.5 text-[13px]",
+        blocked ? "border-bad/30 bg-bad/5" : "border-warn/30 bg-warn/5",
+      )}
+    >
+      <AlertTriangle className={cn("h-4 w-4 shrink-0", blocked ? "text-bad" : "text-warn")} strokeWidth={1.75} aria-hidden="true" />
+      <p className="min-w-0 flex-1 truncate">
+        <span className="font-medium text-fg">{blocked ? "Budget limit reached, requests are blocked." : "Budget alert threshold reached."}</span>{" "}
+        <span className="text-fg-muted" title={list}>{list}</span>
+      </p>
+      <Link to={dashboard("/plans")} className={cn("inline-flex min-h-6 shrink-0 items-center rounded-md text-[12px] font-medium text-link hover:underline", FOCUS_RING)}>
+        Review budgets
       </Link>
     </div>
   );
 }
 
-function OverviewSkeleton() {
-  return (
-    <div className="space-y-6 pb-12">
-      <div className="grid gap-4 lg:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, index) => (
-          <Card key={index} className="p-5">
-            <Skeleton className="h-8 w-28" />
-            <Skeleton className="mt-4 h-9 w-32" />
-            <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[var(--border)] pt-3">
-              {Array.from({ length: 3 }).map((__, item) => <Skeleton key={item} className="h-8 w-full" />)}
-            </div>
-          </Card>
-        ))}
-      </div>
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,1fr)]">
-        <Card className="p-6"><Skeleton className="h-72 w-full" /></Card>
-        <Card className="p-6"><Skeleton className="h-72 w-full" /></Card>
-      </div>
-      <Card className="p-6"><Skeleton className="h-28 w-full" /></Card>
-      <Card className="p-6"><Skeleton className="h-96 w-full" /></Card>
-    </div>
-  );
-}
+// ── Shared card chrome ───────────────────────────────────────────────────────
 
-function InsightsDashboard({ data }: { data: UsageInsights }) {
-  const { summary, savings, providers, recent, series } = data;
-
-  return (
-    <div className="space-y-6 pb-12">
-      <div className="grid gap-4 lg:grid-cols-3">
-        <SummaryGroupCard
-          icon={Activity}
-          title="Traffic"
-          primary={fmtCompact(summary.total_requests)}
-          primaryLabel="requests"
-          items={[
-            { label: "Input", value: fmtCompact(summary.prompt_tokens) },
-            { label: "Output", value: fmtCompact(summary.completion_tokens) },
-            { label: "Cache read", value: fmtCompact(summary.cached_tokens) },
-          ]}
-        />
-        <SummaryGroupCard
-          icon={DollarSign}
-          title="Spend & value"
-          primary={fmtUSD(summary.cost_usd)}
-          primaryLabel="tracked cost"
-          tone={summary.unpriced_requests > 0 ? "warning" : "accent"}
-          items={[
-            { label: "Value saved", value: fmtUSD(savings.usd_saved), tone: "good" },
-            { label: "Cost / request", value: fmtUSD(summary.cost_per_request_usd) },
-            { label: "Pricing coverage", value: fmtCoverage(summary.pricing_request_coverage) },
-          ]}
-        />
-        <SummaryGroupCard
-          icon={ShieldCheck}
-          title="Reliability"
-          primary={fmtPercent(summary.success_rate)}
-          primaryLabel="successful"
-          tone={summary.success_rate < 0.95 && summary.total_requests > 0 ? "warning" : "success"}
-          items={[
-            { label: "Failed", value: fmtCompact(summary.failed_requests), tone: summary.failed_requests > 0 ? "danger" : undefined },
-            { label: "Avg latency", value: fmtMs(summary.avg_latency_ms) },
-            { label: "TTFT", value: fmtMs(summary.avg_ttft_ms) },
-          ]}
-        />
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.7fr)_minmax(320px,1fr)]">
-        <TrendCard series={series} busiest={data.busiest} />
-        <ProviderPerformance providers={providers} />
-      </div>
-
-      <TokenComposition data={data} />
-      <RecentActivityTable recent={recent} providers={providers} />
-    </div>
-  );
-}
-
-type SummaryTone = "accent" | "success" | "warning";
-
-function SummaryGroupCard({
-  icon: Icon,
+function Panel({
+  icon,
   title,
-  primary,
-  primaryLabel,
-  items,
-  tone = "accent",
+  meta,
+  action,
+  className,
+  children,
 }: {
   icon: LucideIcon;
   title: string;
-  primary: string;
-  primaryLabel: string;
-  items: Array<{ label: string; value: string; tone?: "good" | "danger" }>;
-  tone?: SummaryTone;
+  meta?: ReactNode;
+  action?: ReactNode;
+  className?: string;
+  children: ReactNode;
 }) {
-  const tones: Record<SummaryTone, { icon: string; background: string }> = {
-    accent: {
-      icon: "text-secondary-600 dark:text-secondary-300",
-      background: "bg-secondary-50 ring-secondary-200/70 dark:bg-secondary-950/30 dark:ring-secondary-900/60",
-    },
-    success: {
-      icon: "text-emerald-600 dark:text-emerald-300",
-      background: "bg-emerald-50 ring-emerald-200/70 dark:bg-emerald-950/30 dark:ring-emerald-900/60",
-    },
-    warning: {
-      icon: "text-amber-700 dark:text-amber-300",
-      background: "bg-amber-50 ring-amber-200/70 dark:bg-amber-950/30 dark:ring-amber-900/60",
-    },
-  };
-  const colors = tones[tone];
-
+  const id = useId();
   return (
-    <Card className="p-5">
-      <div className="flex items-center gap-2">
-        <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ${colors.background}`}>
-          <Icon className={`h-4 w-4 ${colors.icon}`} />
-        </span>
-        <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{title}</span>
+    <section aria-labelledby={id} className={cn("flex min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle
+          id={id}
+          icon={icon}
+          title={
+            meta ? (
+              <>
+                {title} <span className="ml-1 text-[12px] font-normal text-fg-muted">{meta}</span>
+              </>
+            ) : (
+              title
+            )
+          }
+          action={action}
+        />
       </div>
-      <div className="mt-4 flex items-baseline gap-2">
-        <span className="text-3xl font-semibold tracking-tight tabular-nums text-[var(--text)]">{primary}</span>
-        <span className="text-xs text-[var(--text-muted)]">{primaryLabel}</span>
-      </div>
-      <div className="mt-4 grid grid-cols-3 gap-3 border-t border-[var(--border)] pt-3">
-        {items.map((item) => (
-          <div key={item.label} className="min-w-0">
-            <div className={`truncate text-xs font-semibold tabular-nums sm:text-sm ${
-              item.tone === "good"
-                ? "text-emerald-600 dark:text-emerald-300"
-                : item.tone === "danger"
-                  ? "text-red-600 dark:text-red-300"
-                  : "text-[var(--text)]"
-            }`} title={item.value}>{item.value}</div>
-            <div className="mt-0.5 text-[9px] font-medium uppercase tracking-wider text-[var(--text-muted)]">{item.label}</div>
-          </div>
-        ))}
-      </div>
-    </Card>
+      {children}
+    </section>
   );
 }
 
-type TrendMetric = "requests" | "tokens" | "cost" | "failures";
-type TrendPoint = SeriesPoint & { total_tokens: number };
-
-const TREND_OPTIONS = [
-  { value: "requests", label: "Requests" },
-  { value: "tokens", label: "Tokens" },
-  { value: "cost", label: "Cost" },
-  { value: "failures", label: "Failures" },
-];
-
-const TREND_CONFIG: Record<TrendMetric, { key: keyof TrendPoint; label: string; color: string }> = {
-  requests: { key: "requests", label: "Requests", color: "var(--color-chart-1)" },
-  tokens: { key: "total_tokens", label: "Tokens", color: "var(--color-chart-2)" },
-  cost: { key: "cost_usd", label: "Cost", color: "var(--color-accent-500)" },
-  failures: { key: "failures", label: "Failures", color: "var(--color-danger)" },
-};
-
-function TrendCard({ series, busiest }: { series: SeriesPoint[]; busiest: string }) {
-  const [metric, setMetric] = useState<TrendMetric>("requests");
-  const points = useMemo<TrendPoint[]>(
-    () => series.map((point) => ({
-      ...point,
-      requests: point.requests || point.count,
-      total_tokens: point.prompt_tokens + point.completion_tokens,
-    })),
-    [series],
-  );
-  const config = TREND_CONFIG[metric];
-
+function PanelLink({ to, children }: { to: string; children: ReactNode }) {
   return (
-    <Card className="flex min-h-[370px] flex-col">
-      <div className="flex flex-col gap-3 border-b border-[var(--border)] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-start gap-2.5">
-          <TrendingUp className="mt-0.5 h-4 w-4 text-[var(--text-muted)]" />
-          <div>
-            <h2 className="text-sm font-semibold">Usage trend</h2>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">
-              {busiest ? `Busiest request bucket: ${busiest}` : "Volume across the selected period."}
-            </p>
-          </div>
-        </div>
-        <SegmentedControl value={metric} onChange={(value) => setMetric(value as TrendMetric)} options={TREND_OPTIONS} />
-      </div>
-      {points.length === 0 ? (
-        <EmptyState title="No activity in this period." />
-      ) : (
-        <div className="min-h-0 flex-1 px-3 pb-4 pt-5 sm:px-5">
-          <ResponsiveContainer width="100%" height="100%" minHeight={260}>
-            <AreaChart data={points} margin={{ top: 4, right: 8, left: -8, bottom: 0 }}>
-              <defs>
-                <linearGradient id={`overview-${metric}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={config.color} stopOpacity={0.22} />
-                  <stop offset="95%" stopColor={config.color} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: "var(--text-muted)" }} minTickGap={28} />
-              <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 10, fill: "var(--text-muted)" }} width={46} tickFormatter={(value) => fmtAxis(Number(value), metric)} />
-              <Tooltip
-                cursor={{ stroke: "var(--border-strong)", strokeWidth: 1 }}
-                contentStyle={{
-                  background: "var(--bg-elevated)",
-                  border: "1px solid var(--border)",
-                  borderRadius: "10px",
-                  fontSize: "12px",
-                  boxShadow: "var(--shadow-card)",
-                }}
-                formatter={(value) => [fmtTrendValue(Number(value), metric), config.label]}
-              />
-              <Area
-                type="monotone"
-                dataKey={config.key}
-                name={config.label}
-                stroke={config.color}
-                strokeWidth={2}
-                fill={`url(#overview-${metric})`}
-                animationDuration={350}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      )}
-    </Card>
+    <Link to={to} className={cn("inline-flex min-h-6 items-center gap-1 rounded-md text-[12px] font-medium text-link hover:underline hover:underline-offset-2", FOCUS_RING)}>
+      {children}
+      <ArrowRight className="h-3 w-3" aria-hidden="true" />
+    </Link>
   );
 }
 
-function ProviderPerformance({ providers }: { providers: ProviderUsage[] }) {
-  const { page, pages, paged, setPage, total } = useClientPagination(providers, 5);
-
-  return (
-    <Card className="flex min-h-[370px] flex-col">
-      <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
-        <div className="flex items-start gap-2.5">
-          <Database className="mt-0.5 h-4 w-4 text-[var(--text-muted)]" />
-          <div>
-            <h2 className="text-sm font-semibold">Provider mix</h2>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">Traffic share and delivery quality.</p>
-          </div>
-        </div>
-        <span className="text-xs tabular-nums text-[var(--text-muted)]">{providers.length} providers</span>
-      </div>
-      {providers.length === 0 ? (
-        <EmptyState title="No provider usage yet." />
-      ) : (
-        <>
-          <div className="flex-1 divide-y divide-[var(--border)] px-5">
-            {paged.map((provider) => (
-              <div key={provider.provider} className="py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <SmallProviderIcon provider={provider} className="h-6 w-6" />
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-semibold" title={provider.display_name}>{provider.display_name}</div>
-                      <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
-                        {fmtPercent(provider.success_rate)} success · {fmtMs(provider.avg_latency_ms)} avg
-                      </div>
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <div className="text-xs font-semibold tabular-nums">{fmtCompact(provider.total_requests)} req</div>
-                    <div className="mt-0.5 text-[10px] tabular-nums text-[var(--text-muted)]">{fmtUSD(provider.cost_usd)}</div>
-                  </div>
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-                    <div className="h-full rounded-full bg-secondary-500" style={{ width: `${Math.max(0, Math.min(100, provider.share_pct))}%` }} />
-                  </div>
-                  <span className="w-11 text-right text-[10px] font-medium tabular-nums text-[var(--text-muted)]">{provider.share_pct.toFixed(1)}%</span>
-                </div>
-              </div>
-            ))}
-          </div>
-          <TablePagination page={page} pages={pages} total={total} onPage={setPage} />
-        </>
-      )}
-    </Card>
-  );
+function PanelEmpty({ icon = Inbox, title, hint, action }: { icon?: LucideIcon; title: string; hint?: string; action?: ReactNode }) {
+  return <EmptyState icon={icon} title={title} hint={hint} action={action} size="sm" className="flex-1 justify-center" />;
 }
 
-function TokenComposition({ data }: { data: UsageInsights }) {
-  const { summary } = data;
-  const regularInput = Math.max(0, summary.prompt_tokens - summary.cached_tokens - summary.cache_write_tokens);
-  const total = summary.prompt_tokens + summary.completion_tokens;
-  const rows = [
-    { label: "Regular input", value: regularInput, color: "bg-secondary-500" },
-    { label: "Cache read", value: summary.cached_tokens, color: "bg-accent-500" },
-    { label: "Cache write", value: summary.cache_write_tokens, color: "bg-amber-500" },
+const TH = "px-4 py-2 font-medium";
+const THEAD = "border-b border-line bg-subtle text-left text-[12px] text-fg-faint";
+
+// ── KPI strip ────────────────────────────────────────────────────────────────
+
+function KpiStrip({ data, prevLabel }: { data: UsageInsights; prevLabel: string }) {
+  const s = data.summary;
+  const p = data.previous;
+  const series = data.series;
+  const headingId = useId();
+
+  const successSeries = series.filter((pt) => pt.requests > 0).map((pt) => 1 - pt.failures / pt.requests);
+  // Success rate is the one health value in the strip, so only it gets a status tone.
+  const successTone = s.total_requests ? (s.success_rate >= 0.99 ? "ok" : s.success_rate >= 0.95 ? "warn" : "bad") : "section";
+  // Four numbers answer "is it healthy and what does it cost". Optimizer
+  // savings live in the Savings and budgets card (and as the Spend hint).
+  const items: {
+    label: string;
+    icon: LucideIcon;
+    tone?: "ok" | "warn" | "bad" | "section";
+    value: string;
+    sub?: string;
+    delta: Delta | null;
+    spark: number[];
+  }[] = [
     {
-      label: "Output",
-      value: summary.completion_tokens,
-      color: "bg-[var(--color-chart-4)]",
-      note: summary.reasoning_tokens > 0
-        ? `${((summary.completion_tokens / Math.max(1, total)) * 100).toFixed(1)}% · ${fmtCompact(summary.reasoning_tokens)} reasoning`
-        : undefined,
+      label: "Requests",
+      icon: ICONS.requests,
+      value: fmtInt(s.total_requests),
+      delta: relDelta(s.total_requests, p?.total_requests, "flat"),
+      spark: series.map((pt) => pt.requests),
+    },
+    {
+      label: "Success rate",
+      icon: ICONS.successRate,
+      tone: successTone,
+      value: s.total_requests ? fmtPct(s.success_rate, 2) : "—",
+      delta: p && p.total_requests && s.total_requests ? ptsDelta(s.success_rate, p.success_rate) : null,
+      spark: successSeries,
+    },
+    {
+      label: "Latency p50",
+      icon: ICONS.latency,
+      value: fmtMs(s.p50_latency_ms),
+      sub: s.p95_latency_ms ? `p95 ${fmtMs(s.p95_latency_ms)}` : undefined,
+      delta: relDelta(s.p50_latency_ms, p?.p50_latency_ms, "lower-better"),
+      spark: series.filter((pt) => pt.avg_latency_ms > 0).map((pt) => pt.avg_latency_ms),
+    },
+    {
+      label: "Spend",
+      icon: ICONS.spend,
+      value: fmtUSD(s.cost_usd),
+      sub: data.savings.usd_saved > 0 ? `${fmtUSD(data.savings.usd_saved)} saved` : undefined,
+      delta: relDelta(s.cost_usd, p?.cost_usd, "flat"),
+      spark: series.map((pt) => pt.cost_usd),
     },
   ];
 
   return (
-    <Card>
-      <div className="grid gap-5 px-5 py-5 lg:grid-cols-[minmax(180px,0.55fr)_minmax(0,1.45fr)] lg:items-center lg:px-6">
-        <div className="flex items-start gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--bg-subtle)] text-[var(--text-muted)]">
-            <Layers3 className="h-4 w-4" />
-          </span>
-          <div>
-            <h2 className="text-sm font-semibold">Token composition</h2>
-            <div className="mt-2 flex items-baseline gap-2">
-              <span className="text-2xl font-semibold tracking-tight tabular-nums">{fmtCompact(total)}</span>
-              <span className="text-xs text-[var(--text-muted)]">tokens</span>
-            </div>
-            <p className="mt-1 text-[10px] text-[var(--text-muted)]">{fmtCompact(summary.cache_hits)} request cache hits</p>
-          </div>
-        </div>
-        {total === 0 ? (
-          <p className="text-sm text-[var(--text-muted)]">No token usage recorded in this period.</p>
-        ) : (
-          <div className="min-w-0">
-            <div className="flex h-2.5 overflow-hidden rounded-full bg-[var(--bg-subtle)]" aria-label="Token composition">
-              {rows.filter((row) => row.value > 0).map((row) => (
-                <div
-                  key={row.label}
-                  className={row.color}
-                  style={{ width: `${(row.value / total) * 100}%` }}
-                  title={`${row.label}: ${fmtInteger(row.value)}`}
-                />
-              ))}
-            </div>
-            <div className="mt-4 grid grid-cols-2 gap-x-5 gap-y-3 sm:grid-cols-4">
-              {rows.map((row) => (
-                <div key={row.label} className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${row.color}`} />
-                    <span className="truncate text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">{row.label}</span>
-                  </div>
-                  <div className="mt-1 text-sm font-semibold tabular-nums">{fmtCompact(row.value)}</div>
-                  <div className="mt-0.5 truncate text-[10px] text-[var(--text-muted)]">
-                    {row.note || `${((row.value / total) * 100).toFixed(1)}% of total`}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </Card>
+    <section aria-labelledby={headingId}>
+      <h2 id={headingId} className="sr-only">Key metrics</h2>
+      <KpiGrid cols={4}>
+        {items.map((item) => (
+          <Kpi
+            key={item.label}
+            icon={item.icon}
+            tone={item.tone}
+            label={item.label}
+            value={<span className="whitespace-nowrap">{item.value}</span>}
+            delta={item.delta}
+            deltaLabel={`vs ${prevLabel}`}
+            hint={item.sub}
+            trend={item.spark}
+          />
+        ))}
+      </KpiGrid>
+    </section>
   );
 }
 
-function RecentActivityTable({ recent, providers }: { recent: RecentActivity[]; providers: ProviderUsage[] }) {
-  const { page, pages, paged, setPage, total } = useClientPagination(recent, 10);
-  const providerMap = useMemo(() => new Map(providers.map((provider) => [provider.provider, provider])), [providers]);
+// ── Provider health ──────────────────────────────────────────────────────────
 
+const TICK_CLASS: Record<string, string> = {
+  ok: "bg-ok/70",
+  degraded: "bg-warn",
+  down: "bg-bad",
+  idle: "bg-track",
+};
+
+function providerState(p: HealthTimelineProvider): { label: string; tone: "success" | "warning" | "danger" | "neutral" } {
+  if (p.requests === 0) return { label: "Idle", tone: "neutral" };
+  const recent = p.buckets.slice(-3).map((b) => b.status);
+  if (recent.includes("down")) return { label: "Unhealthy", tone: "danger" };
+  if (recent.includes("degraded")) return { label: p.rate_limited > 0 ? "Rate limited" : "Degraded", tone: "warning" };
+  return { label: "Healthy", tone: "success" };
+}
+
+function ProviderHealthCard({ providers, loading }: { providers?: HealthTimelineProvider[]; loading: boolean }) {
+  const rows = (providers ?? []).slice(0, 6);
   return (
-    <Card>
-      <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
-        <div className="flex items-start gap-2.5">
-          <Timer className="mt-0.5 h-4 w-4 text-[var(--text-muted)]" />
-          <div>
-            <h2 className="text-sm font-semibold">Recent requests</h2>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">Terminal request outcomes from the selected period.</p>
-          </div>
+    <Panel icon={ICONS.health} title="Provider health" meta="24h" action={<PanelLink to={dashboard("/provider-health")}>All providers</PanelLink>}>
+      {loading ? (
+        <div className="space-y-3 p-4" aria-busy="true">
+          <span className="sr-only">Loading provider health</span>
+          {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-11 w-full" />)}
         </div>
-        <Link to={dashboard("/usage")} className="inline-flex shrink-0 items-center gap-1 text-xs font-semibold text-[var(--text-muted)] hover:text-[var(--text)]">
-          Full accounting <ArrowUpRight className="h-3.5 w-3.5" />
-        </Link>
-      </div>
-      {recent.length === 0 ? (
-        <EmptyState title="No recent requests." hint="Make a request through the proxy to see it here." />
+      ) : rows.length === 0 ? (
+        <PanelEmpty icon={ICONS.health} title="No provider traffic in the last 24 hours" />
+      ) : (
+        <ul className="divide-y divide-line">
+          {rows.map((p) => {
+            const state = providerState(p);
+            return (
+              <li key={p.provider}>
+                <Link
+                  to={dashboard(`/provider-health/${encodeURIComponent(p.provider)}`)}
+                  className="block px-4 py-2.5 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+                >
+                  <div className="flex items-center gap-2.5">
+                    <ProviderLogo icon={p.icon} name={p.display_name} />
+                    <p className="min-w-0 flex-1 truncate text-[13px] font-medium text-fg">{p.display_name}</p>
+                    <div className="flex flex-col items-end gap-0.5 text-right">
+                      <Badge tone={state.tone}>
+                        <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
+                        {state.label}
+                      </Badge>
+                      <p className="text-[11.5px] tabular-nums text-fg-muted">
+                        {p.requests ? `${fmtPct(p.success_rate, 1)} ok` : "—"} · p95 {fmtMs(p.worst_p95_ms)}
+                      </p>
+                    </div>
+                  </div>
+                  {/* Hourly strip is a visual summary; the status label above carries the meaning. */}
+                  <div className="mt-2 flex gap-[2px]" aria-hidden="true">
+                    {p.buckets.map((b) => (
+                      <span
+                        key={b.start}
+                        className={cn("h-4 min-w-[2px] flex-1 rounded-[1.5px]", TICK_CLASS[b.status] ?? "bg-track")}
+                        title={`${formatBucket(b.start, false)} · ${b.status}${b.requests ? ` · ${b.requests} req` : ""}`}
+                      />
+                    ))}
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Panel>
+  );
+}
+
+// ── Top models ───────────────────────────────────────────────────────────────
+
+function TopModelsCard({ models, loading, className }: { models?: ModelUsage[]; loading: boolean; className?: string }) {
+  const rows = (models ?? []).slice(0, 6);
+  const total = (models ?? []).reduce((sum, m) => sum + m.total_requests, 0);
+  return (
+    <Panel icon={ICONS.model} title="Top models" action={<PanelLink to={dashboard("/usage?tab=models")}>All models</PanelLink>} className={className}>
+      {loading ? (
+        <div className="space-y-2 p-4" aria-busy="true">
+          <span className="sr-only">Loading models</span>
+          {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}
+        </div>
+      ) : rows.length === 0 ? (
+        <PanelEmpty icon={ICONS.model} title="No model traffic in this period" />
       ) : (
         <>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] text-xs">
+          {/* Phones: one stacked card per model instead of a sideways-scrolling table. */}
+          <ul className="divide-y divide-line md:hidden" aria-label="Top models">
+            {rows.map((m) => {
+              const share = modelShare(m, total);
+              return (
+                <li key={`${m.provider}/${m.model}`} className="px-4 py-3">
+                  <div className="flex items-center gap-2.5">
+                    <ProviderLogo icon={m.provider_icon} name={m.provider_name || m.provider} size={18} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-mono text-[12.5px] text-fg" title={m.model}>{m.model || "unknown"}</p>
+                      <p className="truncate font-mono text-[11.5px] text-fg-muted">{m.provider}</p>
+                    </div>
+                    <span className="shrink-0 text-[12.5px] font-medium tabular-nums text-fg">
+                      {fmtShare(share)}
+                      <span className="sr-only"> of requests</span>
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-[12px] tabular-nums text-fg-muted">
+                    {fmtInt(m.total_requests)} requests · {fmtCompact(m.total_tokens)} tokens
+                    {modelCost(m) !== "—" && <> · {modelCost(m)}</>}
+                  </p>
+                  <div className="mt-2 h-1 overflow-hidden rounded-full bg-track" aria-hidden="true">
+                    <div className="h-full rounded-full bg-accent-500" style={{ width: `${share}%` }} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <div
+            className="hidden overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500 md:block"
+            tabIndex={0}
+            role="region"
+            aria-label="Top models table"
+          >
+            <table className="w-full min-w-[560px] text-[12.5px]">
               <thead>
-                <tr className="border-b border-[var(--border)] text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                  <th className="px-5 py-3 text-left">Status</th>
-                  <th className="px-4 py-3 text-left">Provider / model</th>
-                  <th className="px-4 py-3 text-right">Tokens</th>
-                  <th className="px-4 py-3 text-right">Cost</th>
-                  <th className="px-4 py-3 text-right">Latency</th>
-                  <th className="px-5 py-3 text-right">Time</th>
+                <tr className={THEAD}>
+                  <th scope="col" className={TH}>Model</th>
+                  <th scope="col" className={cn(TH, "text-right")}>Requests</th>
+                  <th scope="col" className={cn(TH, "text-right")}>Tokens</th>
+                  <th scope="col" className={cn(TH, "text-right")}>Cost</th>
+                  <th scope="col" className={cn(TH, "w-40")}>Share</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {paged.map((row) => {
-                  const provider = providerMap.get(row.provider);
+              <tbody className="divide-y divide-line">
+                {rows.map((m) => {
+                  const share = modelShare(m, total);
                   return (
-                    <tr key={row.id} className="transition-colors hover:bg-[var(--bg-subtle)]/60">
-                      <td className="px-5 py-3"><RequestStatusBadge status={row.status} /></td>
-                      <td className="px-4 py-3">
-                        <div className="flex min-w-0 items-center gap-2.5">
-                          <SmallProviderIcon provider={provider} className="h-7 w-7" />
-                          <div className="min-w-0">
-                            <div className="max-w-md truncate font-mono text-[11px] font-semibold" title={row.model}>{row.model || "Unknown model"}</div>
-                            <div className="mt-0.5 truncate text-[10px] text-[var(--text-muted)]">{provider?.display_name || row.provider}</div>
+                    <tr key={`${m.provider}/${m.model}`} className="transition-colors hover:bg-hover">
+                      <td className="max-w-[280px] px-4 py-2">
+                        <span className="flex min-w-0 items-center gap-2.5">
+                          <ProviderLogo icon={m.provider_icon} name={m.provider_name || m.provider} size={18} />
+                          <span className="min-w-0">
+                            <span className="block truncate font-mono text-fg" title={m.model}>{m.model || "unknown"}</span>
+                            <span className="block truncate font-mono text-[11.5px] text-fg-muted">{m.provider}</span>
+                          </span>
+                        </span>
+                      </td>
+                      <td className="px-4 py-2 text-right text-fg">{fmtInt(m.total_requests)}</td>
+                      <td className="px-4 py-2 text-right text-fg-muted">{fmtCompact(m.total_tokens)}</td>
+                      <td className="px-4 py-2 text-right text-fg">{modelCost(m)}</td>
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-2">
+                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-track" aria-hidden="true">
+                            <div className="h-full rounded-full bg-accent-500" style={{ width: `${share}%` }} />
                           </div>
+                          <span className="w-10 text-right text-[11.5px] tabular-nums text-fg-muted">{fmtShare(share)}</span>
                         </div>
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums">
-                        <div className="font-semibold">{fmtInteger(row.prompt_tokens + row.completion_tokens)}</div>
-                        {(row.cached_tokens > 0 || row.reasoning_tokens > 0) && (
-                          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">
-                            {row.cached_tokens > 0 ? `${fmtCompact(row.cached_tokens)} cached` : `${fmtCompact(row.reasoning_tokens)} reasoning`}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 text-right font-medium tabular-nums">
-                        {row.pricing_status === "missing" ? "Unpriced" : fmtUSD(row.cost_usd)}
-                      </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-[var(--text-muted)]">
-                        {fmtMs(row.end_to_end_latency_ms || row.latency_ms)}
-                      </td>
-                      <td className="whitespace-nowrap px-5 py-3 text-right text-[var(--text-muted)]" title={formatDateTime(row.created_at)}>
-                        {relativeTime(row.created_at)}
                       </td>
                     </tr>
                   );
@@ -570,101 +605,722 @@ function RecentActivityTable({ recent, providers }: { recent: RecentActivity[]; 
               </tbody>
             </table>
           </div>
-          <TablePagination page={page} pages={pages} total={total} onPage={setPage} />
         </>
       )}
-    </Card>
+    </Panel>
   );
 }
 
-function RequestStatusBadge({ status }: { status: UsageTerminalStatus }) {
-  const config: Record<UsageTerminalStatus, { label: string; tone: "success" | "accent" | "warning" | "danger" | "neutral" }> = {
-    success: { label: "Success", tone: "success" },
-    cache_hit: { label: "Cache hit", tone: "accent" },
-    blocked: { label: "Blocked", tone: "warning" },
-    failed: { label: "Failed", tone: "danger" },
-    cancelled: { label: "Cancelled", tone: "neutral" },
-  };
-  const item = config[status] ?? { label: String(status), tone: "neutral" as const };
-  return <Badge tone={item.tone}>{item.label}</Badge>;
+function modelShare(m: ModelUsage, total: number): number {
+  return total ? (m.total_requests / total) * 100 : 0;
 }
 
-function SmallProviderIcon({ provider, className = "h-5 w-5" }: { provider?: ProviderUsage; className?: string }) {
-  const [errored, setErrored] = useState(false);
-  if (!provider || errored || !provider.icon) {
-    const label = provider?.display_name || "?";
-    return (
-      <div
-        className={`flex shrink-0 items-center justify-center rounded-md text-[9px] font-bold text-white ${className}`}
-        style={{ backgroundColor: provider?.color || "var(--color-ink-400)" }}
-        aria-hidden="true"
-      >
-        {label.slice(0, 1).toUpperCase()}
-      </div>
-    );
-  }
+function fmtShare(share: number): string {
+  return `${share.toFixed(share < 10 ? 1 : 0)}%`;
+}
+
+function modelCost(m: ModelUsage): string {
+  return m.cost_usd > 0 ? fmtUSD(m.cost_usd) : m.pricing_status === "free" ? "Free" : "—";
+}
+
+// ── Savings and budgets ──────────────────────────────────────────────────────
+
+function CostCard({ data, budgets, budgetsLoading }: { data: UsageInsights; budgets?: BudgetStatus[]; budgetsLoading: boolean }) {
+  const sv = data.savings;
+  const gross = data.summary.cost_usd + sv.usd_saved;
+  const compressionTokens = sv.slim_tokens_saved + sv.headroom_tokens_saved;
+  const shaped = sv.caveman_requests + sv.terse_requests + sv.ponytail_requests;
+  const usdRows = [
+    { name: "Semantic cache", detail: `${fmtInt(data.summary.cache_hits)} cache hits`, usd: sv.avoided_cost_usd, opacity: 1 },
+    { name: "Input compression", detail: `${fmtCompact(compressionTokens)} tokens removed`, usd: sv.saved_cost_usd, opacity: 0.45 },
+  ];
+  const usdTotal = usdRows.reduce((sum, r) => sum + r.usd, 0);
+  const savedDelta = absUSDDelta(sv.usd_saved, data.previous?.usd_saved);
+  const budgetRows = [...(budgets ?? [])].sort((a, b) => usedPct(b) - usedPct(a)).slice(0, 3);
+  const savingsId = useId();
+  const budgetsId = useId();
+
   return (
-    <img
-      src={provider.icon}
-      alt=""
-      onError={() => setErrored(true)}
-      className={`shrink-0 rounded-md object-contain ${className}`}
-    />
+    <Panel icon={ICONS.savings} title="Savings and budgets">
+      <section aria-labelledby={savingsId} className="px-4 pb-2 pt-3.5">
+        <div className="flex items-center justify-between gap-3">
+          <h3 id={savingsId} className="text-[12.5px] font-medium text-fg-muted">Saved by optimizers</h3>
+          <PanelLink to={dashboard("/settings")}>
+            Configure<span className="sr-only"> token savings</span>
+          </PanelLink>
+        </div>
+        <p className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span className="text-[22px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-fg">{fmtUSD(sv.usd_saved)}</span>
+          {gross > 0 && <span className="text-[12px] tabular-nums text-fg-muted">{fmtPct(sv.usd_saved / gross, 1)} of gross</span>}
+          {sv.usd_saved_estimate && <span className="text-[12px] text-fg-muted">· estimated</span>}
+          {savedDelta && <DeltaBadge delta={savedDelta} className="ml-auto" />}
+        </p>
+        {usdTotal > 0 && (
+          <div className="mt-3 flex h-2 gap-0.5 overflow-hidden rounded-full" aria-hidden="true">
+            {usdRows.map((r) => r.usd > 0 && <span key={r.name} className="bg-accent-500" style={{ width: `${(r.usd / usdTotal) * 100}%`, opacity: r.opacity }} />)}
+          </div>
+        )}
+        <ul className="mt-1.5">
+          {usdRows.map((r) => (
+            <li key={r.name} className="flex items-center gap-2.5 py-1.5">
+              <span className="h-2 w-2 shrink-0 rounded-[2px] bg-accent-500" style={{ opacity: r.opacity }} aria-hidden="true" />
+              <p className="min-w-0 flex-1 truncate text-[12.5px]">
+                <span className="font-medium text-fg">{r.name}</span> <span className="text-fg-muted">· {r.detail}</span>
+              </p>
+              <span className="text-[12.5px] font-medium tabular-nums text-fg">{fmtUSD(r.usd)}</span>
+            </li>
+          ))}
+          <li className="flex items-center gap-2.5 py-1.5">
+            <span className="h-2 w-2 shrink-0 rounded-[2px] bg-track" aria-hidden="true" />
+            <p className="min-w-0 flex-1 truncate text-[12.5px]">
+              <span className="font-medium text-fg">Output shaping</span> <span className="text-fg-muted">· not priced</span>
+            </p>
+            <span className="text-[12.5px] tabular-nums text-fg-muted">{fmtInt(shaped)} req</span>
+          </li>
+        </ul>
+      </section>
+
+      <section aria-labelledby={budgetsId} className="flex-1 border-t border-line px-4 pb-3 pt-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3 id={budgetsId} className="text-[12.5px] font-medium text-fg-muted">Budgets</h3>
+          <PanelLink to={dashboard("/plans")}>
+            {budgetRows.length > 0 ? "Manage" : "Set a budget"}
+            {budgetRows.length > 0 && <span className="sr-only"> budgets</span>}
+          </PanelLink>
+        </div>
+        {budgetsLoading ? (
+          <div className="mt-2 space-y-2" aria-busy="true">
+            <span className="sr-only">Loading budgets</span>
+            {[0, 1].map((i) => <Skeleton key={i} className="h-9 w-full" />)}
+          </div>
+        ) : budgetRows.length === 0 ? (
+          <p className="mt-1.5 text-[12.5px] text-fg-muted">No budgets set.</p>
+        ) : (
+          <ul className="mt-1 divide-y divide-line">
+            {budgetRows.map((b) => {
+              const pct = usedPct(b);
+              const level = pct >= 100 ? "over" : pct >= b.alert_pct ? "near" : "ok";
+              const fill = level === "over" ? "bg-bad" : level === "near" ? "bg-warn" : "bg-accent-500";
+              const byTokens = b.limit_tokens > 0 && b.tokens_pct_used >= b.pct_used;
+              const detail = byTokens
+                ? `${fmtCompact(b.spent_tokens)} of ${fmtCompact(b.limit_tokens)} tokens`
+                : `${fmtUSD(b.spent_micros / 1e6)} of ${fmtUSD(b.limit_micros / 1e6)}`;
+              return (
+                <li key={b.id} className="flex flex-col gap-1.5 py-2.5">
+                  <div className="flex items-baseline gap-2">
+                    <span className="truncate font-mono text-[12.5px] font-medium text-fg">{b.scope_name}</span>
+                    <span className={cn("ml-auto text-[12px] font-medium tabular-nums", level === "over" ? "text-bad" : level === "near" ? "text-warn" : "text-fg")}>
+                      {Math.round(pct)}%
+                      <span className="sr-only">{level === "over" ? " used, limit reached" : level === "near" ? " used, near limit" : " used"}</span>
+                    </span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-track" aria-hidden="true">
+                    <div className={cn("h-full rounded-full", fill)} style={{ width: `${Math.min(100, pct)}%` }} />
+                  </div>
+                  <div className="flex justify-between gap-2 text-[11.5px] tabular-nums text-fg-muted">
+                    <span className="truncate">{detail} · {b.period}</span>
+                    <span className="shrink-0">{b.resets_at ? `Resets ${relativeFuture(b.resets_at)}` : "No reset"}</span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+    </Panel>
   );
 }
 
-function fmtCompact(value: number): string {
-  if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`;
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return value.toLocaleString();
+// ── Routing chains ───────────────────────────────────────────────────────────
+
+const STEP_OPACITY = [1, 0.6, 0.38, 0.24, 0.16];
+
+function ChainsCard({ chains, loading, className }: { chains?: ChainUsage[]; loading: boolean; className?: string }) {
+  const rows = (chains ?? []).slice(0, 4);
+  return (
+    <Panel icon={ICONS.chains} title="Routing chains" action={rows.length > 0 ? <PanelLink to={dashboard("/chains")}>Manage chains</PanelLink> : undefined} className={className}>
+      {loading ? (
+        <div className="space-y-3 p-4" aria-busy="true">
+          <span className="sr-only">Loading chains</span>
+          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-14 w-full" />)}
+        </div>
+      ) : rows.length === 0 ? (
+        // The page's single next-step callout.
+        <PanelEmpty
+          icon={ICONS.chains}
+          title="No fallback chains yet"
+          hint="A chain tries models in order, so one rate-limited provider never stops your tools."
+          action={
+            <Link
+              to={dashboard("/chains/new")}
+              className={cn("inline-flex h-8 items-center rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:bg-hover", FOCUS_RING)}
+            >
+              Create chain
+            </Link>
+          }
+        />
+      ) : (
+        <ul className="divide-y divide-line">
+          {rows.map((c) => {
+            const rotating = /round|random/.test(c.strategy);
+            const sep = rotating ? "·" : "→";
+            return (
+              <li key={c.chain_id}>
+                <Link
+                  to={dashboard(`/chains/${c.chain_id}/edit`)}
+                  className="flex flex-col gap-2 px-4 py-3 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+                >
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="font-mono text-[13px] font-medium text-fg">{c.name}</span>
+                    <Badge tone="neutral">{humanStrategy(c.strategy)}</Badge>
+                    <span className="ml-auto text-[12px] tabular-nums text-fg-muted">
+                      {c.requests > 0 ? (
+                        <>
+                          {fmtInt(c.requests)} req ·{" "}
+                          <span className={cn(c.fallback_rate >= 0.1 ? "text-warn" : "text-fg")}>{fmtPct(c.fallback_rate, 1)}</span> fell back
+                          <span className="sr-only"> ({fmtInt(c.fallback_requests)} requests)</span>
+                        </>
+                      ) : (
+                        "No traffic"
+                      )}
+                    </span>
+                  </div>
+                  {c.requests > 0 && (
+                    <div className="flex h-1.5 gap-0.5 overflow-hidden rounded-full bg-track" aria-hidden="true">
+                      {c.steps.map((st, i) =>
+                        st.requests > 0 ? (
+                          <span key={`${st.provider}/${st.model}`} className="bg-accent-500" style={{ width: `${st.share * 100}%`, opacity: STEP_OPACITY[Math.min(i, STEP_OPACITY.length - 1)] }} />
+                        ) : null,
+                      )}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+                    {c.steps.map((st, i) => (
+                      <span key={`${st.provider}/${st.model}/${i}`} className="inline-flex min-w-0 items-center gap-1.5">
+                        {i > 0 && <span className="text-fg-faint" aria-hidden="true">{st.is_fallback ? "⤳" : sep}</span>}
+                        <span
+                          className="inline-flex h-6 min-w-0 items-center gap-1.5 rounded-md border border-line bg-subtle px-2"
+                          title={`${st.provider}/${st.model}${st.is_fallback ? " · last-resort fallback" : ""}`}
+                        >
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-[2px] bg-accent-500" style={{ opacity: STEP_OPACITY[Math.min(i, STEP_OPACITY.length - 1)] }} aria-hidden="true" />
+                          <span className="truncate font-mono text-fg">{st.model}</span>
+                          {st.is_fallback && <span className="sr-only">(last-resort fallback)</span>}
+                          {c.requests > 0 && <span className="tabular-nums text-fg-muted">{fmtPct(st.share, st.share < 0.1 ? 1 : 0)}</span>}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Panel>
+  );
 }
 
-function fmtInteger(value: number): string {
-  return Math.round(value).toLocaleString();
+function humanStrategy(s: string): string {
+  const map: Record<string, string> = { priority: "Priority", fallback: "Fallback", round_robin: "Round robin", "round-robin": "Round robin", random: "Random", latency: "Lowest latency", cost: "Lowest cost" };
+  return map[s] ?? (s ? s.charAt(0).toUpperCase() + s.slice(1).replace(/[_-]/g, " ") : "Priority");
 }
 
-function fmtUSD(value: number): string {
-  if (value > 0 && value < 0.0001) return "<$0.0001";
-  if (value < 1) return `$${value.toFixed(4)}`;
-  return `$${value.toFixed(2)}`;
+// ── Budgets ──────────────────────────────────────────────────────────────────
+
+function usedPct(b: BudgetStatus): number {
+  return Math.max(b.limit_micros > 0 ? b.pct_used : 0, b.limit_tokens > 0 ? b.tokens_pct_used : 0);
 }
 
-function fmtMs(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "—";
-  if (value < 1000) return `${Math.round(value)}ms`;
-  return `${(value / 1000).toFixed(2)}s`;
+// ── Recent requests ──────────────────────────────────────────────────────────
+
+// Same labels and tones as the Usage requests table.
+const STATUS_STYLE: Record<string, { label: string; tone: "success" | "accent" | "danger" | "warning" | "neutral" }> = {
+  success: { label: "Success", tone: "success" },
+  cache_hit: { label: "Cache hit", tone: "accent" },
+  failed: { label: "Failed", tone: "danger" },
+  blocked: { label: "Blocked", tone: "warning" },
+  cancelled: { label: "Cancelled", tone: "neutral" },
+};
+
+function RecentRequestsCard({ recent, period, className }: { recent: RecentActivity[]; period: PeriodKey; className?: string }) {
+  const navigate = useNavigate();
+  // Every row opens the request's detail drawer on the Usage page.
+  const detailHref = (r: RecentActivity) => dashboard(`/usage?period=${period}&tab=requests&request=${encodeURIComponent(r.id)}`);
+  return (
+    <Panel icon={ICONS.requests} title="Recent requests" action={<PanelLink to={dashboard(`/usage?period=${period}&tab=requests`)}>All requests</PanelLink>} className={className}>
+      {recent.length === 0 ? (
+        <PanelEmpty icon={ICONS.requests} title="No requests in this period" />
+      ) : (
+        <>
+          {/* Phones: stacked cards — model and status first, then the numbers. */}
+          <ul className="divide-y divide-line md:hidden" aria-label="Recent requests">
+            {recent.map((r) => {
+              const st = STATUS_STYLE[r.status] ?? STATUS_STYLE.cancelled;
+              const caller = [r.api_key_name, r.client].filter(Boolean).join(" · ");
+              return (
+                <li key={r.id}>
+                  <Link to={detailHref(r)} className="block px-4 py-3 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500">
+                    <div className="flex items-center gap-2.5">
+                      <ProviderLogo icon={r.provider_icon} name={r.provider_name || r.provider} size={18} />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-mono text-[12.5px] text-fg" title={`${r.provider}/${r.model}`}>{r.model || "unknown"}</p>
+                        {caller && <p className="truncate font-mono text-[11.5px] text-fg-muted">{caller}</p>}
+                      </div>
+                      <span className="shrink-0">
+                        <Badge tone={st.tone} title={r.error_kind || undefined}>
+                          {requestStatusLabel(r, st.label)}
+                        </Badge>
+                      </span>
+                    </div>
+                    <p className="mt-1.5 flex flex-wrap gap-x-1.5 text-[12px] tabular-nums text-fg-muted">
+                      <time dateTime={r.created_at} title={formatDateTime(r.created_at)} className="font-mono">
+                        {formatClock(r.created_at)}
+                      </time>
+                      <span aria-hidden="true">·</span>
+                      <span>{fmtMs(r.latency_ms)}</span>
+                      {(r.prompt_tokens > 0 || r.completion_tokens > 0) && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            {requestTokens(r)}
+                            <span className="sr-only"> tokens in and out</span>
+                          </span>
+                        </>
+                      )}
+                      {requestCost(r) !== "—" && (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span className="text-fg">{requestCost(r)}</span>
+                        </>
+                      )}
+                    </p>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+          <div
+            className="hidden overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500 md:block"
+            tabIndex={0}
+            role="region"
+            aria-label="Recent requests table"
+          >
+            <table className="w-full min-w-[600px] text-[12.5px]">
+              <thead>
+                <tr className={THEAD}>
+                  <th scope="col" className={TH}>Time</th>
+                  <th scope="col" className={TH}>Status</th>
+                  <th scope="col" className={TH}>Model</th>
+                  <th scope="col" className={cn(TH, "text-right")}>Latency</th>
+                  <th scope="col" className={cn(TH, "text-right")}>Tokens in → out</th>
+                  <th scope="col" className={cn(TH, "text-right")}>Cost</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {recent.map((r) => {
+                  const st = STATUS_STYLE[r.status] ?? STATUS_STYLE.cancelled;
+                  const caller = [r.api_key_name, r.client].filter(Boolean).join(" · ");
+                  return (
+                    // The row is a mouse convenience; the time link is the keyboard / AT path.
+                    <tr key={r.id} className="cursor-pointer transition-colors hover:bg-hover" onClick={() => navigate(detailHref(r))}>
+                      <td className="whitespace-nowrap px-4 py-2 font-mono text-[12px] text-fg-muted" title={formatDateTime(r.created_at)}>
+                        <Link to={detailHref(r)} onClick={(e) => e.stopPropagation()} className={cn("rounded-sm hover:text-fg hover:underline", FOCUS_RING)}>
+                          {formatClock(r.created_at)}
+                          <span className="sr-only">, {r.model || "unknown model"}: open request details</span>
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2">
+                        <Badge tone={st.tone} title={r.error_kind || undefined}>
+                          {requestStatusLabel(r, st.label)}
+                        </Badge>
+                      </td>
+                      <td className="max-w-[300px] px-4 py-2">
+                        <span className="flex min-w-0 items-center gap-2.5">
+                          <ProviderLogo icon={r.provider_icon} name={r.provider_name || r.provider} size={18} />
+                          <span className="min-w-0">
+                            <span className="block truncate font-mono text-fg" title={`${r.provider}/${r.model}`}>{r.model || "unknown"}</span>
+                            {caller && <span className="block truncate font-mono text-[11.5px] text-fg-muted">{caller}</span>}
+                          </span>
+                        </span>
+                      </td>
+                      <td className="whitespace-nowrap px-4 py-2 text-right text-fg">{fmtMs(r.latency_ms)}</td>
+                      <td className="whitespace-nowrap px-4 py-2 text-right text-fg-muted">{requestTokens(r)}</td>
+                      <td className="whitespace-nowrap px-4 py-2 text-right text-fg">{requestCost(r)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </Panel>
+  );
 }
 
-function fmtPercent(value: number): string {
-  return `${(value * 100).toFixed(1)}%`;
+function requestStatusLabel(r: RecentActivity, fallback: string): string {
+  return r.status === "failed" && r.error_kind ? humanError(r.error_kind) : fallback;
 }
 
-function fmtCoverage(value: number | null): string {
-  return value == null ? "—" : `${(value * 100).toFixed(1)}%`;
+function requestTokens(r: RecentActivity): string {
+  return r.prompt_tokens || r.completion_tokens ? `${fmtCompact(r.prompt_tokens)} → ${fmtCompact(r.completion_tokens)}` : "—";
 }
 
-function fmtAxis(value: number, metric: TrendMetric): string {
-  if (metric === "cost") return value >= 1 ? `$${value.toFixed(0)}` : `$${value.toFixed(2)}`;
-  return fmtCompact(value);
+function requestCost(r: RecentActivity): string {
+  return r.cache_hit ? "$0" : r.cost_usd > 0 ? fmtUSD(r.cost_usd) : "—";
 }
 
-function fmtTrendValue(value: number, metric: TrendMetric): string {
-  if (metric === "cost") return fmtUSD(value);
-  return fmtInteger(value);
+function humanError(kind: string): string {
+  const map: Record<string, string> = {
+    rate_limited: "Rate limited",
+    timeout: "Timeout",
+    auth: "Auth error",
+    auth_error: "Auth error",
+    quota_exceeded: "Quota exceeded",
+    provider_5xx: "Upstream 5xx",
+    bad_request: "Bad request",
+    network: "Network error",
+    network_error: "Network error",
+  };
+  return map[kind] ?? kind.replace(/_/g, " ");
 }
 
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString();
+// ── First run ────────────────────────────────────────────────────────────────
+
+type SnippetKey = "claude" | "openai" | "curl";
+
+function FirstRun() {
+  const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api.listAccounts(), staleTime: 30_000 });
+  const keys = useQuery({ queryKey: ["keys"], queryFn: () => api.listKeys(), staleTime: 30_000 });
+  const info = useQuery({ queryKey: ["gateway-info"], queryFn: () => api.gatewayInfo(), staleTime: 60_000 });
+  const [snippet, setSnippet] = useState<SnippetKey>("claude");
+  const setupId = useId();
+  const gatewayId = useId();
+  const snippetBase = useId();
+
+  const accountCount = accounts.data?.accounts.length ?? 0;
+  const keyList = keys.data?.keys ?? [];
+  const keyUsed = keyList.some((k) => !!k.last_used_at);
+  const steps = [accountCount > 0, keyList.length > 0, keyUsed, false];
+  const done = steps.filter(Boolean).length;
+  const current = steps.findIndex((s) => !s);
+
+  const origin = window.location.origin;
+  const snippets: Record<SnippetKey, { label: string; code: string; language: CodeLanguage }> = {
+    claude: {
+      label: "Claude Code",
+      language: "bash",
+      code: `export ANTHROPIC_BASE_URL=${origin}\nexport ANTHROPIC_AUTH_TOKEN=<your KeiRouter key>\nclaude`,
+    },
+    openai: {
+      label: "OpenAI SDK",
+      language: "python",
+      code: `from openai import OpenAI\n\nclient = OpenAI(\n    base_url="${origin}/v1",\n    api_key="<your KeiRouter key>",\n)\nclient.chat.completions.create(\n    model="<model or chain>",\n    messages=[{"role": "user", "content": "ping"}],\n)`,
+    },
+    curl: {
+      label: "curl",
+      language: "bash",
+      code: `curl ${origin}/v1/chat/completions \\\n  -H "Authorization: Bearer <your KeiRouter key>" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "<model or chain>", "messages": [{"role": "user", "content": "ping"}]}'`,
+    },
+  };
+  const snippetKeys = Object.keys(snippets) as SnippetKey[];
+
+  return (
+    <div className="grid gap-4 xl:grid-cols-3">
+      <section aria-labelledby={setupId} className="min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] xl:col-span-2">
+        <div className="border-b border-line px-4 py-3">
+          <SectionTitle
+            id={setupId}
+            icon={ICONS.checklist}
+            title={
+              <>
+                Finish setting up <span className="ml-1 text-[12px] font-normal tabular-nums text-fg-muted">{done} of 4 done</span>
+              </>
+            }
+            action={
+              <div
+                className="h-1.5 w-20 overflow-hidden rounded-full bg-track sm:w-40"
+                role="progressbar"
+                aria-valuenow={done * 25}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuetext={`${done} of 4 steps done`}
+                aria-label="Setup progress"
+              >
+                <div className="h-full bg-accent-500 transition-[width]" style={{ width: `${done * 25}%` }} />
+              </div>
+            }
+          />
+        </div>
+        <ol className="divide-y divide-line">
+          <SetupStep
+            index={0}
+            icon={ICONS.providers}
+            current={current}
+            done={steps[0]}
+            title="Connect a provider"
+            body={steps[0] ? `${accountCount} account${accountCount === 1 ? "" : "s"} connected.` : "An API key or OAuth sign-in, any of 130+ LLM providers."}
+            action={<SetupAction to={dashboard("/providers")} primary={current === 0}>{steps[0] ? "Manage providers" : "Connect provider"}</SetupAction>}
+          />
+          <SetupStep
+            index={1}
+            icon={ICONS.keys}
+            current={current}
+            done={steps[1]}
+            title="Create an API key"
+            body="Your tools use it instead of provider credentials."
+            action={<SetupAction to={dashboard("/keys")} primary={current === 1}>{steps[1] ? "Manage keys" : "Create key"}</SetupAction>}
+          />
+          <SetupStep
+            index={2}
+            icon={ICONS.cliTools}
+            current={current}
+            done={steps[2]}
+            title="Point a tool at KeiRouter"
+            body="Paste a snippet, or let KeiRouter write the config."
+            action={<SetupAction to={dashboard("/cli-tools")} primary={current === 2}>Auto-configure tools</SetupAction>}
+          >
+            <div className="mt-3 overflow-hidden rounded-xl border border-line">
+              <div className="flex items-center gap-1 border-b border-line bg-subtle p-1.5">
+                <div
+                  className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none]"
+                  role="tablist"
+                  aria-label="Snippet"
+                  onKeyDown={(e) => onGroupArrowKeys(e, "tab")}
+                >
+                  {snippetKeys.map((k) => (
+                    <button
+                      key={k}
+                      id={`${snippetBase}-tab-${k}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={snippet === k}
+                      aria-controls={`${snippetBase}-panel`}
+                      tabIndex={snippet === k ? 0 : -1}
+                      onClick={() => setSnippet(k)}
+                      className={cn(
+                        "h-9 shrink-0 whitespace-nowrap rounded-lg px-2.5 text-[12px] font-medium transition-colors sm:h-7",
+                        FOCUS_RING,
+                        snippet === k ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
+                      )}
+                    >
+                      {snippets[k].label}
+                    </button>
+                  ))}
+                </div>
+                <CopyButton value={snippets[snippet].code} label={`Copy ${snippets[snippet].label} snippet`} toast="Snippet copied" size="sm" className="ml-1" />
+              </div>
+              <pre
+                id={`${snippetBase}-panel`}
+                role="tabpanel"
+                aria-labelledby={`${snippetBase}-tab-${snippet}`}
+                tabIndex={0}
+                className={cn("overflow-x-auto bg-[var(--code-bg)] px-3.5 py-3 font-mono text-[12.5px] leading-[1.65] text-[var(--code-fg)]", FOCUS_RING)}
+              >
+                <code>
+                  <HighlightedCode code={snippets[snippet].code} language={snippets[snippet].language} />
+                </code>
+              </pre>
+            </div>
+          </SetupStep>
+          <SetupStep
+            index={3}
+            icon={ICONS.requests}
+            current={current}
+            done={false}
+            title="Send your first request"
+            body="This page fills in as soon as traffic arrives."
+            action={
+              <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12px] text-fg-muted">
+                <span className="live-dot h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />
+                Listening on <span className="font-mono">/v1</span>
+              </span>
+            }
+          />
+        </ol>
+        <p className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line bg-subtle px-4 py-2.5 text-[12px] text-fg-muted">
+          <span>Then:</span>
+          <Link to={dashboard("/chains/new")} className={cn("inline-flex min-h-6 items-center rounded-md font-medium text-link hover:underline", FOCUS_RING)}>Add a fallback chain</Link>
+          <Link to={dashboard("/settings")} className={cn("inline-flex min-h-6 items-center rounded-md font-medium text-link hover:underline", FOCUS_RING)}>Turn on token savings</Link>
+          <Link to={dashboard("/plans")} className={cn("inline-flex min-h-6 items-center rounded-md font-medium text-link hover:underline", FOCUS_RING)}>Set a budget</Link>
+        </p>
+      </section>
+
+      <section aria-labelledby={gatewayId} className="min-w-0 self-start overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        <div className="border-b border-line px-4 py-3">
+          <SectionTitle
+            id={gatewayId}
+            icon={ICONS.server}
+            title="Gateway"
+            action={
+              <Badge tone="success">
+                <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
+                Running
+              </Badge>
+            }
+          />
+        </div>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2.5 px-4 py-3.5 text-[12.5px]">
+          <dt className="text-fg-muted">Endpoint</dt>
+          <dd className="min-w-0 break-all text-right font-mono text-fg">{origin}/v1</dd>
+          <dt className="text-fg-muted">Listening on</dt>
+          <dd className="min-w-0 break-all text-right font-mono text-fg">{info.data?.listen_addr ?? "—"}</dd>
+          <dt className="text-fg-muted">Storage</dt>
+          <dd className="text-right text-fg">{info.data ? (info.data.dialect === "postgres" ? "Postgres" : "SQLite") : "—"}</dd>
+          <dt className="text-fg-muted">Version</dt>
+          <dd className="text-right font-mono text-fg">{info.data?.version ?? "—"}</dd>
+          <dt className="text-fg-muted">Remote access</dt>
+          <dd className="text-right">
+            <Link to={dashboard("/endpoints")} className={cn("inline-flex min-h-6 items-center rounded-md text-[12px] font-medium text-link hover:underline", FOCUS_RING)}>
+              Set up tunnel
+            </Link>
+          </dd>
+        </dl>
+      </section>
+    </div>
+  );
 }
 
-function relativeTime(value: string): string {
-  const timestamp = new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) return "—";
-  const delta = Date.now() - timestamp;
-  if (delta < 60_000) return "just now";
-  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)}m ago`;
-  if (delta < 86_400_000) return `${Math.floor(delta / 3_600_000)}h ago`;
-  return `${Math.floor(delta / 86_400_000)}d ago`;
+function SetupStep({
+  index,
+  icon,
+  current,
+  done,
+  title,
+  body,
+  action,
+  children,
+}: {
+  index: number;
+  icon: LucideIcon;
+  current: number;
+  done: boolean;
+  title: string;
+  body: string;
+  action?: ReactNode;
+  children?: ReactNode;
+}) {
+  const isCurrent = index === current;
+  return (
+    <li className={cn("flex gap-3 px-4 py-4 sm:gap-3.5", isCurrent && "bg-subtle")} aria-current={isCurrent ? "step" : undefined}>
+      {/* Done steps turn into a green check; the current step carries the page
+          tone; later steps stay neutral. The sr-only text in the heading says which. */}
+      <IconTile icon={done ? Check : icon} size="md" tone={done ? "ok" : isCurrent ? "section" : "slate"} />
+      <div className="min-w-0 flex-1 pt-0.5">
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="min-w-[min(100%,220px)] flex-1">
+            <h3 className={cn("text-[13px]", done ? "font-medium text-fg-muted line-through decoration-line-strong" : isCurrent ? "font-semibold text-fg" : "font-medium text-fg")}>
+              <span className="sr-only">Step {index + 1}: </span>
+              {title}
+              <span className="sr-only">{done ? " (done)" : isCurrent ? " (current step)" : ""}</span>
+            </h3>
+            <p className="mt-0.5 max-w-xl text-[12px] text-fg-muted">{body}</p>
+          </div>
+          {action}
+        </div>
+        {children}
+      </div>
+    </li>
+  );
+}
+
+function SetupAction({ to, primary, children }: { to: string; primary?: boolean; children: ReactNode }) {
+  return (
+    <Link
+      to={to}
+      className={cn(
+        // Full-width on phones so the step's action is an easy, obvious tap target.
+        "inline-flex h-9 w-full shrink-0 items-center justify-center rounded-lg px-3 text-[13px] font-medium transition-colors focus-visible:ring-offset-2 sm:h-8 sm:w-auto",
+        FOCUS_RING,
+        primary ? "bg-action text-action-fg hover:bg-action-hover" : "border border-line-strong bg-surface text-fg hover:bg-hover",
+      )}
+    >
+      {children}
+    </Link>
+  );
+}
+
+// ── Skeleton ─────────────────────────────────────────────────────────────────
+
+function OverviewSkeleton() {
+  return (
+    <div className="space-y-6" aria-busy="true">
+      <span className="sr-only" role="status">Loading overview</span>
+      <Skeleton className="h-[104px] w-full rounded-2xl" />
+      <div className="grid gap-4 xl:grid-cols-3">
+        <Skeleton className="h-[340px] rounded-2xl xl:col-span-2" />
+        <Skeleton className="h-[340px] rounded-2xl" />
+      </div>
+      <div className="grid gap-4 xl:grid-cols-3">
+        <Skeleton className="h-[280px] rounded-2xl xl:col-span-2" />
+        <Skeleton className="h-[280px] rounded-2xl" />
+      </div>
+    </div>
+  );
+}
+
+// ── Formatting & maths ───────────────────────────────────────────────────────
+
+function fmtInt(v: number): string {
+  return Math.round(v || 0).toLocaleString("en-US");
+}
+
+function fmtCompact(v: number): string {
+  const n = v || 0;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}k`;
+  return Math.round(n).toString();
+}
+
+// Two decimals for anything a person would read as money; more precision only
+// for sub-cent values, so a quiet day shows "$0.42", not "$0.4213".
+function fmtUSD(v: number): string {
+  const n = v || 0;
+  if (n === 0) return "$0.00";
+  if (n < 0.01) return `$${n.toPrecision(2)}`;
+  return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function fmtMs(v: number): string {
+  if (!Number.isFinite(v) || v <= 0) return "—";
+  if (v < 1000) return `${Math.round(v)} ms`;
+  return `${(v / 1000).toFixed(v < 10_000 ? 2 : 1)} s`;
+}
+
+function fmtPct(ratio: number, digits: number): string {
+  return `${(ratio * 100).toFixed(digits)}%`;
+}
+
+function absUSDDelta(cur: number, prev: number | undefined): Delta | null {
+  if (prev === undefined || (!prev && !cur)) return null;
+  const diff = cur - prev;
+  const text = `${diff >= 0 ? "+" : "−"}${fmtUSD(Math.abs(diff))}`;
+  const dir = Math.abs(diff) < 0.005 ? "flat" : diff > 0 ? "up" : "down";
+  return { text, tone: dir === "flat" ? "flat" : dir === "up" ? "good" : "bad", dir };
+}
+
+function formatBucket(iso: string, withDate: boolean): string {
+  const d = new Date(iso);
+  return withDate
+    ? d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatClock(iso: string): string {
+  const d = new Date(iso);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })
+    : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function relativeFuture(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return "now";
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  if (h >= 48) return `in ${Math.round(h / 24)}d`;
+  if (h > 0) return `in ${h}h ${m}m`;
+  return `in ${Math.max(1, m)}m`;
 }

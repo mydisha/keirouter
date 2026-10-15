@@ -1,131 +1,110 @@
 package clitools
 
 import (
-	"fmt"
-	"os"
-	"runtime"
+	"path/filepath"
 	"strings"
 )
 
-// CopilotTool auto-configures VS Code Copilot (chatLanguageModels.json).
+// CopilotTool auto-configures VS Code Copilot Chat (chatLanguageModels.json),
+// registering KeiRouter as a custom "azure"-vendor model provider.
 type CopilotTool struct{}
 
-func (t *CopilotTool) ID() string   { return "copilot" }
-func (t *CopilotTool) Name() string { return "GitHub Copilot (VS Code)" }
-
-// Command returns "" — Copilot is a VS Code extension, not a standalone CLI.
-func (t *CopilotTool) Command() string { return "" }
+func (t *CopilotTool) ID() string                    { return "copilot" }
+func (t *CopilotTool) Name() string                  { return "GitHub Copilot (VS Code)" }
+func (t *CopilotTool) Commands() []string            { return nil }
+func (t *CopilotTool) Extensions() []string          { return []string{"github.copilot-chat"} }
+func (t *CopilotTool) ModelRequired() bool           { return true }
+func (t *CopilotTool) ConfigFiles(h string) []string { return []string{t.configPath(h)} }
 
 func (t *CopilotTool) configPath(homeDir string) string {
-	return platformConfigPath(homeDir, "chatLanguageModels.json")
+	return filepath.Join(vscodeUserDir(homeDir), "chatLanguageModels.json")
 }
 
-func (t *CopilotTool) DetectStatus(homeDir string) (bool, bool, string, error) {
-	path := t.configPath(homeDir)
-	if !fileExists(path) {
-		return false, false, path, nil
-	}
+const (
+	copilotEntryName = "KeiRouter"
+	// copilotURLSuffix routes the azure vendor's request to a plain
+	// OpenAI-compatible chat endpoint.
+	copilotURLSuffix = "/chat/completions#models.ai.azure.com"
+)
+
+func (t *CopilotTool) load(path string) ([]map[string]any, bool, error) {
 	var entries []map[string]any
-	if err := readJSONC(path, &entries); err != nil {
-		// Might be an object, not array — still installed.
-		return true, false, path, nil
-	}
-	for _, e := range entries {
-		if name, _ := e["name"].(string); name == "KeiRouter" {
-			return true, true, path, nil
-		}
-	}
-	return true, false, path, nil
+	exists, err := loadJSON(path, &entries)
+	return entries, exists, err
 }
 
-func (t *CopilotTool) Configure(homeDir, baseURL, apiKey string, models []string) error {
-	path := t.configPath(homeDir)
-
-	var entries []map[string]any
-	_ = readJSON(path, &entries)
-	if entries == nil {
-		entries = []map[string]any{}
-	}
-
-	// Remove existing KeiRouter entry.
-	filtered := make([]map[string]any, 0, len(entries))
+// partition splits entries into the KeiRouter entry and everything else.
+func (t *CopilotTool) partition(entries []map[string]any) (ours map[string]any, others []map[string]any) {
+	others = make([]map[string]any, 0, len(entries))
 	for _, e := range entries {
-		if name, _ := e["name"].(string); name != "KeiRouter" {
-			filtered = append(filtered, e)
+		if name, _ := e["name"].(string); name == copilotEntryName {
+			ours = e
+			continue
+		}
+		others = append(others, e)
+	}
+	return ours, others
+}
+
+func (t *CopilotTool) Read(homeDir string) (*Settings, error) {
+	entries, exists, err := t.load(t.configPath(homeDir))
+	if err != nil || !exists {
+		return nil, err
+	}
+	ours, _ := t.partition(entries)
+	if ours == nil {
+		return nil, nil
+	}
+	s := &Settings{}
+	s.APIKey, _ = ours["apiKey"].(string)
+	if models, ok := ours["models"].([]any); ok && len(models) > 0 {
+		if m, ok := models[0].(map[string]any); ok {
+			s.Model, _ = m["id"].(string)
+			u, _ := m["url"].(string)
+			s.BaseURL = strings.TrimSuffix(u, copilotURLSuffix)
 		}
 	}
-
-	// Build models array.
-	modelEntries := make([]map[string]any, len(models))
-	for i, m := range models {
-		modelEntries[i] = map[string]any{
-			"id":              m,
-			"name":            m,
-			"url":             fmt.Sprintf("%s/v1/chat/completions#models.ai.azure.com", baseURL),
-			"toolCalling":     true,
-			"maxInputTokens":  128000,
-			"maxOutputTokens": 16384,
-		}
+	if s.BaseURL == "" {
+		return nil, nil
 	}
-	if len(modelEntries) == 0 {
-		modelEntries = []map[string]any{{
-			"id":              "gpt-4o",
-			"name":            "gpt-4o",
-			"url":             fmt.Sprintf("%s/v1/chat/completions#models.ai.azure.com", baseURL),
-			"toolCalling":     true,
-			"maxInputTokens":  128000,
-			"maxOutputTokens": 16384,
-		}}
-	}
+	return s, nil
+}
 
-	entry := map[string]any{
-		"name":   "KeiRouter",
+func (t *CopilotTool) Configure(homeDir string, s Settings) error {
+	path := t.configPath(homeDir)
+	entries, _, err := t.load(path)
+	if err != nil {
+		return err
+	}
+	_, others := t.partition(entries)
+	others = append(others, map[string]any{
+		"name":   copilotEntryName,
 		"vendor": "azure",
-		"apiKey": apiKey,
-		"models": modelEntries,
-	}
-	filtered = append(filtered, entry)
-
-	return writeJSON(path, filtered)
+		"apiKey": s.APIKey,
+		"models": []map[string]any{{
+			"id":              s.Model,
+			"name":            s.Model,
+			"url":             v1URL(s.BaseURL) + copilotURLSuffix,
+			"toolCalling":     true,
+			"maxInputTokens":  128000,
+			"maxOutputTokens": 16384,
+		}},
+	})
+	return saveJSON(path, others)
 }
 
 func (t *CopilotTool) Remove(homeDir string) error {
 	path := t.configPath(homeDir)
-	if !fileExists(path) {
+	entries, exists, err := t.load(path)
+	if err != nil || !exists {
+		return err
+	}
+	ours, others := t.partition(entries)
+	if ours == nil {
 		return nil
 	}
-	var entries []map[string]any
-	if err := readJSON(path, &entries); err != nil {
-		return nil
+	if len(others) == 0 {
+		return removeFile(path)
 	}
-	filtered := make([]map[string]any, 0, len(entries))
-	for _, e := range entries {
-		if name, _ := e["name"].(string); name != "KeiRouter" {
-			filtered = append(filtered, e)
-		}
-	}
-	if len(filtered) == 0 {
-		return os.Remove(path)
-	}
-	return writeJSON(path, filtered)
-}
-
-// vscodeConfigDir returns the platform-specific VS Code User config directory.
-func vscodeConfigDir(homeDir string) string {
-	switch runtime.GOOS {
-	case "darwin":
-		return homeDir + "/Library/Application Support/Code/User"
-	case "windows":
-		if appData := os.Getenv("APPDATA"); appData != "" {
-			return appData + "/Code/User"
-		}
-		return homeDir + "/AppData/Roaming/Code/User"
-	default:
-		return homeDir + "/.config/Code/User"
-	}
-}
-
-// containsKeiRouter reports whether a JSON string contains a KeiRouter marker.
-func containsKeiRouter(s string) bool {
-	return strings.Contains(s, "KeiRouter") || strings.Contains(s, "keirouter")
+	return saveJSON(path, others)
 }

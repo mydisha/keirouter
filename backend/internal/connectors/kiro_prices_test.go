@@ -25,17 +25,18 @@ func TestKiroModelPrices_NewClaudeVersions(t *testing.T) {
 		model              string
 		wantInput, wantOut float64
 	}{
-		{"claude-sonnet-5", 3, 15},
-		{"claude-sonnet-5-thinking-agentic", 3, 15},
+		{"claude-sonnet-5", 2, 10},
+		{"claude-sonnet-5-thinking-agentic", 2, 10},
 		{"claude-sonnet-4.6", 3, 15},
 		{"claude-sonnet-4.6-thinking-agentic", 3, 15},
 		{"claude-sonnet-4.7", 3, 15},
 		{"claude-sonnet-4.8", 3, 15},
-		{"claude-opus-4.5", 15, 75},
-		{"claude-opus-4.5-thinking", 15, 75},
-		{"claude-opus-4.6", 15, 75},
-		{"claude-opus-4.7-thinking", 15, 75},
-		{"claude-opus-4.8-thinking-agentic", 15, 75},
+		{"claude-opus-4.5", 5, 25},
+		{"claude-opus-4.5-thinking", 5, 25},
+		{"claude-opus-4.6", 5, 25},
+		{"claude-opus-4.7-thinking", 5, 25},
+		{"claude-opus-4.8-thinking-agentic", 5, 25},
+		{"gpt-5.6-sol-thinking", 4, 20},
 	}
 	for _, tc := range cases {
 		mp, ok := ModelPriceByProviderModel("kiro", tc.model)

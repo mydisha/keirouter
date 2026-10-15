@@ -3,6 +3,9 @@ package store
 import (
 	"context"
 	"database/sql"
+	"fmt"
+	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -14,7 +17,17 @@ import (
 func newTestDB(t *testing.T) *DB {
 	t.Helper()
 	ctx := context.Background()
-	db, err := Open(ctx, config.DatabaseConfig{Driver: "sqlite", DSN: ":memory:"}, t.TempDir())
+	cfg := config.DatabaseConfig{Driver: "sqlite", DSN: ":memory:"}
+	if base := os.Getenv("KEIROUTER_AUDIT_PG_DSN"); base != "" {
+		schema := fmt.Sprintf("t_%d", time.Now().UnixNano())
+		admin, err := sql.Open("pgx", base)
+		require.NoError(t, err)
+		_, err = admin.Exec("CREATE SCHEMA " + schema)
+		require.NoError(t, err)
+		_ = admin.Close()
+		cfg = config.DatabaseConfig{Driver: "postgres", DSN: base + "&search_path=" + schema}
+	}
+	db, err := Open(ctx, cfg, t.TempDir())
 	require.NoError(t, err)
 	require.NoError(t, db.Migrate(ctx))
 	require.NoError(t, db.Tenants().EnsureDefault(ctx))
@@ -63,6 +76,50 @@ func mustTx(t *testing.T, db *DB) *sql.Tx {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	return tx
+}
+
+// TestSQLitePragmas_ApplyToEveryConnection holds several pool connections at
+// once so each is a distinct SQLite handle, and checks that per-connection
+// pragmas reached all of them rather than only the first.
+func TestSQLitePragmas_ApplyToEveryConnection(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name string
+		dsn  string
+		file bool
+	}{
+		{name: "file", dsn: t.TempDir() + "/pragmas.db", file: true},
+		{name: "memory", dsn: ":memory:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, err := Open(ctx, config.DatabaseConfig{Driver: "sqlite", DSN: tc.dsn, MaxOpenConns: 4}, t.TempDir())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = db.Close() })
+
+			conns := make([]*sql.Conn, 4)
+			for i := range conns {
+				conns[i], err = db.SQL().Conn(ctx)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = conns[i].Close() })
+			}
+			pragma := func(c *sql.Conn, name string) string {
+				var v string
+				require.NoError(t, c.QueryRowContext(ctx, "PRAGMA "+name).Scan(&v))
+				return v
+			}
+			for i, c := range conns {
+				require.Equal(t, strconv.Itoa(-sqliteCacheKiB), pragma(c, "cache_size"), "conn %d", i)
+				require.Equal(t, "1", pragma(c, "foreign_keys"), "conn %d", i)
+				require.Equal(t, "2", pragma(c, "temp_store"), "conn %d", i)
+				require.Equal(t, "5000", pragma(c, "busy_timeout"), "conn %d", i)
+				if tc.file {
+					require.Equal(t, "wal", pragma(c, "journal_mode"), "conn %d", i)
+					require.Equal(t, "1", pragma(c, "synchronous"), "conn %d", i)
+					require.Equal(t, strconv.Itoa(sqliteMmapBytes), pragma(c, "mmap_size"), "conn %d", i)
+				}
+			}
+		})
+	}
 }
 
 func TestMigrate_Idempotent(t *testing.T) {
@@ -383,20 +440,45 @@ func TestAuditRepo_AppendAndList(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 
-	for i := 0; i < 5; i++ {
+	base := time.Date(2026, 10, 11, 9, 0, 0, 0, time.UTC)
+	actions := []string{"keys.create", "keys.delete", "accounts.create", "auth.login", "keys.update"}
+	for i, action := range actions {
 		require.NoError(t, db.Audit().Append(ctx, AuditEntry{
-			ID:        "a" + time.Now().Format("150405.000000000"),
+			ID:        fmt.Sprintf("a%d", i),
 			TenantID:  DefaultTenantID,
-			Actor:     "key1",
-			Action:    "proxy.request",
-			Detail:    "{}",
-			CreatedAt: time.Now(),
+			Actor:     "session:1",
+			Action:    action,
+			Outcome:   "success",
+			HTTPRoute: "/api/keys/{id}",
+			// Sub-second spacing: ordering must hold inside one second.
+			CreatedAt: base.Add(time.Duration(i) * time.Millisecond),
 		}))
-		time.Sleep(time.Millisecond)
 	}
 
-	entries, err := db.Audit().List(ctx, DefaultTenantID, 10)
+	entries, err := db.Audit().List(ctx, DefaultTenantID, AuditFilter{Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, entries, 5)
-	require.Equal(t, "proxy.request", entries[0].Action)
+	require.Equal(t, "keys.update", entries[0].Action)
+	require.Equal(t, "{}", entries[0].Detail)
+	require.Equal(t, "INFO", entries[0].Severity)
+
+	keys, err := db.Audit().List(ctx, DefaultTenantID, AuditFilter{Action: "keys.*"})
+	require.NoError(t, err)
+	require.Len(t, keys, 3)
+
+	page1, err := db.Audit().List(ctx, DefaultTenantID, AuditFilter{Limit: 2})
+	require.NoError(t, err)
+	last := page1[len(page1)-1]
+	page2, err := db.Audit().List(ctx, DefaultTenantID, AuditFilter{Limit: 2, BeforeTime: last.CreatedAt, BeforeID: last.ID})
+	require.NoError(t, err)
+	require.Equal(t, []string{"accounts.create", "keys.delete"}, []string{page2[0].Action, page2[1].Action})
+
+	// LIKE wildcards in a search are literal.
+	none, err := db.Audit().List(ctx, DefaultTenantID, AuditFilter{Query: "keys_"})
+	require.NoError(t, err)
+	require.Empty(t, none)
+
+	n, err := db.Audit().DeleteOlderThan(ctx, base.Add(2*time.Millisecond))
+	require.NoError(t, err)
+	require.EqualValues(t, 2, n)
 }

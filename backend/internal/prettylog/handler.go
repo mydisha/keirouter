@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // ANSI escape codes.
@@ -33,12 +34,12 @@ type Options struct {
 // Handler is a slog.Handler that renders colorized, compact output when
 // writing to a terminal, and falls back to plain text otherwise.
 type Handler struct {
-	w       io.Writer
-	level   slog.Level
-	pretty  bool
-	mu      *sync.Mutex
-	attrs   []slog.Attr
-	groups  []string
+	w      io.Writer
+	level  slog.Level
+	pretty bool
+	mu     *sync.Mutex
+	attrs  []slog.Attr
+	groups []string
 }
 
 // NewHandler creates a handler. If w's file descriptor is a terminal, pretty
@@ -110,20 +111,27 @@ func (h *Handler) renderPretty(sb *strings.Builder, r slog.Record) {
 
 	sb.WriteString(r.Message)
 
-	// Collect static attrs.
-	var pairs []string
-	for _, a := range h.attrs {
+	// Errors go on their own continuation line: their wrapped chains are long
+	// and would otherwise spill the attribute column across several rows.
+	var pairs, errs []string
+	collect := func(a slog.Attr) {
+		if isErrorKey(a.Key) {
+			errs = append(errs, a.Value.String())
+			return
+		}
 		pairs = append(pairs, formatAttr(a, true))
 	}
+	for _, a := range h.attrs {
+		collect(a)
+	}
 	r.Attrs(func(a slog.Attr) bool {
-		pairs = append(pairs, formatAttr(a, true))
+		collect(a)
 		return true
 	})
 
 	if len(pairs) > 0 {
 		// Pad message to align attributes.
-		msgLen := len(r.Message)
-		pad := 36 - msgLen
+		pad := 36 - utf8.RuneCountInString(r.Message)
 		if pad < 2 {
 			pad = 2
 		}
@@ -133,6 +141,26 @@ func (h *Handler) renderPretty(sb *strings.Builder, r slog.Record) {
 		sb.WriteString(ansiReset)
 	}
 	sb.WriteByte('\n')
+
+	errColor := ansiGray
+	if r.Level >= slog.LevelWarn {
+		_, errColor = levelStyle(r.Level)
+	}
+	for _, e := range errs {
+		// Indent under the message (after "15:04:05 ● ").
+		sb.WriteString("           ")
+		sb.WriteString(ansiDim)
+		sb.WriteString("└─ ")
+		sb.WriteString(ansiReset)
+		sb.WriteString(errColor)
+		sb.WriteString(strings.ReplaceAll(e, "\n", "\n              "))
+		sb.WriteString(ansiReset)
+		sb.WriteByte('\n')
+	}
+}
+
+func isErrorKey(k string) bool {
+	return k == "err" || k == "error"
 }
 
 // renderPlain produces: "time=15:04:05 level=INFO msg=\"message\" key=value\n"

@@ -1,6 +1,10 @@
 package connectors
 
-import "github.com/mydisha/keirouter/backend/internal/core"
+import (
+	"sync"
+
+	"github.com/mydisha/keirouter/backend/internal/core"
+)
 
 // RegionOption describes one selectable region for a provider that has
 // region-based endpoints (e.g. Xiaomi Token Plan SGP/CN/AMS).
@@ -58,6 +62,20 @@ type ProviderSpec struct {
 	// Custom marks user-defined dynamic provider instances (not part of the
 	// built-in static catalog). These are editable and deletable.
 	Custom bool `json:"custom,omitempty"`
+	// Fields are provider-specific connect-form inputs (region, project id,
+	// secondary secrets). See CredentialField.
+	Fields []CredentialField `json:"fields,omitempty"`
+	// APIKeyMode is APIKeyRequired (default), APIKeyOptional or APIKeyHidden.
+	APIKeyMode string `json:"api_key_mode,omitempty"`
+	// APIKeyWhen limits the API key input to a value of a select field.
+	APIKeyWhen *FieldCondition `json:"api_key_when,omitempty"`
+	// APIKeyLabel / APIKeyPlaceholder relabel the key input (e.g. "Personal
+	// access token").
+	APIKeyLabel       string `json:"api_key_label,omitempty"`
+	APIKeyPlaceholder string `json:"api_key_placeholder,omitempty"`
+	// BaseURLPlaceholder hints the expected endpoint shape for providers that
+	// need a per-account base URL (BaseURL empty).
+	BaseURLPlaceholder string `json:"base_url_placeholder,omitempty"`
 }
 
 // llm is shorthand for the default LLM-only service kind slice.
@@ -75,6 +93,18 @@ func llm(extra ...core.ServiceKind) []core.ServiceKind {
 // discovery and account management, but are not routable until a dedicated
 // connector lands.
 func Catalog() []ProviderSpec {
+	static := builtinCatalog()
+	dyn := dynamicSpecs()
+	out := make([]ProviderSpec, 0, len(static)+len(dyn))
+	out = append(out, static...)
+	// Append user-defined dynamic provider instances so they participate in
+	// discovery, account management, and provider/alias resolution.
+	return append(out, dyn...)
+}
+
+// builtinCatalog assembles the static provider list once; Catalog copies it
+// per call so callers may reslice freely.
+var builtinCatalog = sync.OnceValue(func() []ProviderSpec {
 	built := append(append(append(append(append(
 		pinnedProviders(),
 		freeProviders()...),
@@ -82,10 +112,8 @@ func Catalog() []ProviderSpec {
 		oauthProviders()...),
 		apiKeyProviders()...),
 		mediaProviders()...)
-	// Append user-defined dynamic provider instances so they participate in
-	// discovery, account management, and provider/alias resolution.
-	return append(built, dynamicSpecs()...)
-}
+	return append(append(built, cloudProviders()...), compatProviders()...)
+})
 
 // pinnedProviders are always-visible entries shown at the top of the listing.
 func pinnedProviders() []ProviderSpec {
@@ -129,7 +157,7 @@ func freeTierProviders() []ProviderSpec {
 			Notice: "Free tier: 27+ free models, no credit card, 200 req/day."},
 		{ID: "nvidia", DisplayName: "NVIDIA NIM", Alias: "nvidia", Dialect: core.DialectOpenAI,
 			BaseURL: "https://integrate.api.nvidia.com/v1", AuthKind: "api_key",
-			ServiceKinds: llm(core.ServiceTTS, core.ServiceEmbedding), Color: "#76B900",
+			ServiceKinds: llm(core.ServiceEmbedding), Color: "#76B900",
 			Website: "https://developer.nvidia.com/nim", APIKeyURL: "https://build.nvidia.com/settings/api-keys"},
 		{ID: "ollama", DisplayName: "Ollama Cloud", Alias: "ollama", Dialect: core.DialectOllama,
 			BaseURL: "https://ollama.com", AuthKind: "api_key", ServiceKinds: llm(),
@@ -144,7 +172,7 @@ func freeTierProviders() []ProviderSpec {
 			Notice:  "Self-hosted vLLM OpenAI-compatible server. Set base URL to your vLLM endpoint; provide an API key only if you started vLLM with --api-key. Requires KEIROUTER_SECURITY__ALLOW_PRIVATE_BASE_URL=true when pointing at loopback or LAN hosts."},
 		{ID: "gemini", DisplayName: "Gemini", Alias: "gemini", Dialect: core.DialectGemini,
 			BaseURL: "https://generativelanguage.googleapis.com/v1beta", AuthKind: "api_key",
-			ServiceKinds: llm(core.ServiceEmbedding, core.ServiceImage, core.ServiceSearch, core.ServiceTTS, core.ServiceSTT, core.ServiceImageToText),
+			ServiceKinds: llm(core.ServiceImageToText),
 			Color:        "#4285F4", Website: "https://ai.google.dev", APIKeyURL: "https://aistudio.google.com/app/apikey"},
 		{ID: "vertex", DisplayName: "Vertex AI", Alias: "vx", Dialect: core.DialectVertex,
 			BaseURL: "https://aiplatform.googleapis.com", AuthKind: "oauth", AuthModes: []string{"oauth"}, ServiceKinds: llm(core.ServiceImageToText),
@@ -154,7 +182,7 @@ func freeTierProviders() []ProviderSpec {
 			Color: "#34A853", Website: "https://cloud.google.com/vertex-ai/generative-ai/docs/partner-models/use-partner-models", Hidden: true},
 		{ID: "cloudflare-ai", DisplayName: "Cloudflare", Alias: "cf", Dialect: core.DialectOpenAI,
 			BaseURL: "https://api.cloudflare.com/client/v4/accounts/{accountId}/ai/v1", AuthKind: "api_key",
-			ServiceKinds: llm(core.ServiceImage), Color: "#F38020",
+			ServiceKinds: llm(core.ServiceEmbedding), Color: "#F38020",
 			Website: "https://developers.cloudflare.com/workers-ai/", APIKeyURL: "https://dash.cloudflare.com/profile/api-tokens",
 			Notice: "Workers AI free tier. Requires a Cloudflare API token and Account ID."},
 		{ID: "byteplus", DisplayName: "BytePlus ModelArk", Alias: "bpm", Dialect: core.DialectOpenAI,
@@ -179,10 +207,10 @@ func oauthProviders() []ProviderSpec {
 			Color: "#F59E0B", Website: "https://antigravity.google", Deprecated: true, Notice: risk},
 		{ID: "codex", DisplayName: "OpenAI Codex", Alias: "cx", Dialect: core.DialectOpenAIResponses,
 			BaseURL: "https://chatgpt.com/backend-api/codex/responses", AuthKind: "oauth", AuthModes: []string{"oauth"},
-			ServiceKinds: llm(core.ServiceImage), Color: "#3B82F6", Website: "https://chatgpt.com/codex", Deprecated: true, Notice: risk},
+			ServiceKinds: llm(), Color: "#3B82F6", Website: "https://chatgpt.com/codex", Deprecated: true, Notice: risk},
 		{ID: "github", DisplayName: "GitHub Copilot", Alias: "gh", Dialect: core.DialectOpenAI,
 			BaseURL: "https://api.githubcopilot.com", AuthKind: "oauth", AuthModes: []string{"oauth"},
-			ServiceKinds: llm(core.ServiceEmbedding), Color: "#333333", Website: "https://github.com/features/copilot", Deprecated: true, Notice: risk},
+			ServiceKinds: llm(), Color: "#333333", Website: "https://github.com/features/copilot", Deprecated: true, Notice: risk},
 		{ID: "cursor", DisplayName: "Cursor IDE", Alias: "cu", Dialect: core.DialectCursor,
 			BaseURL: "https://api2.cursor.sh", AuthKind: "oauth", AuthModes: []string{"oauth"}, ServiceKinds: llm(),
 			Color: "#00D4AA", Website: "https://cursor.com"},
@@ -221,7 +249,7 @@ func apiKeyProviders() []ProviderSpec {
 	return []ProviderSpec{
 		{ID: "openai", DisplayName: "OpenAI", Alias: "openai", Dialect: core.DialectOpenAI,
 			BaseURL: "https://api.openai.com/v1", AuthKind: "api_key",
-			ServiceKinds: llm(core.ServiceEmbedding, core.ServiceTTS, core.ServiceSTT, core.ServiceImage, core.ServiceSearch),
+			ServiceKinds: llm(core.ServiceEmbedding, core.ServiceTTS, core.ServiceSTT, core.ServiceImage),
 			Color:        "#10A37F", Website: "https://platform.openai.com", APIKeyURL: "https://platform.openai.com/api-keys",
 			InputPerM: 2.5, OutputPerM: 10},
 		{ID: "anthropic", DisplayName: "Anthropic", Alias: "anthropic", Dialect: core.DialectAnthropic,
@@ -241,15 +269,15 @@ func apiKeyProviders() []ProviderSpec {
 			Color: "#DC2626", Website: "https://open.bigmodel.cn", APIKeyURL: "https://open.bigmodel.cn/usercenter/apikeys",
 			InputPerM: 0.6, OutputPerM: 0.6},
 		{ID: "kimi", DisplayName: "Kimi", Alias: "kimi", Dialect: core.DialectAnthropic,
-			BaseURL: "https://api.kimi.com/coding/v1", AuthKind: "api_key", ServiceKinds: llm(core.ServiceSearch),
+			BaseURL: "https://api.kimi.com/coding/v1", AuthKind: "api_key", ServiceKinds: llm(),
 			Color: "#1E3A8A", Website: "https://kimi.moonshot.cn", APIKeyURL: "https://platform.moonshot.ai/console/api-keys"},
 		{ID: "minimax", DisplayName: "MiniMax Coding", Alias: "minimax", Dialect: core.DialectAnthropic,
 			BaseURL: "https://api.minimax.io/anthropic/v1", AuthKind: "api_key",
-			ServiceKinds: llm(core.ServiceImage, core.ServiceSearch, core.ServiceTTS, core.ServiceImageToText), Color: "#7C3AED",
+			ServiceKinds: llm(core.ServiceImageToText), Color: "#7C3AED",
 			Website: "https://www.minimaxi.com", APIKeyURL: "https://platform.minimaxi.com/user-center/basic-information/interface-key",
 			InputPerM: 0.2, OutputPerM: 1.1},
 		{ID: "minimax-cn", DisplayName: "MiniMax (China)", Alias: "minimax-cn", Dialect: core.DialectAnthropic,
-			BaseURL: "https://api.minimaxi.com/anthropic/v1", AuthKind: "api_key", ServiceKinds: llm(core.ServiceTTS),
+			BaseURL: "https://api.minimaxi.com/anthropic/v1", AuthKind: "api_key", ServiceKinds: llm(),
 			Color: "#DC2626", Website: "https://www.minimaxi.com"},
 		{ID: "alicode", DisplayName: "Alibaba", Alias: "alicode", Dialect: core.DialectOpenAI,
 			BaseURL: "https://coding.dashscope.aliyuncs.com/v1", AuthKind: "api_key", ServiceKinds: llm(),
@@ -279,7 +307,8 @@ func apiKeyProviders() []ProviderSpec {
 			Color: "#111827", Website: "https://vercel.com/ai-gateway"},
 		{ID: "azure", DisplayName: "Azure OpenAI", Alias: "azure", Dialect: core.DialectOpenAI,
 			BaseURL: "", AuthKind: "api_key", ServiceKinds: llm(), Color: "#0078D4",
-			Website: "https://azure.microsoft.com/en-us/products/ai-services/openai-service"},
+			Website:    "https://azure.microsoft.com/en-us/products/ai-services/openai-service",
+			APIKeyWhen: when("azure_auth", "api_key"), Fields: entraFields()},
 		{ID: "commandcode", DisplayName: "Command Code", Alias: "cmc", Dialect: core.DialectCommandCode,
 			BaseURL:  "https://api.commandcode.ai/alpha/generate",
 			AuthKind: "api_key", AuthModes: []string{"oauth", "api_key"}, ServiceKinds: llm(),
@@ -291,13 +320,13 @@ func apiKeyProviders() []ProviderSpec {
 			InputPerM: 0.59, OutputPerM: 0.79},
 		{ID: "xai", DisplayName: "xAI (Grok)", Alias: "xai", Dialect: core.DialectOpenAI,
 			BaseURL: "https://api.x.ai/v1", AuthKind: "api_key", AuthModes: []string{"oauth", "api_key"},
-			ServiceKinds: llm(core.ServiceSearch, core.ServiceImage, core.ServiceVideo, core.ServiceImageToText), Color: "#1DA1F2", Website: "https://x.ai",
+			ServiceKinds: llm(core.ServiceImage, core.ServiceVideo, core.ServiceImageToText), Color: "#1DA1F2", Website: "https://x.ai",
 			APIKeyURL: "https://console.x.ai"},
 		{ID: "mistral", DisplayName: "Mistral", Alias: "mistral", Dialect: core.DialectOpenAI,
 			BaseURL: "https://api.mistral.ai/v1", AuthKind: "api_key", ServiceKinds: llm(core.ServiceEmbedding, core.ServiceImageToText),
 			Color: "#FF7000", Website: "https://mistral.ai", APIKeyURL: "https://console.mistral.ai/api-keys"},
 		{ID: "perplexity", DisplayName: "Perplexity", Alias: "pplx", Dialect: core.DialectOpenAI,
-			BaseURL: "https://api.perplexity.ai", AuthKind: "api_key", ServiceKinds: llm(core.ServiceSearch),
+			BaseURL: "https://api.perplexity.ai", AuthKind: "api_key", ServiceKinds: llm(),
 			Color: "#20808D", Website: "https://www.perplexity.ai", APIKeyURL: "https://www.perplexity.ai/settings/api"},
 		{ID: "together", DisplayName: "Together AI", Alias: "together", Dialect: core.DialectOpenAI,
 			BaseURL: "https://api.together.xyz/v1", AuthKind: "api_key", ServiceKinds: llm(core.ServiceEmbedding),
@@ -309,7 +338,7 @@ func apiKeyProviders() []ProviderSpec {
 			BaseURL: "https://api.cerebras.ai/v1", AuthKind: "api_key", ServiceKinds: llm(),
 			Color: "#FF4F00", Website: "https://www.cerebras.ai", APIKeyURL: "https://cloud.cerebras.ai/platform"},
 		{ID: "cohere", DisplayName: "Cohere", Alias: "cohere", Dialect: core.DialectOpenAI,
-			BaseURL: "https://api.cohere.ai/v1", AuthKind: "api_key", ServiceKinds: llm(),
+			BaseURL: "https://api.cohere.ai/compatibility/v1", AuthKind: "api_key", ServiceKinds: llm(core.ServiceEmbedding),
 			Color: "#39594D", Website: "https://cohere.com", APIKeyURL: "https://dashboard.cohere.com/api-keys"},
 		{ID: "nebius", DisplayName: "Nebius AI", Alias: "nebius", Dialect: core.DialectOpenAI,
 			BaseURL: "https://api.studio.nebius.ai/v1", AuthKind: "api_key", ServiceKinds: llm(core.ServiceEmbedding),
@@ -318,7 +347,7 @@ func apiKeyProviders() []ProviderSpec {
 			BaseURL: "https://api.siliconflow.cn/v1", AuthKind: "api_key", ServiceKinds: llm(),
 			Color: "#5B6EF5", Website: "https://cloud.siliconflow.com", APIKeyURL: "https://cloud.siliconflow.com/account/ak"},
 		{ID: "hyperbolic", DisplayName: "Hyperbolic", Alias: "hyp", Dialect: core.DialectOpenAI,
-			BaseURL: "https://api.hyperbolic.xyz/v1", AuthKind: "api_key", ServiceKinds: llm(core.ServiceTTS),
+			BaseURL: "https://api.hyperbolic.xyz/v1", AuthKind: "api_key", ServiceKinds: llm(),
 			Color: "#00D4FF", Website: "https://hyperbolic.xyz", APIKeyURL: "https://app.hyperbolic.xyz/settings"},
 		{ID: "blackbox", DisplayName: "Blackbox AI", Alias: "bb", Dialect: core.DialectOpenAI,
 			BaseURL: "https://api.blackbox.ai", AuthKind: "api_key", ServiceKinds: llm(),
@@ -449,7 +478,7 @@ func apiKeyProviders() []ProviderSpec {
 			Color: "#111827", Website: "https://featherless.ai", APIKeyURL: "https://featherless.ai/account/api-keys"},
 		{ID: "perplexity-agent", DisplayName: "Perplexity Agent", Alias: "pa", Dialect: core.DialectOpenAIResponses,
 			BaseURL: "https://api.perplexity.ai/v1/responses", AuthKind: "api_key",
-			ServiceKinds: llm(core.ServiceSearch), Color: "#20808D",
+			ServiceKinds: llm(), Color: "#20808D",
 			Website: "https://www.perplexity.ai", APIKeyURL: "https://www.perplexity.ai/settings/api",
 			Notice: "Agent API exposes many upstream models through one OpenAI-compatible Responses API."},
 		{ID: "mmf", DisplayName: "MMF", Alias: "mmf", Dialect: core.DialectOpenAI,
@@ -591,8 +620,25 @@ func SpecByID(id string) (ProviderSpec, bool) {
 }
 
 // SpecByAlias resolves a provider by its short alias or id.
+//
+// User-defined (custom) providers are matched before built-ins. A custom
+// provider keeps the alias it was given even when a later release adds a
+// built-in provider with that ID or alias, so clients' "<alias>/<model>"
+// strings keep routing where they did before the upgrade. New custom
+// providers cannot take a built-in's ID or alias in the first place.
 func SpecByAlias(aliasOrID string) (ProviderSpec, bool) {
-	for _, p := range Catalog() {
+	for _, p := range dynamicSpecs() {
+		if p.ID == aliasOrID || p.Alias == aliasOrID {
+			return p, true
+		}
+	}
+	return BuiltinSpecByAlias(aliasOrID)
+}
+
+// BuiltinSpecByAlias resolves only among built-in providers, ignoring custom
+// ones (e.g. to detect a custom alias that shadows a built-in).
+func BuiltinSpecByAlias(aliasOrID string) (ProviderSpec, bool) {
+	for _, p := range builtinCatalog() {
 		if p.ID == aliasOrID || p.Alias == aliasOrID {
 			return p, true
 		}
@@ -601,11 +647,11 @@ func SpecByAlias(aliasOrID string) (ProviderSpec, bool) {
 }
 
 // SpecsByKind returns the catalog specs that serve a given service kind,
-// excluding hidden providers.
+// excluding hidden providers and providers that cannot be driven yet.
 func SpecsByKind(kind core.ServiceKind) []ProviderSpec {
 	var out []ProviderSpec
 	for _, p := range Catalog() {
-		if p.Hidden {
+		if p.Hidden || !Drivable(p) {
 			continue
 		}
 		if core.HasServiceKind(p.ServiceKinds, kind) {

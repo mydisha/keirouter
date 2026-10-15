@@ -8,8 +8,9 @@
 //
 // Detection is layered:
 //
-//   - Layer 1 (always on): keyword + ngram match. Cheap, deterministic,
-//     covers the majority of cases.
+//   - Layer 1 (always on): word-boundary keyword match over the folded word
+//     view, tolerant of inflections, small typos and obfuscation. Cheap,
+//     deterministic, covers the majority of cases.
 //   - Layer 2 (opt-in via engine="embedding"): cosine-similarity between the
 //     prompt embedding and a pre-computed topic embedding. Catches semantic
 //     paraphrases the keyword path misses. Requires an Embedder wired at
@@ -19,8 +20,11 @@ package topics
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/guardrails"
 )
@@ -34,11 +38,12 @@ type Embedder interface {
 
 // Detector implements guardrails.Detector for topic boundaries.
 type Detector struct {
-	embedder Embedder
+	embedder  Embedder
+	completer atomic.Pointer[completerBox]
+	llmCache  *verdictCache
 	// vectorCache memoizes the embedding for each topic string so we don't
 	// re-embed the same topic on every request. Keyed by the *normalized*
-	// topic text. Phase 2: a per-policy cache keyed on topic-list hash would
-	// avoid the per-topic map lookup, but this is plenty fast in practice.
+	// topic text.
 	vectorCache *topicVectorCache
 }
 
@@ -54,19 +59,35 @@ func New(cfg Config) *Detector {
 	return &Detector{
 		embedder:    cfg.Embedder,
 		vectorCache: newTopicVectorCache(),
+		llmCache:    newVerdictCache(2048, 30*time.Minute),
+	}
+}
+
+type completerBox struct{ c guardrails.Completer }
+
+// SetCompleter enables the "llm" engine. The gateway calls it once its
+// routing is ready.
+func (d *Detector) SetCompleter(c guardrails.Completer) {
+	if c != nil {
+		d.completer.Store(&completerBox{c: c})
+	}
+}
+
+// Capabilities reports which optional engines the server can run.
+func (d *Detector) Capabilities() map[string]bool {
+	return map[string]bool{
+		"embedding": d.embedder != nil,
+		"llm":       d.completer.Load() != nil,
 	}
 }
 
 // Name identifies this detector in policy config and audit logs.
-func (Detector) Name() string { return "topics" }
+func (*Detector) Name() string { return "topics" }
 
 // Inbound scans the user prompt. Action defaults to warn when none is set.
 func (d *Detector) Inbound(ctx context.Context, in *guardrails.InboundRequest, p guardrails.Policy) (*guardrails.Decision, error) {
 	cfg := p.Topics
 	if cfg == nil || !cfg.Enabled || len(cfg.Topics) == 0 {
-		return nil, nil
-	}
-	if strings.TrimSpace(in.FlatText) == "" {
 		return nil, nil
 	}
 
@@ -75,7 +96,26 @@ func (d *Detector) Inbound(ctx context.Context, in *guardrails.InboundRequest, p
 		mode = "block"
 	}
 
-	matches := d.matchTopics(ctx, in.FlatText, cfg)
+	// Block lists look at every user message, so a forbidden topic can't be
+	// slipped in through earlier turns. Allow lists look at the last few
+	// user messages, so a follow-up such as "tell me more" inherits the
+	// topic of the question before it. The system prompt is never matched:
+	// it would put every request on (or off) topic.
+	text := in.UserText()
+	if mode == "allow" {
+		text = in.RecentUserText()
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil, nil
+	}
+
+	if strings.EqualFold(strings.TrimSpace(cfg.Engine), "llm") {
+		if dec, ok := d.llmDecision(ctx, cfg, mode, in); ok {
+			return dec, nil
+		}
+	}
+
+	matches := d.matchTopics(ctx, text, cfg)
 	triggered := false
 	switch mode {
 	case "allow":
@@ -90,7 +130,7 @@ func (d *Detector) Inbound(ctx context.Context, in *guardrails.InboundRequest, p
 
 	action := cfg.Action
 	if action == "" {
-		action = guardrails.ActionWarn
+		action = guardrails.DefaultTopicsAction
 	}
 	return &guardrails.Decision{
 		Action:   action,
@@ -100,9 +140,57 @@ func (d *Detector) Inbound(ctx context.Context, in *guardrails.InboundRequest, p
 	}, nil
 }
 
+// llmDecision runs the "llm" engine. ok is false when it can't run (no
+// model, no completer, an error), and the caller then falls back: block lists
+// to keyword matching, allow lists to letting the message through, since a
+// keyword allow list would refuse ordinary chat.
+func (d *Detector) llmDecision(ctx context.Context, cfg *guardrails.TopicsConfig, mode string, in *guardrails.InboundRequest) (*guardrails.Decision, bool) {
+	box := d.completer.Load()
+	if box == nil || strings.TrimSpace(cfg.Model) == "" || strings.TrimSpace(in.LastUserText()) == "" {
+		return nil, mode == "allow"
+	}
+	v, err := d.llmClassify(ctx, box.c, cfg, mode, in)
+	if err != nil {
+		slog.Warn("guardrails: topics LLM engine failed", "model", cfg.Model, "err", err)
+		return nil, mode == "allow"
+	}
+	action := cfg.Action
+	if action == "" {
+		action = guardrails.DefaultTopicsAction
+	}
+	switch {
+	case v.Hijacked:
+		return &guardrails.Decision{
+			Action:   action,
+			Severity: guardrails.SeverityHigh,
+			Reason:   "topics: the message tried to override the topic check",
+			Findings: []guardrails.Finding{{Entity: "TOPIC:llm:judge_hijacked", Score: 1, Start: -1, End: -1}},
+		}, true
+	case mode == "allow" && len(v.Matched) == 0 && !v.SmallTalk:
+		return &guardrails.Decision{
+			Action:   action,
+			Severity: guardrails.SeverityMedium,
+			Reason:   reasonFor(mode, nil, cfg.Topics),
+			Findings: []guardrails.Finding{{Entity: "TOPIC:llm:off_allowlist", Score: 1, Start: -1, End: -1}},
+		}, true
+	case mode != "allow" && len(v.Matched) > 0:
+		ms := make([]match, len(v.Matched))
+		for i, t := range v.Matched {
+			ms[i] = match{Topic: t, Layer: "llm", Score: 1}
+		}
+		return &guardrails.Decision{
+			Action:   action,
+			Severity: guardrails.SeverityMedium,
+			Reason:   reasonFor(mode, ms, cfg.Topics),
+			Findings: toFindings(mode, ms, cfg.Topics),
+		}, true
+	}
+	return nil, true
+}
+
 // Outbound: topics are evaluated on the prompt only. Returning nil is
 // correct — the engine treats nil as ActionAllow.
-func (Detector) Outbound(_ context.Context, _ *guardrails.OutboundResponse, _ guardrails.Policy) (*guardrails.Decision, error) {
+func (*Detector) Outbound(_ context.Context, _ *guardrails.OutboundResponse, _ guardrails.Policy) (*guardrails.Decision, error) {
 	return nil, nil
 }
 
@@ -119,7 +207,7 @@ type match struct {
 // is wired and the policy opts in, Layer 2 (embedding similarity) for any
 // topic that did not already match.
 func (d *Detector) matchTopics(ctx context.Context, text string, cfg *guardrails.TopicsConfig) []match {
-	normalized := strings.ToLower(text)
+	index := newPromptIndex(text)
 	out := make([]match, 0, len(cfg.Topics))
 	embedRun := d.shouldUseEmbedding(cfg)
 
@@ -135,7 +223,7 @@ func (d *Detector) matchTopics(ctx context.Context, text string, cfg *guardrails
 			continue
 		}
 		// Layer 1: keyword/ngram.
-		if keywordHit(normalized, topic) {
+		if keywordHit(index, topic) {
 			out = append(out, match{Topic: topic, Layer: "keyword", Score: 1.0})
 			continue
 		}
@@ -184,7 +272,7 @@ func (d *Detector) shouldUseEmbedding(cfg *guardrails.TopicsConfig) bool {
 
 func reasonFor(mode string, matches []match, topics []string) string {
 	if mode == "allow" && len(matches) == 0 {
-		return "topics: off-topic (allowlist=" + strings.Join(topics, ", ") + ")"
+		return "topics: off-topic, the message mentions none of the allowed topics (" + strings.Join(topics, ", ") + ")"
 	}
 	parts := make([]string, 0, len(matches))
 	for _, m := range matches {

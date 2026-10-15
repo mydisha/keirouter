@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
-	"sort"
 	"sync"
 	"time"
 
@@ -68,6 +67,14 @@ const (
 	// computed cooldowns so accounts that failed together do not all become
 	// eligible again at the same instant.
 	BackoffJitterFraction = 0.25
+	// TransientFailureThreshold is the number of transient upstream failures
+	// (5xx, timeouts, network faults) an account must accumulate within
+	// TransientFailureWindow before it is cooled down. A single blip on the
+	// only configured account used to lock the whole router out for
+	// TransientCooldown; a failure threshold must trip first.
+	TransientFailureThreshold = 3
+	// TransientFailureWindow bounds how long transient strikes are remembered.
+	TransientFailureWindow = time.Minute
 	// CreditsExhaustedCooldown parks an account whose paid balance is
 	// depleted. A dry balance only recovers when the user tops up or the plan
 	// renews, so probing every half hour just burns requests — one automatic
@@ -208,26 +215,52 @@ type Dispatcher struct {
 	// account+model) so a burst of parallel failures counts once.
 	failureMu      sync.Mutex
 	recentFailures map[string]time.Time
+	// transientStrikes counts recent transient failures per account so a
+	// cooldown is only applied after repeated faults.
+	transientStrikes map[string]strikeWindow
+	// dirty records accounts (and account\x00model keys) whose cooldown or
+	// backoff state this process has written. NoteSuccess only issues the
+	// clearing DB writes for dirty keys, keeping the success hot path free of
+	// database round-trips.
+	dirty map[string]time.Time
 	// defaultCooldown is applied to an account when an error carries no
 	// upstream-specified Retry-After.
 	defaultCooldown time.Duration
+	// clock is the time source for circuit bookkeeping (swapped in tests).
+	clock func() time.Time
+}
+
+type strikeWindow struct {
+	Count int
+	Start time.Time
 }
 
 type providerCircuit struct {
 	Failures    int
 	LastFailure time.Time
 	OpenUntil   time.Time
+	// ProbeStarted is set while the circuit is half-open: one request has
+	// been let through to test the provider and the rest keep waiting.
+	ProbeStarted time.Time
 }
+
+// ProviderCircuitProbeTimeout bounds a half-open probe. If the trial request
+// neither succeeds nor fails within this window (client disconnected, very
+// long generation) another request is allowed to probe.
+const ProviderCircuitProbeTimeout = 30 * time.Second
 
 // New builds a Dispatcher.
 func New(conns ConnectorSource, accounts *store.AccountRepo, v *vault.Vault) *Dispatcher {
 	return &Dispatcher{
-		conns:           conns,
-		accounts:        accounts,
-		vault:           v,
-		defaultCooldown: 60 * time.Second,
-		circuits:        make(map[string]providerCircuit),
-		recentFailures:  make(map[string]time.Time),
+		conns:            conns,
+		accounts:         accounts,
+		vault:            v,
+		defaultCooldown:  60 * time.Second,
+		circuits:         make(map[string]providerCircuit),
+		recentFailures:   make(map[string]time.Time),
+		transientStrikes: make(map[string]strikeWindow),
+		dirty:            make(map[string]time.Time),
+		clock:            time.Now,
 	}
 }
 
@@ -259,6 +292,12 @@ type PlanOptions struct {
 	// StickyLimit is the number of consecutive requests per target before
 	// round-robin advances. Zero defaults to DefaultStickyLimit.
 	StickyLimit int
+	// FixedOrder marks a target order that carries meaning (cheapest-first,
+	// fastest-first), so a global round-robin default must not rotate it.
+	FixedOrder bool
+	// PinnedTail is the number of trailing targets excluded from rotation,
+	// e.g. a chain's explicit last-resort fallback model, which must stay last.
+	PinnedTail int
 	// AccountStrategy controls how accounts inside one provider/model target
 	// are ordered. "fallback" keeps priority order; "round-robin" rotates the
 	// starting account while preserving cooldown/fallback behavior.
@@ -283,6 +322,11 @@ type PlanOptions struct {
 	// AllowedAccountIDs pins account-bound operations to a known credential.
 	// Empty means every otherwise eligible account is allowed.
 	AllowedAccountIDs map[string]struct{}
+	// Limit stops planning once this many healthy attempts are resolved.
+	// Zero resolves every candidate. The pipeline plans one attempt at a time
+	// and re-plans after each failure, so Limit=1 avoids refreshing OAuth
+	// tokens and decrypting credentials for accounts that are never used.
+	Limit int
 }
 
 // AttemptKey uniquely identifies one routed provider/model/account candidate.
@@ -324,8 +368,10 @@ func (d *Dispatcher) Plan(ctx context.Context, tenantID string, targets []Target
 
 // PlanWith is like Plan but accepts strategy options.
 func (d *Dispatcher) PlanWith(ctx context.Context, tenantID string, targets []Target, required core.CapabilitySet, opts PlanOptions) ([]Attempt, error) {
-	unlock := d.lockSelection(targets)
-	defer unlock()
+	// Rotation and affinity state are serialized inside applyRotation and
+	// applyAccountRouting only. Credential preparation below (OAuth refresh,
+	// vault decryption, proxy-pool lookup) runs unlocked so one slow token
+	// refresh never stalls every other request routed to the same provider.
 
 	// Apply round-robin rotation if requested.
 	ordered := d.applyRotation(ctx, targets, opts)
@@ -483,20 +529,7 @@ func (d *Dispatcher) PlanWith(ctx context.Context, tenantID string, targets []Ta
 			isUnhealthy := unhealthySet != nil && unhealthySet[acc.ID]
 			prepared, ok := preparedAccounts[acc.ID]
 			if !ok {
-				prepared.account = acc
-				if d.refresher != nil {
-					prepared.account, prepared.err = d.refresher.EnsureFresh(ctx, prepared.account)
-				}
-				if prepared.err == nil {
-					prepared.creds, prepared.err = d.vault.Open(prepared.account)
-				}
-				if prepared.err == nil && d.pools != nil && prepared.account.ProxyPoolID != "" {
-					prepared.err = proxy.ResolvePool(ctx, d.pools, prepared.account.ProxyPoolID, &prepared.creds)
-				}
-				if prepared.err == nil && prepared.creds.ProxyURL == "" && prepared.creds.RelayURL == "" && globalProxyURL != "" {
-					prepared.creds.ProxyURL = globalProxyURL
-					prepared.creds.NoProxy = globalNoProxy
-				}
+				prepared.account, prepared.creds, prepared.err = d.prepareAccount(ctx, acc, globalProxyURL, globalNoProxy)
 				preparedAccounts[acc.ID] = prepared
 			}
 			if prepared.err != nil {
@@ -515,6 +548,9 @@ func (d *Dispatcher) PlanWith(ctx context.Context, tenantID string, targets []Ta
 				unhealthyAttempts = append(unhealthyAttempts, attempt)
 			} else {
 				attempts = append(attempts, attempt)
+				if opts.Limit > 0 && len(attempts) >= opts.Limit {
+					return attempts, nil
+				}
 			}
 		}
 	}
@@ -562,7 +598,80 @@ func (d *Dispatcher) PlanWith(ctx context.Context, tenantID string, targets []Ta
 	return attempts, nil
 }
 
-// NoteFailure applies cooldowns to an account (and optionally a model) based on
+// PrepareCredentials builds the credentials one account would serve traffic
+// with: its proxy pool (or the global proxy), a just-in-time OAuth refresh, and
+// the decrypted secrets. Callers outside the request path (synthetic health
+// probes) use it so they hit the upstream exactly as routed traffic does.
+func (d *Dispatcher) PrepareCredentials(ctx context.Context, acc store.Account) (store.Account, core.Credentials, error) {
+	var globalProxyURL, globalNoProxy string
+	if d.proxyReader != nil {
+		globalProxyURL = d.proxyReader.ProxyURL()
+		globalNoProxy = d.proxyReader.NoProxy()
+	}
+	return d.prepareAccount(ctx, acc, globalProxyURL, globalNoProxy)
+}
+
+// EgressContext returns ctx carrying the egress route (proxy pool, else the
+// global proxy) the account's traffic must leave through. Account-scoped calls
+// made outside the request path — credential validation, quota and model
+// discovery, background token refreshes — use it so they never leak the
+// server's own IP for an account bound to a pool.
+func (d *Dispatcher) EgressContext(ctx context.Context, acc store.Account) (context.Context, error) {
+	var globalProxyURL, globalNoProxy string
+	if d.proxyReader != nil {
+		globalProxyURL = d.proxyReader.ProxyURL()
+		globalNoProxy = d.proxyReader.NoProxy()
+	}
+	route, err := d.resolveRoute(ctx, acc, globalProxyURL, globalNoProxy)
+	if err != nil {
+		return ctx, err
+	}
+	return core.WithProxy(ctx, route), nil
+}
+
+func (d *Dispatcher) resolveRoute(ctx context.Context, acc store.Account, globalProxyURL, globalNoProxy string) (core.Credentials, error) {
+	var route core.Credentials
+	if d.pools != nil && acc.ProxyPoolID != "" {
+		if err := proxy.ResolvePool(ctx, d.pools, acc.ProxyPoolID, &route); err != nil {
+			return core.Credentials{}, err
+		}
+	}
+	if route.ProxyURL == "" && route.RelayURL == "" && globalProxyURL != "" {
+		route.ProxyURL = globalProxyURL
+		route.NoProxy = globalNoProxy
+		// The global proxy has no strict switch; it has always failed
+		// closed, so never fall back to a direct connection around it.
+		route.StrictProxy = true
+	}
+	return route, nil
+}
+
+func (d *Dispatcher) prepareAccount(ctx context.Context, acc store.Account, globalProxyURL, globalNoProxy string) (store.Account, core.Credentials, error) {
+	// Resolve the egress route first so an OAuth refresh leaves through the
+	// same proxy as the API calls it authorizes.
+	route, err := d.resolveRoute(ctx, acc, globalProxyURL, globalNoProxy)
+	if err != nil {
+		return acc, core.Credentials{}, err
+	}
+	if d.refresher != nil {
+		refreshed, err := d.refresher.EnsureFresh(core.WithProxy(ctx, route), acc)
+		if err != nil {
+			return refreshed, core.Credentials{}, err
+		}
+		acc = refreshed
+	}
+	creds, err := d.vault.Open(acc)
+	if err != nil {
+		return acc, core.Credentials{}, err
+	}
+	creds.ProxyURL = route.ProxyURL
+	creds.RelayURL = route.RelayURL
+	creds.NoProxy = route.NoProxy
+	creds.StrictProxy = route.StrictProxy
+	return acc, creds, nil
+}
+
+// NoteFailureapplies cooldowns to an account (and optionally a model) based on
 // a provider error. Exponential backoff increases the cooldown on repeated
 // failures for rate-limit / quota errors. Concurrent failures on the same
 // account within FailureDedupWindow escalate once, and locally computed
@@ -580,6 +689,12 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 
 	scope := err.EffectiveScope()
 	if err.Kind == core.ErrClientCanceled || scope == core.FailureScopeRequest {
+		return
+	}
+	// The request did not fit this model (or tripped its safety filter). The
+	// account and model are healthy for every other request: never cool
+	// them down, just let the chain advance.
+	if err.Kind == core.ErrContextWindow || err.Kind == core.ErrContentFilter {
 		return
 	}
 
@@ -606,6 +721,7 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 				return
 			}
 			_ = d.routing.SetModelCooldown(ctx, accountID, err.Model, time.Now().Add(cooldown))
+			d.markDirty(accountID + "\x00" + err.Model)
 		}
 		return
 	}
@@ -627,6 +743,11 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 		// cooldown to avoid penalizing a working account.
 		if err.Kind == core.ErrTimeout && err.StatusCode == 0 &&
 			errors.Is(err.Cause, context.DeadlineExceeded) {
+			return
+		}
+		// Transient faults need repeated strikes before an account is
+		// benched; one 502 must not take the only account offline.
+		if !d.recordTransientStrike(accountID, time.Now()) {
 			return
 		}
 	default:
@@ -682,6 +803,7 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 	err.RetryAfter = cooldown
 
 	_ = d.accounts.SetCooldown(ctx, accountID, time.Now().Add(cooldown))
+	d.markDirty(accountID)
 
 	// A depleted balance is terminal until the user tops up: flag the account
 	// so the dashboard can surface it and a manual reset can clear it. The
@@ -695,28 +817,106 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 	if d.routing != nil && err.Model != "" {
 		modelCooldown := time.Duration(int64(cooldown) * ModelCooldownMultiplier)
 		_ = d.routing.SetModelCooldown(ctx, accountID, err.Model, time.Now().Add(modelCooldown))
+		d.markDirty(accountID + "\x00" + err.Model)
 	}
 }
 
 // NoteSuccess resets the backoff level for an account and clears any model
 // cooldown. Called by the pipeline after a successful upstream response.
 func (d *Dispatcher) NoteSuccess(ctx context.Context, provider, accountID, model string) {
-	_ = d.accounts.ResetBackoffLevel(ctx, accountID)
+	d.NoteSuccessAt(ctx, provider, accountID, model, time.Time{})
+}
+
+// NoteSuccessAt is NoteSuccess for an attempt that started at startedAt.
+//
+// The success hot path performs no database writes unless this process
+// previously recorded a failure for the account (or account+model): clearing
+// state that was never set is wasted I/O on every request. A cooldown set by
+// a failure that happened *after* this attempt started is left alone — the
+// in-flight request predates the incident and proves nothing about it.
+func (d *Dispatcher) NoteSuccessAt(ctx context.Context, provider, accountID, model string, startedAt time.Time) {
+	modelKey := accountID + "\x00" + model
+
+	d.failureMu.Lock()
 	// A success proves the account recovered, so a later failure is a fresh
 	// incident rather than part of the burst that set the dedup marker.
-	d.failureMu.Lock()
 	delete(d.recentFailures, accountID)
+	delete(d.transientStrikes, accountID)
 	if model != "" {
-		delete(d.recentFailures, accountID+"\x00"+model)
+		delete(d.recentFailures, modelKey)
+	}
+	accountDirty := d.dirtySince(accountID, startedAt)
+	modelDirty := d.dirtySince(modelKey, startedAt)
+	if accountDirty {
+		delete(d.dirty, accountID)
+	}
+	if modelDirty {
+		delete(d.dirty, modelKey)
 	}
 	d.failureMu.Unlock()
-	if d.routing != nil && model != "" {
+
+	if accountDirty {
+		_ = d.accounts.ResetBackoffLevel(ctx, accountID)
+	}
+	if modelDirty && d.routing != nil && model != "" {
 		_ = d.routing.ClearModelCooldown(ctx, accountID, model)
 	}
 	if d.health != nil && model != "" {
 		_ = d.health.MarkHealthy(ctx, accountID, model)
 	}
 	d.recordProviderSuccess(provider)
+}
+
+// dirtySince reports whether key carries state written by this process that
+// a success starting at startedAt is entitled to clear. Caller holds failureMu.
+func (d *Dispatcher) dirtySince(key string, startedAt time.Time) bool {
+	at, ok := d.dirty[key]
+	if !ok {
+		return false
+	}
+	// Failure recorded after this attempt began: keep the cooldown.
+	return startedAt.IsZero() || !at.After(startedAt)
+}
+
+// markDirty remembers that cooldown/backoff state was written for key.
+func (d *Dispatcher) markDirty(key string) {
+	d.failureMu.Lock()
+	if len(d.dirty) >= maxRecentFailureEntries {
+		cutoff := time.Now().Add(-24 * time.Hour)
+		for k, at := range d.dirty {
+			if at.Before(cutoff) {
+				delete(d.dirty, k)
+			}
+		}
+	}
+	d.dirty[key] = time.Now()
+	d.failureMu.Unlock()
+}
+
+// recordTransientStrike counts a transient failure for accountID and reports
+// whether the account has crossed TransientFailureThreshold within
+// TransientFailureWindow (and should therefore be cooled down).
+func (d *Dispatcher) recordTransientStrike(accountID string, now time.Time) bool {
+	d.failureMu.Lock()
+	defer d.failureMu.Unlock()
+	w := d.transientStrikes[accountID]
+	if w.Count == 0 || now.Sub(w.Start) > TransientFailureWindow {
+		w = strikeWindow{Count: 0, Start: now}
+	}
+	w.Count++
+	if len(d.transientStrikes) >= maxRecentFailureEntries {
+		for k, sw := range d.transientStrikes {
+			if now.Sub(sw.Start) > TransientFailureWindow {
+				delete(d.transientStrikes, k)
+			}
+		}
+	}
+	d.transientStrikes[accountID] = w
+	if w.Count >= TransientFailureThreshold {
+		d.transientStrikes[accountID] = strikeWindow{Count: 0, Start: now}
+		return true
+	}
+	return false
 }
 
 // shouldEscalateFailure reports whether this failure should escalate cooldown
@@ -786,7 +986,12 @@ func (d *Dispatcher) exponentialCooldown(ctx context.Context, accountID string) 
 // as-is. For "round-robin", the persisted cursor is advanced and the targets
 // are rotated so the cursor index comes first.
 func (d *Dispatcher) applyRotation(ctx context.Context, targets []Target, opts PlanOptions) []Target {
-	if opts.Strategy != StrategyRoundRobin || len(targets) <= 1 || d.routing == nil || opts.ChainID == "" {
+	tail := opts.PinnedTail
+	if tail < 0 || tail > len(targets) {
+		tail = 0
+	}
+	rotatable := len(targets) - tail
+	if opts.Strategy != StrategyRoundRobin || rotatable <= 1 || d.routing == nil || opts.ChainID == "" {
 		return targets
 	}
 
@@ -794,13 +999,16 @@ func (d *Dispatcher) applyRotation(ctx context.Context, targets []Target, opts P
 	if sticky <= 0 {
 		sticky = DefaultStickyLimit
 	}
+	unlock := d.lockSelection("chain:" + opts.ChainID)
+	defer unlock()
 	state, _ := d.routing.GetChainRotationState(ctx, opts.ChainID)
-	cursor, nextCursor, nextHitCount := advanceRotationState(len(targets), state.LastIndex, state.HitCount, sticky)
+	cursor, nextCursor, nextHitCount := advanceRotationState(rotatable, state.LastIndex, state.HitCount, sticky)
 
 	rotated := make([]Target, len(targets))
-	for i := range targets {
-		rotated[i] = targets[(cursor+i)%len(targets)]
+	for i := 0; i < rotatable; i++ {
+		rotated[i] = targets[(cursor+i)%rotatable]
 	}
+	copy(rotated[rotatable:], targets[rotatable:])
 
 	_ = d.routing.SetChainRotationState(ctx, store.ChainRotation{
 		ChainID:   opts.ChainID,
@@ -826,6 +1034,14 @@ func (opts PlanOptions) accountRoutingForTarget(provider string) AccountRoutingO
 }
 
 func (d *Dispatcher) applyAccountRouting(ctx context.Context, tenantID string, target Target, accounts []store.Account, opts AccountRoutingOptions) []store.Account {
+	if len(accounts) <= 1 || d.routing == nil {
+		return accounts
+	}
+	switch opts.Strategy {
+	case StrategyRoundRobin, StrategySmartRoundRobin:
+		unlock := d.lockSelection("provider:" + target.Provider)
+		defer unlock()
+	}
 	switch opts.Strategy {
 	case StrategyRoundRobin:
 		return d.applyAccountRoundRobin(ctx, tenantID, target, accounts, opts)
@@ -955,48 +1171,37 @@ func (d *Dispatcher) EvictAccountAffinity(ctx context.Context, tenantID string, 
 	})
 }
 
-func (d *Dispatcher) lockSelection(targets []Target) func() {
-	providers := make([]string, 0, len(targets))
-	seen := make(map[string]struct{}, len(targets))
-	for _, target := range targets {
-		if target.Provider == "" {
-			continue
-		}
-		if _, ok := seen[target.Provider]; ok {
-			continue
-		}
-		seen[target.Provider] = struct{}{}
-		providers = append(providers, target.Provider)
-	}
-	sort.Strings(providers)
-	locks := make([]*sync.Mutex, 0, len(providers))
-	for _, provider := range providers {
-		value, _ := d.selectionLocks.LoadOrStore(provider, &sync.Mutex{})
-		lock := value.(*sync.Mutex)
-		lock.Lock()
-		locks = append(locks, lock)
-	}
-	return func() {
-		for i := len(locks) - 1; i >= 0; i-- {
-			locks[i].Unlock()
-		}
-	}
+// lockSelection serializes the read-advance-write of one rotation or affinity
+// state key so concurrent requests do not all observe the same cursor. Hold
+// it only around state access, never around network or crypto work.
+func (d *Dispatcher) lockSelection(key string) func() {
+	value, _ := d.selectionLocks.LoadOrStore(key, &sync.Mutex{})
+	lock := value.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
 }
 
 func (d *Dispatcher) recordProviderFailure(provider string) {
 	if provider == "" {
 		return
 	}
-	now := time.Now()
+	now := d.clock()
 	d.circuitMu.Lock()
 	defer d.circuitMu.Unlock()
 	state := d.circuits[provider]
-	if !state.LastFailure.IsZero() && now.Sub(state.LastFailure) > ProviderCircuitResetWindow {
+	probing := !state.ProbeStarted.IsZero()
+	state.ProbeStarted = time.Time{}
+	if !probing && !state.LastFailure.IsZero() && now.Sub(state.LastFailure) > ProviderCircuitResetWindow {
 		state.Failures = 0
 		state.OpenUntil = time.Time{}
 	}
 	state.Failures++
 	state.LastFailure = now
+	// A failed half-open probe re-opens the circuit immediately with the
+	// next (longer) interval; it never needs to accumulate fresh strikes.
+	if probing && state.Failures < ProviderCircuitFailureThreshold {
+		state.Failures = ProviderCircuitFailureThreshold
+	}
 	if state.Failures >= ProviderCircuitFailureThreshold {
 		exponent := state.Failures - ProviderCircuitFailureThreshold
 		if exponent > 10 {
@@ -1020,6 +1225,11 @@ func (d *Dispatcher) recordProviderSuccess(provider string) {
 	d.circuitMu.Unlock()
 }
 
+// providerCircuitRemaining reports how long the provider's circuit stays
+// open for this caller. Once the open interval has elapsed the circuit goes
+// half-open: exactly one request is admitted as a probe while the others
+// keep seeing a short remaining time, so a provider that is still down is
+// hit by one request instead of the whole backlog at once.
 func (d *Dispatcher) providerCircuitRemaining(provider string, now time.Time) time.Duration {
 	if provider == "" {
 		return 0
@@ -1027,10 +1237,19 @@ func (d *Dispatcher) providerCircuitRemaining(provider string, now time.Time) ti
 	d.circuitMu.Lock()
 	defer d.circuitMu.Unlock()
 	state, ok := d.circuits[provider]
-	if !ok || !state.OpenUntil.After(now) {
+	if !ok || state.OpenUntil.IsZero() {
 		return 0
 	}
-	return state.OpenUntil.Sub(now)
+	if state.OpenUntil.After(now) {
+		return state.OpenUntil.Sub(now)
+	}
+	// Half-open: admit one probe at a time.
+	if state.ProbeStarted.IsZero() || now.Sub(state.ProbeStarted) > ProviderCircuitProbeTimeout {
+		state.ProbeStarted = now
+		d.circuits[provider] = state
+		return 0
+	}
+	return ProviderCircuitProbeTimeout - now.Sub(state.ProbeStarted)
 }
 
 // advanceRotationState returns the cursor to use for this request, plus the

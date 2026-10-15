@@ -1,6 +1,6 @@
 ---
 name: keirouter-stt
-description: Speech-to-text via KeiRouter /v1/audio/transcriptions using OpenAI Whisper / Groq / Gemini / Deepgram / AssemblyAI models. Use when the user wants to transcribe audio, convert speech to text, or get subtitles from audio files.
+description: Speech-to-text via KeiRouter /v1/audio/transcriptions using OpenAI Whisper or Groq Whisper models (or any OpenAI-compatible transcription server). Use when the user wants to transcribe audio, convert speech to text, or get subtitles from audio files.
 ---
 
 # KeiRouter — Speech-to-Text
@@ -11,11 +11,10 @@ Requires `KEIROUTER_URL` (and `KEIROUTER_KEY` if auth enabled). See https://raw.
 
 ```bash
 curl $KEIROUTER_URL/v1/models/stt | jq '.data[].id'
-# Per-model params (language, response_format, prompt, temperature support)
 curl "$KEIROUTER_URL/v1/models/info?id=openai/whisper-1"
 ```
 
-`model` = STT model ID (e.g. `openai/whisper-1`, `groq/whisper-large-v3`, `deepgram/nova-3`, `gemini/gemini-2.5-flash`).
+`model` = `provider/model`, e.g. `openai/whisper-1` or `groq/whisper-large-v3-turbo`.
 
 ## Endpoint
 
@@ -25,9 +24,9 @@ curl "$KEIROUTER_URL/v1/models/info?id=openai/whisper-1"
 |---|---|---|
 | `model` | yes | from `/v1/models/stt` |
 | `file` | yes | audio file (mp3, wav, m4a, webm, ogg, flac) |
-| `language` | no | ISO-639-1 (e.g. `en`, `vi`) |
+| `language` | no | ISO-639-1 (e.g. `en`, `id`) |
 | `prompt` | no | hint text to guide transcription |
-| `response_format` | no | `json` (default) / `text` / `verbose_json` / `srt` / `vtt` |
+| `response_format` | no | `json` (default) or `text` |
 | `temperature` | no | 0–1 |
 
 ## Examples
@@ -43,10 +42,10 @@ curl -X POST "$KEIROUTER_URL/v1/audio/transcriptions" \
 JS (Node):
 
 ```js
-import { createReadStream } from "node:fs";
+import { readFile } from "node:fs/promises";
 const form = new FormData();
 form.append("model", "groq/whisper-large-v3-turbo");
-form.append("file", new Blob([await (await import("node:fs/promises")).readFile("audio.mp3")]), "audio.mp3");
+form.append("file", new Blob([await readFile("audio.mp3")]), "audio.mp3");
 const r = await fetch(`${process.env.KEIROUTER_URL}/v1/audio/transcriptions`, {
   method: "POST",
   headers: { "Authorization": `Bearer ${process.env.KEIROUTER_KEY}` },
@@ -60,18 +59,17 @@ console.log(text);
 
 Default (`response_format=json`):
 ```json
-{ "text": "Hello, this is the transcription." }
+{ "text": "Hello, this is the transcription.", "language": "en", "duration": 3.2 }
 ```
 
-`verbose_json` adds `language`, `duration`, `segments[]` with timestamps.
-`srt` / `vtt` return subtitle text.
+`response_format=text` returns the transcript as `text/plain`. Segment timestamps (`verbose_json`) and subtitle formats (`srt`, `vtt`) are not passed through; any other format comes back inside the `text` field.
 
 ## Provider quick reference
 
-| Provider | `model` format | Notes |
+| Provider | `model` | Notes |
 |---|---|---|
 | OpenAI | `whisper-1`, `gpt-4o-transcribe`, `gpt-4o-mini-transcribe` | Native OpenAI shape |
 | Groq | `whisper-large-v3`, `whisper-large-v3-turbo` | Fastest; OpenAI shape |
-| Gemini | `gemini-2.5-flash`, `gemini-2.5-pro` | Server converts to `generateContent` with audio |
-| Deepgram | `nova-3`, `nova-2` | Token auth; server adapts response |
-| AssemblyAI | `universal-3-pro`, `universal-2` | Async upload+poll handled server-side |
+| Custom provider | `<provider>/<model>` | Any server that speaks OpenAI `/audio/transcriptions` |
+
+Deepgram and AssemblyAI are listed in the dashboard as coming soon: KeiRouter has no adapter for their APIs yet.

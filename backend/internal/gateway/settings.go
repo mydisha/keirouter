@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/dispatch"
 	"github.com/mydisha/keirouter/backend/internal/headroom"
 	"github.com/mydisha/keirouter/backend/internal/httputil"
+	"github.com/mydisha/keirouter/backend/internal/limits"
 	"github.com/mydisha/keirouter/backend/internal/ponytail"
 	"github.com/mydisha/keirouter/backend/internal/slimmer"
 	"github.com/mydisha/keirouter/backend/internal/terse"
@@ -68,12 +71,24 @@ type EndpointSettings struct {
 	// RateLimitsEnabled toggles per-key RPM/TPM/concurrency enforcement.
 	RateLimitsEnabled bool `json:"rate_limits_enabled"`
 
+	// Rate-limit tuning. Nil means "not set in the dashboard" and falls back
+	// to config.yaml (limits.*), so editing the file keeps working until an
+	// operator overrides a value here.
+	TPMReconcileEnabled     *bool  `json:"tpm_reconcile_enabled,omitempty"`
+	TPMOutputFloor          *int64 `json:"tpm_output_floor,omitempty"`
+	TPMOutputReserveCap     *int64 `json:"tpm_output_reserve_cap,omitempty"`
+	ConcurrencyRetryAfterMs *int   `json:"concurrency_retry_after_ms,omitempty"`
+	AuthFailuresPerMinute   *int   `json:"auth_failures_per_minute,omitempty"`
+	LoginAttemptsPerMinute  *int   `json:"login_attempts_per_minute,omitempty"`
+
 	// Timeout settings (milliseconds).
 	// StreamStallTimeoutMs aborts a stream that produces no data for this long.
 	// Increase for reasoning models (Deepseek, GLM) that think before streaming.
 	StreamStallTimeoutMs int `json:"stream_stall_timeout_ms"`
 	// ResponseHeaderTimeoutMs is the max time waiting for upstream response
-	// headers. Accommodates slow providers (ollama on modest hardware).
+	// headers on streaming calls (time to first byte). Non-streaming calls
+	// are bounded by RequestTimeoutMs instead, because their headers only
+	// arrive once generation has finished.
 	ResponseHeaderTimeoutMs int `json:"response_header_timeout_ms"`
 	// RequestTimeoutMs bounds non-streaming upstream calls.
 	RequestTimeoutMs int `json:"request_timeout_ms"`
@@ -227,7 +242,73 @@ func (s *Server) ponytailConfig() ponytail.Config {
 
 // adminGetEndpointSettings returns the current token-saving preferences.
 func (s *Server) adminGetEndpointSettings(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.loadEndpointSettings(r.Context()))
+	writeJSON(w, http.StatusOK, s.effectiveLimitSettings(s.loadEndpointSettings(r.Context())))
+}
+
+// RateLimitController is the live-tunable surface of the per-key limiter.
+type RateLimitController interface {
+	SetEnabled(bool)
+	SetOptions(limits.Options)
+}
+
+// adminLimitsStatus reports where per-key limits and budget spend live and
+// whether that backend is healthy. With the redis backend, "healthy": false
+// means requests are currently decided by limits.fail_mode.
+func (s *Server) adminLimitsStatus(w http.ResponseWriter, _ *http.Request) {
+	out := map[string]any{"backend": "memory", "healthy": true}
+	if rs, ok := s.rateLimiter.(interface{ Stats() limits.RedisStats }); ok {
+		out["limiter"] = rs.Stats()
+		out["backend"] = "redis"
+		out["healthy"] = rs.Stats().Healthy
+	}
+	if s.budgetEngine != nil {
+		out["budget_counter"] = s.budgetEngine.Stats()
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// effectiveLimitSettings fills rate-limit knobs the dashboard has not set
+// with their config.yaml values. The result is for display and enforcement
+// only; persisting it would freeze the file's values into the store.
+func (s *Server) effectiveLimitSettings(es EndpointSettings) EndpointSettings {
+	cfg := s.cfg.Limits
+	if es.TPMReconcileEnabled == nil {
+		es.TPMReconcileEnabled = &cfg.ReconcileTokens
+	}
+	if es.TPMOutputFloor == nil {
+		es.TPMOutputFloor = &cfg.OutputTokenFloor
+	}
+	if es.TPMOutputReserveCap == nil {
+		es.TPMOutputReserveCap = &cfg.OutputReserveCap
+	}
+	if es.ConcurrencyRetryAfterMs == nil {
+		ms := int(cfg.ConcurrencyRetryAfter / time.Millisecond)
+		es.ConcurrencyRetryAfterMs = &ms
+	}
+	if es.AuthFailuresPerMinute == nil {
+		es.AuthFailuresPerMinute = &cfg.AuthFailuresPerMinute
+	}
+	if es.LoginAttemptsPerMinute == nil {
+		es.LoginAttemptsPerMinute = &cfg.LoginAttemptsPerMinute
+	}
+	return es
+}
+
+// applyLimitSettings pushes the effective rate-limit settings into the live
+// limiters so a dashboard save takes effect without a restart.
+func (s *Server) applyLimitSettings(es EndpointSettings) {
+	es = s.effectiveLimitSettings(es)
+	if s.rateLimiter != nil {
+		s.rateLimiter.SetEnabled(es.RateLimitsEnabled)
+		s.rateLimiter.SetOptions(limits.Options{
+			ReconcileTokens:       *es.TPMReconcileEnabled,
+			OutputTokenFloor:      *es.TPMOutputFloor,
+			OutputReserveCap:      *es.TPMOutputReserveCap,
+			ConcurrencyRetryAfter: time.Duration(*es.ConcurrencyRetryAfterMs) * time.Millisecond,
+		})
+	}
+	s.authFailures.SetLimit(*es.AuthFailuresPerMinute)
+	s.loginLimiter.SetLimit(*es.LoginAttemptsPerMinute)
 }
 
 // adminTestHeadroom probes a Headroom proxy to confirm it is running. It accepts
@@ -312,6 +393,12 @@ func (s *Server) adminUpdateEndpointSettings(w http.ResponseWriter, r *http.Requ
 		OutboundNoProxy         *string `json:"outbound_no_proxy"`
 		ObservabilityEnabled    *bool   `json:"observability_enabled"`
 		RateLimitsEnabled       *bool   `json:"rate_limits_enabled"`
+		TPMReconcileEnabled     *bool   `json:"tpm_reconcile_enabled"`
+		TPMOutputFloor          *int64  `json:"tpm_output_floor"`
+		TPMOutputReserveCap     *int64  `json:"tpm_output_reserve_cap"`
+		ConcurrencyRetryAfterMs *int    `json:"concurrency_retry_after_ms"`
+		AuthFailuresPerMinute   *int    `json:"auth_failures_per_minute"`
+		LoginAttemptsPerMinute  *int    `json:"login_attempts_per_minute"`
 		StreamStallTimeoutMs    *int    `json:"stream_stall_timeout_ms"`
 		ResponseHeaderTimeoutMs *int    `json:"response_header_timeout_ms"`
 		RequestTimeoutMs        *int    `json:"request_timeout_ms"`
@@ -404,8 +491,8 @@ func (s *Server) adminUpdateEndpointSettings(w http.ResponseWriter, r *http.Requ
 		current.RoutingStrategy = normalized
 	}
 	if patch.StickyLimit != nil {
-		if *patch.StickyLimit < 1 {
-			writeError(w, http.StatusBadRequest, "sticky_limit must be at least 1")
+		if *patch.StickyLimit < 1 || *patch.StickyLimit > maxStickyLimit {
+			writeError(w, http.StatusBadRequest, "sticky_limit must be between 1 and 100")
 			return
 		}
 		current.StickyLimit = *patch.StickyLimit
@@ -419,8 +506,8 @@ func (s *Server) adminUpdateEndpointSettings(w http.ResponseWriter, r *http.Requ
 		current.ComboStrategy = normalized
 	}
 	if patch.ComboStickyLimit != nil {
-		if *patch.ComboStickyLimit < 1 {
-			writeError(w, http.StatusBadRequest, "combo_sticky_limit must be at least 1")
+		if *patch.ComboStickyLimit < 1 || *patch.ComboStickyLimit > maxStickyLimit {
+			writeError(w, http.StatusBadRequest, "combo_sticky_limit must be between 1 and 100")
 			return
 		}
 		current.ComboStickyLimit = *patch.ComboStickyLimit
@@ -429,13 +516,13 @@ func (s *Server) adminUpdateEndpointSettings(w http.ResponseWriter, r *http.Requ
 		current.OutboundProxyEnabled = *patch.OutboundProxyEnabled
 	}
 	if patch.OutboundProxyURL != nil {
-		current.OutboundProxyURL = *patch.OutboundProxyURL
+		current.OutboundProxyURL = strings.TrimSpace(*patch.OutboundProxyURL)
 	}
 	// Same rationale as headroom_url: only validate when this request supplies
 	// the proxy URL, so unrelated patches don't fail on a persisted value.
-	if patch.OutboundProxyURL != nil && strings.TrimSpace(current.OutboundProxyURL) != "" {
-		if err := httputil.ValidateProxyURL(current.OutboundProxyURL); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid outbound_proxy_url: URL blocked by security policy")
+	if patch.OutboundProxyURL != nil && current.OutboundProxyURL != "" {
+		if msg := outboundProxyURLError(current.OutboundProxyURL); msg != "" {
+			writeError(w, http.StatusBadRequest, "invalid outbound_proxy_url: "+msg)
 			return
 		}
 	}
@@ -447,6 +534,44 @@ func (s *Server) adminUpdateEndpointSettings(w http.ResponseWriter, r *http.Requ
 	}
 	if patch.RateLimitsEnabled != nil {
 		current.RateLimitsEnabled = *patch.RateLimitsEnabled
+	}
+	if patch.TPMReconcileEnabled != nil {
+		current.TPMReconcileEnabled = patch.TPMReconcileEnabled
+	}
+	if patch.TPMOutputFloor != nil {
+		if *patch.TPMOutputFloor < 0 || *patch.TPMOutputFloor > 1_000_000 {
+			writeError(w, http.StatusBadRequest, "tpm_output_floor must be between 0 and 1000000")
+			return
+		}
+		current.TPMOutputFloor = patch.TPMOutputFloor
+	}
+	if patch.TPMOutputReserveCap != nil {
+		if *patch.TPMOutputReserveCap < 0 || *patch.TPMOutputReserveCap > 10_000_000 {
+			writeError(w, http.StatusBadRequest, "tpm_output_reserve_cap must be between 0 and 10000000")
+			return
+		}
+		current.TPMOutputReserveCap = patch.TPMOutputReserveCap
+	}
+	if patch.ConcurrencyRetryAfterMs != nil {
+		if *patch.ConcurrencyRetryAfterMs < 100 || *patch.ConcurrencyRetryAfterMs > 60000 {
+			writeError(w, http.StatusBadRequest, "concurrency_retry_after_ms must be between 100 and 60000")
+			return
+		}
+		current.ConcurrencyRetryAfterMs = patch.ConcurrencyRetryAfterMs
+	}
+	if patch.AuthFailuresPerMinute != nil {
+		if *patch.AuthFailuresPerMinute < 0 || *patch.AuthFailuresPerMinute > 10000 {
+			writeError(w, http.StatusBadRequest, "auth_failures_per_minute must be between 0 and 10000")
+			return
+		}
+		current.AuthFailuresPerMinute = patch.AuthFailuresPerMinute
+	}
+	if patch.LoginAttemptsPerMinute != nil {
+		if *patch.LoginAttemptsPerMinute < 0 || *patch.LoginAttemptsPerMinute > 1000 {
+			writeError(w, http.StatusBadRequest, "login_attempts_per_minute must be between 0 and 1000")
+			return
+		}
+		current.LoginAttemptsPerMinute = patch.LoginAttemptsPerMinute
 	}
 	if patch.StreamStallTimeoutMs != nil {
 		if *patch.StreamStallTimeoutMs < 5000 || *patch.StreamStallTimeoutMs > 600000 {
@@ -511,12 +636,10 @@ func (s *Server) adminUpdateEndpointSettings(w http.ResponseWriter, r *http.Requ
 		)
 	}
 
-	// Notify limiter so changes take effect without restart.
-	if s.rateLimiter != nil {
-		s.rateLimiter.SetEnabled(current.RateLimitsEnabled)
-	}
+	// Notify limiters so changes take effect without restart.
+	s.applyLimitSettings(current)
 
-	writeJSON(w, http.StatusOK, current)
+	writeJSON(w, http.StatusOK, s.effectiveLimitSettings(current))
 }
 
 func (s *Server) endpointPlanOptions(ctx context.Context, opts dispatch.PlanOptions, targets []dispatch.Target, affinityKey string) dispatch.PlanOptions {
@@ -530,7 +653,9 @@ func (s *Server) endpointPlanOptions(ctx context.Context, opts dispatch.PlanOpti
 		opts.AccountStickyLimit = es.StickyLimit
 		opts.AccountAffinityKey = affinityKey
 	}
-	if opts.Strategy == dispatch.StrategyRoundRobin || es.ComboStrategy == string(dispatch.StrategyRoundRobin) {
+	// The global chain strategy is a default for priority-ordered chains; it
+	// never rotates a chain whose order is meaningful (cost, latency).
+	if opts.Strategy == dispatch.StrategyRoundRobin || (es.ComboStrategy == string(dispatch.StrategyRoundRobin) && !opts.FixedOrder) {
 		opts.Strategy = dispatch.StrategyRoundRobin
 		opts.StickyLimit = es.ComboStickyLimit
 	}
@@ -560,6 +685,31 @@ func (s *Server) endpointPlanOptions(ctx context.Context, opts dispatch.PlanOpti
 		opts.ProviderAccountStrategies[target.Provider] = route
 	}
 	return opts
+}
+
+// maxStickyLimit bounds how many consecutive calls round-robin keeps on one
+// account or chain step before rotating.
+const maxStickyLimit = 100
+
+// outboundProxyURLError returns a user-facing reason why rawURL cannot be used
+// as the outbound proxy, or "" when it is acceptable. Saving the setting and
+// the dashboard "Test proxy" button share it so their verdicts never differ.
+func outboundProxyURLError(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" || u.Hostname() == "" {
+		return "expected scheme://host:port, e.g. http://proxy.example.com:8080"
+	}
+	if !httputil.IsSupportedProxyScheme(u.Scheme) {
+		return "unsupported scheme " + strconv.Quote(u.Scheme) + "; use http, https, socks5 or socks5h"
+	}
+	if err := httputil.ValidateProxyURL(rawURL); err != nil {
+		var blocked *httputil.ErrSSRFBlocked
+		if errors.As(err, &blocked) && (strings.Contains(blocked.Reason, "loopback") || strings.Contains(blocked.Reason, "private")) {
+			return blocked.Reason + "; set security.allow_private_base_url: true in config.yaml to use a local or LAN proxy"
+		}
+		return err.Error()
+	}
+	return ""
 }
 
 func normalizeAccountRoutingStrategy(raw string) (string, bool) {
@@ -689,8 +839,8 @@ func (s *Server) adminUpdateProviderRouting(w http.ResponseWriter, r *http.Reque
 		current.RoutingStrategy = normalized
 	}
 	if patch.StickyLimit != nil {
-		if *patch.StickyLimit < 1 {
-			writeError(w, http.StatusBadRequest, "sticky_limit must be at least 1")
+		if *patch.StickyLimit < 1 || *patch.StickyLimit > maxStickyLimit {
+			writeError(w, http.StatusBadRequest, "sticky_limit must be between 1 and 100")
 			return
 		}
 		current.StickyLimit = *patch.StickyLimit

@@ -368,7 +368,7 @@ func (s *Server) kiroHealth(w http.ResponseWriter, r *http.Request) {
 			h.ExpiresAt = &t
 			if acc.TokenExpiresAt.Before(time.Now()) {
 				if s.refresher != nil {
-					if _, ferr := s.refresher.EnsureFresh(r.Context(), acc); ferr != nil {
+					if _, ferr := s.refresher.EnsureFresh(s.accountEgressContext(r.Context(), acc), acc); ferr != nil {
 						h.Status = "needs_reauth"
 					}
 				} else {

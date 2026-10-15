@@ -1,7 +1,7 @@
-import { useState, type ReactNode } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { ArrowLeft, Lightbulb, Play, RefreshCw } from "lucide-react";
+import { ArrowLeft, ChevronRight, CircleAlert, CircleX, CornerDownRight, Lightbulb, Play, RefreshCw, X, type LucideIcon } from "lucide-react";
 import {
   api,
   type HealthStatus,
@@ -11,51 +11,57 @@ import {
   type HealthModelRow,
   type HealthChainRow,
   type HealthProbeRow,
+  type HealthTimelineProvider,
+  type Provider,
 } from "../lib/api";
-import { dashboard } from "../lib/dashboardRoutes";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
-import {
-  Badge,
-  Card,
-  EmptyState,
-  ErrorCard,
-  SegmentedControl,
-  Spinner,
-  TablePagination,
-  useClientPagination,
-} from "../components/ui";
+import { ProviderLogo } from "../components/ProviderLogo";
+import { Badge, Button, ErrorCard, Kpi, KpiGrid, SectionTitle, Skeleton, TablePagination, useClientPagination, EmptyState } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { HealthStatusBadge, HealthScoreRing, fmtIssue } from "../components/HealthBadge";
-import {
-  ErrorBreakdownChart,
-  ErrorRateChart,
-  FallbackChart,
-  LatencyChart,
-  RequestVolumeChart,
-  TTFTChart,
-} from "../components/HealthCharts";
+import { ErrorTypeBreakdown, HealthTrends } from "../components/HealthCharts";
 import { useToast } from "../components/Toast";
+import { formatDateTime } from "../lib/format";
+import { dashboard } from "../lib/dashboardRoutes";
 
+// "Live" is the telemetry service's rolling window; every longer range is
+// answered from persisted snapshots, so it survives restarts.
 const RANGES = [
-  { value: "5m", label: "5m" },
-  { value: "15m", label: "15m" },
+  { value: "15m", label: "Live" },
   { value: "1h", label: "1h" },
   { value: "6h", label: "6h" },
   { value: "24h", label: "24h" },
   { value: "7d", label: "7d" },
+  { value: "30d", label: "30d" },
 ];
+
+const RANGE_LABEL: Record<string, string> = {
+  "15m": "Live, last 15 minutes",
+  "1h": "Last hour",
+  "6h": "Last 6 hours",
+  "24h": "Last 24 hours",
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+};
+
+// Bucket counts keep each uptime strip between 15 and 36 ticks.
+const TIMELINE_BUCKETS: Record<string, number> = { "15m": 15, "1h": 30, "6h": 36, "24h": 24, "7d": 28, "30d": 30 };
 
 const STATUS_FILTERS = [
   { value: "", label: "All" },
   { value: "healthy", label: "Healthy" },
   { value: "degraded", label: "Degraded" },
   { value: "unhealthy", label: "Unhealthy" },
-  { value: "unknown", label: "Unknown" },
 ];
 
+// Problems first: the API orders by request volume, which stays the tie-breaker.
+const STATUS_RANK: Record<string, number> = { unhealthy: 0, degraded: 1, healthy: 2, unknown: 3, disabled: 4 };
+
 function fmtMs(ms?: number) {
-  if (ms == null) return "—";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
+  if (ms == null || ms <= 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(2)} s`;
 }
 
 function fmtPct(v?: number) {
@@ -71,7 +77,59 @@ function fmtTime(t?: string) {
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
-  return d.toLocaleString();
+  return formatDateTime(d);
+}
+
+const FOCUS = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+
+// Arrow / Home / End move focus and selection inside a radiogroup or tablist.
+function rovingKeyDown(role: "radio" | "tab") {
+  return (e: ReactKeyboardEvent<HTMLElement>) => {
+    const fwd = ["ArrowRight", "ArrowDown"];
+    const back = ["ArrowLeft", "ArrowUp"];
+    if (![...fwd, ...back, "Home", "End"].includes(e.key)) return;
+    const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>(`[role="${role}"]`));
+    const cur = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (cur < 0 || items.length === 0) return;
+    e.preventDefault();
+    const next =
+      e.key === "Home" ? 0 : e.key === "End" ? items.length - 1 : (cur + (fwd.includes(e.key) ? 1 : -1) + items.length) % items.length;
+    items[next]?.focus();
+    items[next]?.click();
+  };
+}
+
+const onRadioKeyDown = rovingKeyDown("radio");
+const onTabKeyDown = rovingKeyDown("tab");
+
+function RangeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div className="inline-flex h-9 max-w-full items-center overflow-x-auto rounded-xl border border-line bg-subtle p-0.5 [scrollbar-width:none] sm:h-8" role="radiogroup" aria-label="Time range" onKeyDown={onRadioKeyDown}>
+      {RANGES.map((r) => {
+        const active = value === r.value;
+        return (
+          <button
+            key={r.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            title={RANGE_LABEL[r.value]}
+            tabIndex={active ? 0 : -1}
+            onClick={() => onChange(r.value)}
+            className={cn(
+              "inline-flex h-full min-w-[30px] shrink-0 items-center justify-center gap-1.5 rounded-lg px-2 text-[12px] font-medium transition-colors sm:px-2.5",
+              FOCUS,
+              active ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
+              r.value !== "15m" && "font-mono",
+            )}
+          >
+            {r.value === "15m" && <span className="live-dot h-1.5 w-1.5 rounded-full bg-ok" aria-hidden="true" />}
+            {r.label}
+          </button>
+        );
+      })}
+    </div>
+  );
 }
 
 export function ProviderHealthPage() {
@@ -84,29 +142,48 @@ export function ProviderHealthPage() {
 
 type Tab = "providers" | "models" | "chains" | "probes";
 
+const TABS: { value: Tab; label: string }[] = [
+  { value: "providers", label: "Providers" },
+  { value: "models", label: "Models" },
+  { value: "chains", label: "Chains" },
+  { value: "probes", label: "Probes" },
+];
+
 function Overview() {
   const [params, setParams] = useSearchParams();
-  const range = params.get("range") ?? "1h";
+  const range = params.get("range") ?? "24h";
   const status = params.get("status") ?? "";
-  const [tab, setTab] = useState<Tab>("providers");
+  const tab = (params.get("tab") as Tab | null) ?? "providers";
+  const qc = useQueryClient();
 
-  const setRange = (v: string) => setParams((p) => { p.set("range", v); return p; }, { replace: true });
-  const setStatus = (v: string) => setParams((p) => { if (v) p.set("status", v); else p.delete("status"); return p; }, { replace: true });
+  const setParam = (key: string, value: string) =>
+    setParams((p) => {
+      if (value) p.set(key, value);
+      else p.delete(key);
+      return p;
+    }, { replace: true });
 
   const overview = useQuery({
     queryKey: ["health-overview", range, status],
     queryFn: () => api.healthOverview(range, status || undefined),
     staleTime: 15_000,
     refetchInterval: 30_000,
+    placeholderData: (prev) => prev,
   });
-
+  const timeline = useQuery({
+    queryKey: ["health-timeline", range, TIMELINE_BUCKETS[range] ?? 24],
+    queryFn: () => api.healthTimeline(range, TIMELINE_BUCKETS[range] ?? 24),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    placeholderData: (prev) => prev,
+  });
+  const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.providers(), staleTime: 5 * 60_000 });
   const models = useQuery({
     queryKey: ["health-models", range, status],
     queryFn: () => api.healthModels(range, status || undefined),
     enabled: tab === "models",
     staleTime: 15_000,
   });
-
   const chains = useQuery({
     queryKey: ["health-chains", range],
     queryFn: () => api.healthChains(range),
@@ -114,301 +191,499 @@ function Overview() {
     staleTime: 15_000,
   });
 
+  const meta = new Map((providers.data?.providers ?? []).map((p) => [p.id, p]));
+  const strips = new Map((timeline.data?.providers ?? []).map((p) => [p.provider, p]));
+  const refreshing = overview.isFetching && !overview.isLoading;
+
   return (
     <div>
       <PageHeader
-        title="Provider Health"
-        description="Monitor the health of every AI provider connected to KeiRouter. See which are failing or slow, why, which routing chains are affected, and what to do next."
+        title="Provider health"
+        description="Which upstreams are failing or slow, and what to do."
         action={
-          <div className="flex flex-wrap items-center gap-2">
-            <SegmentedControl value={range} onChange={setRange} options={RANGES} />
+          <>
+            <RangeSelect value={range} onChange={(v) => setParam("range", v)} />
             <button
-              onClick={() => overview.refetch()}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-2 text-xs font-medium hover:bg-[var(--bg-subtle)]"
+              type="button"
+              onClick={() => {
+                qc.invalidateQueries({ queryKey: ["health-overview"] });
+                qc.invalidateQueries({ queryKey: ["health-timeline"] });
+                qc.invalidateQueries({ queryKey: ["health-models"] });
+                qc.invalidateQueries({ queryKey: ["health-chains"] });
+              }}
+              aria-label="Refresh health"
+              className={cn("inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg sm:h-8 sm:w-8", FOCUS)}
             >
-              <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} strokeWidth={1.75} aria-hidden="true" />
             </button>
-          </div>
+          </>
         }
       />
 
       {overview.isLoading ? (
-        <Spinner />
+        <div className="space-y-6" aria-busy="true">
+          <span className="sr-only" role="status">Loading provider health</span>
+          <Skeleton className="h-[84px] w-full rounded-2xl" />
+          <TableSkeleton rows={6} />
+        </div>
       ) : overview.isError ? (
-        <ErrorCard message="Failed to load provider health." />
+        <ErrorCard message="Couldn't load provider health. Try refreshing." />
       ) : overview.data ? (
-        <>
-          <SummaryCards summary={overview.data.summary} />
-          <div className="mt-5">
-            <SegmentedControl
-              value={tab}
-              onChange={(v) => setTab(v as Tab)}
-              options={[
-                { value: "providers", label: "Providers" },
-                { value: "models", label: "Models" },
-                { value: "chains", label: "Chains" },
-                { value: "probes", label: "Probes" },
-              ]}
-            />
-          </div>
-          <div className="mt-4">
-            {tab === "providers" && (
-              <ProviderTable rows={overview.data.providers} status={status} onStatus={setStatus} />
+        <div className="space-y-6">
+          <SummaryStrip summary={overview.data.summary} rows={overview.data.providers} />
+
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between sm:gap-x-3 sm:gap-y-2 sm:border-b sm:border-line">
+            <div className="border-b border-line sm:border-b-0">
+              <div className="-mb-px flex gap-1 overflow-x-auto [scrollbar-width:none]" role="tablist" aria-label="Health views" onKeyDown={onTabKeyDown}>
+                {TABS.map((t) => {
+                  const active = tab === t.value;
+                  return (
+                    <button
+                      key={t.value}
+                      id={`health-tab-${t.value}`}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      aria-controls="health-tabpanel"
+                      tabIndex={active ? 0 : -1}
+                      onClick={() => setParam("tab", t.value === "providers" ? "" : t.value)}
+                      className={cn("relative shrink-0 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus-visible:ring-inset", FOCUS, active ? "text-fg" : "text-fg-muted hover:text-fg")}
+                    >
+                      {t.label}
+                      {active && <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" aria-hidden="true" />}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {(tab === "providers" || tab === "models") && (
+              <div className="flex flex-wrap gap-1.5 sm:mb-2 sm:gap-1" role="radiogroup" aria-label="Filter by status" onKeyDown={onRadioKeyDown}>
+                {STATUS_FILTERS.map((f) => {
+                  const active = status === f.value;
+                  return (
+                    <button
+                      key={f.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      tabIndex={active ? 0 : -1}
+                      onClick={() => setParam("status", f.value)}
+                      className={cn(
+                        "h-8 rounded-lg border px-2.5 text-[12px] font-medium transition-colors sm:h-7",
+                        FOCUS,
+                        active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
+                      )}
+                    >
+                      {f.label}
+                    </button>
+                  );
+                })}
+              </div>
             )}
+          </div>
+
+          <div role="tabpanel" id="health-tabpanel" aria-labelledby={`health-tab-${tab}`}>
+            {tab === "providers" && <ProviderTable rows={overview.data.providers} meta={meta} strips={strips} range={range} />}
             {tab === "models" && <ModelTable query={models} />}
             {tab === "chains" && <ChainTable query={chains} />}
             {tab === "probes" && <ProbeHistoryTable range={range} />}
           </div>
-        </>
+        </div>
       ) : null}
     </div>
   );
 }
 
-function SummaryCards({ summary }: { summary: HealthSummary }) {
+function SummaryStrip({ summary, rows }: { summary: HealthSummary; rows: HealthProviderRow[] }) {
   const total = summary.healthy + summary.degraded + summary.unhealthy + summary.unknown + summary.disabled;
-  const segments = [
-    { key: "healthy", label: "Healthy", count: summary.healthy, color: "var(--color-accent-500)" },
-    { key: "degraded", label: "Degraded", count: summary.degraded, color: "var(--color-warning)" },
-    { key: "unhealthy", label: "Unhealthy", count: summary.unhealthy, color: "var(--color-danger)" },
-    { key: "unknown", label: "Unknown", count: summary.unknown, color: "var(--color-ink-400)" },
-    { key: "disabled", label: "Disabled", count: summary.disabled, color: "var(--color-ink-300)" },
-  ].filter((s) => s.count > 0);
-
+  const requests = rows.reduce((n, r) => n + (r.requests ?? 0), 0);
+  // Status cells are green when clear, tinted when something needs attention.
+  const statusTone = (n: number, bad: "warn" | "bad") => (!total ? "section" : n ? bad : "ok");
   return (
-    <Card className="p-4">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        {/* Distribution bar + legend */}
-        <div className="min-w-0 flex-1">
-          <div className="mb-2 flex items-baseline justify-between">
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">
-              Provider Health
-            </span>
-            <span className="text-sm font-semibold tabular-nums">{total} total</span>
-          </div>
-          {total === 0 ? (
-            <div className="h-2.5 rounded-full bg-[var(--bg-subtle)]" />
-          ) : (
-            <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-              {segments.map((s) => (
-                <div
-                  key={s.key}
-                  style={{ width: `${(s.count / total) * 100}%`, backgroundColor: s.color }}
-                  title={`${s.label}: ${s.count}`}
-                />
-              ))}
-            </div>
-          )}
-          <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1">
-            {segments.map((s) => (
-              <div key={s.key} className="flex items-center gap-1.5 text-xs">
-                <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: s.color }} />
-                <span className="text-[var(--text-muted)]">{s.label}</span>
-                <span className="font-semibold tabular-nums">{s.count}</span>
-              </div>
-            ))}
-          </div>
-          <p className="mt-2 text-xs text-[var(--text-muted)]">
-            Share of providers by current health status. Green is working normally; yellow is slower or less reliable; red should be avoided.
-          </p>
-        </div>
-
-        {/* Compact key metrics */}
-        <div className="flex shrink-0 gap-5 border-t border-[var(--border)] pt-3 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
-          <CompactStat label="Fallbacks" value={summary.fallbacks.toLocaleString()} tone={summary.fallbacks > 0 ? "warning" : "muted"} />
-          <CompactStat label="Avg p95" value={fmtMs(summary.avg_p95_latency_ms)} tone="muted" />
-        </div>
-      </div>
-    </Card>
+    <KpiGrid cols={4} label="Health summary">
+      <Kpi
+        icon={CircleX}
+        label="Unhealthy"
+        value={String(summary.unhealthy)}
+        tone={statusTone(summary.unhealthy, "bad")}
+        valueClassName={summary.unhealthy ? "text-bad" : ""}
+        hint={total ? `of ${total} providers` : "No telemetry yet"}
+      />
+      <Kpi
+        icon={CircleAlert}
+        label="Degraded"
+        value={String(summary.degraded)}
+        tone={statusTone(summary.degraded, "warn")}
+        valueClassName={summary.degraded ? "text-warn" : ""}
+        hint={total ? `${summary.healthy} healthy` : undefined}
+      />
+      <Kpi
+        icon={ICONS.fallbacks}
+        label="Fallbacks"
+        value={summary.fallbacks.toLocaleString("en-US")}
+        tone={summary.fallbacks ? "warn" : "section"}
+        valueClassName={summary.fallbacks ? "text-warn" : ""}
+        hint={requests ? `of ${requests.toLocaleString("en-US")} requests` : undefined}
+      />
+      <Kpi icon={ICONS.latency} label="Avg p95 latency" value={fmtMs(summary.avg_p95_latency_ms)} />
+    </KpiGrid>
   );
 }
 
-function CompactStat({ label, value, tone = "muted" }: { label: string; value: string; tone?: "muted" | "warning" | "danger" }) {
-  const color = tone === "warning" ? "text-[color:var(--color-warning)]" : tone === "danger" ? "text-[color:var(--color-danger)]" : "text-[var(--text)]";
+const TICK_CLASS: Record<string, string> = { ok: "bg-ok/70", degraded: "bg-warn", down: "bg-bad", idle: "bg-track" };
+
+function stripLabel(name: string, strip: HealthTimelineProvider) {
+  const down = strip.buckets.filter((b) => b.status === "down").length;
+  const degraded = strip.buckets.filter((b) => b.status === "degraded").length;
+  if (!down && !degraded) return `${name}: no problems in ${strip.buckets.length} intervals`;
+  return `${name}: ${down} down and ${degraded} degraded of ${strip.buckets.length} intervals`;
+}
+
+function UptimeStrip({ name, strip, className }: { name: string; strip: HealthTimelineProvider; className?: string }) {
   return (
-    <div>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</div>
-      <div className={`mt-0.5 text-lg font-semibold tabular-nums ${color}`}>{value}</div>
+    <div className={cn("flex gap-[2px]", className)} role="img" aria-label={stripLabel(name, strip)}>
+      {strip.buckets.map((b) => (
+        <span key={b.start} className={cn("h-3.5 min-w-[2px] flex-1 rounded-[1.5px]", TICK_CLASS[b.status] ?? "bg-track")} title={`${fmtTime(b.start)} · ${b.status}${b.requests ? ` · ${b.requests} req` : ""}`} />
+      ))}
     </div>
   );
 }
 
-function MetricPill({ label, value, tone = "muted" }: { label: string; value: string; tone?: "muted" | "good" | "warn" | "bad" }) {
-  const color =
-    tone === "good" ? "text-[color:var(--color-accent-500)]" :
-    tone === "warn" ? "text-[color:var(--color-warning)]" :
-    tone === "bad" ? "text-[color:var(--color-danger)]" :
-    "text-[var(--text)]";
-  return (
-    <div className="flex items-baseline gap-1.5">
-      <span className="text-[11px] font-medium uppercase tracking-wide text-[var(--text-muted)]">{label}</span>
-      <span className={`text-sm font-semibold tabular-nums ${color}`}>{value}</span>
-    </div>
-  );
+function successClass(rate: number) {
+  return rate >= 99 ? "text-fg" : rate >= 95 ? "text-warn" : "text-bad";
 }
 
 function ProviderTable({
   rows,
-  status,
-  onStatus,
+  meta,
+  strips,
+  range,
 }: {
   rows: HealthProviderRow[];
-  status: string;
-  onStatus: (v: string) => void;
+  meta: Map<string, Provider>;
+  strips: Map<string, HealthTimelineProvider>;
+  range: string;
 }) {
-  const { page, pages, paged, setPage, total } = useClientPagination(rows, 10);
+  const navigate = useNavigate();
+  const sorted = [...rows].sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9));
+  const { page, pages, paged, setPage, total } = useClientPagination(sorted, 15);
+  if (rows.length === 0) {
+    return <EmptyPanel icon={ICONS.health} title="No provider telemetry in this range" hint="Health appears once requests flow or a probe runs." />;
+  }
   return (
-    <Card>
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-        <h2 className="text-sm font-semibold">Provider Status</h2>
-        <select
-          value={status}
-          onChange={(e) => onStatus(e.target.value)}
-          className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-xs"
-        >
-          {STATUS_FILTERS.map((f) => (
-            <option key={f.value} value={f.value}>{f.label}</option>
-          ))}
-        </select>
-      </div>
-      {rows.length === 0 ? (
-        <EmptyState title="No health data yet." hint="Run a probe or send traffic through a provider." />
-      ) : (
-        <>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--text-muted)]">
-                  <th className="px-4 py-2 font-medium">Provider</th>
-                  <th className="px-4 py-2 font-medium">Status</th>
-                  <th className="px-4 py-2 font-medium">Score</th>
-                  <th className="px-4 py-2 font-medium">Success</th>
-                  <th className="px-4 py-2 font-medium">Errors</th>
-                  <th className="px-4 py-2 font-medium">p95</th>
-                  <th className="px-4 py-2 font-medium">Fallbacks</th>
-                  <th className="px-4 py-2 font-medium">Last Probe</th>
-                  <th className="px-4 py-2 font-medium">Main Issue</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paged.map((r) => (
-                  <tr key={r.provider} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg-subtle)]">
-                    <td className="px-4 py-2.5 font-medium">{r.provider}</td>
-                    <td className="px-4 py-2.5"><HealthStatusBadge status={r.status as HealthStatus} issue={r.main_issue} /></td>
-                    <td className="px-4 py-2.5"><HealthScoreRing score={r.score} /></td>
-                    <td className="px-4 py-2.5 tabular-nums">{fmtPct(r.success_rate)}</td>
-                    <td className="px-4 py-2.5 tabular-nums">{fmtPct(r.error_rate)}</td>
-                    <td className="px-4 py-2.5 tabular-nums">{fmtMs(r.latency_p95_ms)}</td>
-                    <td className="px-4 py-2.5 tabular-nums">{r.fallback_count}</td>
-                    <td className="px-4 py-2.5 text-[var(--text-muted)]">{fmtTime(r.last_probe_at)}</td>
-                    <td className="px-4 py-2.5 text-[var(--text-muted)]">{fmtIssue(r.main_issue) || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+    <TableCard
+      label="Providers table"
+      footer={<TablePagination page={page} pages={pages} total={total} onPage={setPage} />}
+      mobile={
+        <ul className="divide-y divide-line md:hidden" aria-label="Providers">
+          {paged.map((r) => {
+            const p = meta.get(r.provider);
+            const strip = strips.get(r.provider);
+            const name = p?.display_name ?? r.provider;
+            const href = dashboard(`/provider-health/${encodeURIComponent(r.provider)}`);
+            return (
+              <li key={r.provider} className="relative px-4 py-3 transition-colors active:bg-hover">
+                <div className="flex items-start justify-between gap-3">
+                  {/* The link's overlay makes the whole card a tap target. */}
+                  <Link to={href} className={cn("flex min-w-0 items-center gap-2.5 rounded-md after:absolute after:inset-0 after:content-['']", FOCUS)}>
+                    <ProviderLogo icon={p?.icon} name={name} size={22} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-[13px] font-medium text-fg">{name}</span>
+                      <span className="block truncate font-mono text-[11.5px] text-fg-faint">
+                        {r.provider} · {r.accounts} account{r.accounts === 1 ? "" : "s"}
+                      </span>
+                    </span>
+                  </Link>
+                  <span className="shrink-0">
+                    <HealthStatusBadge status={r.status as HealthStatus} issue={r.main_issue} />
+                  </span>
+                </div>
+                {strip && <UptimeStrip name={name} strip={strip} className="mt-2.5" />}
+                <p className="mt-2 flex flex-wrap gap-x-1.5 text-[12px] tabular-nums text-fg-muted">
+                  <span>{r.requests != null ? r.requests.toLocaleString("en-US") : "—"} requests</span>
+                  <span aria-hidden="true">·</span>
+                  <span className={successClass(r.success_rate)}>{fmtPct(r.success_rate)} success</span>
+                  <span aria-hidden="true">·</span>
+                  <span>p95 {fmtMs(r.latency_p95_ms)}</span>
+                  {r.fallback_count > 0 && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span className="text-warn">
+                        {r.fallback_count.toLocaleString("en-US")} fallback{r.fallback_count === 1 ? "" : "s"}
+                      </span>
+                    </>
+                  )}
+                </p>
+                {r.main_issue && (
+                  <p className="mt-1 line-clamp-2 text-[12px] text-fg">
+                    {fmtIssue(r.main_issue)}
+                    {r.recommendation && <span className="text-fg-muted"> · {r.recommendation}</span>}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      }
+    >
+      <table className="w-full min-w-[860px] text-[13px]">
+        <thead>
+          <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+            <th scope="col" className={TH}>Provider</th>
+            <th scope="col" className={TH}>Status</th>
+            <th scope="col" className={TH}>Uptime · {range === "15m" ? "live" : range}</th>
+            <th scope="col" className={THR}>Requests</th>
+            <th scope="col" className={THR}>Success</th>
+            <th scope="col" className={THR}>p95</th>
+            <th scope="col" className={TH}>Main issue</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line">
+          {paged.map((r) => {
+            const p = meta.get(r.provider);
+            const strip = strips.get(r.provider);
+            const name = p?.display_name ?? r.provider;
+            const href = dashboard(`/provider-health/${encodeURIComponent(r.provider)}`);
+            return (
+              <tr key={r.provider} className="cursor-pointer transition-colors hover:bg-hover" onClick={() => navigate(href)}>
+                <td className="px-4 py-2.5">
+                  <Link to={href} onClick={(e) => e.stopPropagation()} className={cn("flex items-center gap-2.5 rounded-md", FOCUS)}>
+                    <ProviderLogo icon={p?.icon} name={name} size={22} />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-fg">{name}</span>
+                      <span className="block truncate font-mono text-[11.5px] text-fg-faint">
+                        {r.provider} · {r.accounts} account{r.accounts === 1 ? "" : "s"}
+                      </span>
+                    </span>
+                  </Link>
+                </td>
+                <td className="px-4 py-2.5" title={`Score ${r.score}${r.live_status ? " · live status" : ""}`}>
+                  <HealthStatusBadge status={r.status as HealthStatus} issue={r.main_issue} />
+                </td>
+                <td className="px-4 py-2.5">
+                  {strip ? (
+                    <UptimeStrip name={name} strip={strip} className="w-40" />
+                  ) : (
+                    <span className="text-[12px] text-fg-faint">—</span>
+                  )}
+                </td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums">
+                  <span className="block text-fg">{r.requests != null ? r.requests.toLocaleString("en-US") : "—"}</span>
+                  {r.fallback_count > 0 && (
+                    <span className="block text-[12px] text-warn">
+                      {r.fallback_count.toLocaleString("en-US")} fallback{r.fallback_count === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </td>
+                <td className={cn("whitespace-nowrap px-4 py-2.5 text-right tabular-nums", successClass(r.success_rate))}>{fmtPct(r.success_rate)}</td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-fg-muted">{fmtMs(r.latency_p95_ms)}</td>
+                <td className="max-w-[260px] px-4 py-2.5">
+                  {r.main_issue ? (
+                    <>
+                      <span className="block truncate text-fg">{fmtIssue(r.main_issue)}</span>
+                      {r.recommendation && (
+                        <span className="block truncate text-[12px] text-fg-muted" title={r.recommendation}>
+                          {r.recommendation}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-fg-faint">—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </TableCard>
+  );
+}
+
+const TH = "px-4 py-2 font-medium";
+const THR = "px-4 py-2 text-right font-medium";
+
+function TableSkeleton({ rows = 5 }: { rows?: number }) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]" aria-hidden="true">
+      <div className="h-9 border-b border-line bg-subtle" />
+      <div className="divide-y divide-line">
+        {Array.from({ length: rows }, (_, i) => (
+          <div key={i} className="flex items-center gap-4 px-4 py-3">
+            <Skeleton className="h-4 w-48" />
+            <Skeleton className="h-4 w-16" />
+            <Skeleton className="ml-auto h-4 w-24" />
           </div>
-          <TablePagination page={page} pages={pages} total={total} onPage={setPage} />
-        </>
-      )}
-    </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LoadingTable() {
+  return (
+    <div aria-busy="true">
+      <span className="sr-only" role="status">Loading</span>
+      <TableSkeleton />
+    </div>
+  );
+}
+
+function EmptyPanel({ icon, title, hint }: { icon: LucideIcon; title: string; hint?: string }) {
+  return <EmptyState variant="card" size="sm" icon={icon} title={title} hint={hint} />;
+}
+
+function TableCard({ children, footer, label, mobile }: { children: ReactNode; footer?: ReactNode; label: string; mobile?: ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      {/* `mobile` is a md:hidden list that stands in for the table on phones. */}
+      {mobile}
+      {/* Focusable so keyboard users can scroll a table wider than the screen (WCAG 2.1.1). */}
+      <div
+        className={cn("overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500", mobile != null && "hidden md:block")}
+        tabIndex={0}
+        role="region"
+        aria-label={label}
+      >
+        {children}
+      </div>
+      {footer}
+    </div>
+  );
+}
+
+// Sticky first column keeps the row identity in view while a table scrolls sideways.
+const TH_STICKY = "sticky left-0 z-[1] bg-subtle px-4 py-2 font-medium";
+const TD_STICKY = "sticky left-0 z-[1] bg-surface px-4 py-2.5 group-hover:bg-hover";
+
+function TargetCell({ provider, model, stack }: { provider?: string; model?: string; stack?: boolean }) {
+  // `stack` puts the provider above the model on phones so a narrow sticky cell stays readable.
+  if (stack) {
+    return (
+      <span className="flex min-w-0 flex-col font-mono text-[12.5px] sm:flex-row sm:items-baseline sm:gap-1">
+        <span className="truncate text-[11.5px] text-fg-muted sm:shrink-0 sm:text-[12.5px]">{provider}/</span>
+        <span className="truncate text-fg" title={model}>{model}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="flex min-w-0 items-baseline gap-1 font-mono text-[12.5px]">
+      <span className="text-fg-muted">{provider}/</span>
+      <span className="truncate text-fg" title={model}>{model}</span>
+    </span>
   );
 }
 
 function ModelTable({ query }: { query: UseQueryResult<{ models: HealthModelRow[] } | HealthProviderDetail> }) {
-  if (query.isLoading) return <Spinner />;
-  if (query.isError) return <ErrorCard message="Failed to load model health." />;
+  if (query.isLoading) return <LoadingTable />;
+  if (query.isError) return <ErrorCard message="Couldn't load model health. Try refreshing." />;
   const rows = (query.data as { models?: HealthModelRow[] } | undefined)?.models ?? [];
-  if (rows.length === 0) return <Card><EmptyState title="No model health data yet." /></Card>;
+  if (rows.length === 0) return <EmptyPanel icon={ICONS.model} title="No model health data yet" hint="Rows appear once a model gets traffic or a probe." />;
   return <ModelTableInner rows={rows} />;
 }
 
 function ModelTableInner({ rows }: { rows: HealthModelRow[] }) {
   const { page, pages, paged, setPage, total } = useClientPagination(rows, 10);
   return (
-    <Card>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--text-muted)]">
-              <th className="px-4 py-2 font-medium">Provider / Model</th>
-              <th className="px-4 py-2 font-medium">Status</th>
-              <th className="px-4 py-2 font-medium">Score</th>
-              <th className="px-4 py-2 font-medium">Success</th>
-              <th className="px-4 py-2 font-medium">p95</th>
-              <th className="px-4 py-2 font-medium">Fallbacks</th>
-              <th className="px-4 py-2 font-medium">Main Issue</th>
+    <TableCard label="Models table" footer={<TablePagination page={page} pages={pages} total={total} onPage={setPage} />}>
+      <table className="w-full min-w-[760px] text-[13px]">
+        <thead>
+          <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+            <th scope="col" className={TH_STICKY}>Model</th>
+            <th scope="col" className={TH}>Status</th>
+            <th scope="col" className={TH}>Score</th>
+            <th scope="col" className={THR}>Success</th>
+            <th scope="col" className={THR}>p95</th>
+            <th scope="col" className={THR}>Fallbacks</th>
+            <th scope="col" className={TH}>Main issue</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line">
+          {paged.map((r: HealthModelRow, i: number) => (
+            <tr key={`${r.provider}/${r.model}-${i}`} className="group hover:bg-hover">
+              <td className={cn(TD_STICKY, "max-w-[150px] sm:max-w-[320px]")}><TargetCell provider={r.provider} model={r.model ?? ""} stack /></td>
+              <td className="px-4 py-2.5"><HealthStatusBadge status={r.status as HealthStatus} issue={r.main_issue} /></td>
+              <td className="px-4 py-2.5"><HealthScoreRing score={r.score} /></td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-fg">{fmtPct(r.success_rate)}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-fg">{fmtMs(r.latency_p95_ms)}</td>
+              <td className={cn("px-4 py-2.5 text-right tabular-nums", r.fallback_count ? "text-warn" : "text-fg-muted")}>{r.fallback_count.toLocaleString("en-US")}</td>
+              <td className="px-4 py-2.5 text-fg-muted">{fmtIssue(r.main_issue) || "—"}</td>
             </tr>
-          </thead>
-          <tbody>
-            {paged.map((r: HealthModelRow, i: number) => (
-              <tr key={`${r.provider}/${r.model}-${i}`} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg-subtle)]">
-                <td className="px-4 py-2.5 font-medium">{r.provider}/{r.model}</td>
-                <td className="px-4 py-2.5"><HealthStatusBadge status={r.status as HealthStatus} issue={r.main_issue} /></td>
-                <td className="px-4 py-2.5"><HealthScoreRing score={r.score} /></td>
-                <td className="px-4 py-2.5 tabular-nums">{fmtPct(r.success_rate)}</td>
-                <td className="px-4 py-2.5 tabular-nums">{fmtMs(r.latency_p95_ms)}</td>
-                <td className="px-4 py-2.5 tabular-nums">{r.fallback_count}</td>
-                <td className="px-4 py-2.5 text-[var(--text-muted)]">{fmtIssue(r.main_issue) || "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <TablePagination page={page} pages={pages} total={total} onPage={setPage} />
-    </Card>
+          ))}
+        </tbody>
+      </table>
+    </TableCard>
   );
 }
 
 function ChainTable({ query }: { query: UseQueryResult<{ chains: HealthChainRow[] }> }) {
   const [selected, setSelected] = useState<string | null>(null);
-  if (query.isLoading) return <Spinner />;
-  if (query.isError) return <ErrorCard message="Failed to load chain impact." />;
+  if (query.isLoading) return <LoadingTable />;
+  if (query.isError) return <ErrorCard message="Couldn't load chain impact. Try refreshing." />;
   const rows = query.data?.chains ?? [];
-  if (rows.length === 0) return <Card><EmptyState title="No chains configured." /></Card>;
+  if (rows.length === 0) return <EmptyPanel icon={ICONS.chains} title="No chains configured" hint="Chains show here once they serve traffic." />;
+  const close = () => {
+    const id = selected;
+    setSelected(null);
+    // Return focus to the row that opened the detail.
+    if (id) requestAnimationFrame(() => document.getElementById(`chain-row-${id}`)?.focus());
+  };
   return (
     <div className="space-y-4">
-      <ChainTableInner rows={rows} onSelect={setSelected} />
-      {selected && <ChainDetail id={selected} onClose={() => setSelected(null)} />}
+      <ChainTableInner rows={rows} selected={selected} onSelect={(id) => setSelected((s) => (s === id ? null : id))} />
+      {selected && <ChainDetail id={selected} onClose={close} />}
     </div>
   );
 }
 
-function ChainTableInner({ rows, onSelect }: { rows: HealthChainRow[]; onSelect: (id: string) => void }) {
+function ChainTableInner({ rows, selected, onSelect }: { rows: HealthChainRow[]; selected: string | null; onSelect: (id: string) => void }) {
   const { page, pages, paged, setPage, total } = useClientPagination(rows, 10);
   return (
-    <Card>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--text-muted)]">
-              <th className="px-4 py-2 font-medium">Chain</th>
-              <th className="px-4 py-2 font-medium">Status</th>
-              <th className="px-4 py-2 font-medium">Requests</th>
-              <th className="px-4 py-2 font-medium">Fallback Rate</th>
-              <th className="px-4 py-2 font-medium">Final Failures</th>
-              <th className="px-4 py-2 font-medium">Affected</th>
-              <th className="px-4 py-2 font-medium">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {paged.map((r) => (
-              <tr key={r.chain_id} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg-subtle)] cursor-pointer" onClick={() => onSelect(r.chain_id)}>
-                <td className="px-4 py-2.5 font-medium">{r.name}</td>
-                <td className="px-4 py-2.5"><HealthStatusBadge status={r.status} issue={r.main_issue} /></td>
-                <td className="px-4 py-2.5 tabular-nums">{r.requests.toLocaleString()}</td>
-                <td className="px-4 py-2.5 tabular-nums">{fmtPct(r.fallback_rate)}</td>
-                <td className="px-4 py-2.5 tabular-nums">
-                  {r.final_failure_count > 0 ? <span className="text-[color:var(--color-danger)] font-medium">{r.final_failure_count}</span> : "0"}
+    <TableCard label="Chains table" footer={<TablePagination page={page} pages={pages} total={total} onPage={setPage} />}>
+      <table className="w-full min-w-[760px] text-[13px]">
+        <thead>
+          <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+            <th scope="col" className={TH_STICKY}>Chain</th>
+            <th scope="col" className={TH}>Status</th>
+            <th scope="col" className={THR}>Requests</th>
+            <th scope="col" className={THR}>Fallback rate</th>
+            <th scope="col" className={THR}>Final failures</th>
+            <th scope="col" className={TH}>Most affected</th>
+            <th scope="col" className="w-10 px-4 py-2"><span className="sr-only">Details</span></th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line">
+          {paged.map((r) => {
+            const open = selected === r.chain_id;
+            return (
+              <tr key={r.chain_id} className={cn("group cursor-pointer hover:bg-hover", open && "bg-subtle")} onClick={() => onSelect(r.chain_id)}>
+                <td className={cn(TD_STICKY, "max-w-[160px] sm:max-w-[280px]", open && "bg-subtle")}>
+                  <button
+                    id={`chain-row-${r.chain_id}`}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelect(r.chain_id);
+                    }}
+                    aria-expanded={open}
+                    aria-controls={open ? "chain-detail" : undefined}
+                    className={cn("rounded-md text-left font-medium text-fg [overflow-wrap:anywhere] hover:underline", FOCUS)}
+                  >
+                    {r.name}
+                  </button>
                 </td>
-                <td className="px-4 py-2.5 text-[var(--text-muted)]">{r.affected_provider ? `${r.affected_provider}/${r.affected_model}` : "—"}</td>
-                <td className="px-4 py-2.5 text-xs text-accent-600 dark:text-accent-300">View →</td>
+                <td className="px-4 py-2.5"><HealthStatusBadge status={r.status} issue={r.main_issue} /></td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-fg">{r.requests.toLocaleString("en-US")}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-fg">{fmtPct(r.fallback_rate)}</td>
+                <td className={cn("px-4 py-2.5 text-right tabular-nums", r.final_failure_count > 0 ? "font-medium text-bad" : "text-fg-muted")}>{r.final_failure_count.toLocaleString("en-US")}</td>
+                <td className="max-w-[280px] px-4 py-2.5">{r.affected_provider ? <TargetCell provider={r.affected_provider} model={r.affected_model ?? ""} /> : <span className="text-fg-faint">—</span>}</td>
+                <td className="px-4 py-2.5 text-fg-faint"><ChevronRight className={cn("h-4 w-4 transition-transform", open && "rotate-90")} strokeWidth={1.75} aria-hidden="true" /></td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <TablePagination page={page} pages={pages} total={total} onPage={setPage} />
-    </Card>
+            );
+          })}
+        </tbody>
+      </table>
+    </TableCard>
   );
 }
 
@@ -419,46 +694,73 @@ function ChainDetail({ id, onClose }: { id: string; onClose: () => void }) {
     staleTime: 15_000,
   });
   return (
-    <Card>
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-        <h2 className="text-sm font-semibold">Chain Detail</h2>
-        <button onClick={onClose} className="text-xs text-[var(--text-muted)] hover:text-[var(--text)]">Close</button>
+    <section
+      id="chain-detail"
+      aria-labelledby="chain-detail-title"
+      aria-busy={q.isLoading}
+      onKeyDown={(e) => e.key === "Escape" && onClose()}
+      className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
+    >
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle
+          id="chain-detail-title"
+          icon={ICONS.chains}
+          title={
+            <span className="inline-flex flex-wrap items-center gap-2">
+              {q.data?.name ?? "Chain detail"}
+              {q.data && <Badge tone="neutral">{q.data.strategy}</Badge>}
+            </span>
+          }
+          subtitle={
+            q.data && (
+              <span className="flex flex-wrap gap-x-2 tabular-nums">
+                {q.data.requests != null && <span>{q.data.requests.toLocaleString("en-US")} requests</span>}
+                {q.data.fallback_rate != null && <span>· {fmtPct(q.data.fallback_rate)} fallback rate</span>}
+                {q.data.final_failure_count != null && q.data.final_failure_count > 0 && <span className="text-bad">· {q.data.final_failure_count} final failures</span>}
+              </span>
+            )
+          }
+          action={
+            <button type="button" onClick={onClose} aria-label="Close chain detail" className={cn("inline-flex h-9 w-9 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg sm:h-7 sm:w-7", FOCUS)}>
+              <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+            </button>
+          }
+        />
       </div>
-      {q.isLoading ? <Spinner /> : q.isError ? <EmptyState title="Failed to load chain detail." /> : q.data ? (
-        <div className="px-4 py-3">
-          <div className="mb-3 flex flex-wrap items-center gap-3 text-sm">
-            <span className="font-medium">{q.data.name}</span>
-            <Badge tone="neutral">{q.data.strategy}</Badge>
-            {q.data.requests != null && <span className="text-[var(--text-muted)]">{q.data.requests.toLocaleString()} requests</span>}
-            {q.data.fallback_rate != null && <span className="text-[var(--text-muted)]">{fmtPct(q.data.fallback_rate)} fallback rate</span>}
-            {q.data.final_failure_count != null && q.data.final_failure_count > 0 && (
-              <span className="text-[color:var(--color-danger)]">{q.data.final_failure_count} final failures</span>
-            )}
-          </div>
-          <div className="space-y-2">
-            {q.data.steps.map((step) => (
-              <div key={step.position} className="flex items-center gap-3 rounded-lg border border-[var(--border)] px-3 py-2">
-                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--bg-subtle)] text-xs font-medium">{step.position + 1}</span>
-                <div className="flex-1">
-                  <div className="text-sm font-medium">{step.provider}/{step.model}</div>
-                  {step.main_issue && <div className="text-xs text-[var(--text-muted)]">{fmtIssue(step.main_issue)}</div>}
-                </div>
+      {q.isLoading ? (
+        <div className="space-y-2 px-4 py-4" aria-hidden="true">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-11 w-full" />)}</div>
+      ) : q.isError ? (
+        <p className="px-4 py-8 text-center text-[13px] text-fg-muted">Couldn't load this chain. Close it and try again.</p>
+      ) : q.data ? (
+        <ol className="divide-y divide-line">
+          {q.data.steps.map((step) => (
+            <li key={step.position} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-2.5">
+              <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-line bg-subtle text-[11.5px] font-medium tabular-nums text-fg-muted" aria-label={`Step ${step.position + 1}`}>{step.position + 1}</span>
+              <div className="min-w-0 flex-1 basis-[calc(100%-36px)] sm:basis-0">
+                <TargetCell provider={step.provider} model={step.model} />
+                {step.main_issue && <p className="mt-0.5 text-[12px] text-fg-muted">{fmtIssue(step.main_issue)}</p>}
+              </div>
+              {/* Wraps under the target on phones, aligned with it. */}
+              <div className="flex items-center gap-3 pl-9 sm:pl-0">
                 <HealthStatusBadge status={step.status} />
-                <HealthScoreRing score={step.score} size={36} />
+                <HealthScoreRing score={step.score} />
               </div>
-            ))}
-            {q.data.fallback_provider && (
-              <div className="flex items-center gap-3 rounded-lg border border-dashed border-[var(--border)] px-3 py-2">
-                <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--bg-subtle)] text-xs">★</span>
-                <div className="flex-1 text-sm text-[var(--text-muted)]">
-                  Fallback: {q.data.fallback_provider}/{q.data.fallback_model}
-                </div>
+            </li>
+          ))}
+          {q.data.fallback_provider && (
+            <li className="flex items-center gap-3 bg-subtle px-4 py-2.5">
+              <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-dashed border-line-strong text-fg-faint" aria-hidden="true">
+                <CornerDownRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] text-fg-muted">Final fallback</p>
+                <TargetCell provider={q.data.fallback_provider} model={q.data.fallback_model ?? ""} />
               </div>
-            )}
-          </div>
-        </div>
+            </li>
+          )}
+        </ol>
       ) : null}
-    </Card>
+    </section>
   );
 }
 
@@ -471,46 +773,46 @@ function ProbeHistoryTable({ range }: { range: string }) {
     queryFn: () => api.healthProbeHistory({ range, page, limit: 50 }),
     staleTime: 15_000,
   });
-  if (q.isLoading) return <Spinner />;
-  if (q.isError) return <ErrorCard message="Failed to load probe history." />;
+  if (q.isLoading) return <LoadingTable />;
+  if (q.isError) return <ErrorCard message="Couldn't load probe history. Try refreshing." />;
   const rows = q.data?.items ?? [];
   const total = q.data?.pagination.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / 50));
-  if (rows.length === 0) return <Card><EmptyState title="No probes yet." hint="Run a manual probe to see results here." /></Card>;
+  if (rows.length === 0) return <EmptyPanel icon={Play} title="No probes in this range" hint="Run a probe from a provider's health page." />;
   return (
-    <Card>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-[var(--border)] text-left text-xs text-[var(--text-muted)]">
-              <th className="px-4 py-2 font-medium">Time</th>
-              <th className="px-4 py-2 font-medium">Provider / Model</th>
-              <th className="px-4 py-2 font-medium">Status</th>
-              <th className="px-4 py-2 font-medium">Latency</th>
-              <th className="px-4 py-2 font-medium">HTTP</th>
-              <th className="px-4 py-2 font-medium">Error</th>
-              <th className="px-4 py-2 font-medium">Trigger</th>
+    <TableCard label="Probe history table" footer={<TablePagination page={page} pages={pages} total={total} onPage={setPage} />}>
+      <table className="w-full min-w-[820px] text-[13px]">
+        <thead>
+          <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+            <th scope="col" className={TH_STICKY}>Time</th>
+            <th scope="col" className={TH}>Model</th>
+            <th scope="col" className={TH}>Result</th>
+            <th scope="col" className={THR}>Latency</th>
+            <th scope="col" className={THR}>HTTP</th>
+            <th scope="col" className={TH}>Error</th>
+            <th scope="col" className={TH}>Trigger</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line">
+          {rows.map((r: HealthProbeRow, i) => (
+            <tr key={i} className="group hover:bg-hover">
+              <td className={cn(TD_STICKY, "whitespace-nowrap tabular-nums text-fg-muted")}>{fmtTime(r.time)}</td>
+              <td className="max-w-[320px] px-4 py-2.5"><TargetCell provider={r.provider} model={r.model} /></td>
+              <td className="px-4 py-2.5">
+                <span className={cn("inline-flex items-center gap-1.5 text-[12.5px]", r.status === "success" ? "text-fg" : "text-bad")}>
+                  <span className={cn("h-1.5 w-1.5 rounded-full", r.status === "success" ? "bg-ok" : "bg-bad")} aria-hidden="true" />
+                  {r.status === "success" ? "Success" : r.status}
+                </span>
+              </td>
+              <td className="px-4 py-2.5 text-right tabular-nums text-fg">{fmtMs(r.latency_ms)}</td>
+              <td className="px-4 py-2.5 text-right font-mono text-[12.5px] tabular-nums text-fg-muted">{r.http_status ?? "—"}</td>
+              <td className="px-4 py-2.5 text-fg-muted">{fmtIssue(r.error_type) || "—"}</td>
+              <td className="px-4 py-2.5"><Badge tone="neutral">{r.triggered_by}</Badge></td>
             </tr>
-          </thead>
-          <tbody>
-            {rows.map((r: HealthProbeRow, i) => (
-              <tr key={i} className="border-b border-[var(--border)] last:border-0">
-                <td className="px-4 py-2.5 text-[var(--text-muted)]">{fmtTime(r.time)}</td>
-                <td className="px-4 py-2.5 font-medium">{r.provider}/{r.model}</td>
-                <td className="px-4 py-2.5">
-                  <Badge tone={r.status === "success" ? "success" : "danger"}>{r.status}</Badge>
-                </td>
-                <td className="px-4 py-2.5 tabular-nums">{fmtMs(r.latency_ms)}</td>
-                <td className="px-4 py-2.5 tabular-nums">{r.http_status ?? "—"}</td>
-                <td className="px-4 py-2.5 text-[var(--text-muted)]">{fmtIssue(r.error_type) || "—"}</td>
-                <td className="px-4 py-2.5"><Badge tone="neutral">{r.triggered_by}</Badge></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <TablePagination page={page} pages={pages} total={total} onPage={setPage} />
-    </Card>
+          ))}
+        </tbody>
+      </table>
+    </TableCard>
   );
 }
 
@@ -520,6 +822,7 @@ function ProviderDetail({ provider }: { provider: string }) {
   const [params, setParams] = useSearchParams();
   const range = params.get("range") ?? "24h";
 
+  const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.providers(), staleTime: 5 * 60_000 });
   const detail = useQuery({
     queryKey: ["health-provider", provider, range],
     queryFn: () => api.healthProviderDetail(provider, range),
@@ -527,156 +830,140 @@ function ProviderDetail({ provider }: { provider: string }) {
     refetchInterval: 30_000,
   });
 
-  if (detail.isLoading) return <Spinner />;
+  if (detail.isLoading) {
+    return (
+      <div className="space-y-4" aria-busy="true">
+        <span className="sr-only" role="status">Loading provider health</span>
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-10 w-72" />
+        <Skeleton className="h-[76px] w-full rounded-2xl" />
+        <Skeleton className="h-[260px] w-full rounded-2xl" />
+      </div>
+    );
+  }
   if (detail.isError) return (
     <div>
       <BackLink />
-      <ErrorCard message="Failed to load provider detail." />
+      <ErrorCard message="Couldn't load this provider's health. Try refreshing." />
     </div>
   );
   const d = detail.data;
   if (!d) return null;
 
+  const meta = providers.data?.providers.find((p) => p.id === d.provider);
+  const name = meta?.display_name ?? d.provider;
+  const m = d.metrics;
+  // Success is a status value: tinted only once there is traffic to judge.
+  const successTone = !m.requests ? "section" : m.success_rate >= 99 ? "ok" : m.success_rate >= 95 ? "warn" : "bad";
+
   return (
     <div>
-      <Card className="mb-4 p-4">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-4">
-            <BackLink />
-            <HealthScoreRing score={d.score} size={56} />
-            <div>
-              <h1 className="font-display text-2xl font-semibold tracking-tight">{d.provider}</h1>
-              <div className="mt-1 flex items-center gap-2">
+      <nav aria-label="Breadcrumb" className="mb-3">
+        <ol className="flex items-center gap-1.5 text-[13px] text-fg-muted">
+          <li>
+            <Link to={dashboard(`/provider-health?range=${range}`)} className={cn("inline-flex items-center gap-1.5 rounded-md hover:text-fg", FOCUS)}>
+              <ArrowLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+              Provider health
+            </Link>
+          </li>
+          <li aria-hidden="true" className="text-fg-faint">/</li>
+          <li aria-current="page" className="min-w-0 truncate text-fg">{name}</li>
+        </ol>
+      </nav>
+
+      <header className="mb-4 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <ProviderLogo icon={meta?.icon} name={name} size={40} className="rounded-lg" />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{name}</h1>
               <HealthStatusBadge status={d.status as HealthStatus} issue={d.main_issue} />
-              {d.main_issue && <span className="text-xs text-[var(--text-muted)]">{fmtIssue(d.main_issue)}</span>}
-              </div>
+              <HealthScoreRing score={d.score} />
             </div>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <SegmentedControl value={range} onChange={(v) => setParams((p) => { p.set("range", v); return p; }, { replace: true })} options={RANGES} />
+            <p className="mt-0.5 flex flex-wrap items-center gap-2 text-[13px] text-fg-muted">
+              <span className="break-all font-mono text-[12.5px]">{d.provider}</span>
+              {meta && (
+                <>
+                  <span aria-hidden="true" className="text-fg-faint">·</span>
+                  <Link to={dashboard(`/providers/${d.provider}`)} className={cn("rounded-sm font-medium text-link hover:underline", FOCUS)}>
+                    Manage accounts
+                  </Link>
+                </>
+              )}
+            </p>
           </div>
         </div>
+        <RangeSelect value={range} onChange={(v) => setParams((p) => { p.set("range", v); return p; }, { replace: true })} />
+      </header>
 
-        {/* Compact inline metric strip — replaces the old 6-card grid */}
-        <div className="mt-4 flex flex-wrap items-center gap-x-6 gap-y-3 border-t border-[var(--border)] pt-3">
-          <MetricPill label="Requests" value={d.metrics.requests.toLocaleString()} />
-          <MetricPill label="Success" value={fmtPct(d.metrics.success_rate)} tone={d.metrics.success_rate >= 95 ? "good" : "warn"} />
-          <MetricPill label="Errors" value={fmtPct(d.metrics.error_rate)} tone={d.metrics.error_rate >= 5 ? "bad" : "muted"} />
-          <MetricPill label="p95" value={fmtMs(d.metrics.latency_p95_ms)} />
-          <MetricPill label="TTFT" value={fmtMs(d.metrics.ttft_p95_ms)} />
-          <MetricPill label="Fallbacks" value={d.metrics.fallback_count.toLocaleString()} tone={d.metrics.fallback_count > 0 ? "warn" : "muted"} />
-        </div>
-      </Card>
+      <div className="space-y-6">
+        {(d.main_issue || d.recommendation) && (
+          <RecommendationPanel issue={fmtIssue(d.main_issue)} recommendation={d.recommendation} />
+        )}
 
-      {(d.main_issue || d.recommendation) && (
-        <RecommendationPanel issue={fmtIssue(d.main_issue)} recommendation={d.recommendation} />
-      )}
+        <KpiGrid cols={4} label="Metrics">
+          <Kpi icon={ICONS.requests} label="Requests" value={m.requests.toLocaleString("en-US")} />
+          <Kpi
+            icon={ICONS.successRate}
+            label="Success"
+            value={fmtPct(m.success_rate)}
+            tone={successTone}
+            valueClassName={m.requests && m.success_rate < 95 ? "text-warn" : ""}
+            hint={<span className={cn("tabular-nums", m.error_rate >= 5 && "text-bad")}>{fmtPct(m.error_rate)} errors</span>}
+          />
+          <Kpi icon={ICONS.latency} label="p95 latency" value={fmtMs(m.latency_p95_ms)} hint={<span className="tabular-nums">TTFT {fmtMs(m.ttft_p95_ms)}</span>} />
+          <Kpi
+            icon={ICONS.fallbacks}
+            label="Fallbacks"
+            value={m.fallback_count.toLocaleString("en-US")}
+            tone={m.fallback_count ? "warn" : "section"}
+            valueClassName={m.fallback_count ? "text-warn" : ""}
+          />
+        </KpiGrid>
 
+        <HealthTrends snapshots={d.snapshots ?? []} range={range} />
 
-      <TrendCharts snapshots={d.snapshots ?? []} />
-
-      <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card>
-          <div className="border-b border-[var(--border)] px-4 py-3">
-            <h2 className="text-sm font-semibold">Error Breakdown</h2>
-          </div>
-          {Object.keys(d.error_breakdown).length === 0 ? (
-            <EmptyState title="No errors in this window." />
-          ) : (
-            <div className="px-4 py-3 space-y-2">
-              {Object.entries(d.error_breakdown)
-                .sort((a, b) => b[1] - a[1])
-                .map(([k, v]) => (
-                  <div key={k} className="flex items-center justify-between text-sm">
-                    <span className="text-[var(--text-muted)]">{fmtIssue(k)}</span>
-                    <span className="tabular-nums font-medium">{v}</span>
-                  </div>
-                ))}
+        <div className="grid gap-4 lg:grid-cols-2">
+          <ErrorTypeBreakdown breakdown={d.error_breakdown} />
+          <section aria-labelledby="probe-title" className="self-start rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+            <div className="border-b border-line px-4 py-3">
+              <SectionTitle id="probe-title" icon={Play} title="Run a probe" subtitle="Sends one test request now" />
             </div>
-          )}
-        </Card>
-        <Card>
-          <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-            <h2 className="text-sm font-semibold">Manual Probe</h2>
-            <ManualProbeInline provider={provider} models={d.models.map((m) => m.model).filter(Boolean)} />
-          </div>
-          <div className="px-4 py-3 text-sm text-[var(--text-muted)]">
-            Run a synthetic probe to test this provider now. Result appears in probe history.
-          </div>
-        </Card>
-      </div>
+            <div className="p-4">
+              <ManualProbeInline provider={provider} models={d.models.map((m) => m.model).filter(Boolean)} />
+            </div>
+          </section>
+        </div>
 
-      <div className="mt-4">
-        <h2 className="mb-2 text-sm font-semibold">Models</h2>
-        <ModelTable query={detail} />
+        <section aria-labelledby="models-title">
+          <div className="mb-3">
+            <SectionTitle id="models-title" icon={ICONS.model} title="Models" />
+          </div>
+          <ModelTable query={detail} />
+        </section>
       </div>
     </div>
-  );
-}
-
-function TrendCharts({ snapshots }: { snapshots: import("../lib/api").HealthSnapshot[] }) {
-  if (!snapshots.length) {
-    return (
-      <Card className="mt-4">
-        <EmptyState title="No trend data yet." hint="Snapshots appear after traffic flows through this provider." />
-      </Card>
-    );
-  }
-  return (
-    <div className="mt-4 grid gap-4 lg:grid-cols-2">
-      <ChartCard title="Request Volume">
-        <RequestVolumeChart data={snapshots} />
-      </ChartCard>
-      <ChartCard title="Error Rate">
-        <ErrorRateChart data={snapshots} />
-      </ChartCard>
-      <ChartCard title="Latency p50 / p95 / p99">
-        <LatencyChart data={snapshots} />
-      </ChartCard>
-      <ChartCard title="TTFT p95">
-        <TTFTChart data={snapshots} />
-      </ChartCard>
-      <ChartCard title="Fallbacks">
-        <FallbackChart data={snapshots} />
-      </ChartCard>
-      <ChartCard title="Error Type Breakdown">
-        <ErrorBreakdownChart data={snapshots} />
-      </ChartCard>
-    </div>
-  );
-}
-
-function ChartCard({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <Card>
-      <div className="border-b border-[var(--border)] px-4 py-3">
-        <h2 className="text-sm font-semibold">{title}</h2>
-      </div>
-      <div className="h-56 p-3">{children}</div>
-    </Card>
   );
 }
 
 function BackLink() {
   return (
-    <a href={dashboard("/provider-health")} className="inline-flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
-      <ArrowLeft className="h-4 w-4" /> Back
-    </a>
+    <Link to={dashboard("/provider-health")} className={cn("mb-3 inline-flex items-center gap-1.5 rounded-md text-[13px] text-fg-muted hover:text-fg", FOCUS)}>
+      <ArrowLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" /> Provider health
+    </Link>
   );
 }
 
 function RecommendationPanel({ issue, recommendation }: { issue: string; recommendation: string }) {
   if (!issue && !recommendation) return null;
   return (
-    <Card className="mt-4 border-[color:var(--color-warning)]/30 bg-[color:var(--color-warning)]/5">
-      <div className="flex items-start gap-3 px-4 py-3.5">
-        <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-[color:var(--color-warning)]" />
-        <div className="text-sm">
-          {issue && <p className="font-medium">Main issue: <span className="text-[var(--text-muted)]">{fmtIssue(issue)}</span></p>}
-          {recommendation && <p className="mt-1 text-[var(--text-muted)]">{recommendation}</p>}
-        </div>
+    <section aria-label="Main issue" className="flex items-start gap-3 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3">
+      <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+      <div className="text-[13px]">
+        {issue && <p className="font-medium text-fg">{issue}</p>}
+        {recommendation && <p className="mt-0.5 text-fg-muted">{recommendation}</p>}
       </div>
-    </Card>
+    </section>
   );
 }
 
@@ -699,19 +986,24 @@ function ManualProbeInline({ provider, models }: { provider: string; models: str
       setRunning(false);
     }
   };
+  if (models.length === 0) {
+    return <p className="text-[13px] text-fg-muted">No models to probe yet.</p>;
+  }
   return (
-    <div className="flex items-center gap-2">
-      <select value={model} onChange={(e) => setModel(e.target.value)} className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-xs">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+      <label htmlFor="probe-model" className="sr-only">Model to probe</label>
+      <select
+        id="probe-model"
+        value={model}
+        onChange={(e) => setModel(e.target.value)}
+        className={cn("h-9 w-full min-w-0 rounded-lg border border-input bg-surface px-2.5 font-mono text-[12.5px] text-fg focus:border-accent-500 sm:w-auto sm:flex-1", FOCUS)}
+      >
         {models.map((m) => <option key={m} value={m}>{m}</option>)}
       </select>
-      <button
-        onClick={run}
-        disabled={running || !model}
-        className="inline-flex items-center gap-1.5 rounded-lg bg-accent-600 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-accent-700 disabled:opacity-50"
-      >
-        {running ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
-        Run Probe
-      </button>
+      <Button type="button" className="w-full sm:w-auto" onClick={run} disabled={running || !model} aria-busy={running}>
+        {running ? <RefreshCw className="animate-spin" aria-hidden="true" /> : <Play aria-hidden="true" />}
+        {running ? "Running…" : "Run probe"}
+      </Button>
     </div>
   );
 }

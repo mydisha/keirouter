@@ -1,94 +1,74 @@
 package clitools
 
-import (
-	"os"
-
-	"gopkg.in/yaml.v3"
-)
-
 // HermesTool auto-configures Hermes Agent (~/.hermes/config.yaml + .env).
 type HermesTool struct{}
 
-func (t *HermesTool) ID() string      { return "hermes" }
-func (t *HermesTool) Name() string    { return "Hermes Agent" }
-func (t *HermesTool) Command() string { return "hermes" }
+func (t *HermesTool) ID() string           { return "hermes" }
+func (t *HermesTool) Name() string         { return "Hermes Agent" }
+func (t *HermesTool) Commands() []string   { return []string{"hermes"} }
+func (t *HermesTool) Extensions() []string { return nil }
+func (t *HermesTool) ModelRequired() bool  { return true }
+func (t *HermesTool) ConfigFiles(h string) []string {
+	return []string{t.configPath(h), t.envPath(h)}
+}
 
 func (t *HermesTool) configPath(homeDir string) string {
-	return expandHome(homeDir, "~/.hermes/config.yaml")
+	return envDirFile(homeDir, "HERMES_HOME", "~/.hermes", "config.yaml")
 }
 func (t *HermesTool) envPath(homeDir string) string {
-	return expandHome(homeDir, "~/.hermes/.env")
+	return envDirFile(homeDir, "HERMES_HOME", "~/.hermes", ".env")
 }
 
-func (t *HermesTool) DetectStatus(homeDir string) (bool, bool, string, error) {
+const hermesKeyVar = "OPENAI_API_KEY"
+
+func (t *HermesTool) Read(homeDir string) (*Settings, error) {
+	cfg, exists, err := loadYAML(t.configPath(homeDir))
+	if err != nil || !exists {
+		return nil, err
+	}
+	if str(cfg, "model", "provider") != "custom" {
+		return nil, nil
+	}
+	base := str(cfg, "model", "base_url")
+	if base == "" {
+		return nil, nil
+	}
+	key, err := readEnvValue(t.envPath(homeDir), hermesKeyVar)
+	if err != nil {
+		return nil, err
+	}
+	return &Settings{BaseURL: base, APIKey: key, Model: str(cfg, "model", "default")}, nil
+}
+
+func (t *HermesTool) Configure(homeDir string, s Settings) error {
 	path := t.configPath(homeDir)
-	if !fileExists(path) {
-		return false, false, path, nil
-	}
-	raw, err := readString(path)
-	if err != nil {
-		return true, false, path, nil
-	}
-	configured := containsLocalhost(raw) && containsKeiRouter(raw)
-	return true, configured, path, nil
-}
-
-func (t *HermesTool) Configure(homeDir, baseURL, apiKey string, models []string) error {
-	configPath := t.configPath(homeDir)
-	envP := t.envPath(homeDir)
-
-	model := "gpt-4o"
-	if len(models) > 0 {
-		model = models[0]
-	}
-
-	cfg := make(map[string]any)
-	if raw, err := readString(configPath); err == nil {
-		_ = yaml.Unmarshal([]byte(raw), &cfg)
-	}
-
-	cfg["model"] = map[string]any{
-		"default":  model,
-		"provider": "custom",
-		"base_url": ensureSuffix(baseURL, "/v1"),
-	}
-
-	data, err := yaml.Marshal(cfg)
+	cfg, _, err := loadYAML(path)
 	if err != nil {
 		return err
 	}
-	if err := writeString(configPath, string(data)); err != nil {
+	model := child(cfg, "model")
+	model["default"] = s.Model
+	model["provider"] = "custom"
+	model["base_url"] = v1URL(s.BaseURL)
+	if err := saveYAML(path, cfg); err != nil {
 		return err
 	}
-
-	return writeString(envP, "OPENAI_API_KEY="+apiKey+"\n")
+	// Merge into .env: it may hold the user's other provider keys.
+	return setEnvValue(t.envPath(homeDir), hermesKeyVar, s.APIKey)
 }
 
 func (t *HermesTool) Remove(homeDir string) error {
-	configPath := t.configPath(homeDir)
-	envP := t.envPath(homeDir)
-
-	if fileExists(configPath) {
-		raw, err := readString(configPath)
-		if err == nil {
-			cfg := make(map[string]any)
-			_ = yaml.Unmarshal([]byte(raw), &cfg)
-			if model, ok := cfg["model"].(map[string]any); ok {
-				if provider, ok := model["provider"].(string); ok && provider == "custom" {
-					delete(cfg, "model")
-				}
-			}
-			if len(cfg) == 0 {
-				os.Remove(configPath)
-			} else {
-				data, _ := yaml.Marshal(cfg)
-				writeString(configPath, string(data))
-			}
-		}
+	path := t.configPath(homeDir)
+	cfg, exists, err := loadYAML(path)
+	if err != nil {
+		return err
 	}
-
-	if fileExists(envP) {
-		os.Remove(envP)
+	if !exists || str(cfg, "model", "provider") != "custom" {
+		return nil
 	}
-	return nil
+	delete(cfg, "model")
+	if err := saveOrRemove(path, cfg, saveYAML); err != nil {
+		return err
+	}
+	return setEnvValue(t.envPath(homeDir), hermesKeyVar, "")
 }

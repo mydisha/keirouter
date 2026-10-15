@@ -117,6 +117,12 @@ func sanitizeUpstreamError(err error) string {
 	switch core.AsProviderError(err).Kind {
 	case core.ErrBadRequest:
 		return "upstream provider rejected the request"
+	case core.ErrContextWindow:
+		// Clients (Claude Code, Cline, Codex) key their automatic context
+		// compaction off this wording; keep it stable and recognisable.
+		return "prompt is too long: request exceeds the model's maximum context length"
+	case core.ErrContentFilter:
+		return "request rejected by the upstream provider's content policy"
 	case core.ErrAuth:
 		return "upstream provider authentication failed"
 	case core.ErrRateLimit:

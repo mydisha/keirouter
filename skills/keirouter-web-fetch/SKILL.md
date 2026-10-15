@@ -1,6 +1,6 @@
 ---
 name: keirouter-web-fetch
-description: Fetch URL → markdown / text / HTML via KeiRouter /v1/web/fetch using Firecrawl / Jina Reader / Tavily Extract / Exa Contents. Use when the user wants to scrape a webpage, extract URL content, read article, or convert a URL to markdown.
+description: Fetch URL → markdown / text / HTML via KeiRouter /v1/web/fetch using Firecrawl / Tavily Extract / Exa Contents. Use when the user wants to scrape a webpage, extract URL content, read article, or convert a URL to markdown.
 ---
 
 # KeiRouter — Web Fetch
@@ -10,12 +10,11 @@ Requires `KEIROUTER_URL` (and `KEIROUTER_KEY` if auth enabled). See https://raw.
 ## Discover
 
 ```bash
-curl $KEIROUTER_URL/v1/models/web | jq '.data[] | select(.kind=="webFetch") | .id'
-# Per-provider params
-curl "$KEIROUTER_URL/v1/models/info?id=firecrawl/fetch"
+curl $KEIROUTER_URL/v1/models/fetch | jq '.data[].id'
+curl "$KEIROUTER_URL/v1/models/info?id=firecrawl/firecrawl-scrape"
 ```
 
-IDs end in `/fetch` (e.g. `firecrawl/fetch`, `jina/fetch`). `fetch-combo` chains providers with auto-fallback.
+`model` is `provider/model` (e.g. `firecrawl/firecrawl-scrape`), a chain name that lists several fetch providers for automatic fallback, or an alias.
 
 ## Endpoint
 
@@ -23,27 +22,19 @@ IDs end in `/fetch` (e.g. `firecrawl/fetch`, `jina/fetch`). `fetch-combo` chains
 
 | Field | Required | Notes |
 |---|---|---|
-| `model` (or `provider`) | yes | from `/v1/models/web` (e.g. `firecrawl` or `jina-reader`) |
+| `model` | yes | from `/v1/models/fetch` |
 | `url` | yes | URL to extract |
 | `format` | no | `markdown` (default) / `text` / `html` |
 | `max_characters` | no | truncate output |
 
 ## Examples
 
-### Jina Reader
-```bash
-curl -X POST $KEIROUTER_URL/v1/web/fetch \
-  -H "Authorization: Bearer $KEIROUTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"model":"jina-reader","url":"https://example.com","format":"markdown"}'
-```
-
 ### Firecrawl
 ```bash
 curl -X POST $KEIROUTER_URL/v1/web/fetch \
   -H "Authorization: Bearer $KEIROUTER_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"firecrawl","url":"https://example.com","format":"markdown","max_characters":0}'
+  -d '{"model":"firecrawl/firecrawl-scrape","url":"https://example.com","format":"markdown"}'
 ```
 
 ### Tavily
@@ -51,7 +42,7 @@ curl -X POST $KEIROUTER_URL/v1/web/fetch \
 curl -X POST $KEIROUTER_URL/v1/web/fetch \
   -H "Authorization: Bearer $KEIROUTER_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"tavily","url":"https://example.com","format":"markdown","max_characters":0}'
+  -d '{"model":"tavily/tavily-extract","url":"https://example.com","format":"markdown"}'
 ```
 
 JS:
@@ -60,31 +51,29 @@ JS:
 const r = await fetch(`${process.env.KEIROUTER_URL}/v1/web/fetch`, {
   method: "POST",
   headers: { "Authorization": `Bearer ${process.env.KEIROUTER_KEY}`, "Content-Type": "application/json" },
-  body: JSON.stringify({ model: "jina-reader", url: "https://example.com", format: "markdown", max_characters: 5000 }),
+  body: JSON.stringify({ model: "exa/exa-contents", url: "https://example.com", max_characters: 5000 }),
 });
-const { data } = await r.json();
-console.log(data.title, data.content.length);
+const page = await r.json();
+console.log(page.title, page.content.length);
 ```
 
 ## Response shape
 
 ```json
 {
-  "provider": "jina-reader",
-  "url": "...",
-  "title": "...",
-  "content": { "format": "markdown", "text": "...", "length": 1234 },
-  "metadata": { "author": null, "published_at": null, "language": null },
-  "usage": { "fetch_cost_usd": 0 },
-  "metrics": { "response_time_ms": 850, "upstream_latency_ms": 700 }
+  "url": "https://example.com",
+  "title": "Example Domain",
+  "content": "# Example Domain\n...",
+  "format": "markdown"
 }
 ```
 
+The `X-KeiRouter-Provider` header names the provider that answered.
+
 ## Provider quick reference
 
-| Provider | Auth | Best for |
+| Provider | `model` | Best for |
 |---|---|---|
-| `firecrawl` | Bearer | JS-rendered pages, `format=markdown/html` |
-| `jina-reader` | Bearer (optional) | Free tier (~1M chars/mo); fastest plain markdown |
-| `tavily` | Bearer | Bulk extract; returns `raw_content` |
-| `exa` | `x-api-key` | Pre-indexed pages; fast text extraction |
+| Firecrawl | `firecrawl/firecrawl-scrape` | JS-rendered pages, `format=markdown/html` |
+| Tavily | `tavily/tavily-extract` | Bulk extract |
+| Exa | `exa/exa-contents` | Pre-indexed pages; fast text extraction |

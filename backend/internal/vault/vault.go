@@ -7,6 +7,7 @@ package vault
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/core"
@@ -38,13 +39,61 @@ type NewSecret struct {
 	ExpiresAt    *time.Time
 	// Metadata holds non-secret provider config (base_url, region, ...).
 	Metadata map[string]string
+	// SecretFields are provider-specific secrets beyond the API key (an AWS
+	// secret access key, an OAuth client secret, a PEM private key). They are
+	// sealed together with APIKey and surface in Credentials.Extra on Open.
+	SecretFields map[string]string
+}
+
+// secretFieldsPrefix marks a sealed API-key blob that also carries secret
+// provider fields as JSON. Plain keys never start with it.
+const secretFieldsPrefix = "kr-fields-v1:"
+
+// packSecret combines the API key with secret fields into one sealable blob.
+func packSecret(apiKey string, fields map[string]string) (string, error) {
+	clean := make(map[string]string, len(fields))
+	for k, v := range fields {
+		if v != "" {
+			clean[k] = v
+		}
+	}
+	if len(clean) == 0 {
+		return apiKey, nil
+	}
+	clean[apiKeyField] = apiKey
+	raw, err := json.Marshal(clean)
+	if err != nil {
+		return "", err
+	}
+	return secretFieldsPrefix + string(raw), nil
+}
+
+// apiKeyField holds the API key inside a packed secret blob.
+const apiKeyField = "api_key"
+
+// unpackSecret splits a sealed blob back into the API key and secret fields.
+func unpackSecret(blob string) (string, map[string]string, error) {
+	if !strings.HasPrefix(blob, secretFieldsPrefix) {
+		return blob, nil, nil
+	}
+	var fields map[string]string
+	if err := json.Unmarshal([]byte(blob[len(secretFieldsPrefix):]), &fields); err != nil {
+		return "", nil, fmt.Errorf("vault: parse secret fields: %w", err)
+	}
+	key := fields[apiKeyField]
+	delete(fields, apiKeyField)
+	return key, fields, nil
 }
 
 // Seal encrypts the secret material of an account in place, replacing the
 // plaintext NewSecret fields with sealed blobs on the store.Account.
 func (v *Vault) Seal(acc *store.Account, secret NewSecret) error {
-	if secret.APIKey != "" {
-		sealed, err := v.sealer.SealString(secret.APIKey)
+	packed, err := packSecret(secret.APIKey, secret.SecretFields)
+	if err != nil {
+		return fmt.Errorf("vault: pack secret fields: %w", err)
+	}
+	if packed != "" {
+		sealed, err := v.sealer.SealString(packed)
 		if err != nil {
 			return fmt.Errorf("vault: seal api key: %w", err)
 		}
@@ -98,11 +147,18 @@ func (v *Vault) Open(acc store.Account) (core.Credentials, error) {
 	creds.Extra = meta
 
 	if acc.SecretCiphertext != "" {
-		key, err := v.sealer.OpenString(crypto.Sealed{WrappedDEK: acc.SecretWrappedDEK, Ciphertext: acc.SecretCiphertext})
+		blob, err := v.sealer.OpenString(crypto.Sealed{WrappedDEK: acc.SecretWrappedDEK, Ciphertext: acc.SecretCiphertext})
 		if err != nil {
 			return core.Credentials{}, fmt.Errorf("vault: open api key: %w", err)
 		}
+		key, fields, err := unpackSecret(blob)
+		if err != nil {
+			return core.Credentials{}, err
+		}
 		creds.APIKey = key
+		for k, val := range fields {
+			creds.Extra[k] = val
+		}
 	}
 	if acc.TokenCiphertext != "" {
 		tok, err := v.sealer.OpenString(crypto.Sealed{WrappedDEK: acc.TokenWrappedDEK, Ciphertext: acc.TokenCiphertext})

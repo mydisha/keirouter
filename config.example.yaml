@@ -74,7 +74,8 @@ meter:
 limits:
   # Per-key rate limiter. Off by default for local development.
   enabled: false
-  # "memory" for single-instance deployments. Redis backend is reserved for later.
+  # "memory" for a single instance. "redis" shares RPM/TPM windows, concurrency
+  # slots and budget spend across every replica behind a load balancer (HA).
   backend: memory
   # Defaults apply only when an API key has no assigned plan. Zero means unlimited.
   default_rpm: 0
@@ -83,8 +84,64 @@ limits:
   # Fixed counting window and stale bucket cleanup cadence.
   window: 1m
   cleanup_interval: 1m
-  # Reserved for future backend=redis.
-  redis_url: ""
+  # TPM charges an estimate up front (prompt + max_tokens). With reconcile on,
+  # the estimate is corrected to the real usage once the response finishes.
+  reconcile_tokens: true
+  # Output tokens reserved when a chat request sets no max_tokens. 0 = none.
+  output_token_floor: 0
+  # Cap on the max_tokens part of the reservation (e.g. 8192), so clients that
+  # always send a huge max_tokens do not exhaust TPM up front. 0 = no cap.
+  output_reserve_cap: 0
+  # Retry-After hint sent when a key hits its concurrency limit.
+  concurrency_retry_after: 1s
+  # Per-IP abuse guards; they apply even when enabled is false. 0 = off.
+  auth_failures_per_minute: 20   # then 429 for that IP's invalid keys; valid keys and loopback are never refused
+  login_attempts_per_minute: 5
+  # backend=redis only. Empty falls back to cache.redis_url.
+  redis_url: ""            # e.g. redis://:password@redis:6379/0 or rediss://...
+  # Deadline for each limiter round trip. A slower or failed call trips a
+  # circuit breaker for 5s and requests follow fail_mode meanwhile.
+  redis_timeout: 100ms
+  # While redis is unreachable: "local" = same limits enforced per process,
+  # "open" = admit everything, "closed" = reject with a retryable 429.
+  fail_mode: local
+  # A concurrency slot held by a crashed replica frees itself after this long.
+  lease_ttl: 1m
+  # Shared budget counters re-seed from the usage table this often, bounding
+  # drift from increments lost in a crash.
+  budget_counter_ttl: 1m
+
+audit:
+  # Records every dashboard sign-in and configuration change (who, what,
+  # from where, outcome) in the audit_log table. Rows are HMAC hash-chained:
+  # GET /api/audit/verify detects an edited or inserted row, or one deleted
+  # from the middle of a chain.
+  enabled: true
+  # Rows older than this are deleted hourly. 0 keeps them forever.
+  retention_days: 365
+  buffer_size: 4096
+  otlp:
+    # Export every event as an OpenTelemetry log record over OTLP/HTTP (JSON),
+    # e.g. to an OTel Collector, Grafana, Datadog, Elastic or Splunk.
+    # Empty falls back to OTEL_EXPORTER_OTLP_LOGS_ENDPOINT /
+    # OTEL_EXPORTER_OTLP_ENDPOINT; with neither set, export is off.
+    endpoint: ""           # e.g. http://otel-collector:4318
+    # Extra request headers (merged over OTEL_EXPORTER_OTLP_HEADERS).
+    headers: {}            # e.g. { Authorization: "Bearer ..." }
+    compression: gzip      # gzip | none
+    timeout: 10s
+    batch_size: 256
+    flush_interval: 2s
+    max_retries: 3
+    # Resource attributes. service.name falls back to OTEL_SERVICE_NAME, then
+    # "keirouter"; extra attributes merge over OTEL_RESOURCE_ATTRIBUTES.
+    service_name: ""
+    resource_attributes: {} # e.g. { deployment.environment: prod }
+    # Also export one record per gateway request (event keirouter.request,
+    # scope .../requests): API key, provider, model, tokens, cost, latency,
+    # status, fallbacks and guardrail outcome. Never prompt or response text.
+    # Off by default because the volume follows your traffic.
+    include_requests: false
 
 health:
   # Background account/model health checks. Unhealthy account/model pairs are

@@ -20,7 +20,7 @@ type BrandingSettings struct {
 	LogoURL      string `json:"logo_url"`      // URL to logo image (SVG/PNG). Empty = default logo.
 	FaviconURL   string `json:"favicon_url"`   // URL to favicon (PNG/ICO). Empty = default favicon.
 	Tagline      string `json:"tagline"`       // Optional short tagline shown on portal login.
-	ColorPalette string `json:"color_palette"` // Color palette identifier (e.g. "sage-terra", "ocean", "midnight").
+	ColorPalette string `json:"color_palette"` // Color palette identifier (e.g. "kei", "sage-terra", "ocean").
 	// APIKeyPrefix is the canonical "token_" prefix stamped onto newly created
 	// API keys. Existing keys are unaffected.
 	APIKeyPrefix string `json:"api_key_prefix"`
@@ -32,7 +32,7 @@ func defaultBrandingSettings() BrandingSettings {
 		LogoURL:      "",
 		FaviconURL:   "",
 		Tagline:      "",
-		ColorPalette: "sage-terra",
+		ColorPalette: "kei",
 		APIKeyPrefix: crypto.DefaultKeyPrefix,
 	}
 }

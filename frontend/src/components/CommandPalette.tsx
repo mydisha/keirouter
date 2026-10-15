@@ -1,89 +1,57 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { Command } from "cmdk";
+import { Dialog } from "radix-ui";
+import { Copy, CornerDownLeft, History, Monitor, Moon, Plus, Search, Sun, type LucideIcon } from "lucide-react";
 import { api } from "../lib/api";
+import { ICONS } from "../lib/icons";
+import { cn } from "@/lib/utils";
+import { IconTile } from "./ui";
+import { useTheme } from "./ThemeProvider";
+import { useToast } from "./Toast";
+import { ProviderLogo } from "./ProviderLogo";
 import { dashboard } from "../lib/dashboardRoutes";
-import {
-  Search,
-  LayoutGrid,
-  Boxes,
-  Network,
-  Layers,
-  BarChart3,
-  Clock,
-  TerminalSquare,
-  Image,
-  Waypoints,
-  Sparkles,
-  ScrollText,
-  Wallet,
-  Key,
-  KeyRound,
-  Plus,
-  Settings,
-  Shield,
-  Activity,
-  History,
-  CornerDownLeft,
-  type LucideIcon,
-} from "lucide-react";
 
-// CommandKind classifies each entry so results can be badged and (when a query
-// is active) ranked in a single flat list rather than only grouped by section.
-type CommandKind =
-  | "navigation"
-  | "action"
-  | "provider"
-  | "account"
-  | "chain"
-  | "key"
-  | "plan"
-  | "skill"
-  | "pool";
+// The palette is built on cmdk (keyboard navigation, selection, ARIA listbox
+// semantics) inside a Radix dialog (focus trap, scroll lock, Escape). Ranking
+// stays ours: cmdk's filter is disabled so the fuzzy scorer below decides
+// order and the matched characters can be highlighted.
 
 interface CommandItem {
   id: string;
   label: string;
   description?: string;
-  /** Short right-aligned tag, e.g. "Provider", "Disabled", or a plan name. */
+  /** Short right-aligned tag shown while searching ("Provider", "Disabled"). */
   badge?: string;
-  icon: LucideIcon;
+  icon?: LucideIcon;
+  /** Sidebar group hue of the page this item leads to (icon tile colour). */
+  tone: PaletteTone;
+  /** Provider logo, used instead of `icon` for provider and account rows. */
+  logo?: { icon?: string; name: string };
   section: string;
-  kind: CommandKind;
-  action: () => void;
+  run: () => void;
   keywords?: string[];
 }
 
-interface CommandPaletteProps {
-  open: boolean;
-  onClose: () => void;
-}
+// Same hue per sidebar group as Layout: Monitor blue, Routing violet,
+// Providers teal, Access orange, Workspace slate.
+type PaletteTone = "blue" | "violet" | "teal" | "orange" | "slate";
 
 const RECENT_KEY = "kei-cmdk-recent";
 const RECENT_MAX = 6;
 const RESULT_LIMIT = 40;
 
-// ---------------------------------------------------------------------------
-// Fuzzy matching
-// ---------------------------------------------------------------------------
-
-// fuzzyScore ranks how well `q` matches `text`, returning a higher number for a
-// better match or null for no match. Ordering, from best to worst: exact match,
-// prefix match, word-boundary substring, plain substring, then a subsequence
-// fallback so "opr" still finds "OpenAI Provider". Returns 0 for an empty query.
+// fuzzyScore ranks how well `q` matches `text`: exact, prefix, word-boundary
+// substring, substring, then a subsequence fallback so "opr" still finds
+// "OpenRouter". Null means no match.
 function fuzzyScore(text: string, q: string): number | null {
   if (!q) return 0;
   const t = text.toLowerCase();
   if (t === q) return 1000;
-
   const idx = t.indexOf(q);
   if (idx === 0) return 900 - (t.length - q.length) * 0.5;
-  if (idx > 0) {
-    const boundary = /[^a-z0-9]/.test(t[idx - 1]);
-    return (boundary ? 700 : 500) - idx;
-  }
-
-  // Subsequence fallback with a consecutive-run bonus.
+  if (idx > 0) return (/[^a-z0-9]/.test(t[idx - 1]) ? 700 : 500) - idx;
   let ti = 0;
   let qi = 0;
   let streak = 0;
@@ -104,9 +72,6 @@ function fuzzyScore(text: string, q: string): number | null {
   return Math.max(40, 220 - first) + score - t.length * 0.1;
 }
 
-// matchIndices returns the character positions in `text` that matched `q`, used
-// to highlight the matched portion of a label. Prefers a contiguous substring
-// hit, falling back to the subsequence positions.
 function matchIndices(text: string, q: string): number[] {
   if (!q) return [];
   const t = text.toLowerCase();
@@ -123,9 +88,7 @@ function matchIndices(text: string, q: string): number[] {
   return qi === q.length ? out : [];
 }
 
-// scoreItem returns the best weighted score across an item's searchable fields.
-// The label matters most; keywords, description and section contribute at a
-// discount so a keyword hit ranks below a direct label hit.
+// Label hits outrank keyword, description and section hits.
 function scoreItem(item: CommandItem, q: string): number | null {
   let best: number | null = null;
   const consider = (text: string | undefined, weight: number) => {
@@ -144,14 +107,13 @@ function scoreItem(item: CommandItem, q: string): number | null {
 }
 
 function Highlight({ text, query }: { text: string; query: string }) {
-  const idxs = useMemo(() => matchIndices(text, query.toLowerCase()), [text, query]);
-  if (!idxs.length) return <>{text}</>;
-  const set = new Set(idxs);
+  const idxs = useMemo(() => new Set(matchIndices(text, query.toLowerCase())), [text, query]);
+  if (!idxs.size) return <>{text}</>;
   return (
     <>
       {text.split("").map((ch, i) =>
-        set.has(i) ? (
-          <mark key={i} className="bg-transparent font-semibold text-accent-600 dark:text-accent-300">
+        idxs.has(i) ? (
+          <mark key={i} className="bg-transparent font-semibold text-fg">
             {ch}
           </mark>
         ) : (
@@ -164,26 +126,22 @@ function Highlight({ text, query }: { text: string; query: string }) {
 
 function loadRecent(): string[] {
   try {
-    const raw = localStorage.getItem(RECENT_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(localStorage.getItem(RECENT_KEY) ?? "[]");
     return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string").slice(0, RECENT_MAX) : [];
   } catch {
     return [];
   }
 }
 
-export function CommandPalette({ open, onClose }: CommandPaletteProps) {
+export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [query, setQuery] = useState("");
-  const [selectedIndex, setSelectedIndex] = useState(0);
   const [recent, setRecent] = useState<string[]>(loadRecent);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const { setTheme } = useTheme();
+  const toast = useToast();
 
-  // Entity data is fetched only while the palette is open, and reuses the same
-  // React Query cache keys the pages use so an already-visited page's data is
-  // served instantly with no extra request.
+  // Entity data loads only while open and shares the pages' query keys, so an
+  // already-visited page's data is served from cache.
   const providersQ = useQuery({ queryKey: ["providers"], queryFn: () => api.providers(), enabled: open, staleTime: 60_000 });
   const accountsQ = useQuery({ queryKey: ["accounts"], queryFn: () => api.listAccounts(), enabled: open, staleTime: 30_000 });
   const chainsQ = useQuery({ queryKey: ["chains"], queryFn: () => api.listChains(), enabled: open, staleTime: 30_000 });
@@ -191,381 +149,322 @@ export function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const plansQ = useQuery({ queryKey: ["plans"], queryFn: () => api.listPlans(), enabled: open, staleTime: 30_000 });
   const skillsQ = useQuery({ queryKey: ["skills"], queryFn: () => api.listSkills(), enabled: open, staleTime: 30_000 });
   const poolsQ = useQuery({ queryKey: ["proxy-pools"], queryFn: () => api.listProxyPools(), enabled: open, staleTime: 30_000 });
+  const loading = [providersQ, accountsQ, chainsQ, keysQ, plansQ, skillsQ, poolsQ].some((q) => q.isLoading);
 
-  const entitiesLoading =
-    providersQ.isLoading ||
-    accountsQ.isLoading ||
-    chainsQ.isLoading ||
-    keysQ.isLoading ||
-    plansQ.isLoading ||
-    skillsQ.isLoading ||
-    poolsQ.isLoading;
+  useEffect(() => {
+    if (open) {
+      setQuery("");
+      setRecent(loadRecent());
+    }
+  }, [open]);
 
-  const rememberRecent = useCallback((id: string) => {
+  const remember = useCallback((id: string) => {
     setRecent((prev) => {
       const next = [id, ...prev.filter((x) => x !== id)].slice(0, RECENT_MAX);
       try {
         localStorage.setItem(RECENT_KEY, JSON.stringify(next));
       } catch {
-        // ignore storage failures (private mode / quota)
+        /* private mode / quota: recents are a convenience */
       }
       return next;
     });
   }, []);
 
   const go = useCallback(
-    (path: string, id?: string) => {
-      if (id) rememberRecent(id);
+    (path: string) => () => {
       navigate(dashboard(path));
-      onClose();
     },
-    [navigate, onClose, rememberRecent],
+    [navigate],
   );
 
-  // Static navigation + quick actions. Kept in sync with the sidebar nav.
+  // Pages and actions, grouped to mirror the sidebar.
   const staticItems: CommandItem[] = useMemo(
     () => [
-      // Navigation
-      { id: "nav-overview", label: "Overview", icon: LayoutGrid, section: "Overview", kind: "navigation", action: () => go("/", "nav-overview"), keywords: ["home", "dashboard", "start"] },
-      { id: "nav-endpoints", label: "Endpoints", icon: Network, section: "Traffic & Logic", kind: "navigation", action: () => go("/endpoints", "nav-endpoints"), keywords: ["proxy", "url", "tunnel", "tailscale", "base url"] },
-      { id: "nav-chains", label: "Chains", icon: Layers, section: "Traffic & Logic", kind: "navigation", action: () => go("/chains", "nav-chains"), keywords: ["chain", "routing", "fallback", "failover"] },
-      { id: "nav-skills", label: "Skills", icon: Sparkles, section: "Traffic & Logic", kind: "navigation", action: () => go("/skills", "nav-skills"), keywords: ["prompt", "system prompt", "custom"] },
-      { id: "nav-keys", label: "API Keys", icon: Key, section: "Connections", kind: "navigation", action: () => go("/keys", "nav-keys"), keywords: ["auth", "token", "secret", "bearer"] },
-      { id: "nav-providers", label: "Providers", icon: Boxes, section: "Connections", kind: "navigation", action: () => go("/providers", "nav-providers"), keywords: ["accounts", "openai", "anthropic", "upstream", "credentials"] },
-      { id: "nav-media", label: "Media", icon: Image, section: "Connections", kind: "navigation", action: () => go("/media", "nav-media"), keywords: ["image", "video", "tts", "stt", "embedding", "audio"] },
-      { id: "nav-proxy-pools", label: "Proxy Pools", icon: Waypoints, section: "Connections", kind: "navigation", action: () => go("/proxy-pools", "nav-proxy-pools"), keywords: ["proxy", "residential", "egress", "vercel", "cloudflare"] },
-      { id: "nav-guardrails", label: "Guardrails", icon: Shield, section: "Safety", kind: "navigation", action: () => go("/guardrails", "nav-guardrails"), keywords: ["pii", "injection", "toxicity", "bias", "policy", "moderation"] },
-      { id: "nav-usage", label: "Usage", icon: BarChart3, section: "Cost & Analytics", kind: "navigation", action: () => go("/usage", "nav-usage"), keywords: ["analytics", "stats", "tokens", "spend", "insights"] },
-      { id: "nav-plans", label: "Plans", icon: Wallet, section: "Cost & Analytics", kind: "navigation", action: () => go("/plans", "nav-plans"), keywords: ["cost", "limit", "spend", "budget", "quota"] },
-      { id: "nav-quota", label: "Quota Tracker", icon: Clock, section: "Cost & Analytics", kind: "navigation", action: () => go("/quota", "nav-quota"), keywords: ["limits", "upstream", "remaining"] },
-      { id: "nav-system", label: "System", icon: Activity, section: "Cost & Analytics", kind: "navigation", action: () => go("/system", "nav-system"), keywords: ["cpu", "memory", "health", "monitor", "goroutines"] },
-      { id: "nav-settings", label: "Settings", icon: Settings, section: "Cost & Analytics", kind: "navigation", action: () => go("/settings", "nav-settings"), keywords: ["config", "preferences", "token saving", "rtk", "caveman", "terse", "cache"] },
-      { id: "nav-console", label: "Console Log", icon: ScrollText, section: "Developer", kind: "navigation", action: () => go("/console", "nav-console"), keywords: ["logs", "debug", "output", "stream"] },
-      { id: "nav-cli-tools", label: "CLI Tools", icon: TerminalSquare, section: "Developer", kind: "navigation", action: () => go("/cli-tools", "nav-cli-tools"), keywords: ["claude", "codex", "cline", "copilot", "cursor", "terminal"] },
+      { id: "nav-overview", label: "Overview", icon: ICONS.overview, tone: "blue", section: "Go to", run: go("/"), keywords: ["home", "dashboard"] },
+      { id: "nav-usage", label: "Usage", icon: ICONS.usage, tone: "blue", section: "Go to", run: go("/usage"), keywords: ["analytics", "tokens", "spend", "cost"] },
+      { id: "nav-console", label: "Console", icon: ICONS.console, tone: "blue", section: "Go to", run: go("/console"), keywords: ["logs", "debug", "stream"] },
+      { id: "nav-endpoints", label: "Endpoints", icon: ICONS.endpoints, tone: "violet", section: "Go to", run: go("/endpoints"), keywords: ["base url", "tunnel", "tailscale", "cloudflare"] },
+      { id: "nav-chains", label: "Chains", icon: ICONS.chains, tone: "violet", section: "Go to", run: go("/chains"), keywords: ["routing", "fallback", "failover"] },
+      { id: "nav-skills", label: "Skills", icon: ICONS.skills, tone: "violet", section: "Go to", run: go("/skills"), keywords: ["prompt", "system prompt"] },
+      { id: "nav-providers", label: "Providers", icon: ICONS.providers, tone: "teal", section: "Go to", run: go("/providers"), keywords: ["accounts", "upstream", "credentials"] },
+      { id: "nav-media", label: "Media", icon: ICONS.media, tone: "teal", section: "Go to", run: go("/media"), keywords: ["image", "video", "tts", "stt"] },
+      { id: "nav-health", label: "Provider health", icon: ICONS.health, tone: "teal", section: "Go to", run: go("/provider-health"), keywords: ["uptime", "errors", "latency", "status"] },
+      { id: "nav-quota", label: "Quota", icon: ICONS.quota, tone: "teal", section: "Go to", run: go("/quota"), keywords: ["limits", "remaining", "upstream"] },
+      { id: "nav-proxy-pools", label: "Proxy pools", icon: ICONS.proxyPools, tone: "teal", section: "Go to", run: go("/proxy-pools"), keywords: ["proxy", "egress"] },
+      { id: "nav-keys", label: "API keys", icon: ICONS.keys, tone: "orange", section: "Go to", run: go("/keys"), keywords: ["auth", "token", "bearer"] },
+      { id: "nav-plans", label: "Plans & budgets", icon: ICONS.plans, tone: "orange", section: "Go to", run: go("/plans"), keywords: ["budget", "limit", "rate limit"] },
+      { id: "nav-guardrails", label: "Guardrails", icon: ICONS.guardrails, tone: "orange", section: "Go to", run: go("/guardrails"), keywords: ["pii", "injection", "moderation"] },
+      { id: "nav-audit", label: "Audit log", icon: ICONS.audit, tone: "orange", section: "Go to", run: go("/audit"), keywords: ["audit", "history", "who changed", "compliance", "otel", "siem"] },
+      { id: "nav-cli-tools", label: "CLI tools", icon: ICONS.cliTools, tone: "slate", section: "Go to", run: go("/cli-tools"), keywords: ["claude code", "codex", "cursor", "configure"] },
+      { id: "nav-system", label: "System", icon: ICONS.system, tone: "slate", section: "Go to", run: go("/system"), keywords: ["cpu", "memory", "monitor"] },
+      { id: "nav-settings", label: "Settings", icon: ICONS.settings, tone: "slate", section: "Go to", run: go("/settings"), keywords: ["token saving", "rtk", "caveman", "branding", "backup"] },
 
-      // Quick actions
-      { id: "action-new-key", label: "Create API Key", icon: Plus, section: "Actions", kind: "action", action: () => go("/keys", "action-new-key"), keywords: ["new", "generate", "add key"] },
-      { id: "action-new-account", label: "Add Provider Account", icon: Plus, section: "Actions", kind: "action", action: () => go("/providers", "action-new-account"), keywords: ["new", "connect", "credential", "oauth"] },
-      { id: "action-new-chain", label: "Create Chain", icon: Plus, section: "Actions", kind: "action", action: () => go("/chains/new", "action-new-chain"), keywords: ["new", "chain", "routing", "fallback"] },
-      { id: "action-new-plan", label: "Create Plan", icon: Plus, section: "Actions", kind: "action", action: () => go("/plans", "action-new-plan"), keywords: ["new", "budget", "limit"] },
-      { id: "action-new-skill", label: "Create Skill", icon: Plus, section: "Actions", kind: "action", action: () => go("/skills", "action-new-skill"), keywords: ["new", "prompt"] },
-      { id: "action-new-pool", label: "Add Proxy Pool", icon: Plus, section: "Actions", kind: "action", action: () => go("/proxy-pools", "action-new-pool"), keywords: ["new", "proxy"] },
-      { id: "action-settings", label: "Open Settings", icon: Settings, section: "Actions", kind: "action", action: () => go("/settings", "action-settings"), keywords: ["config", "preferences", "token saving"] },
+      { id: "action-connect", label: "Connect a provider", icon: Plus, tone: "teal", section: "Actions", run: go("/providers"), keywords: ["add account", "oauth", "api key"] },
+      { id: "action-new-key", label: "Create API key", icon: Plus, tone: "orange", section: "Actions", run: go("/keys"), keywords: ["new key", "generate"] },
+      { id: "action-new-chain", label: "Create chain", icon: Plus, tone: "violet", section: "Actions", run: go("/chains/new"), keywords: ["new chain", "fallback"] },
+      { id: "action-new-plan", label: "Create plan", icon: Plus, tone: "orange", section: "Actions", run: go("/plans"), keywords: ["budget", "limit"] },
+      {
+        id: "action-copy-base-url",
+        label: "Copy base URL",
+        icon: Copy,
+        tone: "violet",
+        section: "Actions",
+        description: `${window.location.origin}/v1`,
+        keywords: ["endpoint", "openai", "anthropic"],
+        run: () => {
+          navigator.clipboard
+            .writeText(`${window.location.origin}/v1`)
+            .then(() => toast.success("Base URL copied", `${window.location.origin}/v1`))
+            .catch(() => toast.error("Couldn't copy", "Your browser blocked clipboard access."));
+        },
+      },
+      { id: "theme-light", label: "Use light theme", icon: Sun, tone: "slate", section: "Theme", run: () => setTheme("light"), keywords: ["appearance"] },
+      { id: "theme-dark", label: "Use dark theme", icon: Moon, tone: "slate", section: "Theme", run: () => setTheme("dark"), keywords: ["appearance", "night"] },
+      { id: "theme-system", label: "Match system theme", icon: Monitor, tone: "slate", section: "Theme", run: () => setTheme("system"), keywords: ["appearance", "auto"] },
     ],
-    [go],
+    [go, setTheme, toast],
   );
 
-  // Live entities pulled from the API. These only surface when there's a query
-  // (they're excluded from the empty state to keep it focused on navigation).
+  // Live entities surface only while searching, keeping the empty state short.
   const entityItems: CommandItem[] = useMemo(() => {
     const items: CommandItem[] = [];
-
-    for (const p of providersQ.data?.providers ?? []) {
+    const providers = providersQ.data?.providers ?? [];
+    const byId = new Map(providers.map((p) => [p.id, p]));
+    for (const p of providers) {
       if (p.hidden) continue;
       items.push({
         id: `provider-${p.id}`,
         label: p.display_name,
-        description: p.custom ? "Custom provider" : undefined,
+        description: p.id,
         badge: p.custom ? "Custom" : "Provider",
-        icon: Boxes,
+        icon: ICONS.providers,
+        tone: "teal",
+        logo: { icon: p.icon, name: p.display_name },
         section: "Providers",
-        kind: "provider",
-        action: () => go(`/providers/${p.id}`, `provider-${p.id}`),
+        run: go(`/providers/${p.id}`),
         keywords: [p.alias, p.dialect, p.id, ...(p.service_kinds ?? [])].filter(Boolean),
       });
     }
-
-    const providerName = (id: string) =>
-      providersQ.data?.providers.find((p) => p.id === id)?.display_name ?? id;
-
     for (const a of accountsQ.data?.accounts ?? []) {
-      const status = a.disabled ? "Disabled" : a.needs_reconnect ? "Reconnect" : "Account";
+      const p = byId.get(a.provider);
       items.push({
         id: `account-${a.id}`,
-        label: a.label || providerName(a.provider),
-        description: `${providerName(a.provider)} account`,
-        badge: status,
-        icon: KeyRound,
+        label: a.label || p?.display_name || a.provider,
+        description: `${p?.display_name ?? a.provider} account`,
+        badge: a.disabled ? "Paused" : a.needs_reconnect ? "Reconnect" : "Account",
+        icon: ICONS.account,
+        tone: "teal",
+        logo: p ? { icon: p.icon, name: p.display_name } : undefined,
         section: "Accounts",
-        kind: "account",
-        action: () => go(`/providers/${a.provider}`, `account-${a.id}`),
+        run: go(`/providers/${a.provider}`),
         keywords: [a.provider, a.auth_kind, a.label].filter(Boolean),
       });
     }
-
     for (const c of chainsQ.data?.chains ?? []) {
       items.push({
         id: `chain-${c.id}`,
         label: c.name,
         description: `${c.steps?.length ?? 0} step${(c.steps?.length ?? 0) === 1 ? "" : "s"} · ${c.strategy}`,
         badge: "Chain",
-        icon: Layers,
+        icon: ICONS.chains,
+        tone: "violet",
         section: "Chains",
-        kind: "chain",
-        action: () => go("/chains", `chain-${c.id}`),
-        keywords: [c.strategy, c.fallback_provider, c.fallback_model, ...(c.steps?.map((s) => s.model) ?? [])].filter(Boolean) as string[],
+        run: go(`/chains/${c.id}/edit`),
+        keywords: [c.strategy, c.fallback_model, ...(c.steps?.map((s) => s.model) ?? [])].filter(Boolean) as string[],
       });
     }
-
     for (const k of keysQ.data?.keys ?? []) {
       items.push({
         id: `key-${k.id}`,
         label: k.name,
         description: k.display,
-        badge: k.disabled ? "Disabled" : k.plan_name || "API Key",
-        icon: Key,
-        section: "API Keys",
-        kind: "key",
-        action: () => go(`/keys/${k.id}`, `key-${k.id}`),
+        badge: k.disabled ? "Disabled" : k.plan_name || "API key",
+        icon: ICONS.keys,
+        tone: "orange",
+        section: "API keys",
+        run: go(`/keys/${k.id}`),
         keywords: [k.plan_name, k.display].filter(Boolean) as string[],
       });
     }
-
     for (const pl of plansQ.data?.plans ?? []) {
       items.push({
         id: `plan-${pl.id}`,
         label: pl.name,
         description: pl.description || `${pl.key_count} key${pl.key_count === 1 ? "" : "s"}`,
         badge: "Plan",
-        icon: Wallet,
+        icon: ICONS.plans,
+        tone: "orange",
         section: "Plans",
-        kind: "plan",
-        action: () => go("/plans", `plan-${pl.id}`),
-        keywords: [pl.period].filter(Boolean),
+        run: go("/plans"),
       });
     }
-
     for (const s of skillsQ.data?.skills ?? []) {
       items.push({
         id: `skill-${s.id}`,
         label: s.name,
         description: s.description || undefined,
         badge: s.enabled ? "Skill" : "Disabled",
-        icon: Sparkles,
+        icon: ICONS.skills,
+        tone: "violet",
         section: "Skills",
-        kind: "skill",
-        action: () => go("/skills", `skill-${s.id}`),
+        run: go("/skills"),
       });
     }
-
     for (const pool of poolsQ.data?.pools ?? []) {
       items.push({
         id: `pool-${pool.id}`,
         label: pool.name,
         description: `${pool.type} · ${pool.is_active ? "active" : "inactive"}`,
-        badge: "Proxy Pool",
-        icon: Waypoints,
-        section: "Proxy Pools",
-        kind: "pool",
-        action: () => go("/proxy-pools", `pool-${pool.id}`),
-        keywords: [pool.type, pool.proxy_url].filter(Boolean),
+        badge: "Proxy pool",
+        icon: ICONS.proxyPools,
+        tone: "teal",
+        section: "Proxy pools",
+        run: go("/proxy-pools"),
+        keywords: [pool.type],
       });
     }
-
     return items;
   }, [providersQ.data, accountsQ.data, chainsQ.data, keysQ.data, plansQ.data, skillsQ.data, poolsQ.data, go]);
 
   const allItems = useMemo(() => [...staticItems, ...entityItems], [staticItems, entityItems]);
-  const itemById = useMemo(() => new Map(allItems.map((i) => [i.id, i])), [allItems]);
-
   const trimmed = query.trim();
 
-  // groupsToRender drives the visible layout; flat is the parallel ordered list
-  // used for keyboard selection so indices line up with what's on screen.
-  const { groupsToRender, flat } = useMemo(() => {
-    const groups: { section: string; heading: boolean; items: CommandItem[] }[] = [];
-
+  const groups = useMemo(() => {
     if (!trimmed) {
-      // Empty state: recents first, then static navigation grouped by section.
-      const recentItems = recent.map((id) => itemById.get(id)).filter((x): x is CommandItem => !!x);
-      if (recentItems.length) groups.push({ section: "Recent", heading: true, items: recentItems });
-      for (const item of staticItems) {
-        const last = groups[groups.length - 1];
-        if (last && last.section === item.section && last.heading) last.items.push(item);
-        else groups.push({ section: item.section, heading: true, items: [item] });
+      const byId = new Map(allItems.map((i) => [i.id, i]));
+      const recents = recent.map((id) => byId.get(id)).filter((x): x is CommandItem => !!x);
+      const out: { heading: string; items: CommandItem[] }[] = [];
+      if (recents.length) out.push({ heading: "Recent", items: recents });
+      for (const section of ["Go to", "Actions", "Theme"]) {
+        out.push({ heading: section, items: staticItems.filter((i) => i.section === section && !recent.includes(i.id)) });
       }
-    } else {
-      // Query state: everything is ranked into one flat, badge-annotated list.
-      const q = trimmed.toLowerCase();
-      const scored: { item: CommandItem; score: number }[] = [];
-      for (const item of allItems) {
-        const s = scoreItem(item, q);
-        if (s != null) scored.push({ item, score: s });
-      }
-      scored.sort((a, b) => b.score - a.score || a.item.label.length - b.item.label.length);
-      groups.push({ section: "", heading: false, items: scored.slice(0, RESULT_LIMIT).map((s) => s.item) });
+      return out;
     }
+    const q = trimmed.toLowerCase();
+    const scored = allItems
+      .map((item) => ({ item, score: scoreItem(item, q) }))
+      .filter((x): x is { item: CommandItem; score: number } => x.score != null)
+      .sort((a, b) => b.score - a.score || a.item.label.length - b.item.label.length)
+      .slice(0, RESULT_LIMIT)
+      .map((x) => x.item);
+    return [{ heading: "", items: scored }];
+  }, [trimmed, allItems, staticItems, recent]);
 
-    const flatList = groups.flatMap((g) => g.items);
-    return { groupsToRender: groups, flat: flatList };
-  }, [trimmed, recent, itemById, staticItems, allItems]);
+  const resultCount = groups.reduce((n, g) => n + g.items.length, 0);
 
-  // Reset selection when the result set changes.
-  useEffect(() => {
-    setSelectedIndex(0);
-  }, [query]);
-
-  useEffect(() => {
-    if (open) {
-      setQuery("");
-      setSelectedIndex(0);
-      setRecent(loadRecent());
-      requestAnimationFrame(() => inputRef.current?.focus());
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!listRef.current) return;
-    const selected = listRef.current.querySelector(`[data-index="${selectedIndex}"]`);
-    selected?.scrollIntoView({ block: "nearest" });
-  }, [selectedIndex, groupsToRender]);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      switch (e.key) {
-        case "ArrowDown":
-          e.preventDefault();
-          if (flat.length) setSelectedIndex((i) => (i + 1) % flat.length);
-          break;
-        case "ArrowUp":
-          e.preventDefault();
-          if (flat.length) setSelectedIndex((i) => (i - 1 + flat.length) % flat.length);
-          break;
-        case "Home":
-          e.preventDefault();
-          setSelectedIndex(0);
-          break;
-        case "End":
-          e.preventDefault();
-          if (flat.length) setSelectedIndex(flat.length - 1);
-          break;
-        case "Enter":
-          e.preventDefault();
-          flat[selectedIndex]?.action();
-          break;
-        case "Escape":
-          e.preventDefault();
-          onClose();
-          break;
-      }
-    },
-    [flat, selectedIndex, onClose],
-  );
-
-  if (!open) return null;
-
-  let flatIndex = 0;
+  const select = (item: CommandItem) => {
+    remember(item.id);
+    onClose();
+    item.run();
+  };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-start justify-center pt-[15vh]" role="dialog" aria-modal="true" aria-label="Command palette">
-      {/* Backdrop */}
-      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
-
-      {/* Panel */}
-      <div
-        className="relative w-full max-w-xl overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-float)]"
-        style={{ animation: "page-in 0.15s ease-out" }}
-        onKeyDown={handleKeyDown}
-      >
-        {/* Input */}
-        <div className="flex items-center gap-3 border-b border-[var(--border)] px-4">
-          <Search className="h-4 w-4 shrink-0 text-[var(--text-muted)]" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search pages, providers, keys, chains…"
-            className="h-12 flex-1 bg-transparent text-sm text-[var(--text)] placeholder:text-[var(--text-muted)] focus:outline-none"
-            autoComplete="off"
-            spellCheck={false}
-          />
-          {entitiesLoading && (
-            <div className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent text-[var(--text-muted)]" />
-          )}
-          <kbd className="shrink-0 rounded border border-[var(--border)] bg-[var(--bg-subtle)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
-            esc
-          </kbd>
-        </div>
-
-        {/* Results */}
-        <div ref={listRef} className="max-h-[22rem] overflow-y-auto py-2">
-          {flat.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm text-[var(--text-muted)]">
-              {trimmed ? (
-                <>No results for &quot;{trimmed}&quot;</>
-              ) : (
-                <>Type to search across pages and your data</>
-              )}
-            </div>
-          ) : (
-            groupsToRender.map((group, gi) => (
-              <div key={group.section || `results-${gi}`}>
-                {group.heading && group.section && (
-                  <p className="flex items-center gap-1.5 px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                    {group.section === "Recent" && <History className="h-3 w-3" />}
-                    {group.section}
-                  </p>
-                )}
-                {group.items.map((item) => {
-                  const idx = flatIndex++;
-                  const selected = idx === selectedIndex;
-                  return (
-                    <button
-                      key={`${group.section}-${item.id}`}
-                      data-index={idx}
-                      onClick={item.action}
-                      onMouseMove={() => setSelectedIndex(idx)}
-                      className={`flex w-full items-center gap-3 px-4 py-2 text-left text-sm transition-colors ${
-                        selected
-                          ? "bg-accent-100 text-accent-700 dark:bg-accent-800/40 dark:text-accent-200"
-                          : "text-[var(--text)] hover:bg-[var(--bg-subtle)]"
-                      }`}
-                    >
-                      <item.icon className="h-4 w-4 shrink-0 text-[var(--text-muted)]" strokeWidth={2} />
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate">
-                          <Highlight text={item.label} query={trimmed} />
-                        </span>
-                        {item.description && (
-                          <span className="truncate text-xs text-[var(--text-muted)]">{item.description}</span>
-                        )}
-                      </span>
-                      {trimmed && item.badge && (
-                        <span className="shrink-0 rounded-md border border-[var(--border)] bg-[var(--bg-subtle)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--text-muted)]">
-                          {item.badge}
-                        </span>
-                      )}
-                      {selected && (
-                        <CornerDownLeft className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            ))
-          )}
-        </div>
-
-        {/* Footer hint */}
-        <div className="flex items-center gap-4 border-t border-[var(--border)] px-4 py-2 text-[10px] text-[var(--text-muted)]">
-          <span className="flex items-center gap-1">
-            <kbd className="rounded border border-[var(--border)] bg-[var(--bg-subtle)] px-1 py-px font-mono">↑↓</kbd>
-            navigate
-          </span>
-          <span className="flex items-center gap-1">
-            <kbd className="rounded border border-[var(--border)] bg-[var(--bg-subtle)] px-1 py-px font-mono">↵</kbd>
-            select
-          </span>
-          <span className="flex items-center gap-1">
-            <kbd className="rounded border border-[var(--border)] bg-[var(--bg-subtle)] px-1 py-px font-mono">esc</kbd>
-            close
-          </span>
-          {flat.length > 0 && (
-            <span className="ml-auto tabular-nums">{flat.length} result{flat.length === 1 ? "" : "s"}</span>
-          )}
-        </div>
+    <Command.Dialog
+      open={open}
+      onOpenChange={(next) => !next && onClose()}
+      label="Search pages, providers, keys and chains"
+      shouldFilter={false}
+      loop
+      // Phones: a full-screen sheet (input on top, results fill the rest,
+      // safe-area padded). From sm: the centred floating panel.
+      className="flex min-h-0 flex-1 flex-col"
+      overlayClassName="fixed inset-0 z-[100] bg-black/45 data-[state=open]:animate-in data-[state=open]:fade-in-0"
+      contentClassName="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-surface pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] data-[state=open]:animate-in data-[state=open]:fade-in-0 sm:inset-auto sm:left-1/2 sm:top-[14vh] sm:w-[calc(100%-2rem)] sm:max-w-xl sm:-translate-x-1/2 sm:rounded-2xl sm:border sm:border-line sm:pb-0 sm:pt-0 sm:shadow-[var(--shadow-float)] sm:data-[state=open]:zoom-in-[0.98]"
+    >
+      <Dialog.Title className="sr-only">Command palette</Dialog.Title>
+      <Dialog.Description className="sr-only">
+        Type to search. Use the up and down arrow keys to move, Enter to open, Escape to close.
+      </Dialog.Description>
+      <div className="flex shrink-0 items-center gap-2.5 border-b border-line pl-4 pr-2 sm:pr-4">
+        <Search className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+        <Command.Input
+          value={query}
+          onValueChange={setQuery}
+          placeholder="Search pages, providers, keys, chains…"
+          className="h-12 flex-1 bg-transparent text-[14px] text-fg placeholder:text-fg-faint focus:outline-none"
+          style={{ outline: "none" }}
+        />
+        {loading && <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-line-strong border-t-fg-muted" aria-hidden="true" />}
+        <kbd className="hidden shrink-0 rounded border border-line bg-subtle px-1.5 font-mono text-[10.5px] text-fg-faint sm:inline" aria-hidden="true">esc</kbd>
+        {/* Touch has no Escape key: a visible way out on phones. */}
+        <Dialog.Close className="inline-flex h-9 shrink-0 items-center rounded-lg px-2.5 text-[13px] font-medium text-link hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:hidden">
+          Cancel
+        </Dialog.Close>
       </div>
-    </div>
+
+      {/* Result count for screen readers; always mounted so changes are read. */}
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {trimmed ? (loading && resultCount === 0 ? "Searching…" : `${resultCount} result${resultCount === 1 ? "" : "s"}`) : ""}
+      </div>
+
+      <Command.List label="Results" aria-busy={loading || undefined} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 sm:max-h-[min(24rem,60vh)] sm:flex-none">
+        <Command.Empty className="px-4 py-10 text-center text-[13px] text-fg-muted">
+          {trimmed ? `No results for “${trimmed}”` : "Type to search pages and your data"}
+        </Command.Empty>
+        {groups.map((group, gi) =>
+          group.items.length === 0 ? null : (
+            <Command.Group
+              key={group.heading || `results-${gi}`}
+              heading={group.heading ? <GroupHeading recent={group.heading === "Recent"}>{group.heading}</GroupHeading> : undefined}
+              className="[&_[cmdk-group-heading]]:px-2.5 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-2"
+            >
+              {group.items.map((item) => (
+                <Command.Item
+                  key={`${group.heading}-${item.id}`}
+                  value={`${group.heading}-${item.id}`}
+                  onSelect={() => select(item)}
+                  data-tone={item.tone}
+                  className="group flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-[13px] text-fg outline-none data-[selected=true]:bg-hover [@media(pointer:coarse)]:py-2"
+                >
+                  {item.logo ? (
+                    <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-subtle ring-1 ring-inset ring-line" aria-hidden="true">
+                      <ProviderLogo icon={item.logo.icon} name={item.logo.name} size={16} />
+                    </span>
+                  ) : item.icon ? (
+                    <IconTile icon={item.icon} size="sm" />
+                  ) : null}
+                  <span className="flex min-w-0 flex-1 flex-col">
+                    <span className="truncate">
+                      <Highlight text={item.label} query={trimmed} />
+                    </span>
+                    {item.description && <span className={cn("truncate text-[12px] text-fg-faint", item.logo && "font-mono")}>{item.description}</span>}
+                  </span>
+                  {trimmed && item.badge && (
+                    <span className="shrink-0 rounded-md border border-line bg-subtle px-1.5 py-px text-[11px] text-fg-muted">{item.badge}</span>
+                  )}
+                  <CornerDownLeft className="hidden h-3.5 w-3.5 shrink-0 text-fg-faint group-data-[selected=true]:block" aria-hidden="true" />
+                </Command.Item>
+              ))}
+            </Command.Group>
+          ),
+        )}
+      </Command.List>
+
+      {/* Keyboard hints only make sense with a keyboard: hidden on phones. */}
+      <div className="hidden shrink-0 items-center gap-4 border-t border-line px-4 py-2 text-[11px] text-fg-faint sm:flex" aria-hidden="true">
+        <Hint keys="↑↓">navigate</Hint>
+        <Hint keys="↵">open</Hint>
+        <Hint keys="esc">close</Hint>
+        {trimmed && <span className="ml-auto tabular-nums">{resultCount} result{resultCount === 1 ? "" : "s"}</span>}
+      </div>
+    </Command.Dialog>
+  );
+}
+
+function GroupHeading({ children, recent }: { children: ReactNode; recent?: boolean }) {
+  return (
+    <span className="flex items-center gap-1.5 text-[11.5px] font-medium text-fg-faint">
+      {recent && <History className="h-3 w-3" aria-hidden="true" />}
+      {children}
+    </span>
+  );
+}
+
+function Hint({ keys, children }: { keys: string; children: ReactNode }) {
+  return (
+    <span className="flex items-center gap-1">
+      <kbd className="rounded border border-line bg-subtle px-1 font-mono">{keys}</kbd>
+      {children}
+    </span>
   );
 }

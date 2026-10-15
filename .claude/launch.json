@@ -1,0 +1,100 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "polish-backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && KEIROUTER_DATA__DIR=/tmp/claude-1000/-home-mydisha-www-keirouter/5aa47ecf-c37b-4b6a-84ea-5ff3cdc302b2/scratchpad/krdata KEIROUTER_SERVER__PORT=20211 go run ./cmd/keirouter"
+      ],
+      "port": 20211
+    },
+    {
+      "name": "polish-frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd frontend && KEIROUTER_BACKEND=http://127.0.0.1:20211 npx vite --port ${PORT:-5211} --strictPort"
+      ],
+      "port": 5211,
+      "autoPort": true
+    },
+    {
+      "name": "providers-backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && KEIROUTER_DATA__DIR=/tmp/claude-1000/-home-mydisha-www-keirouter/5aa47ecf-c37b-4b6a-84ea-5ff3cdc302b2/scratchpad/krdata KEIROUTER_SERVER__PORT=20311 go run ./cmd/keirouter"
+      ],
+      "port": 20311
+    },
+    {
+      "name": "providers-frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd frontend && KEIROUTER_BACKEND=http://127.0.0.1:20311 npx vite --port ${PORT:-5311} --strictPort"
+      ],
+      "port": 5311,
+      "autoPort": true
+    },
+    {
+      "name": "picker-backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && KEIROUTER_DATA__DIR=/tmp/claude-1000/-home-mydisha-www-keirouter/4b245fb7-a137-44d8-834d-9a304f2a7e02/scratchpad/krdata KEIROUTER_SERVER__PORT=20411 go run ./cmd/keirouter"
+      ],
+      "port": 20411
+    },
+    {
+      "name": "picker-frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd frontend && KEIROUTER_BACKEND=http://127.0.0.1:20411 npx vite --port ${PORT:-5411} --strictPort"
+      ],
+      "port": 5411,
+      "autoPort": true
+    },
+    {
+      "name": "console-backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && KEIROUTER_DATA__DIR=/tmp/claude-1000/-home-mydisha-www-keirouter/63f72639-e57a-425b-8722-daf30ae29dc8/scratchpad/krdata KEIROUTER_SERVER__PORT=20511 go run ./cmd/keirouter"
+      ],
+      "port": 20511
+    },
+    {
+      "name": "console-frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd frontend && KEIROUTER_BACKEND=http://127.0.0.1:20511 npx vite --port ${PORT:-5511} --strictPort"
+      ],
+      "port": 5511,
+      "autoPort": true
+    },
+    {
+      "name": "skills-backend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd backend && KEIROUTER_DATA__DIR=/tmp/claude-1000/-home-mydisha-www-keirouter/cde4ef9c-1226-43cd-a1ea-3d36febb35a3/scratchpad/krdata KEIROUTER_SERVER__PORT=20611 go run ./cmd/keirouter"
+      ],
+      "port": 20611
+    },
+    {
+      "name": "skills-frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd frontend && KEIROUTER_BACKEND=http://127.0.0.1:20611 npx vite --port ${PORT:-5611} --strictPort"
+      ],
+      "port": 5611,
+      "autoPort": true
+    }
+  ]
+}

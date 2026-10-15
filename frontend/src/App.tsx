@@ -38,6 +38,7 @@ const PortalTopupRoute = lazy(routeLoaders["/portal-topup"]);
 const PortalDocsRoute = lazy(routeLoaders["/portal-docs"]);
 const KeyDetailPage = lazy(routeLoaders["/key-detail"]);
 const GuardrailsPage = lazy(routeLoaders["/guardrails"]);
+const AuditPage = lazy(routeLoaders["/audit"]);
 const ProviderHealthPage = lazy(routeLoaders["/provider-health"]);
 const BansosPage = lazy(routeLoaders["/bansos"]);
 const PortalUsersPage = lazy(routeLoaders["/portal-users"]);
@@ -104,6 +105,7 @@ export function App() {
                 <Route path="keys" element={<KeysPage />} />
                 <Route path="keys/:id" element={<KeyDetailPage />} />
                 <Route path="guardrails" element={<GuardrailsPage />} />
+                <Route path="audit" element={<AuditPage />} />
                 <Route path="provider-health" element={<ProviderHealthPage />} />
                 <Route path="provider-health/:provider" element={<ProviderHealthPage />} />
                 <Route path="bansos" element={<BansosPage />} />

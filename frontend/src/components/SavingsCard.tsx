@@ -1,5 +1,4 @@
 import { useRef, useState, useCallback } from "react";
-import { toPng } from "html-to-image";
 import { Download, Check } from "lucide-react";
 import type { UsageInsights } from "../lib/api";
 
@@ -89,7 +88,7 @@ function SavingsCardContent({ data }: { data: SavingsCardData }) {
         overflow: "hidden",
         boxSizing: "border-box",
         fontFamily:
-          "'-apple-system', 'BlinkMacSystemFont', 'SF Pro Display', 'Inter', sans-serif",
+          "'IBM Plex Sans Variable', 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif",
         background: `linear-gradient(150deg, ${C.bg} 0%, ${C.bgGradientTo} 100%)`,
         color: C.text,
         padding: "44px 52px",
@@ -150,7 +149,7 @@ function SavingsCardContent({ data }: { data: SavingsCardData }) {
         >
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <img
-              src="/keirouter-logo.png"
+              src="/keirouter-favicon.png"
               alt="KeiRouter"
               style={{ width: 34, height: 34, objectFit: "contain" }}
               crossOrigin="anonymous"
@@ -446,12 +445,17 @@ export function SavingsCardShareButton({
     actualCost,
   };
 
+  const [status, setStatus] = useState("");
+
   const handleShare = useCallback(async () => {
     if (!cardRef.current || generating) return;
     setGenerating(true);
     setDone(false);
+    setStatus("Creating savings card…");
 
     try {
+      // html-to-image is only needed when exporting, so keep it out of the page chunk.
+      const { toPng } = await import("html-to-image");
       const dataUrl = await toPng(cardRef.current, {
         width: 1200,
         height: 630,
@@ -464,9 +468,11 @@ export function SavingsCardShareButton({
       link.href = dataUrl;
       link.click();
       setDone(true);
+      setStatus("Savings card downloaded");
       setTimeout(() => setDone(false), 2000);
     } catch (err) {
       console.error("Failed to generate savings card:", err);
+      setStatus("Couldn't create the savings card. Try again.");
     } finally {
       setGenerating(false);
     }
@@ -476,6 +482,7 @@ export function SavingsCardShareButton({
     <>
       {/* Hidden card for image capture */}
       <div
+        aria-hidden="true"
         style={{
           position: "fixed",
           left: "-9999px",
@@ -489,37 +496,36 @@ export function SavingsCardShareButton({
         </div>
       </div>
 
-      {/* Download button */}
-		<button
-			type="button"
-			aria-label={done ? "Savings card downloaded" : generating ? "Generating savings card" : "Download savings card"}
-			title="Download savings card"
-			onClick={handleShare}
+      {/* Download button — a stable name; progress is announced separately. */}
+      <button
+        type="button"
+        aria-label="Download savings card"
+        title="Download savings card as PNG"
+        onClick={handleShare}
         disabled={generating || summary.total_requests === 0}
-        className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-accent-600 px-3 text-xs font-medium text-white shadow-sm transition-all hover:bg-accent-700 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 dark:bg-accent-500 dark:hover:bg-accent-400"
+        aria-busy={generating || undefined}
+        className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-line-strong bg-surface px-3 text-[12.5px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {done ? (
           <>
-            <Check className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Downloaded!</span>
+            <Check className="h-4 w-4 text-ok" strokeWidth={1.75} aria-hidden="true" />
+            <span className="hidden sm:inline">Downloaded</span>
           </>
         ) : generating ? (
           <>
-            <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-            <span className="hidden sm:inline">Generating…</span>
+            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-line-strong border-t-fg-muted" aria-hidden="true" />
+            <span className="hidden sm:inline">Creating…</span>
           </>
         ) : (
           <>
-            <img
-              src="/keirouter-logo.png"
-              alt=""
-              className="h-3.5 w-3.5 object-contain"
-            />
-            <span className="hidden sm:inline">Savings Card</span>
-            <Download className="h-3.5 w-3.5 opacity-70" />
+            <Download className="h-4 w-4 text-tone" strokeWidth={1.75} aria-hidden="true" />
+            <span className="hidden sm:inline">Savings card</span>
           </>
         )}
       </button>
+      <span className="sr-only" role="status" aria-live="polite">
+        {status}
+      </span>
     </>
   );
 }

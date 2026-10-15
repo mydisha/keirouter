@@ -20,6 +20,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/dispatch"
 	"github.com/mydisha/keirouter/backend/internal/identity"
+	"github.com/mydisha/keirouter/backend/internal/limits"
 	"github.com/mydisha/keirouter/backend/internal/meter"
 	"github.com/mydisha/keirouter/backend/internal/pipeline"
 	"github.com/mydisha/keirouter/backend/internal/store"
@@ -30,13 +31,24 @@ import (
 // e2eHarness wires a full gateway against an in-memory store and a fake upstream.
 type e2eHarness struct {
 	server   *httptest.Server
+	handler  http.Handler
 	gateway  *Server
 	apiKey   string
 	upstream *httptest.Server
 }
 
-func newE2E(t *testing.T, upstreamHandler http.HandlerFunc) *e2eHarness {
+// e2eOptions customizes the harness; the zero value matches production defaults.
+type e2eOptions struct {
+	cfg     config.Config
+	limiter *limits.Memory
+}
+
+func newE2E(t *testing.T, upstreamHandler http.HandlerFunc, opts ...func(*e2eOptions)) *e2eHarness {
 	t.Helper()
+	o := e2eOptions{cfg: config.Default()}
+	for _, opt := range opts {
+		opt(&o)
+	}
 	ctx := context.Background()
 
 	// Fake upstream provider.
@@ -84,20 +96,26 @@ func newE2E(t *testing.T, upstreamHandler http.HandlerFunc) *e2eHarness {
 	disp := dispatch.New(connRegistry, db.Accounts(), v)
 	mtr := meter.New(db.Usage(), nil, nil)
 	bud := budget.New(db.Budgets(), db.Usage())
-	pipe := pipeline.New(pipeline.Deps{Dispatcher: disp, Meter: mtr, Budget: bud})
-
-	gw := New(Deps{
-		Config:   config.Default(),
+	pipeDeps := pipeline.Deps{Dispatcher: disp, Meter: mtr, Budget: bud}
+	gwDeps := Deps{
+		Config:   o.cfg,
 		Identity: idSvc,
-		Pipeline: pipe,
+		Pipeline: nil,
 		Chains:   db.Chains(),
 		Codecs:   transform.DefaultRegistry(),
-	})
+	}
+	if o.limiter != nil {
+		pipeDeps.Limiter = o.limiter
+		gwDeps.RateLimiter = o.limiter
+	}
+	gwDeps.Pipeline = pipeline.New(pipeDeps)
+	gw := New(gwDeps)
 
-	srv := httptest.NewServer(gw.Handler())
+	handler := gw.Handler()
+	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	return &e2eHarness{server: srv, gateway: gw, apiKey: issued.Plaintext, upstream: upstream}
+	return &e2eHarness{server: srv, handler: handler, gateway: gw, apiKey: issued.Plaintext, upstream: upstream}
 }
 
 func (h *e2eHarness) post(t *testing.T, path, body, auth string) *http.Response {
@@ -111,6 +129,21 @@ func (h *e2eHarness) post(t *testing.T, path, body, auth string) *http.Response 
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	return resp
+}
+
+// postFrom sends a request as if it came from remoteAddr ("ip:port"); the test
+// server itself is only reachable over loopback.
+func (h *e2eHarness) postFrom(t *testing.T, remoteAddr, path, body, auth string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	req.RemoteAddr = remoteAddr
+	req.Header.Set("Content-Type", "application/json")
+	if auth != "" {
+		req.Header.Set("Authorization", "Bearer "+auth)
+	}
+	rec := httptest.NewRecorder()
+	h.handler.ServeHTTP(rec, req)
+	return rec.Result()
 }
 
 // openAIUpstream returns a handler that responds as an OpenAI chat endpoint.

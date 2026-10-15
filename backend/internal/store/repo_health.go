@@ -156,6 +156,31 @@ func (r *HealthRepo) List(ctx context.Context, tenantID string) ([]AccountHealth
 	return out, rows.Err()
 }
 
+// RecentSuccessfulAccountModels returns the account/model pairs that served a
+// successful real request since the given time. Real traffic is the best
+// health signal there is; the checker skips probing these pairs.
+func (r *HealthRepo) RecentSuccessfulAccountModels(ctx context.Context, tenantID string, since time.Time) (map[string]time.Time, error) {
+	q := r.db.rebind(`SELECT COALESCE(account_id, ''), model, MAX(created_at)
+		FROM usage_records
+		WHERE tenant_id = ? AND created_at >= ? AND status = 'success'
+		  AND COALESCE(account_id, '') != '' AND model != ''
+		GROUP BY account_id, model`)
+	rows, err := r.db.sql.QueryContext(ctx, q, tenantID, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("store: recent successful account models: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var accountID, model, at string
+		if err := rows.Scan(&accountID, &model, &at); err != nil {
+			return nil, err
+		}
+		out[accountID+"\x00"+model] = parseTime(at)
+	}
+	return out, rows.Err()
+}
+
 // RecentAccountModels returns recently used account/model pairs to health-check.
 func (r *HealthRepo) RecentAccountModels(ctx context.Context, tenantID string, since time.Time, limit int) ([]AccountHealth, error) {
 	if limit <= 0 {

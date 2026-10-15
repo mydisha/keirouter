@@ -1,114 +1,82 @@
 package clitools
 
-import (
-	"os"
-	"strings"
+import "path/filepath"
 
-	toml "github.com/pelletier/go-toml/v2"
-)
-
-// CodexTool auto-configures Codex CLI (~/.codex/config.toml + auth.json).
+// CodexTool auto-configures Codex CLI (~/.codex/config.toml).
+//
+// The key is stored as the provider's experimental_bearer_token rather than in
+// auth.json: auth.json holds the user's own OpenAI / ChatGPT login, and
+// overwriting it would sign them out of Codex.
 type CodexTool struct{}
 
-func (t *CodexTool) ID() string      { return "codex" }
-func (t *CodexTool) Name() string    { return "Codex CLI" }
-func (t *CodexTool) Command() string { return "codex" }
+func (t *CodexTool) ID() string                    { return "codex" }
+func (t *CodexTool) Name() string                  { return "Codex CLI" }
+func (t *CodexTool) Commands() []string            { return []string{"codex"} }
+func (t *CodexTool) Extensions() []string          { return []string{"openai.chatgpt"} }
+func (t *CodexTool) ModelRequired() bool           { return false }
+func (t *CodexTool) ConfigFiles(h string) []string { return []string{t.configPath(h)} }
 
+// configPath honors CODEX_HOME, Codex's override for ~/.codex.
 func (t *CodexTool) configPath(homeDir string) string {
-	return expandHome(homeDir, "~/.codex/config.toml")
-}
-func (t *CodexTool) authPath(homeDir string) string {
-	return expandHome(homeDir, "~/.codex/auth.json")
+	return filepath.Join(envDir(homeDir, "CODEX_HOME", "~/.codex"), "config.toml")
 }
 
-func (t *CodexTool) DetectStatus(homeDir string) (bool, bool, string, error) {
+const codexProviderID = "keirouter"
+
+func (t *CodexTool) Read(homeDir string) (*Settings, error) {
+	cfg, exists, err := loadTOML(t.configPath(homeDir))
+	if err != nil || !exists {
+		return nil, err
+	}
+	// The provider block is inert unless it is the selected provider.
+	if str(cfg, "model_provider") != codexProviderID {
+		return nil, nil
+	}
+	base := str(cfg, "model_providers", codexProviderID, "base_url")
+	if base == "" {
+		return nil, nil
+	}
+	return &Settings{
+		BaseURL: base,
+		APIKey:  str(cfg, "model_providers", codexProviderID, "experimental_bearer_token"),
+		Model:   str(cfg, "model"),
+	}, nil
+}
+
+func (t *CodexTool) Configure(homeDir string, s Settings) error {
 	path := t.configPath(homeDir)
-	if !fileExists(path) {
-		return false, false, path, nil
-	}
-	raw, err := readString(path)
-	if err != nil {
-		return true, false, path, nil
-	}
-	configured := strings.Contains(raw, "model_provider") && strings.Contains(raw, "keirouter")
-	return true, configured, path, nil
-}
-
-func (t *CodexTool) Configure(homeDir, baseURL, apiKey string, models []string) error {
-	configPath := t.configPath(homeDir)
-	authPath := t.authPath(homeDir)
-
-	model := "gpt-4o"
-	if len(models) > 0 {
-		model = models[0]
-	}
-
-	// Parse existing config or start fresh.
-	cfg := make(map[string]any)
-	if raw, err := readString(configPath); err == nil {
-		_ = toml.Unmarshal([]byte(raw), &cfg)
-	}
-
-	cfg["model"] = model
-	cfg["model_provider"] = "keirouter"
-
-	providers, _ := cfg["model_providers"].(map[string]any)
-	if providers == nil {
-		providers = make(map[string]any)
-	}
-	providers["keirouter"] = map[string]any{
-		"name":     "KeiRouter",
-		"base_url": ensureSuffix(baseURL, "/v1"),
-		"wire_api": "responses",
-	}
-	cfg["model_providers"] = providers
-
-	data, err := toml.Marshal(cfg)
+	cfg, _, err := loadTOML(path)
 	if err != nil {
 		return err
 	}
-	if err := writeString(configPath, string(data)); err != nil {
-		return err
+	if s.Model != "" {
+		cfg["model"] = s.Model
 	}
-
-	// Write auth.json.
-	auth := map[string]string{
-		"OPENAI_API_KEY": apiKey,
-		"auth_mode":      "apikey",
+	cfg["model_provider"] = codexProviderID
+	child(cfg, "model_providers")[codexProviderID] = map[string]any{
+		"name":                      "KeiRouter",
+		"base_url":                  v1URL(s.BaseURL),
+		"wire_api":                  "responses",
+		"experimental_bearer_token": s.APIKey,
 	}
-	return writeJSON(authPath, auth)
+	return saveTOML(path, cfg)
 }
 
 func (t *CodexTool) Remove(homeDir string) error {
-	configPath := t.configPath(homeDir)
-	authPath := t.authPath(homeDir)
-
-	if fileExists(configPath) {
-		raw, err := readString(configPath)
-		if err == nil {
-			cfg := make(map[string]any)
-			_ = toml.Unmarshal([]byte(raw), &cfg)
-			if mp, ok := cfg["model_provider"].(string); ok && mp == "keirouter" {
-				delete(cfg, "model_provider")
-				delete(cfg, "model")
-			}
-			if providers, ok := cfg["model_providers"].(map[string]any); ok {
-				delete(providers, "keirouter")
-				if len(providers) == 0 {
-					delete(cfg, "model_providers")
-				}
-			}
-			if len(cfg) == 0 {
-				os.Remove(configPath)
-			} else {
-				data, _ := toml.Marshal(cfg)
-				writeString(configPath, string(data))
-			}
-		}
+	path := t.configPath(homeDir)
+	cfg, exists, err := loadTOML(path)
+	if err != nil || !exists {
+		return err
 	}
-
-	if fileExists(authPath) {
-		os.Remove(authPath)
+	if str(cfg, "model_provider") == codexProviderID {
+		delete(cfg, "model_provider")
+		// The model was chosen for the gateway; Codex falls back to its own
+		// default without it.
+		delete(cfg, "model")
 	}
-	return nil
+	if providers, ok := cfg["model_providers"].(map[string]any); ok {
+		delete(providers, codexProviderID)
+		pruneEmpty(cfg, "model_providers")
+	}
+	return saveOrRemove(path, cfg, saveTOML)
 }

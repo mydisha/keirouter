@@ -31,10 +31,12 @@ type CostBreakdown struct {
 	CacheWriteCostNanos int64
 	OutputCostNanos     int64
 	ReasoningCostNanos  int64
-	CostNanos           int64
-	CostMicros          int64
-	AvoidedCostNanos    int64
-	SavedCostNanos      int64
+	// ToolCostNanos prices provider-side tool use (web search requests).
+	ToolCostNanos    int64
+	CostNanos        int64
+	CostMicros       int64
+	AvoidedCostNanos int64
+	SavedCostNanos   int64
 
 	InputRatePerM      float64
 	CachedRatePerM     float64
@@ -76,21 +78,81 @@ func modelCandidates(model string) []string {
 			break
 		}
 	}
+	// Fine-tunes ("ft:gpt-4o-mini:org::id") and dated snapshots
+	// ("gpt-4o-2024-08-06") are priced like their base model.
+	for _, candidate := range out {
+		if base := stripFineTuneAndDate(candidate); base != candidate {
+			out = append(out, base)
+		}
+	}
 	return out
 }
+
+// stripFineTuneAndDate reduces "ft:<base>:<org>:<suffix>:<id>" to <base> and
+// drops a trailing "-YYYY-MM-DD" snapshot date.
+func stripFineTuneAndDate(model string) string {
+	m := model
+	if strings.HasPrefix(m, "ft:") {
+		rest := strings.TrimPrefix(m, "ft:")
+		if i := strings.IndexByte(rest, ':'); i >= 0 {
+			rest = rest[:i]
+		}
+		m = rest
+	}
+	if n := len(m); n > 11 && m[n-11] == '-' && isDateSuffix(m[n-10:]) {
+		m = m[:n-11]
+	}
+	return m
+}
+
+func isDateSuffix(s string) bool {
+	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
+		return false
+	}
+	for i, r := range s {
+		if i == 4 || i == 7 {
+			continue
+		}
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// fingerprintReplacer is shared: building a Replacer per call dominated the
+// cost of canonical price matching.
+var fingerprintReplacer = strings.NewReplacer("-", "", "_", "", ".", "", " ", "")
 
 func modelFingerprint(model string) string {
 	m := strings.ToLower(strings.TrimSpace(model))
 	if i := strings.LastIndexByte(m, '/'); i >= 0 {
 		m = m[i+1:]
 	}
-	return strings.NewReplacer("-", "", "_", "", ".", "", " ", "").Replace(m)
+	return fingerprintReplacer.Replace(m)
+}
+
+// indexModelFingerprints maps each model fingerprint to the provider/model
+// price keys that share it, so canonical matching is a lookup instead of a
+// scan over every catalog entry.
+func indexModelFingerprints(modelPrices map[string]Price) map[string][]string {
+	index := make(map[string][]string, len(modelPrices))
+	for key := range modelPrices {
+		parts := strings.SplitN(key, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		fp := modelFingerprint(parts[1])
+		index[fp] = append(index[fp], key)
+	}
+	return index
 }
 
 func samePrice(a, b Price) bool {
 	return a.InputPerM == b.InputPerM && a.OutputPerM == b.OutputPerM &&
 		a.CachedInputPerM == b.CachedInputPerM && a.CacheWritePerM == b.CacheWritePerM &&
 		a.ReasoningPerM == b.ReasoningPerM && a.LongContextThreshold == b.LongContextThreshold &&
+		a.CacheWrite1hPerM == b.CacheWrite1hPerM && a.WebSearchPerK == b.WebSearchPerK &&
 		a.LongInputPerM == b.LongInputPerM && a.LongOutputPerM == b.LongOutputPerM &&
 		a.LongCachedInputPerM == b.LongCachedInputPerM &&
 		a.LongCacheWritePerM == b.LongCacheWritePerM && a.ExplicitFree == b.ExplicitFree
@@ -151,28 +213,36 @@ func (m *Meter) ResolvePrice(provider, model string) PricingMatch {
 	for _, candidate := range candidates {
 		fingerprints[modelFingerprint(candidate)] = struct{}{}
 	}
-	var found Price
-	foundKey := ""
-	for key, price := range m.modelPrices {
-		parts := strings.SplitN(key, "/", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if _, ok := fingerprints[modelFingerprint(parts[1])]; !ok {
-			continue
-		}
-		if foundKey == "" {
-			found, foundKey = price, key
-			continue
-		}
-		if !samePrice(found, price) {
-			return PricingMatch{Status: "missing", MatchKind: "none"}
-		}
-		if preferCanonicalPrice(key, price, foundKey, found) {
-			found, foundKey = price, key
-		}
+	var keys []string
+	for fp := range fingerprints {
+		keys = append(keys, m.modelFingerprints[fp]...)
 	}
-	if foundKey != "" {
+	if len(keys) > 0 {
+		// Hosts often resell a vendor model at their own rate. When matches
+		// disagree, fall back to the most authoritative source tier and price
+		// only if that tier is unanimous.
+		if !m.allSamePrice(keys) {
+			top := canonicalSourcePriority(m.modelPrices[keys[0]].Source)
+			for _, key := range keys[1:] {
+				top = min(top, canonicalSourcePriority(m.modelPrices[key].Source))
+			}
+			preferred := keys[:0:0]
+			for _, key := range keys {
+				if canonicalSourcePriority(m.modelPrices[key].Source) == top {
+					preferred = append(preferred, key)
+				}
+			}
+			if !m.allSamePrice(preferred) {
+				return PricingMatch{Status: "missing", MatchKind: "none"}
+			}
+			keys = preferred
+		}
+		foundKey, found := keys[0], m.modelPrices[keys[0]]
+		for _, key := range keys[1:] {
+			if price := m.modelPrices[key]; preferCanonicalPrice(key, price, foundKey, found) {
+				found, foundKey = price, key
+			}
+		}
 		return pricingMatch(foundKey, found, "canonical_model", true)
 	}
 
@@ -183,6 +253,15 @@ func (m *Meter) ResolvePrice(provider, model string) PricingMatch {
 		return pricingMatch(canonicalProvider, price, "provider_alias", true)
 	}
 	return PricingMatch{Status: "missing", MatchKind: "none"}
+}
+
+func (m *Meter) allSamePrice(keys []string) bool {
+	for _, key := range keys[1:] {
+		if !samePrice(m.modelPrices[keys[0]], m.modelPrices[key]) {
+			return false
+		}
+	}
+	return true
 }
 
 func pricingMatch(key string, price Price, kind string, estimated bool) PricingMatch {
@@ -205,7 +284,30 @@ func pricingMatch(key string, price Price, kind string, estimated bool) PricingM
 
 func hasAnyRate(p Price) bool {
 	return p.InputPerM != 0 || p.OutputPerM != 0 || p.CachedInputPerM != 0 ||
-		p.CacheWritePerM != 0 || p.ReasoningPerM != 0 || p.LongInputPerM != 0 || p.LongOutputPerM != 0
+		p.CacheWritePerM != 0 || p.ReasoningPerM != 0 || p.LongInputPerM != 0 || p.LongOutputPerM != 0 ||
+		p.WebSearchPerK != 0
+}
+
+// cacheWrite1hRatio is the default one-hour cache write premium over the
+// five-minute write rate (Anthropic: 2.0× input vs 1.25× input).
+const cacheWrite1hRatio = 1.6
+
+// serviceTierMultiplier is the OpenAI service-tier price factor applied when
+// the catalogue has no explicit per-tier rates: flex is half price, priority
+// is double.
+func serviceTierMultiplier(provider, tier string) float64 {
+	switch normalizeProvider(provider) {
+	case "openai", "azure", "azure_openai":
+	default:
+		return 1
+	}
+	switch strings.ToLower(strings.TrimSpace(tier)) {
+	case "flex":
+		return 0.5
+	case "priority", "fast":
+		return 2
+	}
+	return 1
 }
 
 func effectivePrice(p Price, promptTokens int) Price {
@@ -259,6 +361,15 @@ func clampUsage(u core.Usage) core.Usage {
 	}
 	if u.ReasoningTokens > u.CompletionTokens {
 		u.ReasoningTokens = u.CompletionTokens
+	}
+	if u.CacheWrite1hTokens < 0 {
+		u.CacheWrite1hTokens = 0
+	}
+	if u.CacheWrite1hTokens > u.CacheWriteTokens {
+		u.CacheWrite1hTokens = u.CacheWriteTokens
+	}
+	if u.WebSearchRequests < 0 {
+		u.WebSearchRequests = 0
 	}
 	u.TotalTokens = u.PromptTokens + u.CompletionTokens
 	return u
@@ -381,12 +492,75 @@ func calculateCostFromPrice(match PricingMatch, uUsage core.Usage, cacheHit bool
 // CalculateCost prices one normalized usage snapshot. Reasoning is a subset of
 // completion, never an additional token class, which prevents double charging.
 func (m *Meter) CalculateCost(provider, model string, raw core.Usage, cacheHit bool, savedInputTokens int) CostBreakdown {
+	return m.CalculateCostWith(provider, model, raw, cacheHit, savedInputTokens, "")
+}
+
+// CalculateCostWith is CalculateCost with the request's service tier. A cost
+// reported by the provider itself (OpenRouter usage.cost) is authoritative
+// over the catalogue and short-circuits the computation.
+func (m *Meter) CalculateCostWith(provider, model string, raw core.Usage, cacheHit bool, savedInputTokens int, serviceTier string) CostBreakdown {
+	u := clampUsage(raw)
 	match := m.ResolvePrice(provider, model)
 	out := CostBreakdown{Pricing: match}
+	if u.ProviderCostNanos > 0 && !cacheHit {
+		out.Pricing = PricingMatch{Key: match.Key, Status: "priced", Source: "provider", MatchKind: "provider_reported", SourceURL: match.SourceURL}
+		out.CostNanos = u.ProviderCostNanos
+		out.CostMicros = int64(math.Round(float64(out.CostNanos) / 1000))
+		return out
+	}
 	if match.Status == "missing" || match.Status == "none" {
 		return out
 	}
-	return calculateCostFromPrice(match, raw, cacheHit, savedInputTokens)
+	p := effectivePrice(match.Price, u.PromptTokens)
+	if mult := serviceTierMultiplier(provider, serviceTier); mult != 1 {
+		p.InputPerM *= mult
+		p.OutputPerM *= mult
+		p.CachedInputPerM *= mult
+		p.CacheWritePerM *= mult
+		p.CacheWrite1hPerM *= mult
+		p.ReasoningPerM *= mult
+	}
+	out.InputRatePerM = p.InputPerM
+	out.CachedRatePerM = p.CachedInputPerM
+	if out.CachedRatePerM == 0 {
+		out.CachedRatePerM = p.InputPerM
+	}
+	out.CacheWriteRatePerM = p.CacheWritePerM
+	if out.CacheWriteRatePerM == 0 {
+		out.CacheWriteRatePerM = p.InputPerM
+	}
+	out.OutputRatePerM = p.OutputPerM
+	out.ReasoningRatePerM = p.ReasoningPerM
+	if out.ReasoningRatePerM == 0 {
+		out.ReasoningRatePerM = p.OutputPerM
+	}
+
+	write1hRate := p.CacheWrite1hPerM
+	if write1hRate == 0 {
+		write1hRate = out.CacheWriteRatePerM * cacheWrite1hRatio
+	}
+
+	standardInput := u.PromptTokens - u.CachedTokens - u.CacheWriteTokens
+	normalOutput := u.CompletionTokens - u.ReasoningTokens
+	write5m := u.CacheWriteTokens - u.CacheWrite1hTokens
+	out.InputCostNanos = tokenCostNanos(standardInput, out.InputRatePerM)
+	out.CachedCostNanos = tokenCostNanos(u.CachedTokens, out.CachedRatePerM)
+	out.CacheWriteCostNanos = tokenCostNanos(write5m, out.CacheWriteRatePerM) + tokenCostNanos(u.CacheWrite1hTokens, write1hRate)
+	out.OutputCostNanos = tokenCostNanos(normalOutput, out.OutputRatePerM)
+	out.ReasoningCostNanos = tokenCostNanos(u.ReasoningTokens, out.ReasoningRatePerM)
+	if u.WebSearchRequests > 0 && p.WebSearchPerK > 0 {
+		// USD per 1,000 requests → nanodollars per request = perK × 1e6.
+		out.ToolCostNanos = int64(math.Round(float64(u.WebSearchRequests) * p.WebSearchPerK * 1e6))
+	}
+	retail := out.InputCostNanos + out.CachedCostNanos + out.CacheWriteCostNanos + out.OutputCostNanos + out.ReasoningCostNanos + out.ToolCostNanos
+	out.SavedCostNanos = tokenCostNanos(savedInputTokens, out.InputRatePerM)
+	if cacheHit {
+		out.AvoidedCostNanos = retail
+	} else {
+		out.CostNanos = retail
+		out.CostMicros = int64(math.Round(float64(retail) / 1000))
+	}
+	return out
 }
 
 // ReplacePrices atomically refreshes catalog/custom prices for subsequent
@@ -398,8 +572,9 @@ func (m *Meter) ReplacePrices(providerPrices, modelPrices map[string]Price) {
 	if modelPrices == nil {
 		modelPrices = map[string]Price{}
 	}
+	index := indexModelFingerprints(modelPrices)
 	m.pricingMu.Lock()
-	m.pricing, m.modelPrices = providerPrices, modelPrices
+	m.pricing, m.modelPrices, m.modelFingerprints = providerPrices, modelPrices, index
 	m.pricingMu.Unlock()
 }
 
@@ -421,6 +596,9 @@ func (m *Meter) BackfillUnpriced(ctx context.Context) (int, error) {
 	cursorTime := time.Time{}
 	cursorID := ""
 	asOf := time.Now().UTC()
+	// Rows for models without a price stay unpriced, so they are listed again on
+	// every pass and every restart. Resolve each provider/model once per pass.
+	unpriceable := map[string]bool{}
 	for {
 		rows, err := repo.ListUnpriced(ctx, cursorTime, cursorID, 1000)
 		if err != nil {
@@ -431,10 +609,19 @@ func (m *Meter) BackfillUnpriced(ctx context.Context) (int, error) {
 		}
 		for _, row := range rows {
 			cursorTime, cursorID = row.CreatedAt, row.ID
+			if err := ctx.Err(); err != nil {
+				return updated, err
+			}
+			modelKey := row.Provider + "\x00" + row.Model
+			if unpriceable[modelKey] {
+				continue
+			}
 			usage := core.Usage{PromptTokens: row.PromptTokens, CompletionTokens: row.CompletionTokens,
-				CachedTokens: row.CachedTokens, CacheWriteTokens: row.CacheWriteTokens, ReasoningTokens: row.ReasoningTokens}
+				CachedTokens: row.CachedTokens, CacheWriteTokens: row.CacheWriteTokens, ReasoningTokens: row.ReasoningTokens,
+				CacheWrite1hTokens: row.CacheWrite1hTokens, WebSearchRequests: row.WebSearchRequests}
 			cost := m.CalculateCost(row.Provider, row.Model, usage, row.CacheHit, row.SlimTokensSaved+row.HeadroomTokensSaved)
 			if cost.Pricing.Status == "missing" || cost.Pricing.Status == "none" {
+				unpriceable[modelKey] = true
 				continue
 			}
 			pricingStatus := cost.Pricing.Status
@@ -446,7 +633,7 @@ func (m *Meter) BackfillUnpriced(ctx context.Context) (int, error) {
 				InputCostNanos: cost.InputCostNanos, CachedCostNanos: cost.CachedCostNanos,
 				CacheWriteCostNanos: cost.CacheWriteCostNanos, OutputCostNanos: cost.OutputCostNanos,
 				ReasoningCostNanos: cost.ReasoningCostNanos, AvoidedCostNanos: cost.AvoidedCostNanos,
-				SavedCostNanos: cost.SavedCostNanos, PricingStatus: pricingStatus,
+				SavedCostNanos: cost.SavedCostNanos, ToolCostNanos: cost.ToolCostNanos, PricingStatus: pricingStatus,
 				PricingSource: cost.Pricing.Source, PricingKey: cost.Pricing.Key,
 				PricingMatchKind: cost.Pricing.MatchKind, PricingSourceURL: cost.Pricing.SourceURL,
 				PricingAsOf: &asOf, PricingBackfilled: true,

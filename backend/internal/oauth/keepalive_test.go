@@ -1,13 +1,18 @@
 package oauth
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/store"
 	"github.com/mydisha/keirouter/backend/internal/vault"
 )
@@ -78,5 +83,34 @@ func TestKeepAliveFailureDoesNotStopOtherAccounts(t *testing.T) {
 	refreshed, _, failed, _ := k.refreshAccounts(context.Background(), accounts)
 	if refreshed != 1 || failed != 1 || calls.Load() != 2 {
 		t.Fatalf("unexpected outcome: refreshed=%d failed=%d calls=%d", refreshed, failed, calls.Load())
+	}
+}
+
+func TestKeepAliveReportFailuresGroupsAndDedupes(t *testing.T) {
+	var buf bytes.Buffer
+	k := &KeepAlive{log: slog.New(slog.NewTextHandler(&buf, nil))}
+	undecryptable := fmt.Errorf("oauth: no refresh token for account a1: vault: open refresh token: unwrap dek: %w", crypto.ErrMalformedCiphertext)
+	fails := []refreshResult{
+		{acc: store.Account{ID: "a1", Provider: "kiro"}, err: undecryptable},
+		{acc: store.Account{ID: "a2", Provider: "qoder"}, err: fmt.Errorf("wrap: %w", crypto.ErrMalformedCiphertext)},
+		{acc: store.Account{ID: "a3", Provider: "kiro"}, err: errors.New("oauth: refresh failed for account a3: invalid_grant")},
+	}
+
+	k.reportFailures(fails)
+	out := buf.String()
+	if got := strings.Count(out, "level=WARN"); got != 2 {
+		t.Fatalf("want 2 grouped warnings, got %d:\n%s", got, out)
+	}
+	if !strings.Contains(out, "accounts=2") || !strings.Contains(out, "provider=kiro,qoder") {
+		t.Fatalf("decrypt failures not grouped:\n%s", out)
+	}
+	if strings.Contains(out, "a3: invalid_grant") || !strings.Contains(out, "account=a3") {
+		t.Fatalf("account id not stripped from cause:\n%s", out)
+	}
+
+	buf.Reset()
+	k.reportFailures(fails)
+	if !k.failedRepeated || buf.Len() != 0 {
+		t.Fatalf("identical failure set should be demoted below info, got:\n%s", buf.String())
 	}
 }

@@ -94,6 +94,9 @@ func TestResolveTargetsChainPrefix(t *testing.T) {
 	if res.PlanOpts.Strategy != dispatch.StrategyRoundRobin {
 		t.Fatalf("Strategy = %v, want round-robin", res.PlanOpts.Strategy)
 	}
+	if res.PlanOpts.PinnedTail != 1 {
+		t.Fatalf("PinnedTail = %d, want 1 so the fallback model is never rotated", res.PlanOpts.PinnedTail)
+	}
 }
 
 func TestResolveTargetsFallbackTargetCarriesChainPrice(t *testing.T) {
@@ -243,6 +246,9 @@ func TestResolveTargetsCostStrategyOrdersCheapestFirst(t *testing.T) {
 	// The explicit fallback model remains the last resort.
 	if res.Targets[2].Provider != "openai" || res.Targets[2].Model != "gpt-4o" {
 		t.Fatalf("last target = %+v, want fallback openai/gpt-4o", res.Targets[2])
+	}
+	if !res.PlanOpts.FixedOrder {
+		t.Fatal("cost-ordered chain must be marked FixedOrder so global round-robin keeps its order")
 	}
 }
 

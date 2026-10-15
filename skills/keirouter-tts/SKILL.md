@@ -1,6 +1,6 @@
 ---
 name: keirouter-tts
-description: Text-to-speech via KeiRouter /v1/audio/speech using OpenAI / ElevenLabs / Deepgram / Edge TTS / Google TTS / Inworld voices. Use when the user wants to convert text to speech, generate audio, voiceover, narrate, or read text aloud.
+description: Text-to-speech via KeiRouter /v1/audio/speech using OpenAI voices (or any OpenAI-compatible speech server added as a custom provider). Use when the user wants to convert text to speech, generate audio, voiceover, narrate, or read text aloud.
 ---
 
 # KeiRouter — Text-to-Speech
@@ -12,22 +12,21 @@ Requires `KEIROUTER_URL` (and `KEIROUTER_KEY` if auth enabled). See https://raw.
 ```bash
 # 1) List models
 curl $KEIROUTER_URL/v1/models/tts | jq '.data[].id'
-# 2) Per-model metadata (params, voicesUrl if voice-by-id)
-curl "$KEIROUTER_URL/v1/models/info?id=el/eleven_multilingual_v2"
+# 2) Per-model metadata
+curl "$KEIROUTER_URL/v1/models/info?id=openai/tts-1"
 ```
-
-`model` field in `/v1/audio/speech` = voice ID directly (e.g. `edge-tts/vi-VN-HoaiMyNeural`, `el/<voice_id>`, or `openai/tts-1` model+default voice).
 
 ## Endpoint
 
-`POST $KEIROUTER_URL/v1/audio/speech`
+`POST $KEIROUTER_URL/v1/audio/speech` (OpenAI-compatible)
 
 | Field | Required | Notes |
 |---|---|---|
-| `model` | yes | voice ID from `/v1/models/tts` |
+| `model` | yes | `provider/model` from `/v1/models/tts`, e.g. `openai/gpt-4o-mini-tts` |
 | `input` | yes | text to speak |
-
-Query `?response_format=mp3` (default, raw bytes) or `?response_format=json` (`{audio: base64, format}`).
+| `voice` | no | voice name, e.g. `alloy`, `nova`, `verse` (default `alloy`) |
+| `response_format` | no | audio format passed to the provider: `mp3` (default), `opus`, `aac`, `flac`, `wav`, `pcm` |
+| `speed` | no | 0.25–4.0 |
 
 ## Examples
 
@@ -37,7 +36,7 @@ Save MP3:
 curl -X POST "$KEIROUTER_URL/v1/audio/speech" \
   -H "Authorization: Bearer $KEIROUTER_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"openai/tts-1","input":"Hello world"}' \
+  -d '{"model":"openai/gpt-4o-mini-tts","voice":"alloy","input":"Hello world"}' \
   --output speech.mp3
 ```
 
@@ -48,26 +47,20 @@ import { writeFile } from "node:fs/promises";
 const r = await fetch(`${process.env.KEIROUTER_URL}/v1/audio/speech`, {
   method: "POST",
   headers: { "Authorization": `Bearer ${process.env.KEIROUTER_KEY}`, "Content-Type": "application/json" },
-  body: JSON.stringify({ model: "el/eleven_multilingual_v2", input: "Hello world" }),
+  body: JSON.stringify({ model: "openai/tts-1", voice: "nova", input: "Hello world" }),
 });
 await writeFile("speech.mp3", Buffer.from(await r.arrayBuffer()));
 ```
 
 ## Response shape
 
-Default → raw audio bytes (Content-Type `audio/mp3`).
-
-`?response_format=json`:
-```json
-{ "audio": "SUQzBAAAA...", "format": "mp3" }
-```
+Raw audio bytes. `Content-Type` is whatever the provider returned (e.g. `audio/mpeg`), and `X-KeiRouter-Provider` names the provider that served it.
 
 ## Provider quick reference
 
-| Provider | `model` format | Notes |
+| Provider | `model` | Notes |
 |---|---|---|
-| OpenAI | `tts-1/alloy` (model/voice) or just voice | Default model `gpt-4o-mini-tts` |
-| ElevenLabs | `<model_id>/<voice_id>` or `<voice_id>` | Default model `eleven_flash_v2_5` |
-| Edge TTS | voice id e.g. `vi-VN-HoaiMyNeural` | **noAuth**; free |
-| Deepgram | `aura-asteria-en` etc | Token auth |
-| Inworld | `model/voice` | Provider-specific auth |
+| OpenAI | `openai/tts-1`, `openai/tts-1-hd`, `openai/gpt-4o-mini-tts` | Native OpenAI shape |
+| Custom provider | `<provider>/<model>` | Any server that speaks OpenAI `/audio/speech` |
+
+ElevenLabs, Deepgram, Edge TTS, Google TTS and Inworld are listed in the dashboard as coming soon: KeiRouter has no adapter for their APIs yet.

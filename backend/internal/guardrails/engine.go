@@ -77,6 +77,23 @@ type Result struct {
 	Action    Action
 	Reason    string
 	Decisions []Decision
+	// Text is the inspected text after every mask was applied. It is set by
+	// OutboundChunk, where the caller forwards the rewritten text itself.
+	Text string
+}
+
+func (r *Result) add(dec Decision) {
+	r.Decisions = append(r.Decisions, dec)
+	if rank(dec.Action) > rank(r.Action) {
+		r.Action = dec.Action
+		r.Reason = dec.Reason
+	}
+}
+
+// policyFor resolves the effective policy for a live request.
+func (e *Engine) policyFor(ctx context.Context, req *core.ChatRequest) Policy {
+	policy := e.resolver.Effective(ctx, e.keyFor(req))
+	return e.applyTenantOverrides(ctx, req.Metadata.TenantID, policy)
 }
 
 // Inbound runs all detectors against the incoming request. If any detector
@@ -84,22 +101,22 @@ type Result struct {
 // (further detectors don't run; the request will be refused). Masking
 // detectors rewrite the request fields in place.
 func (e *Engine) Inbound(ctx context.Context, req *core.ChatRequest) Result {
-	if e == nil || req == nil {
+	if e == nil || req == nil || bypassed(ctx) {
 		return Result{Action: ActionAllow}
 	}
-	policy := e.resolver.Effective(ctx, e.keyFor(req))
-	policy = e.applyTenantOverrides(ctx, req.Metadata.TenantID, policy)
+	policy := e.policyFor(ctx, req)
 	if !policy.IsActive() {
 		return Result{Action: ActionAllow}
 	}
 
+	attachOutcome(req)
 	in := &InboundRequest{Source: req, FlatText: flattenRequest(req)}
 	final := Result{Action: ActionAllow}
 
 	for _, d := range e.detectors {
 		start := time.Now()
 		dec, err := d.Inbound(ctx, in, policy)
-		e.recordLatency(d.Name(), start)
+		e.recordLatency(req, d.Name(), start)
 		if err != nil {
 			e.log.Warn("guardrail detector error (inbound)", "detector", d.Name(), "err", err)
 			continue
@@ -110,19 +127,15 @@ func (e *Engine) Inbound(ctx context.Context, req *core.ChatRequest) Result {
 		}
 		dec.Detector = d.Name()
 		dec.Direction = DirectionInbound
-		e.recordDecision(d.Name(), dec.Action)
-		e.logDecision(req, dec)
+		e.report(req, dec)
+		final.add(*dec)
 
-		final.Decisions = append(final.Decisions, *dec)
-		if rank(dec.Action) > rank(final.Action) {
-			final.Action = dec.Action
-			final.Reason = dec.Reason
-		}
-
-		if dec.Action == ActionMask && dec.Mutated != "" {
-			applyMutation(req, dec)
-			// Rebuild FlatText so the next detector sees the rewritten content.
-			in.FlatText = flattenRequest(req)
+		if dec.Action == ActionMask {
+			if dec.MutatedField != MutatedFieldInPlace && dec.Mutated != "" {
+				applyMutation(req, dec)
+			}
+			// Later detectors must see the rewritten content.
+			in.Refresh()
 		}
 		if dec.Action == ActionBlock {
 			return final
@@ -132,107 +145,135 @@ func (e *Engine) Inbound(ctx context.Context, req *core.ChatRequest) Result {
 }
 
 // Outbound runs detectors against a finalized (non-streaming) response.
-// Streaming output is audited per-chunk via OutboundChunk plus a final pass
-// at stream completion.
+// Streaming output goes through a StreamGuard instead.
 func (e *Engine) Outbound(ctx context.Context, req *core.ChatRequest, resp *core.ChatResponse) Result {
-	if e == nil || req == nil || resp == nil {
+	if e == nil || req == nil || resp == nil || bypassed(ctx) {
 		return Result{Action: ActionAllow}
 	}
-	policy := e.resolver.Effective(ctx, e.keyFor(req))
-	policy = e.applyTenantOverrides(ctx, req.Metadata.TenantID, policy)
+	policy := e.policyFor(ctx, req)
 	if !policy.IsActive() {
 		return Result{Action: ActionAllow}
 	}
-	out := &OutboundResponse{Source: resp, Text: flattenResponse(resp), Streaming: false}
+	attachOutcome(req)
+	out := &OutboundResponse{Source: resp, Request: req, Text: flattenResponse(resp), Streaming: false}
+	res := e.evalOutbound(ctx, policy, out, true)
+	for i := range res.Decisions {
+		e.report(req, &res.Decisions[i])
+	}
+	return res
+}
+
+// OutboundChunk runs the outbound detectors against a piece of streamed text.
+// Result.Text carries the text with every mask applied; on Block the caller
+// must stop the stream. Prefer NewStreamGuard, which also handles matches that
+// straddle chunk boundaries.
+func (e *Engine) OutboundChunk(ctx context.Context, req *core.ChatRequest, text string) Result {
+	if e == nil || req == nil || text == "" || bypassed(ctx) {
+		return Result{Action: ActionAllow, Text: text}
+	}
+	policy := e.policyFor(ctx, req)
+	if !policy.IsActive() {
+		return Result{Action: ActionAllow, Text: text}
+	}
+	attachOutcome(req)
+	res := e.evalOutbound(ctx, policy, &OutboundResponse{Request: req, Text: text, Streaming: true}, false)
+	for i := range res.Decisions {
+		e.report(req, &res.Decisions[i])
+	}
+	return res
+}
+
+// OutboundText evaluates text as a model response, skipping the detectors
+// listed in skip. Only the kept decisions are audited. The dashboard's test
+// panel uses it to exercise output-only detectors on a sample prompt.
+func (e *Engine) OutboundText(ctx context.Context, req *core.ChatRequest, text string, skip map[string]bool) Result {
+	if e == nil || req == nil || text == "" || bypassed(ctx) {
+		return Result{Action: ActionAllow, Text: text}
+	}
+	policy := e.policyFor(ctx, req)
+	if !policy.IsActive() {
+		return Result{Action: ActionAllow, Text: text}
+	}
+	attachOutcome(req)
+	all := e.evalOutbound(ctx, policy, &OutboundResponse{Request: req, Text: text, Streaming: true}, false)
+	res := Result{Action: ActionAllow, Text: all.Text}
+	for _, d := range all.Decisions {
+		if skip[d.Detector] {
+			continue
+		}
+		e.report(req, &d)
+		res.add(d)
+	}
+	return res
+}
+
+// evalOutbound runs every detector's Outbound pass without writing audit
+// rows. Masks are chained so each detector sees the previous rewrite.
+func (e *Engine) evalOutbound(ctx context.Context, policy Policy, out *OutboundResponse, countAllow bool) Result {
 	final := Result{Action: ActionAllow}
 	for _, d := range e.detectors {
 		start := time.Now()
 		dec, err := d.Outbound(ctx, out, policy)
-		e.recordLatency(d.Name(), start)
+		e.recordLatency(out.Request, d.Name(), start)
 		if err != nil {
 			e.log.Warn("guardrail detector error (outbound)", "detector", d.Name(), "err", err)
 			continue
 		}
 		if dec == nil || dec.Action == "" || dec.Action == ActionAllow {
-			e.recordDecision(d.Name(), ActionAllow)
+			if countAllow {
+				e.recordDecision(d.Name(), ActionAllow)
+			}
 			continue
 		}
 		dec.Detector = d.Name()
 		dec.Direction = DirectionOutbound
-		e.recordDecision(d.Name(), dec.Action)
-		e.logDecision(req, dec)
-
-		final.Decisions = append(final.Decisions, *dec)
-		if rank(dec.Action) > rank(final.Action) {
-			final.Action = dec.Action
-			final.Reason = dec.Reason
-		}
-		if dec.Action == ActionMask && dec.Mutated != "" {
-			applyResponseMutation(resp, dec)
+		final.add(*dec)
+		if dec.Action == ActionMask {
+			switch {
+			case dec.MutatedField == MutatedFieldInPlace && out.Source != nil:
+				out.Text = flattenResponse(out.Source)
+			case dec.Mutated != "":
+				if out.Source != nil {
+					applyResponseMutation(out.Source, dec)
+				}
+				out.Text = dec.Mutated
+			}
 		}
 		if dec.Action == ActionBlock {
-			return final
+			break
 		}
 	}
+	final.Text = out.Text
 	return final
 }
 
-// OutboundChunk runs detectors against a partial response buffer accumulated
-// during streaming. The caller drives a sliding window: every N characters it
-// passes the window text and, if the result's Action is Mask, swaps in the
-// rewritten substring before forwarding the chunk to the client; if Block, it
-// cancels the stream.
-//
-// Detectors that only make sense on a complete response (bias scoring across
-// long-form text) return nil here and act on the final pass via Outbound at
-// stream end.
-func (e *Engine) OutboundChunk(ctx context.Context, req *core.ChatRequest, text string) Result {
-	if e == nil || req == nil || text == "" {
-		return Result{Action: ActionAllow}
-	}
-	policy := e.resolver.Effective(ctx, e.keyFor(req))
-	policy = e.applyTenantOverrides(ctx, req.Metadata.TenantID, policy)
-	if !policy.IsActive() {
-		return Result{Action: ActionAllow}
-	}
-	// Synthesize a minimal ChatResponse-shaped view so existing Outbound
-	// detectors can be reused without a separate per-chunk surface. The Source
-	// pointer is nil — detectors that touch Source must guard for the
-	// Streaming flag.
-	out := &OutboundResponse{Source: nil, Text: text, Streaming: true}
-	final := Result{Action: ActionAllow}
-	for _, d := range e.detectors {
-		start := time.Now()
-		dec, err := d.Outbound(ctx, out, policy)
-		e.recordLatency(d.Name(), start)
-		if err != nil {
-			e.log.Warn("guardrail detector error (outbound-chunk)", "detector", d.Name(), "err", err)
-			continue
-		}
-		if dec == nil || dec.Action == "" || dec.Action == ActionAllow {
-			continue
-		}
-		dec.Detector = d.Name()
-		dec.Direction = DirectionOutbound
-		e.recordDecision(d.Name(), dec.Action)
-		e.logDecision(req, dec)
-		final.Decisions = append(final.Decisions, *dec)
-		if rank(dec.Action) > rank(final.Action) {
-			final.Action = dec.Action
-			final.Reason = dec.Reason
-		}
-		if dec.Action == ActionBlock {
-			return final
-		}
-	}
-	return final
+// report records metrics, folds the decision into the request's outcome, and
+// writes the audit row for one decision.
+func (e *Engine) report(req *core.ChatRequest, dec *Decision) {
+	e.recordDecision(dec.Detector, dec.Action)
+	req.Metadata.Guardrail.Note(string(dec.Action), rank(dec.Action), dec.Detector, string(dec.Direction))
+	e.logDecision(req, dec)
 }
 
-func (e *Engine) recordLatency(name string, start time.Time) {
+// recordLatency charges one detector evaluation to the metrics and to the
+// request's guardrail overhead.
+func (e *Engine) recordLatency(req *core.ChatRequest, name string, start time.Time) {
+	elapsed := time.Since(start)
+	if req != nil {
+		req.Metadata.Guardrail.AddElapsed(elapsed)
+	}
 	if e.metrics == nil {
 		return
 	}
-	e.metrics.RecordGuardrailLatency(name, time.Since(start).Seconds())
+	e.metrics.RecordGuardrailLatency(name, elapsed.Seconds())
+}
+
+// attachOutcome gives req a GuardrailOutcome once a policy applies to it, so
+// its usage row records that guardrails ran even when nothing fired.
+func attachOutcome(req *core.ChatRequest) {
+	if req.Metadata.Guardrail == nil {
+		req.Metadata.Guardrail = &core.GuardrailOutcome{}
+	}
 }
 
 func (e *Engine) recordDecision(name string, action Action) {
@@ -247,8 +288,9 @@ func (e *Engine) recordDecision(name string, action Action) {
 
 // applyTenantOverrides enforces tenant-wide flags before the policy reaches
 // detectors. Currently it implements the GDPR allow_external_engines switch:
-// when off, every engine selector is reset to its native default so no data
-// leaves the KeiRouter process.
+// when off, every engine selector is reset to its native default and the
+// embedding / LLM judge layers are switched off, so no prompt text is sent to
+// another service for classification.
 func (e *Engine) applyTenantOverrides(ctx context.Context, tenantID string, p Policy) Policy {
 	if e == nil || e.tenant == nil {
 		return p
@@ -270,6 +312,13 @@ func (e *Engine) applyTenantOverrides(ctx context.Context, tenantID string, p Po
 		clone := *p.Topics
 		clone.Engine = "keyword"
 		p.Topics = &clone
+	}
+	// Embedding and judge layers send prompt text to another service.
+	if p.Injection != nil && (p.Injection.Semantic || (p.Injection.Judge != "" && p.Injection.Judge != JudgeOff)) {
+		clone := *p.Injection
+		clone.Semantic = false
+		clone.Judge = JudgeOff
+		p.Injection = &clone
 	}
 	return p
 }
@@ -380,15 +429,10 @@ func flattenResponse(resp *core.ChatResponse) string {
 	return responseText(resp)
 }
 
-// applyMutation writes a detector's masked text back to the request. We
-// rewrite the *user-authored* surfaces (system + message contents); the
-// detector's Mutated field carries the full post-flatten text and we re-split
-// it across the original message boundaries.
-//
-// For simplicity in Phase 1, we replace the LAST user message's text content
-// when the detector mutates inbound text. This covers the dominant case of
-// chat completions where the latest user turn is the freshly-typed prompt
-// — detectors that need finer-grained rewriting can extend MutatedField.
+// applyMutation writes a detector's single-field rewrite back to the request:
+// the system prompt for MutatedFieldSystem, otherwise the most recent user
+// message. Detectors that rewrite several fields do it themselves and report
+// MutatedFieldInPlace.
 func applyMutation(req *core.ChatRequest, dec *Decision) {
 	if dec == nil || req == nil {
 		return

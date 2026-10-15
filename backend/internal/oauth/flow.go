@@ -16,7 +16,8 @@ import (
 )
 
 // httpClient is shared across OAuth calls; per-request deadlines come from ctx.
-var httpClient = &http.Client{Timeout: 30 * time.Second}
+// Its transport applies the account or global outbound proxy (see proxy.go).
+var httpClient = &http.Client{Timeout: 30 * time.Second, Transport: newProxyTransport()}
 
 // AuthURL builds the provider authorize URL for an authorization-code(+PKCE)
 // flow. challenge is empty for non-PKCE flows.

@@ -9,6 +9,7 @@ import (
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
 
 	"github.com/mydisha/keirouter/backend/internal/core"
+	"github.com/mydisha/keirouter/backend/internal/errclass"
 )
 
 // Gemini streams partial generateContent responses: each SSE data line is a
@@ -20,16 +21,11 @@ import (
 // gemStreamChunk is one SSE "data:" payload from streamGenerateContent.
 type gemStreamChunk struct {
 	Candidates []struct {
-		Content      gemContent `json:"content"`
-		FinishReason string     `json:"finishReason"`
+		Content           gemContent      `json:"content"`
+		FinishReason      string          `json:"finishReason"`
+		GroundingMetadata json.RawMessage `json:"groundingMetadata"`
 	} `json:"candidates"`
-	UsageMetadata *struct {
-		PromptTokenCount        int `json:"promptTokenCount"`
-		CandidatesTokenCount    int `json:"candidatesTokenCount"`
-		ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
-		TotalTokenCount         int `json:"totalTokenCount"`
-		CachedContentTokenCount int `json:"cachedContentTokenCount"`
-	} `json:"usageMetadata"`
+	UsageMetadata *gemUsageMetadata `json:"usageMetadata"`
 }
 
 // ParseStreamLine converts one Gemini SSE data payload into canonical chunks.
@@ -39,8 +35,14 @@ func (GeminiCodec) ParseStreamLine(line []byte, _ string) ([]core.StreamChunk, e
 		return nil, nil
 	}
 
+	// {"error":{"code":429,"status":"RESOURCE_EXHAUSTED",...}} may arrive
+	// as a stream frame; classify it instead of treating it as empty output.
+	if pe, ok := errclass.StreamErrorFrame(line); ok {
+		return []core.StreamChunk{{Type: core.ChunkError, Err: pe}}, nil
+	}
+
 	var raw gemStreamChunk
-	if err := json.Unmarshal(line, &raw); err != nil {
+	if err := json.UnmarshalNoCopy(line, &raw); err != nil {
 		return nil, fmt.Errorf("gemini: parse stream chunk: %w", err)
 	}
 
@@ -76,23 +78,67 @@ func (GeminiCodec) ParseStreamLine(line []byte, _ string) ([]core.StreamChunk, e
 	}
 
 	if raw.UsageMetadata != nil {
-		completionTokens := raw.UsageMetadata.CandidatesTokenCount + raw.UsageMetadata.ThoughtsTokenCount
-		if completionTokens == 0 && raw.UsageMetadata.TotalTokenCount > raw.UsageMetadata.PromptTokenCount {
-			completionTokens = raw.UsageMetadata.TotalTokenCount - raw.UsageMetadata.PromptTokenCount
+		var grounding json.RawMessage
+		if len(raw.Candidates) > 0 {
+			grounding = raw.Candidates[0].GroundingMetadata
 		}
-		chunks = append(chunks, core.StreamChunk{
-			Type: core.ChunkUsage,
-			Usage: &core.Usage{
-				PromptTokens:     raw.UsageMetadata.PromptTokenCount,
-				CompletionTokens: completionTokens,
-				TotalTokens:      raw.UsageMetadata.TotalTokenCount,
-				CachedTokens:     raw.UsageMetadata.CachedContentTokenCount,
-				ReasoningTokens:  raw.UsageMetadata.ThoughtsTokenCount,
-				Source:           core.UsageSourceProvider,
-			},
-		})
+		u := gemUsageToCore(*raw.UsageMetadata, grounding)
+		chunks = append(chunks, core.StreamChunk{Type: core.ChunkUsage, Usage: &u})
 	}
 	return chunks, nil
+}
+
+// Typed wire shapes for streamed GenerateContentResponse fragments.
+type gemStreamOut struct {
+	Candidates    []gemCandidateOut `json:"candidates"`
+	UsageMetadata *gemUsageOut      `json:"usageMetadata,omitempty"`
+}
+
+type gemCandidateOut struct {
+	Content      *gemContentOut `json:"content,omitempty"`
+	FinishReason string         `json:"finishReason,omitempty"`
+	Index        int            `json:"index"`
+}
+
+type gemContentOut struct {
+	Role  string       `json:"role"`
+	Parts []gemPartOut `json:"parts"`
+}
+
+type gemPartOut struct {
+	Text             *string          `json:"text,omitempty"`
+	Thought          bool             `json:"thought,omitempty"`
+	ThoughtSignature string           `json:"thoughtSignature,omitempty"`
+	FunctionCall     *gemFunctionCall `json:"functionCall,omitempty"`
+}
+
+type gemUsageOut struct {
+	PromptTokenCount        int `json:"promptTokenCount"`
+	CandidatesTokenCount    int `json:"candidatesTokenCount"`
+	TotalTokenCount         int `json:"totalTokenCount"`
+	ThoughtsTokenCount      int `json:"thoughtsTokenCount,omitempty"`
+	CachedContentTokenCount int `json:"cachedContentTokenCount,omitempty"`
+}
+
+func gemUsageFromCore(u core.Usage) *gemUsageOut {
+	candidates := u.CompletionTokens - u.ReasoningTokens
+	if candidates < 0 {
+		candidates = u.CompletionTokens
+	}
+	return &gemUsageOut{
+		PromptTokenCount:        u.PromptTokens,
+		CandidatesTokenCount:    candidates,
+		TotalTokenCount:         u.TotalTokens,
+		ThoughtsTokenCount:      u.ReasoningTokens,
+		CachedContentTokenCount: u.CachedTokens,
+	}
+}
+
+func gemModelPart(part gemPartOut) []byte {
+	return sseData(&gemStreamOut{Candidates: []gemCandidateOut{{
+		Content: &gemContentOut{Role: "model", Parts: []gemPartOut{part}},
+		Index:   0,
+	}}})
 }
 
 // RenderStreamChunk encodes a canonical chunk as a Gemini SSE event. Gemini
@@ -101,26 +147,10 @@ func (GeminiCodec) ParseStreamLine(line []byte, _ string) ([]core.StreamChunk, e
 func (GeminiCodec) RenderStreamChunk(chunk core.StreamChunk, _ *StreamState) ([][]byte, error) {
 	switch chunk.Type {
 	case core.ChunkThinking:
-		return [][]byte{gemEvent(map[string]any{
-			"candidates": []map[string]any{{
-				"content": map[string]any{
-					"role":  "model",
-					"parts": []map[string]any{{"text": chunk.Delta, "thought": true}},
-				},
-				"index": 0,
-			}},
-		})}, nil
+		return [][]byte{gemModelPart(gemPartOut{Text: &chunk.Delta, Thought: true})}, nil
 
 	case core.ChunkText:
-		return [][]byte{gemEvent(map[string]any{
-			"candidates": []map[string]any{{
-				"content": map[string]any{
-					"role":  "model",
-					"parts": []map[string]any{{"text": chunk.Delta}},
-				},
-				"index": 0,
-			}},
-		})}, nil
+		return [][]byte{gemModelPart(gemPartOut{Text: &chunk.Delta})}, nil
 
 	case core.ChunkToolCall:
 		if chunk.ToolCall == nil {
@@ -143,47 +173,32 @@ func (GeminiCodec) RenderStreamChunk(chunk core.StreamChunk, _ *StreamState) ([]
 		}
 
 		idToSend := idStr
+		if _, synthetic := stripGeminiSyntheticID(idStr); synthetic {
+			idToSend = ""
+		}
 		if idToSend == chunk.ToolCall.Name || idToSend == strings.ReplaceAll(chunk.ToolCall.Name, ":", "_") {
 			idToSend = ""
 		}
 
-		return [][]byte{gemEvent(map[string]any{
-			"candidates": []map[string]any{{
-				"content": map[string]any{
-					"role": "model",
-					"parts": []map[string]any{{
-						"thoughtSignature": thoughtSig,
-						"functionCall": gemFunctionCall{
-							ID:   idToSend,
-							Name: chunk.ToolCall.Name,
-							Args: args,
-						},
-					}},
-				},
-				"index": 0,
-			}},
+		return [][]byte{gemModelPart(gemPartOut{
+			ThoughtSignature: thoughtSig,
+			FunctionCall:     &gemFunctionCall{ID: idToSend, Name: chunk.ToolCall.Name, Args: args},
 		})}, nil
 
 	case core.ChunkFinish:
-		return [][]byte{gemEvent(map[string]any{
-			"candidates": []map[string]any{{
-				"content":      map[string]any{"role": "model", "parts": []any{}},
-				"finishReason": renderGemFinish(chunk.FinishReason),
-				"index":        0,
-			}},
-		})}, nil
+		return [][]byte{sseData(&gemStreamOut{Candidates: []gemCandidateOut{{
+			Content:      &gemContentOut{Role: "model", Parts: []gemPartOut{}},
+			FinishReason: renderGemFinish(chunk.FinishReason),
+			Index:        0,
+		}}})}, nil
 
 	case core.ChunkUsage:
 		if chunk.Usage == nil {
 			return nil, nil
 		}
-		return [][]byte{gemEvent(map[string]any{
-			"candidates": []any{},
-			"usageMetadata": map[string]int{
-				"promptTokenCount":     chunk.Usage.PromptTokens,
-				"candidatesTokenCount": chunk.Usage.CompletionTokens,
-				"totalTokenCount":      chunk.Usage.TotalTokens,
-			},
+		return [][]byte{sseData(&gemStreamOut{
+			Candidates:    []gemCandidateOut{},
+			UsageMetadata: gemUsageFromCore(*chunk.Usage),
 		})}, nil
 
 	default:
@@ -191,12 +206,5 @@ func (GeminiCodec) RenderStreamChunk(chunk core.StreamChunk, _ *StreamState) ([]
 	}
 }
 
-// RenderStreamDone has no terminal sentinel for Gemini SSE; the connection
-// simply closes after the final fragment.
+// RenderStreamDone: Gemini streams have no terminal sentinel.
 func (GeminiCodec) RenderStreamDone(_ *StreamState) [][]byte { return nil }
-
-// gemEvent formats a Gemini SSE event: "data: <json>\n\n".
-func gemEvent(payload map[string]any) []byte {
-	b, _ := json.Marshal(payload)
-	return append([]byte("data: "), append(b, '\n', '\n')...)
-}

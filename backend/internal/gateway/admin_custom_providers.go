@@ -72,7 +72,8 @@ func resolveCustomAlias(rawAlias, name, ownID string) (string, error) {
 		return "", fmt.Errorf("alias must be 32 characters or fewer")
 	}
 	if alias != ownID {
-		if _, ok := connectors.SpecByAlias(alias); ok {
+		// Re-submitting a provider's own alias is not a collision.
+		if spec, ok := connectors.SpecByAlias(alias); ok && spec.ID != ownID {
 			return "", fmt.Errorf("alias already in use: %s", alias)
 		}
 	}
@@ -539,6 +540,7 @@ func (s *Server) adminImportModels(w http.ResponseWriter, r *http.Request) {
 
 	// Collect credentials from the first enabled account, if any.
 	var creds core.Credentials
+	egress := r.Context()
 	if s.accounts != nil && s.vault != nil {
 		accs, err := s.accounts.ListByProvider(r.Context(), adminTenant, providerID)
 		if err == nil {
@@ -548,13 +550,14 @@ func (s *Server) adminImportModels(w http.ResponseWriter, r *http.Request) {
 				}
 				if c, oerr := s.vault.Open(acc); oerr == nil {
 					creds = c
+					egress = s.accountEgressContext(r.Context(), acc)
 					break
 				}
 			}
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(egress, 15*time.Second)
 	defer cancel()
 	discovered, err := src.ListModels(ctx, creds)
 	if err != nil {

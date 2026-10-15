@@ -60,7 +60,7 @@ When the user needs a specific capability, fetch that skill's `SKILL.md` from it
 | OpenAI | `openai` | `openai` | GPT-5, GPT-4o, DALL-E, Whisper, TTS |
 | Anthropic | `anthropic` | `anthropic` | Claude Opus, Sonnet, Haiku |
 | Claude Code | `claude` | `cc` | Claude via Claude Code subscription |
-| Google Gemini | `gemini` | `gemini` | Gemini 2.5, Imagen |
+| Google Gemini | `gemini` | `gemini` | Gemini 2.5 (chat and vision) |
 | Groq | `groq` | `groq` | Fast inference, Whisper |
 | DeepSeek | `deepseek` | `ds` | DeepSeek V3, Coder |
 | OpenRouter | `openrouter` | `openrouter` | 100+ models via single key |

@@ -24,9 +24,16 @@ export interface PaletteDefinition {
 /** All available palettes. Order matches the picker grid. */
 export const PALETTES: PaletteDefinition[] = [
   {
+    id: "kei",
+    name: "KeiRouter",
+    description: "Precise, neutral — signal blue with the logo's orange. The default identity.",
+    accent: "#0a72ef",
+    secondary: "#ec6a2c",
+  },
+  {
     id: "sage-terra",
     name: "Sage & Terra",
-    description: "Warm, earthy, grounded — the default KeiRouter identity.",
+    description: "Warm, earthy, grounded — the original KeiRouter palette.",
     accent: "#6a7450",
     secondary: "#c3603a",
   },

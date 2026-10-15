@@ -1,14 +1,13 @@
 // Package bias is KeiRouter's bias detector. It runs outbound (on the model
-// response) using a bilingual lexicon of bias-laden phrases per category
-// (political, gender, ethnic, religious). Each category accumulates a score
-// based on how many phrases hit, normalized to 0–100 so it lines up with
-// the dashboard threshold slider.
+// response) and looks for stereotyping language per category (political,
+// gender, ethnic, religious) in English and Indonesian: quantified
+// generalizations ("all X are", "semua orang X pasti"), essentialist claims
+// ("X are naturally …"), and category-specific tropes. Each category is
+// scored 0–100 so it lines up with the dashboard threshold.
 //
-// Bias detection is the hardest detector to define — language patterns vary
-// wildly across communities and contexts. This implementation is marked as
-// "experimental" in the dashboard: it favors precision (avoid yelling at
-// neutral text) over recall, and is best used with action=log_only or warn
-// while the user tunes their threshold.
+// Bias detection is the hardest detector to define, so it is marked
+// experimental in the dashboard and defaults to log_only: it favors
+// precision (neutral text about groups does not fire) over recall.
 package bias
 
 import (
@@ -21,12 +20,22 @@ import (
 
 // Detector implements guardrails.Detector for bias.
 type Detector struct {
-	lex *lexicon
+	categories []category
+}
+
+type category struct {
+	name string
+	lex  *guardrails.Lexicon
 }
 
 // New builds the bias detector.
 func New() *Detector {
-	return &Detector{lex: defaultLexicon()}
+	return &Detector{categories: []category{
+		{"political", guardrails.CompileLexicon(politicalTerms)},
+		{"gender", guardrails.CompileLexicon(genderTerms)},
+		{"ethnic", guardrails.CompileLexicon(ethnicTerms)},
+		{"religious", guardrails.CompileLexicon(religiousTerms)},
+	}}
 }
 
 // Name identifies this detector in policy config and audit logs.
@@ -49,12 +58,11 @@ func (d *Detector) Outbound(_ context.Context, out *guardrails.OutboundResponse,
 	allowed := allowedCategories(cfg.Categories)
 	threshold := cfg.Threshold
 	if threshold <= 0 {
-		threshold = 60
+		threshold = guardrails.DefaultBiasThreshold
 	}
 
-	scores := d.score(strings.ToLower(out.Text), allowed)
-	hits := scores[:0]
-	for _, s := range scores {
+	var hits []categoryScore
+	for _, s := range d.score(out.Text, allowed) {
 		if s.Score >= threshold {
 			hits = append(hits, s)
 		}
@@ -66,7 +74,7 @@ func (d *Detector) Outbound(_ context.Context, out *guardrails.OutboundResponse,
 
 	action := cfg.Action
 	if action == "" {
-		action = guardrails.ActionWarn
+		action = guardrails.DefaultBiasAction
 	}
 	return &guardrails.Decision{
 		Action:   action,
@@ -80,25 +88,43 @@ func (d *Detector) Outbound(_ context.Context, out *guardrails.OutboundResponse,
 type categoryScore struct {
 	Category string
 	Score    int
+	Hits     []hit
 }
 
-// score evaluates each (allowed) category by counting lexicon hits and
-// normalizing to 0–100 using the category's saturation cap.
-func (d *Detector) score(lowerText string, allowed map[string]bool) []categoryScore {
-	out := make([]categoryScore, 0, len(d.lex.categories))
-	for name, cat := range d.lex.categories {
-		if allowed != nil && !allowed[name] {
+type hit struct {
+	weight     int
+	start, end int
+	text       string
+}
+
+// score evaluates each allowed category: the strongest hit plus 10 per
+// additional distinct phrase, capped at 100.
+func (d *Detector) score(text string, allowed map[string]bool) []categoryScore {
+	view := guardrails.Fold(text, guardrails.FoldOptions{Lower: true, Words: true})
+	toks := guardrails.LexTokens(view.Text)
+	out := make([]categoryScore, 0, len(d.categories))
+	for _, c := range d.categories {
+		if allowed != nil && !allowed[c.name] {
 			continue
 		}
-		hits := cat.Pattern.FindAllStringIndex(lowerText, -1)
-		if len(hits) == 0 {
+		matches := c.lex.FindAllTokens(toks)
+		if len(matches) == 0 {
 			continue
 		}
-		score := (len(hits) * 100) / cat.Cap
-		if score > 100 {
-			score = 100
+		best := 0
+		distinct := map[string]bool{}
+		cs := categoryScore{Category: c.name}
+		for _, m := range matches {
+			s, e := view.Span(m.Start, m.End)
+			if s < 0 {
+				continue
+			}
+			best = max(best, m.Term.Weight)
+			distinct[view.Text[m.Start:m.End]] = true
+			cs.Hits = append(cs.Hits, hit{weight: m.Term.Weight, start: s, end: e, text: text[s:e]})
 		}
-		out = append(out, categoryScore{Category: name, Score: score})
+		cs.Score = min(best+10*min(len(distinct)-1, 2), 100)
+		out = append(out, cs)
 	}
 	return out
 }
@@ -139,15 +165,23 @@ func reasonFor(hits []categoryScore) string {
 	return "bias: " + strings.Join(parts, ", ")
 }
 
+const maxFindings = 20
+
 func toFindings(hits []categoryScore) []guardrails.Finding {
 	out := make([]guardrails.Finding, 0, len(hits))
 	for _, h := range hits {
-		out = append(out, guardrails.Finding{
-			Entity: "BIAS:" + h.Category,
-			Score:  float64(h.Score) / 100.0,
-			Start:  -1,
-			End:    -1,
-		})
+		for _, m := range h.Hits {
+			if len(out) >= maxFindings {
+				return out
+			}
+			out = append(out, guardrails.Finding{
+				Entity:   "BIAS:" + h.Category,
+				Score:    float64(m.weight) / 100.0,
+				Start:    m.start,
+				End:      m.end,
+				Original: m.text,
+			})
+		}
 	}
 	return out
 }

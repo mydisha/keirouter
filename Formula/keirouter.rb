@@ -1,6 +1,6 @@
 # Auto-updated by release.yml on tag v0.1.29. Do not edit manually.
 class Keirouter < Formula
-  desc "AI API router — unified gateway for 20+ LLM providers with fallback, caching, and dashboard"
+  desc "Self-hosted AI gateway — one endpoint for 130+ LLM providers with fallback, caching, and a dashboard"
   homepage "https://github.com/mydisha/keirouter"
   version "0.1.29"
   license "MIT"
@@ -30,11 +30,18 @@ class Keirouter < Formula
     (share/"keirouter").install "frontend"
   end
 
+  service do
+    run [opt_bin/"keirouter", "start", "--no-browser"]
+    keep_alive true
+    log_path var/"log/keirouter.log"
+    error_log_path var/"log/keirouter.log"
+  end
+
   def caveats
     <<~EOS
       Quick start:
-        keirouter -bootstrap    # create your first API key
-        keirouter start         # start server on :20180
+        keirouter start                 # start server on :20180
+        brew services start keirouter   # or run it in the background, on login
 
       Dashboard: http://localhost:20180  (default password: keirouter)
     EOS

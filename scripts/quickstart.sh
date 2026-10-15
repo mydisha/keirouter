@@ -10,7 +10,7 @@
 #
 # What it does:
 #   1. Detects or clones the repo
-#   2. Checks prerequisites (Go 1.24+, Node.js 20+)
+#   2. Checks prerequisites (Go 1.26+, Node.js 20.19+)
 #   3. Installs npm dependencies (if needed)
 #   4. Downloads Go modules (if needed)
 #   5. Starts backend + frontend dev servers together
@@ -74,11 +74,11 @@ check_prereqs() {
   done
 
   go_version="$(go version | awk '{print $3}' | sed 's/^go//' | cut -d- -f1)"
-  version_ge "$go_version" "1.24.0" || die "Go 1.24+ required (found $go_version)"
+  version_ge "$go_version" "1.26.0" || die "Go 1.26+ required (found $go_version)"
   ok "Go $go_version"
 
   node_version="$(node -v | sed 's/^v//' | cut -d- -f1)"
-  version_ge "$node_version" "20.0.0" || die "Node.js 20+ required (found $node_version)"
+  version_ge "$node_version" "20.19.0" || die "Node.js 20.19+ required (found $node_version)"
   ok "Node.js $node_version"
 
   npm_version="$(npm -v)"

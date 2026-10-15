@@ -88,6 +88,38 @@ func TestAnthropicDropsTemperatureForOpus4(t *testing.T) {
 	}
 }
 
+// TestAnthropicDropsSamplingForClaude5 verifies Claude 5.x strips both
+// temperature and top_p, while Sonnet 4.6 keeps them.
+func TestAnthropicDropsSamplingForClaude5(t *testing.T) {
+	temp, topP := 0.7, 0.9
+	for model, wantDropped := range map[string]bool{
+		"claude-opus-5-5":   true,
+		"claude-sonnet-5":   true,
+		"claude-haiku-5-5":  true,
+		"claude-fable-5-1":  true,
+		"claude-mythos-5":   true,
+		"claude-sonnet-4-6": false,
+	} {
+		req := &core.ChatRequest{
+			Model:       model,
+			Temperature: &temp,
+			TopP:        &topP,
+			Messages:    []core.Message{{Role: core.RoleUser, Content: []core.ContentPart{{Type: core.PartText, Text: "hi"}}}},
+		}
+		body, err := AnthropicCodec{}.RenderRequest(req)
+		if err != nil {
+			t.Fatalf("render %s: %v", model, err)
+		}
+		var probe map[string]any
+		_ = json.Unmarshal(body, &probe)
+		_, hasTemp := probe["temperature"]
+		_, hasTopP := probe["top_p"]
+		if hasTemp == wantDropped || hasTopP == wantDropped {
+			t.Errorf("%s: temperature present=%v top_p present=%v, want dropped=%v: %s", model, hasTemp, hasTopP, wantDropped, body)
+		}
+	}
+}
+
 // TestGeminiToolConfigRender verifies tool_choice maps to a Gemini toolConfig.
 func TestGeminiToolConfigRender(t *testing.T) {
 	req := &core.ChatRequest{

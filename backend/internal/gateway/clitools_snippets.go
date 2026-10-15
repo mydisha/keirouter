@@ -15,6 +15,20 @@ type cliToolSnippet struct {
 	Snippet      string `json:"snippet"`
 }
 
+// cliKeyPlaceholder stands in for the API key in manual-setup snippets; the
+// dashboard swaps it for the key the user picks.
+const cliKeyPlaceholder = "kr_YOUR_API_KEY"
+
+// snippetsByID indexes generateSnippets by tool id.
+func snippetsByID(baseURL, model string) map[string]cliToolSnippet {
+	list := generateSnippets(baseURL, model, "")
+	out := make(map[string]cliToolSnippet, len(list))
+	for _, sn := range list {
+		out[sn.ID] = sn
+	}
+	return out
+}
+
 // generateSnippets returns snippets for every registered CLI tool, using the
 // given base URL and model. The baseURL is the public KeiRouter endpoint (with
 // /v1 appended); model may be empty (the user can edit the snippet).
@@ -23,7 +37,7 @@ func generateSnippets(baseURL, model, apiKey string) []cliToolSnippet {
 		baseURL = strings.TrimRight(baseURL, "/") + "/v1"
 	}
 	if apiKey == "" {
-		apiKey = "sk_keirouter"
+		apiKey = cliKeyPlaceholder
 	}
 	modelStr := model
 	if modelStr == "" {
@@ -53,12 +67,12 @@ func snippetClaude(baseURL, apiKey, model string) cliToolSnippet {
 	claudeBaseURL := strings.TrimSuffix(baseURL, "/v1")
 	snippet := fmt.Sprintf(`# ~/.claude/settings.json
 {
-  "hasCompletedOnboarding": true,
   "env": {
     "ANTHROPIC_BASE_URL": "%s",
-    "ANTHROPIC_AUTH_TOKEN": "%s"
+    "ANTHROPIC_AUTH_TOKEN": "%s",
+    "ANTHROPIC_MODEL": "%s"
   }
-}`, claudeBaseURL, apiKey)
+}`, claudeBaseURL, apiKey, model)
 	return cliToolSnippet{
 		ID:           "claude",
 		Name:         "Claude Code",
@@ -76,25 +90,20 @@ model_provider = "keirouter"
 [model_providers.keirouter]
 name = "KeiRouter"
 base_url = "%s"
-wire_api = "chat"
-
-# ~/.codex/auth.json
-# {
-#   "auth_mode": "apikey",
-#   "OPENAI_API_KEY": "%s"
-# }`, model, baseURL, apiKey)
+wire_api = "responses"
+experimental_bearer_token = "%s"`, model, baseURL, apiKey)
 	return cliToolSnippet{
 		ID:           "codex",
 		Name:         "Codex CLI",
 		Dialect:      "toml",
-		Instructions: "Write config.toml and auth.json to ~/.codex/ — Codex reads provider settings from these files.",
+		Instructions: "Merge into ~/.codex/config.toml — the key lives in the provider block, so your Codex login in auth.json is left alone.",
 		Snippet:      snippet,
 	}
 }
 
 func snippetCline(baseURL, apiKey, model string) cliToolSnippet {
-	// Cline expects the base URL without /v1
-	baseNoV1 := strings.TrimSuffix(baseURL, "/v1")
+	// Cline hands the base URL to the OpenAI SDK, which appends
+	// /chat/completions — so it keeps the /v1 suffix.
 	snippet := fmt.Sprintf(`# ~/.cline/data/globalState.json (partial)
 {
   "actModeApiProvider": "openai",
@@ -107,7 +116,7 @@ func snippetCline(baseURL, apiKey, model string) cliToolSnippet {
 # ~/.cline/data/secrets.json
 {
   "openAiApiKey": "%s"
-}`, baseNoV1, model, model, apiKey)
+}`, baseURL, model, model, apiKey)
 	return cliToolSnippet{
 		ID:           "cline",
 		Name:         "Cline / Roo",
@@ -154,16 +163,15 @@ func snippetDroid(baseURL, apiKey, model string) cliToolSnippet {
     {
       "model": "%s",
       "id": "custom:KeiRouter-0",
-      "index": 0,
       "baseUrl": "%s",
       "apiKey": "%s",
-      "displayName": "KeiRouter",
+      "displayName": "%s (KeiRouter)",
       "maxOutputTokens": 131072,
-      "noImageSupport": false,
       "provider": "openai"
     }
-  ]
-}`, model, baseURL, apiKey)
+  ],
+  "activeModel": "custom:KeiRouter-0"
+}`, model, baseURL, apiKey, model)
 	return cliToolSnippet{
 		ID:           "droid",
 		Name:         "Factory Droid",
@@ -189,11 +197,11 @@ func snippetOpenClaw(baseURL, apiKey, model string) cliToolSnippet {
         "baseUrl": "%s",
         "apiKey": "%s",
         "api": "openai-completions",
-        "models": ["%s"]
+        "models": [{ "id": "%s", "name": "%s" }]
       }
     }
   }
-}`, model, baseURL, apiKey, model)
+}`, model, baseURL, apiKey, model, model)
 	return cliToolSnippet{
 		ID:           "openclaw",
 		Name:         "OpenClaw",
@@ -208,7 +216,7 @@ func snippetOpenCode(baseURL, apiKey, model string) cliToolSnippet {
 {
   "provider": {
     "keirouter": {
-      "npm": "@opencode-ai/provider-openai-compatible",
+      "npm": "@ai-sdk/openai-compatible",
       "name": "KeiRouter",
       "options": {
         "baseURL": "%s",
@@ -216,8 +224,7 @@ func snippetOpenCode(baseURL, apiKey, model string) cliToolSnippet {
       },
       "models": {
         "%s": {
-          "name": "%s",
-          "modalities": { "input": ["text"], "output": ["text"] }
+          "name": "%s"
         }
       }
     }
@@ -272,6 +279,8 @@ OPENAI_API_KEY=%s`, model, baseURL, apiKey)
 
 func snippetDeepSeek(baseURL, apiKey, model string) cliToolSnippet {
 	snippet := fmt.Sprintf(`# ~/.deepseek/config.toml
+provider = "openai"
+
 [providers.openai]
 base_url = "%s"
 api_key = "%s"

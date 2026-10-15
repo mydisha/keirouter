@@ -80,7 +80,6 @@ func (s *Server) writeMediaError(w http.ResponseWriter, err error) {
 // ---- Embeddings -------------------------------------------------------------
 
 func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
-	key, _ := authedKey(r.Context())
 	var body struct {
 		Model      string          `json:"model"`
 		Input      json.RawMessage `json:"input"`
@@ -109,11 +108,11 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		Model: model, Input: inputs, Dimensions: body.Dimensions,
 	}, opts)
 	if perr != nil {
-		s.logRequest(key.Name, provider, model, 0, 0, 0, false, perr)
+		s.traceOf(r).complete(outcome{provider: provider, model: model, err: perr})
 		s.writeMediaError(w, perr)
 		return
 	}
-	s.logRequest(key.Name, provider, model, resp.Usage.TotalTokens, 0, 0, false, nil)
+	s.traceOf(r).complete(outcome{provider: provider, model: model, tokens: resp.Usage.TotalTokens})
 
 	data := make([]map[string]any, 0, len(resp.Vectors))
 	for i, v := range resp.Vectors {
@@ -147,7 +146,6 @@ func decodeEmbeddingInput(raw json.RawMessage) ([]string, error) {
 // ---- Image generation -------------------------------------------------------
 
 func (s *Server) handleImageGeneration(w http.ResponseWriter, r *http.Request) {
-	key, _ := authedKey(r.Context())
 	var req core.ImageRequest
 	if !s.readJSON(w, r, &req) {
 		return
@@ -164,11 +162,11 @@ func (s *Server) handleImageGeneration(w http.ResponseWriter, r *http.Request) {
 	req.Model = modelTail(opts.Targets)
 	resp, provider, perr := s.pipeline.GenerateImage(r.Context(), &req, opts)
 	if perr != nil {
-		s.logRequest(key.Name, provider, req.Model, 0, 0, 0, false, perr)
+		s.traceOf(r).complete(outcome{provider: provider, model: req.Model, err: perr})
 		s.writeMediaError(w, perr)
 		return
 	}
-	s.logRequest(key.Name, provider, req.Model, 0, 0, 0, false, nil)
+	s.traceOf(r).complete(outcome{provider: provider, model: req.Model})
 	w.Header().Set("X-KeiRouter-Provider", provider)
 	writeJSON(w, http.StatusOK, map[string]any{"created": resp.Created, "data": resp.Data})
 }
@@ -257,7 +255,6 @@ func (s *Server) handleAudioSpeech(w http.ResponseWriter, r *http.Request) {
 // ---- Web search -------------------------------------------------------------
 
 func (s *Server) handleWebSearch(w http.ResponseWriter, r *http.Request) {
-	key, _ := authedKey(r.Context())
 	var req core.SearchRequest
 	if !s.readJSON(w, r, &req) {
 		return
@@ -281,11 +278,11 @@ func (s *Server) handleWebSearch(w http.ResponseWriter, r *http.Request) {
 	req.Model = modelTail(opts.Targets)
 	resp, provider, perr := s.pipeline.Search(r.Context(), &req, opts)
 	if perr != nil {
-		s.logRequest(key.Name, provider, req.Model, 0, 0, 0, false, perr)
+		s.traceOf(r).complete(outcome{provider: provider, model: req.Model, err: perr})
 		s.writeMediaError(w, perr)
 		return
 	}
-	s.logRequest(key.Name, provider, req.Model, 0, 0, 0, false, nil)
+	s.traceOf(r).complete(outcome{provider: provider, model: req.Model})
 	w.Header().Set("X-KeiRouter-Provider", provider)
 	writeJSON(w, http.StatusOK, map[string]any{"query": resp.Query, "results": resp.Results})
 }
@@ -293,7 +290,6 @@ func (s *Server) handleWebSearch(w http.ResponseWriter, r *http.Request) {
 // ---- Web fetch --------------------------------------------------------------
 
 func (s *Server) handleWebFetch(w http.ResponseWriter, r *http.Request) {
-	key, _ := authedKey(r.Context())
 	var req core.FetchRequest
 	if !s.readJSON(w, r, &req) {
 		return
@@ -323,11 +319,11 @@ func (s *Server) handleWebFetch(w http.ResponseWriter, r *http.Request) {
 	req.Model = modelTail(opts.Targets)
 	resp, provider, perr := s.pipeline.Fetch(r.Context(), &req, opts)
 	if perr != nil {
-		s.logRequest(key.Name, provider, req.Model, 0, 0, 0, false, perr)
+		s.traceOf(r).complete(outcome{provider: provider, model: req.Model, err: perr})
 		s.writeMediaError(w, perr)
 		return
 	}
-	s.logRequest(key.Name, provider, req.Model, 0, 0, 0, false, nil)
+	s.traceOf(r).complete(outcome{provider: provider, model: req.Model})
 	w.Header().Set("X-KeiRouter-Provider", provider)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"url": resp.URL, "title": resp.Title, "content": resp.Content, "format": resp.Format,
@@ -339,7 +335,6 @@ func (s *Server) handleWebFetch(w http.ResponseWriter, r *http.Request) {
 // handleVideoGeneration submits an asynchronous video-generation job. Unknown
 // JSON fields are retained so provider-specific generation controls pass through.
 func (s *Server) handleVideoGeneration(w http.ResponseWriter, r *http.Request) {
-	key, _ := authedKey(r.Context())
 	if contentType := r.Header.Get("Content-Type"); contentType != "" {
 		mediaType, _, err := mime.ParseMediaType(contentType)
 		if err != nil || (mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json")) {
@@ -376,11 +371,11 @@ func (s *Server) handleVideoGeneration(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, provider, perr := s.pipeline.GenerateVideo(r.Context(), req, opts)
 	if perr != nil {
-		s.logRequest(key.Name, provider, req.Model, 0, 0, 0, false, perr)
+		s.traceOf(r).complete(outcome{provider: provider, model: req.Model, err: perr})
 		s.writeMediaError(w, perr)
 		return
 	}
-	s.logRequest(key.Name, provider, req.Model, 0, 0, 0, false, nil)
+	s.traceOf(r).complete(outcome{provider: provider, model: req.Model})
 	w.Header().Set("X-KeiRouter-Provider", provider)
 	w.Header().Set("X-KeiRouter-Account", resp.AccountID)
 	writeVideoResponse(w, resp)
@@ -390,7 +385,6 @@ func (s *Server) handleVideoGeneration(w http.ResponseWriter, r *http.Request) {
 // the path; the model (provider/model) is supplied as a query parameter so the
 // poll routes to the same provider that created the job.
 func (s *Server) handleVideoPoll(w http.ResponseWriter, r *http.Request) {
-	key, _ := authedKey(r.Context())
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		writeError(w, http.StatusBadRequest, "video id is required")
@@ -418,11 +412,11 @@ func (s *Server) handleVideoPoll(w http.ResponseWriter, r *http.Request) {
 	req := &core.VideoStatusRequest{Model: modelTail(opts.Targets), RequestID: id}
 	resp, provider, perr := s.pipeline.PollVideo(r.Context(), req, opts)
 	if perr != nil {
-		s.logRequest(key.Name, provider, req.Model, 0, 0, 0, false, perr)
+		s.traceOf(r).complete(outcome{provider: provider, model: req.Model, err: perr})
 		s.writeMediaError(w, perr)
 		return
 	}
-	s.logRequest(key.Name, provider, req.Model, 0, 0, 0, false, nil)
+	s.traceOf(r).complete(outcome{provider: provider, model: req.Model})
 	w.Header().Set("X-KeiRouter-Provider", provider)
 	w.Header().Set("X-KeiRouter-Account", resp.AccountID)
 	writeVideoResponse(w, resp)
@@ -447,7 +441,6 @@ func writeVideoResponse(w http.ResponseWriter, resp *core.VideoResponse) {
 // ---- Image understanding (image-to-text) ------------------------------------
 
 func (s *Server) handleImageUnderstanding(w http.ResponseWriter, r *http.Request) {
-	key, _ := authedKey(r.Context())
 	var req core.ImageUnderstandingRequest
 	if !s.readJSON(w, r, &req) {
 		return
@@ -475,11 +468,11 @@ func (s *Server) handleImageUnderstanding(w http.ResponseWriter, r *http.Request
 	req.Model = modelTail(opts.Targets)
 	resp, provider, perr := s.pipeline.UnderstandImage(r.Context(), &req, opts)
 	if perr != nil {
-		s.logRequest(key.Name, provider, req.Model, 0, 0, 0, false, perr)
+		s.traceOf(r).complete(outcome{provider: provider, model: req.Model, err: perr})
 		s.writeMediaError(w, perr)
 		return
 	}
-	s.logRequest(key.Name, provider, req.Model, resp.Usage.TotalTokens, 0, 0, false, nil)
+	s.traceOf(r).complete(outcome{provider: provider, model: req.Model, tokens: resp.Usage.TotalTokens})
 	w.Header().Set("X-KeiRouter-Provider", provider)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"model": resp.Model, "text": resp.Text,

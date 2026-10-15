@@ -25,7 +25,19 @@ type ProbeRunner struct {
 	vault      *vault.Vault
 	thresholds LatencyThresholds
 	timeout    time.Duration
+	preparer   CredentialPreparer
 }
+
+// CredentialPreparer builds the credentials an account serves traffic with
+// (proxy route, OAuth refresh, decrypted secrets). The dispatcher implements
+// it; probes use it so they reach the upstream exactly like routed requests.
+type CredentialPreparer interface {
+	PrepareCredentials(ctx context.Context, acc store.Account) (store.Account, core.Credentials, error)
+}
+
+// SetCredentialPreparer routes credential preparation through p. Without one,
+// probes fall back to decrypting the account directly from the vault.
+func (r *ProbeRunner) SetCredentialPreparer(p CredentialPreparer) { r.preparer = p }
 
 // NewProbeRunner builds a ProbeRunner.
 func NewProbeRunner(log *slog.Logger, repo *store.ProviderHealthRepo, accounts *store.AccountRepo, conns *connectors.Registry, vault *vault.Vault, thresholds LatencyThresholds, timeout time.Duration) *ProbeRunner {
@@ -90,17 +102,20 @@ func (r *ProbeRunner) Run(ctx context.Context, req ProbeRequest) (ProbeResult, e
 	}
 
 	var creds core.Credentials
-	if r.vault != nil && r.accounts != nil && req.ProviderAccountID != "" {
-		acc, aerr := r.accounts.Get(ctx, req.ProviderAccountID)
+	if r.accounts != nil {
+		acc, aerr := r.probeAccount(ctx, req)
 		if aerr != nil {
-			return res, fmt.Errorf("account not found: %s", req.ProviderAccountID)
+			return res, aerr
 		}
-		if c, verr := r.vault.Open(acc); verr == nil {
-			creds = c
+		res.ProviderAccountID = acc.ID
+		c, cerr := r.prepareCredentials(ctx, acc)
+		if cerr != nil {
+			return res, fmt.Errorf("prepare credentials for account %s: %w", acc.ID, cerr)
 		}
+		creds = c
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, r.timeout)
+	probeCtx, cancel := context.WithTimeout(core.WithProxy(ctx, creds), r.timeout)
 	defer cancel()
 
 	capability := req.Capability
@@ -199,6 +214,47 @@ func (r *ProbeRunner) Run(ctx context.Context, req ProbeRequest) (ProbeResult, e
 	}
 	r.applyProbeToCurrent(ctx, res, capability)
 	return res, nil
+}
+
+// probeAccount returns the account a probe authenticates with. Without an
+// explicit account it picks the highest-priority enabled account for the
+// provider, so provider-level probes (the health page) still carry the API key
+// and URL metadata such as Cloudflare's {accountId}.
+func (r *ProbeRunner) probeAccount(ctx context.Context, req ProbeRequest) (store.Account, error) {
+	if req.ProviderAccountID != "" {
+		acc, err := r.accounts.Get(ctx, req.ProviderAccountID)
+		if err != nil {
+			return store.Account{}, fmt.Errorf("account not found: %s", req.ProviderAccountID)
+		}
+		if acc.Provider != req.Provider {
+			return store.Account{}, fmt.Errorf("account %s belongs to provider %s, not %s", acc.ID, acc.Provider, req.Provider)
+		}
+		if acc.Disabled {
+			return store.Account{}, fmt.Errorf("account %s is disabled", acc.ID)
+		}
+		return acc, nil
+	}
+	accs, err := r.accounts.ListByProvider(ctx, store.DefaultTenantID, req.Provider)
+	if err != nil {
+		return store.Account{}, fmt.Errorf("list accounts for %s: %w", req.Provider, err)
+	}
+	for _, acc := range accs {
+		if !acc.NeedsReconnect {
+			return acc, nil
+		}
+	}
+	return store.Account{}, fmt.Errorf("no usable account configured for provider %s", req.Provider)
+}
+
+func (r *ProbeRunner) prepareCredentials(ctx context.Context, acc store.Account) (core.Credentials, error) {
+	if r.preparer != nil {
+		_, creds, err := r.preparer.PrepareCredentials(ctx, acc)
+		return creds, err
+	}
+	if r.vault == nil {
+		return core.Credentials{}, nil
+	}
+	return r.vault.Open(acc)
 }
 
 // applyProbeToCurrent updates provider_health_current from a probe outcome.

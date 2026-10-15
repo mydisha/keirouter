@@ -1,0 +1,37 @@
+# Optional ML prompt-injection classifier for the guardrails layer.
+#
+#   docker compose -f compose.yaml -f compose.promptguard.yaml up -d
+#
+# The default model, meta-llama/Llama-Prompt-Guard-2-86M (multilingual), is
+# gated: accept its license on Hugging Face and set HF_TOKEN. For an ungated
+# English-only alternative set
+#   PROMPTGUARD_MODEL=protectai/deberta-v3-base-prompt-injection-v2
+# Then enable "ML classifier" on a prompt-injection policy in the dashboard.
+services:
+  keirouter:
+    depends_on:
+      promptguard:
+        condition: service_healthy
+    environment:
+      KEIROUTER_GUARDRAILS__INJECTION__CLASSIFIER_URL: "http://promptguard:8000/predict"
+      KEIROUTER_GUARDRAILS__INJECTION__CLASSIFIER_TIMEOUT: ${KEIROUTER_PROMPTGUARD_TIMEOUT:-3s}
+
+  promptguard:
+    build:
+      context: deploy/promptguard
+    restart: unless-stopped
+    environment:
+      MODEL_ID: ${PROMPTGUARD_MODEL:-meta-llama/Llama-Prompt-Guard-2-86M}
+      HF_TOKEN: ${HF_TOKEN:-}
+      TORCH_THREADS: ${PROMPTGUARD_THREADS:-2}
+    volumes:
+      - promptguard-models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+volumes:
+  promptguard-models:

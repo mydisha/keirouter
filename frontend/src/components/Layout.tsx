@@ -1,41 +1,61 @@
-import { Suspense, useState, useRef, useEffect, useCallback, type ReactNode } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
-import { useQueryClient, useIsFetching } from "@tanstack/react-query";
+import { lazy, Suspense, useId, useState, useEffect, type ReactNode } from "react";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { useQuery, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import {
-  LayoutGrid,
-  Boxes,
-  Layers,
-  Wallet,
-  Sparkles,
-  Settings,
-  Search,
-  ChevronDown,
-  LogOut,
-  Network,
-  BarChart3,
-  Clock,
-  TerminalSquare,
-  Image,
-  Waypoints,
-  ScrollText,
-  Menu,
-  X,
-  Key,
   Activity,
-  Shield,
-  HeartPulse,
-  Gift,
-  Users,
+  BarChart3,
+  Boxes,
   CreditCard,
+  Cpu,
+  Gauge,
+  Gift,
+  GraduationCap,
+  History,
+  Image,
+  Key,
+  LayoutGrid,
+  Layers,
+  LogOut,
+  Menu,
+  Monitor,
+  Moon,
+  Plug,
+  ReceiptText,
+  ScrollText,
+  Search,
+  Settings,
+  Shield,
+  Sun,
+  TerminalSquare,
+  Users,
+  Waypoints,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import { api } from "../lib/api";
+import { cn } from "@/lib/utils";
 import { useBranding } from "../contexts/BrandingContext";
-import { ThemeToggle } from "./ThemeToggle";
-import { CommandPalette } from "./CommandPalette";
+import { useTheme, type Theme } from "./ThemeProvider";
+import { BrandMark } from "./BrandMark";
 import { UpdateNotification } from "./UpdateNotification";
 import { preloadRoute, type RoutePreloadKey } from "../routePreload";
 import { dashboard, DASHBOARD_PREFIX } from "../lib/dashboardRoutes";
+
+// The command palette (and cmdk) stays out of the shell bundle: it is fetched
+// on idle or on the first Ctrl/Cmd+K, then mounted for the rest of the session.
+const loadCommandPalette = () => import("./CommandPalette");
+const CommandPalette = lazy(() => loadCommandPalette().then((m) => ({ default: m.CommandPalette })));
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import { Sheet, SheetClose, SheetContent, SheetTitle } from "./ui/sheet";
 
 interface NavItem {
   to: string;
@@ -43,64 +63,93 @@ interface NavItem {
   icon: LucideIcon;
   end?: boolean;
   preload?: RoutePreloadKey;
+  /** Optional status indicator rendered at the end of the row. */
+  indicator?: "live" | "health";
 }
+
+export type SectionTone = "blue" | "violet" | "teal" | "orange" | "slate";
 
 interface NavGroup {
   heading?: string;
+  /** One hue per group; drives the page header tile and section accents. */
+  tone: SectionTone;
   items: NavItem[];
 }
 
+// Grouped by the job the operator is doing, not by feature origin: watch
+// traffic, shape routing, manage upstreams, control access, run the instance.
 const navGroups: NavGroup[] = [
   {
+    tone: "blue",
     items: [
       { to: "/", label: "Overview", icon: LayoutGrid, end: true, preload: "/" },
+      { to: "/usage", label: "Usage", icon: BarChart3, preload: "/usage" },
+      { to: "/console", label: "Console", icon: ScrollText, preload: "/console", indicator: "live" },
     ],
   },
   {
-    heading: "Traffic & Logic",
+    heading: "Routing",
+    tone: "violet",
     items: [
-      { to: "/endpoints", label: "Endpoints", icon: Network, preload: "/endpoints" },
+      { to: "/endpoints", label: "Endpoints", icon: Plug, preload: "/endpoints" },
       { to: "/chains", label: "Chains", icon: Layers, preload: "/chains" },
-      { to: "/skills", label: "Skills", icon: Sparkles, preload: "/skills" },
+      { to: "/skills", label: "Skills", icon: GraduationCap, preload: "/skills" },
     ],
   },
   {
-    heading: "Connections",
+    heading: "Providers",
+    tone: "teal",
     items: [
-      { to: "/keys", label: "API Keys", icon: Key, preload: "/keys" },
-      { to: "/bansos", label: "Bansos", icon: Gift, preload: "/bansos" },
       { to: "/providers", label: "Providers", icon: Boxes, preload: "/providers" },
       { to: "/media", label: "Media", icon: Image, preload: "/media" },
-      { to: "/proxy-pools", label: "Proxy Pools", icon: Waypoints, preload: "/proxy-pools" },
+      { to: "/provider-health", label: "Health", icon: Activity, preload: "/provider-health", indicator: "health" },
+      { to: "/quota", label: "Quota", icon: Gauge, preload: "/quota" },
+      { to: "/proxy-pools", label: "Proxy pools", icon: Waypoints, preload: "/proxy-pools" },
     ],
   },
   {
-    heading: "Safety",
+    heading: "Access",
+    tone: "orange",
     items: [
-      { to: "/guardrails", label: "Guardrails", icon: Shield, preload: "/guardrails" },
-      { to: "/provider-health", label: "Provider Health", icon: HeartPulse, preload: "/provider-health" },
-    ],
-  },
-  {
-    heading: "Cost & Analytics",
-    items: [
-      { to: "/usage", label: "Usage", icon: BarChart3, preload: "/usage" },
-      { to: "/plans", label: "Plans", icon: Wallet, preload: "/plans" },
-      { to: "/portal-users", label: "Portal Users", icon: Users, preload: "/portal-users" },
+      { to: "/keys", label: "API keys", icon: Key, preload: "/keys" },
+      { to: "/bansos", label: "Bansos", icon: Gift, preload: "/bansos" },
+      { to: "/plans", label: "Plans & budgets", icon: ReceiptText, preload: "/plans" },
+      { to: "/portal-users", label: "Portal users", icon: Users, preload: "/portal-users" },
       { to: "/payments", label: "Payments", icon: CreditCard, preload: "/payments" },
-      { to: "/quota", label: "Quota Tracker", icon: Clock, preload: "/quota" },
-      { to: "/system", label: "System", icon: Activity, preload: "/system" },
+      { to: "/guardrails", label: "Guardrails", icon: Shield, preload: "/guardrails" },
+      { to: "/audit", label: "Audit log", icon: History, preload: "/audit" },
+    ],
+  },
+  {
+    heading: "Workspace",
+    tone: "slate",
+    items: [
+      { to: "/cli-tools", label: "CLI tools", icon: TerminalSquare, preload: "/cli-tools" },
+      { to: "/system", label: "System", icon: Cpu, preload: "/system" },
       { to: "/settings", label: "Settings", icon: Settings, preload: "/settings" },
     ],
   },
-  {
-    heading: "Developer",
-    items: [
-      { to: "/console", label: "Console Log", icon: ScrollText, preload: "/console" },
-      { to: "/cli-tools", label: "CLI Tools", icon: TerminalSquare, preload: "/cli-tools" },
-    ],
-  },
 ];
+
+// stripDashboardPrefix maps a browser path under DASHBOARD_PREFIX back to the
+// route-relative path the nav and title tables are keyed by.
+function stripDashboardPrefix(pathname: string): string {
+  return pathname.startsWith(DASHBOARD_PREFIX) ? pathname.slice(DASHBOARD_PREFIX.length) || "/" : pathname;
+}
+
+// activeSection finds the nav item (and its group tone) that owns a path, so
+// detail pages such as /providers/:id inherit their list page's icon and hue.
+export function activeSection(fullPath: string): { item: NavItem; tone: SectionTone } | null {
+  const pathname = stripDashboardPrefix(fullPath);
+  let best: { item: NavItem; tone: SectionTone } | null = null;
+  for (const group of navGroups) {
+    for (const item of group.items) {
+      const matches = item.to === "/" ? pathname === "/" : pathname === item.to || pathname.startsWith(item.to + "/");
+      if (matches && (!best || item.to.length > best.item.to.length)) best = { item, tone: group.tone };
+    }
+  }
+  return best;
+}
 
 const TITLE_BY_PATH: Record<string, string> = {
   "/": "Overview",
@@ -109,65 +158,64 @@ const TITLE_BY_PATH: Record<string, string> = {
   "/skills": "Skills",
   "/providers": "Providers",
   "/media": "Media",
-  "/proxy-pools": "Proxy Pools",
+  "/proxy-pools": "Proxy pools",
   "/usage": "Usage",
-  "/plans": "Plans",
-  "/budgets": "Plans",
-  "/portal-users": "Portal Users",
+  "/plans": "Plans & budgets",
+  "/budgets": "Plans & budgets",
+  "/portal-users": "Portal users",
   "/payments": "Payments",
-  "/quota": "Quota Tracker",
+  "/quota": "Quota",
   "/settings": "Settings",
-  "/keys": "API Keys",
+  "/keys": "API keys",
   "/bansos": "Bansos",
   "/guardrails": "Guardrails",
-  "/provider-health": "Provider Health",
-  "/console": "Console Log",
-  "/cli-tools": "CLI Tools",
+  "/provider-health": "Provider health",
+  "/console": "Console",
+  "/cli-tools": "CLI tools",
   "/system": "System",
 };
 
 const TITLE_BY_PREFIX: [string, string][] = [
   ["/providers/", "Provider"],
-  ["/cli-tools/", "CLI Tool"],
+  ["/cli-tools/", "CLI tool"],
   ["/media/", "Media"],
-  ["/keys/", "API Key"],
+  ["/keys/", "API key"],
+  ["/chains/", "Chain"],
+  ["/provider-health/", "Provider health"],
 ];
 
-function titleForPath(pathname: string): string {
-  const path = pathname.startsWith(DASHBOARD_PREFIX)
-    ? pathname.slice(DASHBOARD_PREFIX.length) || "/"
-    : pathname;
-  const exact = TITLE_BY_PATH[path];
+function titleForPath(fullPath: string): string {
+  const pathname = stripDashboardPrefix(fullPath);
+  const exact = TITLE_BY_PATH[pathname];
   if (exact) return exact;
   for (const [prefix, label] of TITLE_BY_PREFIX) {
-    if (path.startsWith(prefix)) return label;
+    if (pathname.startsWith(prefix)) return label;
   }
   return "";
 }
 
 export function Layout() {
   const location = useLocation();
+  const section = activeSection(location.pathname);
+  const pageTone = section?.tone ?? "blue";
+
+  // Dialogs, sheets and menus render in portals outside <main>; putting the
+  // page tone on <html> lets them inherit the section hue too.
+  useEffect(() => {
+    document.documentElement.dataset.tone = pageTone;
+  }, [pageTone]);
   const { branding } = useBranding();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-
-  // Close sidebar on navigation (mobile).
-  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
-
-  // Close sidebar on Escape.
+  const [paletteMounted, setPaletteMounted] = useState(false);
   useEffect(() => {
-    if (!sidebarOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeSidebar();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [sidebarOpen, closeSidebar]);
+    if (paletteOpen) setPaletteMounted(true);
+  }, [paletteOpen]);
 
   // Cmd+K / Ctrl+K to open command palette.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen((v) => !v);
       }
@@ -176,6 +224,11 @@ export function Layout() {
     return () => document.removeEventListener("keydown", onKey);
   }, []);
 
+  // Close the mobile drawer whenever the route changes.
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname]);
+
   // Set browser tab title from current route.
   useEffect(() => {
     const label = titleForPath(location.pathname);
@@ -183,18 +236,9 @@ export function Layout() {
     document.title = label ? `${appName} - ${label}` : appName;
   }, [location.pathname, branding.name]);
 
-  // Lock body scroll when mobile sidebar is open.
-  useEffect(() => {
-    if (sidebarOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => { document.body.style.overflow = ""; };
-  }, [sidebarOpen]);
-
   useEffect(() => {
     const warmCommonRoutes = () => {
+      void loadCommandPalette().catch(() => {});
       preloadRoute("/usage");
       preloadRoute("/providers");
       preloadRoute("/keys");
@@ -213,34 +257,45 @@ export function Layout() {
   }, []);
 
   return (
-    <div className="flex h-full bg-[var(--bg)]">
+    // The shell is locked to the viewport: only <main> (and the sidebar nav)
+    // scroll. `relative` + `overflow-hidden` keep absolutely positioned
+    // descendants such as sr-only text from extending the document, which
+    // otherwise lets the whole layout scroll away past the end of a page.
+    <div className="relative flex h-full overflow-hidden bg-canvas">
+      <SkipLink />
       {/* Desktop sidebar — hidden below lg. */}
       <div className="hidden lg:flex">
-        <SidebarContent onNavigate={closeSidebar} />
+        <Sidebar />
       </div>
 
-      {/* Mobile sidebar overlay + drawer. */}
-      {sidebarOpen && (
-        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
-          <div
-            className="fixed inset-0 bg-black/30"
-            style={{ animation: "overlay-in 0.15s ease-out" }}
-            onClick={closeSidebar}
-          />
-          <div
-            className="fixed inset-y-0 left-0 z-50 w-60 shadow-[var(--shadow-float)]"
-            style={{ animation: "drawer-in 0.2s ease-out" }}
+      {/* Mobile navigation drawer. */}
+      <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
+        <SheetContent id={MOBILE_NAV_ID} side="left" className="w-60 lg:hidden" aria-describedby={undefined}>
+          <SheetTitle className="sr-only">Navigation</SheetTitle>
+          <SheetClose
+            className="absolute right-2 top-[calc(env(safe-area-inset-top)+0.625rem)] z-10 flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            aria-label="Close navigation"
           >
-            <SidebarContent onNavigate={closeSidebar} />
-          </div>
-        </div>
-      )}
+            <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+          </SheetClose>
+          <Sidebar />
+        </SheetContent>
+      </Sheet>
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <RouteProgress />
-        <TopBar onMenuToggle={() => setSidebarOpen((v) => !v)} onSearchOpen={() => setPaletteOpen(true)} />
-        <main className="flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+        <TopBar menuOpen={sidebarOpen} onMenuToggle={() => setSidebarOpen(true)} onSearchOpen={() => setPaletteOpen(true)} />
+        {/* tabIndex -1: the skip link moves focus here; no ring on a landmark. */}
+        {/* Safe-area padding keeps content clear of notches / the home
+            indicator (needs viewport-fit=cover to take effect). */}
+        <main
+          id="main"
+          tabIndex={-1}
+          data-tone={pageTone}
+          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] lg:pl-0"
+          style={{ outline: "none" }}
+        >
+          <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
             <Suspense fallback={<PageOutletFallback />}>
               <Outlet />
             </Suspense>
@@ -248,83 +303,123 @@ export function Layout() {
         </main>
       </div>
 
-      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {paletteMounted && (
+        <Suspense fallback={null}>
+          <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+        </Suspense>
+      )}
     </div>
+  );
+}
+
+const MOBILE_NAV_ID = "mobile-navigation";
+
+// SkipLink is the first focusable element: hidden until focused, it jumps
+// keyboard users past the sidebar and top bar (WCAG 2.4.1). Focus is moved in
+// JS so the URL hash (used by some pages) is left untouched.
+function SkipLink() {
+  return (
+    <a
+      href="#main"
+      onClick={(e) => {
+        e.preventDefault();
+        const main = document.getElementById("main");
+        main?.focus();
+        main?.scrollTo({ top: 0 });
+      }}
+      className="fixed left-3 top-3 z-[120] -translate-y-[200%] rounded-lg bg-primary px-3 py-2 text-[13px] font-medium text-primary-fg shadow-[var(--shadow-pop)] focus:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+    >
+      Skip to main content
+    </a>
   );
 }
 
 function PageOutletFallback() {
   return (
-    <div className="flex min-h-[240px] items-center justify-center py-16">
-      <div className="h-6 w-6 animate-spin rounded-full border-2 border-current border-t-transparent opacity-40" />
+    <div className="flex min-h-[240px] items-center justify-center py-16" role="status">
+      <div className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-fg-muted" aria-hidden="true" />
+      <span className="sr-only">Loading page</span>
     </div>
   );
 }
 
 // RouteProgress shows a thin indeterminate bar at the top of the content area
-// whenever queries are in flight (page navigation kicks off the next page's
-// data fetches). This gives an immediate visual response to a nav click even
-// while the route's chunk and data are still loading, instead of the page
-// appearing frozen for seconds. Pure CSS animation (.route-progress).
+// whenever queries are in flight, so a nav click gets immediate feedback even
+// while the next route's chunk and data are still loading.
 function RouteProgress() {
   const fetching = useIsFetching();
   if (fetching === 0) return null;
-  return <div className="route-progress" role="progressbar" aria-label="Loading" aria-busy="true" />;
+  return <div className="route-progress" role="progressbar" aria-label="Loading" />;
 }
 
-function SidebarContent({ onNavigate }: { onNavigate: () => void }) {
-  const { branding, logoSrc } = useBranding();
-  return (
-    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg-elevated)]">
-      <div className="flex items-center justify-between px-5 py-5">
-        <img src={logoSrc} alt={branding.name || "KeiRouter"} className="h-14 w-full object-contain object-left" />
-        {/* Close button — only visible on mobile when rendered inside the drawer. */}
-        <button
-          onClick={onNavigate}
-          aria-label="Close navigation"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-ink-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 dark:hover:bg-ink-800 lg:hidden"
-        >
-          <X className="h-5 w-5" />
-        </button>
-      </div>
+function useGatewayInfo() {
+  return useQuery({
+    queryKey: ["gateway-info"],
+    queryFn: () => api.gatewayInfo(),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+}
 
-      <nav aria-label="Main navigation" className="flex-1 space-y-6 overflow-y-auto px-3 py-2">
+function Sidebar() {
+  const health = useQuery({
+    queryKey: ["health-overview-nav"],
+    queryFn: () => api.healthOverview("1h"),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+  const summary = health.data?.summary;
+  const healthTone = summary ? (summary.unhealthy > 0 ? "bad" : summary.degraded > 0 ? "warn" : null) : null;
+  // Sidebar renders twice (desktop + mobile drawer), so heading ids are unique per instance.
+  const navId = useId();
+
+  return (
+    <aside className="relative flex h-full w-60 shrink-0 flex-col border-r border-line bg-surface">
+      <SidebarBrand />
+
+      <nav aria-label="Primary" className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 pb-4 pt-2">
         {navGroups.map((group, gi) => (
-          <div key={gi} role="group" aria-label={group.heading}>
+          <div key={gi} data-tone={group.tone} className={gi > 0 ? "mt-4" : undefined}>
             {group.heading && (
-              <p className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-widest text-ink-400 dark:text-ink-500">
+              <h2 id={`${navId}-group-${gi}`} className="px-2.5 pb-1.5 text-[11.5px] font-medium text-fg-faint">
                 {group.heading}
-              </p>
+              </h2>
             )}
-            <ul className="space-y-0.5">
+            <ul className="space-y-px" aria-labelledby={group.heading ? `${navId}-group-${gi}` : undefined}>
               {group.items.map((item) => (
                 <li key={item.to}>
                   <NavLink
                     to={dashboard(item.to)}
                     end={item.end}
+                    aria-current="page"
                     onMouseEnter={() => item.preload && preloadRoute(item.preload)}
                     onFocus={() => item.preload && preloadRoute(item.preload)}
                     onTouchStart={() => item.preload && preloadRoute(item.preload)}
-                    onClick={onNavigate}
                     className={({ isActive }) =>
-                      `group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-all duration-200 ease-out focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 ${
-                        isActive
-                          ? "bg-ink-100 font-medium text-ink-950 ring-1 ring-ink-200 dark:bg-ink-800/80 dark:text-white dark:ring-ink-700/50"
-                          : "text-ink-500 hover:bg-ink-100/50 hover:text-ink-900 dark:text-ink-400 dark:hover:bg-ink-800/40 dark:hover:text-ink-100"
-                      }`
+                      cn(
+                        "group flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium [@media(pointer:coarse)]:h-10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                        isActive ? "bg-tone-soft text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+                      )
                     }
                   >
                     {({ isActive }) => (
                       <>
                         <item.icon
-                          className={`h-[18px] w-[18px] shrink-0 transition-colors duration-200 ${
-                            isActive
-                              ? "text-accent-600 dark:text-accent-400"
-                              : "text-ink-400 group-hover:text-ink-600 dark:text-ink-500 dark:group-hover:text-ink-300"
-                          }`}
-                          strokeWidth={isActive ? 2.5 : 2}
+                          className={cn("h-4 w-4 shrink-0 transition-colors", isActive ? "text-tone" : "text-fg-faint group-hover:text-tone")}
+                          strokeWidth={1.75}
+                          aria-hidden="true"
                         />
                         <span className="truncate">{item.label}</span>
+                        {item.indicator === "live" && (
+                          <span className="live-dot ml-auto h-1.5 w-1.5 rounded-full bg-ok" role="img" aria-label="Live" />
+                        )}
+                        {item.indicator === "health" && healthTone && (
+                          <span
+                            className={cn("ml-auto h-1.5 w-1.5 rounded-full", healthTone === "bad" ? "bg-bad" : "bg-warn")}
+                            role="img"
+                            aria-label={healthTone === "bad" ? "A provider is unhealthy" : "A provider is degraded"}
+                          />
+                        )}
                       </>
                     )}
                   </NavLink>
@@ -335,157 +430,222 @@ function SidebarContent({ onNavigate }: { onNavigate: () => void }) {
         ))}
       </nav>
 
-      <div className="border-t border-[var(--border)] p-3 space-y-2">
-        <div className="flex items-center justify-between px-1">
-          <span className="text-[10px] font-medium uppercase tracking-wider text-[var(--text-muted)]">Theme</span>
-          <ThemeToggle />
-        </div>
-      </div>
+      <GatewayStatus />
     </aside>
   );
 }
 
-function TopBar({ onMenuToggle, onSearchOpen }: { onMenuToggle: () => void; onSearchOpen: () => void }) {
+function SidebarBrand() {
   const { branding } = useBranding();
+  const info = useGatewayInfo();
+  const name = branding.name || "KeiRouter";
   return (
-    <header className="flex h-16 shrink-0 items-center justify-center border-b border-[var(--border)] bg-[var(--bg-elevated)]">
-      <div className="mx-auto flex w-full max-w-7xl items-center gap-3 px-4 sm:px-6 lg:px-8">
-      {/* Hamburger — visible on mobile only. */}
+    <Link
+      to={dashboard("/")}
+      className="flex h-14 shrink-0 items-center gap-2.5 border-b border-line px-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+    >
+      {branding.logo_url ? (
+        <img src={branding.logo_url} alt={name} className="h-7 max-w-[150px] object-contain object-left" />
+      ) : (
+        <>
+          <BrandMark />
+          <span className="text-[14px] font-semibold tracking-[-0.01em] text-fg">{name}</span>
+        </>
+      )}
+      {info.data?.version && (
+        <span className="ml-auto font-mono text-[11px] text-fg-faint">{shortVersion(info.data.version)}</span>
+      )}
+    </Link>
+  );
+}
+
+function GatewayStatus() {
+  const info = useGatewayInfo();
+  const data = info.data;
+  // The state is always written out; the dot only repeats it.
+  const label = info.isError ? "Gateway unreachable" : data ? "Gateway running" : "Checking gateway…";
+  return (
+    <section aria-label="Gateway status" className="m-2.5 mt-0 rounded-xl border border-line bg-subtle px-3 py-2">
+      <div className="flex items-center gap-2 text-[12px] font-medium text-fg" role="status">
+        <span
+          className={cn("h-1.5 w-1.5 shrink-0 rounded-full", info.isError ? "bg-bad" : data ? "live-dot bg-ok" : "bg-fg-faint")}
+          aria-hidden="true"
+        />
+        <span className="truncate">{label}</span>
+        {data && <span className="ml-auto shrink-0 text-[11.5px] font-normal tabular-nums text-fg-faint">Up {formatUptime(data.uptime_s)}</span>}
+      </div>
+      {data && (
+        <div className="mt-0.5 flex items-center justify-between gap-2 text-[11.5px]">
+          <span className="truncate font-mono text-fg-muted" title={data.listen_addr}>
+            {data.listen_addr}
+          </span>
+          <span className="shrink-0 text-fg-faint">{data.dialect === "postgres" ? "Postgres" : "SQLite"}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TopBar({ menuOpen, onMenuToggle, onSearchOpen }: { menuOpen: boolean; onMenuToggle: () => void; onSearchOpen: () => void }) {
+  const { branding } = useBranding();
+  const name = branding.name || "KeiRouter";
+  return (
+    // Phones: menu · brand … search icon · update · account. From sm the
+    // search field is shown in full. Padded for notches / the status bar.
+    <header className="flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-line bg-surface pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[env(safe-area-inset-top)] sm:gap-3 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-8 lg:pr-[max(2rem,env(safe-area-inset-right))]">
       <button
+        type="button"
         onClick={onMenuToggle}
         aria-label="Open navigation"
-        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-[var(--text-muted)] transition-colors hover:bg-ink-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 dark:hover:bg-ink-800 lg:hidden"
+        aria-expanded={menuOpen}
+        aria-controls={MOBILE_NAV_ID}
+        aria-haspopup="dialog"
+        className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 lg:hidden"
       >
-        <Menu className="h-5 w-5" />
+        <Menu className="h-[18px] w-[18px]" aria-hidden="true" />
       </button>
 
+      {/* Phones only: the product identity, since the sidebar is hidden. */}
+      <Link
+        to={dashboard("/")}
+        className="flex min-w-0 items-center gap-2 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:hidden"
+      >
+        {branding.logo_url ? (
+          <img src={branding.logo_url} alt={name} className="h-6 max-w-[120px] object-contain object-left" />
+        ) : (
+          <>
+            <BrandMark />
+            <span className="truncate text-[14px] font-semibold tracking-[-0.01em] text-fg">{name}</span>
+          </>
+        )}
+      </Link>
+
+      {/* Name contains the visible text (WCAG 2.5.3); below sm it is an icon
+          button named by the same label. The shortcut is exposed separately. */}
       <button
         type="button"
         onClick={onSearchOpen}
-        className="relative max-w-md flex-1 text-left"
-        aria-label="Open search (⌘K)"
+        aria-label={`Search ${name}`}
+        aria-haspopup="dialog"
+        aria-keyshortcuts="Meta+K Control+K"
+        className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:ml-0 sm:w-auto sm:min-w-0 sm:max-w-sm sm:flex-1 sm:shrink sm:justify-start sm:gap-2 sm:border sm:border-input sm:bg-subtle sm:px-3 sm:text-left sm:text-[13px] sm:text-fg-faint sm:hover:border-fg-faint sm:hover:bg-subtle sm:hover:text-fg-faint"
       >
-        <div className="hidden sm:block">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
-          <span className="block w-full rounded-xl border border-[var(--border)] bg-[var(--bg)] py-2 pl-9 pr-12 text-sm text-[var(--text-muted)]">
-            Search {branding.name || "KeiRouter"}…
-          </span>
-          <kbd className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-[var(--border)] bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--text-muted)]">
-            ⌘K
-          </kbd>
-        </div>
-        <div className="flex sm:hidden h-11 w-11 items-center justify-center rounded-xl text-[var(--text-muted)] transition-colors hover:bg-ink-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 dark:hover:bg-ink-800">
-          <Search className="h-5 w-5" />
-        </div>
+        <Search className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+        <span className="hidden truncate sm:inline">Search {name}…</span>
+        <kbd className="ml-auto hidden rounded border border-line bg-surface px-1.5 font-mono text-[10.5px] text-fg-faint sm:inline" aria-hidden="true">⌘K</kbd>
       </button>
 
-        <div className="ml-auto flex items-center gap-1">
-          <UpdateNotification />
-          <ProfileMenu />
-        </div>
+      <div className="flex shrink-0 items-center gap-1.5 sm:ml-auto">
+        <UpdateNotification />
+        <AccountMenu />
       </div>
     </header>
   );
 }
 
-function ProfileMenu() {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+const THEME_OPTIONS: { value: Theme; label: string; icon: LucideIcon }[] = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "system", label: "System", icon: Monitor },
+];
+
+function AccountMenu() {
   const qc = useQueryClient();
-
-  useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
-
-  // Close on Escape.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
+  const { theme, setTheme } = useTheme();
+  const { branding } = useBranding();
+  const initial = (branding.name || "KeiRouter").slice(0, 1).toUpperCase();
+  const themeLabelId = useId();
 
   return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="true"
-        aria-expanded={open}
-        className="flex h-11 items-center gap-2.5 rounded-xl px-2 transition-colors hover:bg-ink-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 dark:hover:bg-ink-800"
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="Account and theme"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-line bg-subtle text-[12px] font-semibold [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9 text-fg transition-colors hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
       >
-        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-accent-600 text-xs font-semibold text-white">
-          K
-        </div>
-        <div className="hidden text-left sm:block">
-          <p className="text-sm font-medium leading-tight">Kei</p>
-          <p className="text-xs leading-tight text-[var(--text-muted)]">AI Bender</p>
-        </div>
-        <ChevronDown className="h-4 w-4 text-[var(--text-muted)]" />
-      </button>
-
-      {open && (
-        <div
-          role="menu"
-          className="absolute right-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] py-1 shadow-[var(--shadow-float)]"
+        <span aria-hidden="true">{initial}</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuLabel>
+          <span className="block text-[13px] font-medium text-fg">Administrator</span>
+          <span className="block">Dashboard session</span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="pb-1 pt-1" id={themeLabelId}>Theme</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as Theme)} aria-labelledby={themeLabelId}>
+          {THEME_OPTIONS.map((opt) => (
+            <DropdownMenuRadioItem key={opt.value} value={opt.value}>
+              <opt.icon aria-hidden="true" />
+              {opt.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to={dashboard("/settings")}>
+            <Settings aria-hidden="true" />
+            Settings
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          tone="danger"
+          onSelect={async () => {
+            await api.logout();
+            qc.invalidateQueries({ queryKey: ["auth-status"] });
+          }}
         >
-          <div className="px-4 py-3">
-            <p className="text-sm font-medium">Kei</p>
-            <p className="text-xs text-[var(--text-muted)]">AI Bender</p>
-          </div>
-          <div className="my-1 h-px bg-[var(--border)]" />
-          
-          <div className="py-1">
-            <button
-              role="menuitem"
-              onClick={async () => {
-                await api.logout();
-                qc.invalidateQueries({ queryKey: ["auth-status"] });
-              }}
-              className="flex w-full items-center gap-2.5 px-4 py-2 text-left text-sm text-danger transition-colors hover:bg-danger/10 focus:outline-none focus-visible:bg-danger/10"
-            >
-              <LogOut className="h-4 w-4" strokeWidth={2} />
-              Sign out
-            </button>
-          </div>
+          <LogOut aria-hidden="true" />
+          Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+// PageHeader is the title row at the top of every page. `icon` is accepted for
+// backwards compatibility with existing pages but intentionally not rendered:
+// page titles carry no decorative icon chip.
+export function PageHeader(props: {
+  title: string;
+  description?: string;
+  /** Overrides the icon of the nav item that owns the current route. */
+  icon?: LucideIcon;
+  action?: ReactNode;
+}) {
+  const { title, description, action } = props;
+  const { pathname } = useLocation();
+  const Icon = props.icon ?? activeSection(pathname)?.item.icon;
+  return (
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
+      <div className="flex min-w-[min(100%,280px)] flex-1 items-center gap-3.5">
+        {Icon && (
+          <span
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-tone-soft text-tone ring-1 ring-inset ring-tone-ring"
+            aria-hidden="true"
+          >
+            <Icon className="h-5 w-5" strokeWidth={1.75} />
+          </span>
+        )}
+        <div className="min-w-0">
+          <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{title}</h1>
+          {description && <p className="mt-0.5 max-w-3xl text-[13.5px] leading-5 text-fg-muted">{description}</p>}
         </div>
-      )}
+      </div>
+      {action && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{action}</div>}
     </div>
   );
 }
 
+function shortVersion(version: string): string {
+  if (!version || version === "dev") return "dev";
+  return version.startsWith("v") ? version : `v${version}`;
+}
 
-
-export function PageHeader({
-  title,
-  description,
-  icon: Icon,
-  action,
-}: {
-  title: string;
-  description?: string;
-  icon?: LucideIcon;
-  action?: ReactNode;
-}) {
-  return (
-    <div className="mb-7 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-      <div className="flex min-w-0 items-start gap-3.5">
-        {Icon && (
-          <div className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent-200 bg-accent-100 text-accent-700 shadow-sm dark:border-accent-800 dark:bg-accent-900/40 dark:text-accent-300">
-            <Icon className="h-5 w-5" strokeWidth={2} />
-          </div>
-        )}
-        <div className="min-w-0">
-          <h1 className="font-display text-2xl font-semibold tracking-tight sm:text-3xl">{title}</h1>
-          {description && <p className="mt-1.5 max-w-3xl text-sm leading-6 text-[var(--text-muted)]">{description}</p>}
-        </div>
-      </div>
-      {action && <div className="flex shrink-0 flex-wrap items-center gap-2">{action}</div>}
-    </div>
-  );
+export function formatUptime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+  const d = Math.floor(seconds / 86_400);
+  const h = Math.floor((seconds % 86_400) / 3_600);
+  const m = Math.floor((seconds % 3_600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${Math.max(1, m)}m`;
 }

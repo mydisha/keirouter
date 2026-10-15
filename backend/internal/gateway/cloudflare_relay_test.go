@@ -19,6 +19,7 @@ func (f relayRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error)
 
 func TestDeployCloudflareWorker(t *testing.T) {
 	var uploaded bool
+	var workerSrc string
 	client := &http.Client{Transport: relayRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if r.Header.Get("Authorization") != "Bearer token" {
 			t.Fatalf("missing API authorization")
@@ -38,6 +39,10 @@ func TestDeployCloudflareWorker(t *testing.T) {
 			if !strings.Contains(string(worker), "x-relay-target") {
 				t.Fatalf("worker is missing relay protocol")
 			}
+			if strings.Contains(string(worker), cloudflareRelayKeyPlaceholder) {
+				t.Fatalf("worker relay key was not filled in")
+			}
+			workerSrc = string(worker)
 			uploaded = true
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/workers/scripts/my-relay/subdomain"):
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/workers/subdomain"):
@@ -56,8 +61,12 @@ func TestDeployCloudflareWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !uploaded || deployURL != "https://my-relay.team.workers.dev" {
+	key, ok := strings.CutPrefix(deployURL, "https://my-relay.team.workers.dev/?key=")
+	if !uploaded || !ok || len(key) != 64 {
 		t.Fatalf("uploaded=%v deployURL=%q", uploaded, deployURL)
+	}
+	if !strings.Contains(workerSrc, `const RELAY_KEY = "`+key+`"`) {
+		t.Fatalf("deploy URL key does not match the worker's key")
 	}
 }
 
@@ -94,7 +103,7 @@ func TestRelayReadinessRetriesTransientFailure(t *testing.T) {
 	}
 
 	calls := 0
-	s.runRelayReadiness(context.Background(), pool.ID, 3, 0, func(string, time.Duration) proxyTestResult {
+	s.runRelayReadiness(context.Background(), pool.ID, 3, 0, func(context.Context, string, time.Duration) proxyTestResult {
 		calls++
 		if calls == 1 {
 			return proxyTestResult{status: "error", lastError: "relay returned HTTP 503", httpStatus: http.StatusServiceUnavailable}

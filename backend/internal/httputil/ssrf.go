@@ -214,8 +214,18 @@ func ValidateBaseURL(rawURL string) error {
 	return nil
 }
 
+// IsSupportedProxyScheme reports whether scheme is a proxy scheme the Go
+// transport can dial. socks5h resolves DNS on the proxy side.
+func IsSupportedProxyScheme(scheme string) bool {
+	switch strings.ToLower(scheme) {
+	case "http", "https", "socks5", "socks5h":
+		return true
+	}
+	return false
+}
+
 // ValidateProxyURL validates a proxy URL.
-// Allows http, https, and socks5 schemes.
+// Allows http, https, socks5 and socks5h schemes.
 func ValidateProxyURL(rawURL string) error {
 	if rawURL == "" {
 		return nil
@@ -226,11 +236,8 @@ func ValidateProxyURL(rawURL string) error {
 		return &ErrSSRFBlocked{Reason: "invalid proxy URL format"}
 	}
 
-	// Allow http, https, socks5
-	scheme := strings.ToLower(u.Scheme)
-	allowed := map[string]bool{"http": true, "https": true, "socks5": true}
-	if !allowed[scheme] {
-		return &ErrSSRFBlocked{Reason: fmt.Sprintf("blocked proxy scheme: %s", u.Scheme)}
+	if !IsSupportedProxyScheme(u.Scheme) {
+		return &ErrSSRFBlocked{Reason: fmt.Sprintf("blocked proxy scheme: %q", u.Scheme)}
 	}
 
 	// Validate the proxy host

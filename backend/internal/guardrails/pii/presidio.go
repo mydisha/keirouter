@@ -7,8 +7,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/mydisha/keirouter/backend/internal/guardrails"
 )
 
 // PresidioEngine calls a Microsoft Presidio HTTP analyzer to recognize PII.
@@ -17,8 +21,8 @@ import (
 // engine returns no matches and the detector silently falls back to native
 // (see pii.Detector.recognize).
 //
-// Phase 2 wires only the /analyze endpoint. Anonymization is still done in
-// Go (applyStrategy), so we don't need the anonymizer sidecar.
+// Only the /analyze endpoint is used. Anonymization is done in Go
+// (applyStrategy), so the anonymizer sidecar is not needed.
 type PresidioEngine struct {
 	httpClient *http.Client
 	analyzer   string // base URL, e.g. http://localhost:5001
@@ -58,11 +62,11 @@ func NewPresidioEngine(cfg PresidioConfig) *PresidioEngine {
 
 // presidioRequest mirrors the Presidio /analyze POST body.
 type presidioRequest struct {
-	Text            string   `json:"text"`
-	Language        string   `json:"language"`
-	Entities        []string `json:"entities,omitempty"`
-	ScoreThreshold  float64  `json:"score_threshold,omitempty"`
-	ReturnDecision  bool     `json:"return_decision_process,omitempty"`
+	Text           string   `json:"text"`
+	Language       string   `json:"language"`
+	Entities       []string `json:"entities,omitempty"`
+	ScoreThreshold float64  `json:"score_threshold,omitempty"`
+	ReturnDecision bool     `json:"return_decision_process,omitempty"`
 }
 
 // presidioFinding mirrors one row in the Presidio /analyze response.
@@ -111,11 +115,14 @@ func (e *PresidioEngine) Recognize(ctx context.Context, text string, allowed map
 	if err := json.Unmarshal(raw, &findings); err != nil {
 		return nil, fmt.Errorf("pii/presidio: parse: %w", err)
 	}
+	// Presidio reports offsets in code points; convert them to byte offsets.
+	byteAt := runeOffsets(text)
 	out := make([]Match, 0, len(findings))
 	for _, f := range findings {
-		if f.Start < 0 || f.End > len(text) || f.End <= f.Start {
+		if f.Start < 0 || f.End >= len(byteAt) || f.End <= f.Start {
 			continue
 		}
+		f.Start, f.End = byteAt[f.Start], byteAt[f.End]
 		ent := Entity(strings.ToUpper(f.EntityType))
 		if allowed != nil && !allowed[ent] {
 			continue
@@ -131,7 +138,64 @@ func (e *PresidioEngine) Recognize(ctx context.Context, text string, allowed map
 			Score:  f.Score,
 		})
 	}
-	return mergeOverlaps(out), nil
+	return mergeOverlaps(out, text), nil
+}
+
+// batchSeparator keeps entities from different texts apart in a batch call.
+const batchSeparator = "\n\n\u2063\n\n"
+
+// RecognizeBatch analyzes several texts with a single /analyze call. Each
+// text is folded first (zero-width characters, fullwidth digits, look-alike
+// letters) and spans are mapped back onto the original text. A finding that
+// straddles two texts is dropped.
+func (e *PresidioEngine) RecognizeBatch(ctx context.Context, texts []string, allowed map[Entity]bool, minScore float64) ([][]Match, error) {
+	out := make([][]Match, len(texts))
+	folded := make([]*guardrails.Folded, len(texts))
+	starts := make([]int, len(texts))
+	var b strings.Builder
+	for i, t := range texts {
+		folded[i] = guardrails.Fold(t, guardrails.FoldOptions{})
+		if i > 0 {
+			b.WriteString(batchSeparator)
+		}
+		starts[i] = b.Len()
+		b.WriteString(folded[i].Text)
+	}
+	joined := b.String()
+	if strings.TrimSpace(joined) == "" {
+		return out, nil
+	}
+	matches, err := e.Recognize(ctx, joined, allowed, minScore)
+	if err != nil {
+		return nil, err
+	}
+	for _, m := range matches {
+		i := sort.Search(len(starts), func(k int) bool { return starts[k] > m.Start }) - 1
+		if i < 0 {
+			continue
+		}
+		s, en := m.Start-starts[i], m.End-starts[i]
+		if en > len(folded[i].Text) {
+			continue
+		}
+		os, oe := folded[i].Span(s, en)
+		if os < 0 {
+			continue
+		}
+		m.Start, m.End, m.Text = os, oe, texts[i][os:oe]
+		out[i] = append(out[i], m)
+	}
+	return out, nil
+}
+
+// runeOffsets maps each code-point index of s (plus the end) to its byte
+// offset.
+func runeOffsets(s string) []int {
+	out := make([]int, 0, utf8.RuneCountInString(s)+1)
+	for i := range s {
+		out = append(out, i)
+	}
+	return append(out, len(s))
 }
 
 func allowedEntityList(allowed map[Entity]bool) []string {

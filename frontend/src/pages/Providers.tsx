@@ -1,12 +1,16 @@
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Boxes, Search, X, AlertTriangle, Plus, MessageSquare, Database, ImageIcon, Mic, Volume2, Globe, Link2 } from "lucide-react";
-import { api, type Provider, type Account } from "../lib/api";
-import { dashboard } from "../lib/dashboardRoutes";
+import { AlertTriangle, Check, FileSearch, Gift, LogIn, Plug, Plus, Search, SearchX, X, type LucideIcon } from "lucide-react";
+import { api, type Account, type HealthTimelineProvider, type Provider } from "../lib/api";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
-import { Card, CardHeader, Badge, Spinner, EmptyState, StatusDot, Button, Modal, Field, Input, Select, ErrorBanner } from "../components/ui";
+import { ProviderLogo } from "../components/ProviderLogo";
+import { Badge, Button, ErrorBanner, IconTile, SectionTitle, Select, Skeleton, EmptyState } from "../components/ui";
+import { ICONS } from "../lib/icons";
 import { useToast } from "../components/Toast";
+import { ConnectDialog, FormError, PrimaryAction, SecondaryAction, SelectField, TextField } from "../components/connect/ConnectKit";
+import { dashboard } from "../lib/dashboardRoutes";
 
 
 // Popularity ranking for default sort order (lower = more popular).
@@ -100,24 +104,87 @@ function sortByPopularity<T extends { id: string; pinned?: boolean }>(list: T[])
   });
 }
 
-// kindFilters are the service-kind filter chips shown above the provider grid.
+// kindFilters narrow the page by what a provider can serve.
 const kindFilters = [
-  { id: "all", label: "All", icon: Boxes },
-  { id: "llm", label: "Chat", icon: MessageSquare },
-  { id: "embedding", label: "Embeddings", icon: Database },
-  { id: "image", label: "Image", icon: ImageIcon },
-  { id: "stt", label: "STT", icon: Mic },
-  { id: "tts", label: "TTS", icon: Volume2 },
-  { id: "search", label: "Search", icon: Globe },
-  { id: "fetch", label: "Fetch", icon: Link2 },
+  { id: "all", label: "All" },
+  { id: "llm", label: "Chat" },
+  { id: "embedding", label: "Embeddings" },
+  { id: "image", label: "Image" },
+  { id: "stt", label: "Speech-to-text" },
+  { id: "tts", label: "Text-to-speech" },
+  { id: "search", label: "Search" },
+  { id: "fetch", label: "Fetch" },
 ];
+
+type CatalogGroup = "custom" | "subscription" | "api" | "free" | "media" | "retrieval";
+
+// Catalog groups follow how people actually connect: their own endpoint, a
+// subscription they sign in to, a paid API key, something free/local, or a
+// non-chat capability.
+const GROUPS: { id: CatalogGroup; title: string; icon: LucideIcon }[] = [
+  { id: "custom", title: "Custom endpoints", icon: ICONS.server },
+  { id: "subscription", title: "Sign in with a plan", icon: LogIn },
+  { id: "api", title: "Model APIs", icon: ICONS.model },
+  { id: "free", title: "Free and local", icon: Gift },
+  { id: "media", title: "Media and speech", icon: ICONS.media },
+  { id: "retrieval", title: "Search, fetch and embeddings", icon: FileSearch },
+];
+
+function groupOf(p: Provider): CatalogGroup {
+  if (p.custom || p.id.startsWith("custom-")) return "custom";
+  if (p.auth_kind === "none") return "free";
+  if (p.auth_kind === "oauth") return "subscription";
+  if (p.service_kinds.includes("llm")) return "api";
+  if (p.service_kinds.some((k) => k === "image" || k === "tts" || k === "stt" || k === "video")) return "media";
+  return "retrieval";
+}
+
+function matches(p: Provider, filter: string, q: string) {
+  if (filter !== "all" && !p.service_kinds.includes(filter)) return false;
+  return !q || p.display_name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q) || p.alias.toLowerCase().includes(q);
+}
+
+// onRadioKeys gives a role="radiogroup" the arrow-key behaviour of native radios.
+function onRadioKeys(e: ReactKeyboardEvent<HTMLElement>) {
+  if (!["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "Home", "End"].includes(e.key)) return;
+  const radios = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="radio"]:not([disabled])'));
+  const i = radios.indexOf(document.activeElement as HTMLElement);
+  if (i < 0) return;
+  e.preventDefault();
+  const fwd = e.key === "ArrowRight" || e.key === "ArrowDown";
+  const n = e.key === "Home" ? 0 : e.key === "End" ? radios.length - 1 : (i + (fwd ? 1 : -1) + radios.length) % radios.length;
+  radios[n].focus();
+  radios[n].click();
+}
 
 export function ProvidersPage() {
   const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.providers() });
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api.listAccounts() });
+  const timeline = useQuery({
+    queryKey: ["health-timeline", "24h"],
+    queryFn: () => api.healthTimeline("24h", 24),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
   const [filter, setFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // "/" focuses search, the convention in most developer dashboards.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      if (!searchRef.current) return;
+      e.preventDefault();
+      searchRef.current.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   const accountsByProvider = useMemo(() => {
     const map = new Map<string, Account[]>();
@@ -129,162 +196,463 @@ export function ProvidersPage() {
     return map;
   }, [accounts.data]);
 
-  const visible = useMemo(() => {
-    const all = providers.data?.providers ?? [];
-    return all
-      .filter((p) => !p.hidden)
-      .filter((p) => filter === "all" || p.service_kinds.includes(filter))
-      .filter((p) => {
-        if (!searchQuery.trim()) return true;
-        const q = searchQuery.toLowerCase();
-        return (
-          p.display_name.toLowerCase().includes(q) ||
-          p.id.toLowerCase().includes(q) ||
-          p.alias.toLowerCase().includes(q)
-        );
-      });
-  }, [providers.data, filter, searchQuery]);
+  const healthByProvider = useMemo(
+    () => new Map((timeline.data?.providers ?? []).map((h) => [h.provider, h])),
+    [timeline.data],
+  );
 
-  const connected = sortByPopularity(visible.filter((p) => accountsByProvider.has(p.id)));
-  const available = sortByPopularity(visible.filter((p) => !accountsByProvider.has(p.id)));
+  const listed = useMemo(() => (providers.data?.providers ?? []).filter((p) => !p.hidden), [providers.data]);
+  const allConnected = useMemo(() => sortByPopularity(listed.filter((p) => accountsByProvider.has(p.id))), [listed, accountsByProvider]);
+  const available = useMemo(() => sortByPopularity(listed.filter((p) => !accountsByProvider.has(p.id))), [listed, accountsByProvider]);
+  // The picker lists every provider, connected ones included, so another
+  // account can be added to a provider that already has one.
+  const catalog = useMemo(() => sortByPopularity(listed), [listed]);
+  const q = searchQuery.trim().toLowerCase();
+  const connected = allConnected.filter((p) => matches(p, filter, q));
+  const filtering = !!q || filter !== "all";
+  const noneConnected = !providers.isLoading && !providers.isError && allConnected.length === 0;
 
   return (
     <>
       <PageHeader
         title="Providers"
-        icon={Boxes}
-        description="Connect and manage AI providers to power your routing."
+        description={providers.data && allConnected.length > 0 ? `${allConnected.length} connected · ${available.length} available` : undefined}
+        action={
+          noneConnected ? undefined : (
+            <Button onClick={() => setPickerOpen(true)}>
+              <Plug aria-hidden="true" />
+              Connect provider
+            </Button>
+          )
+        }
       />
 
-      {/* Unified toolbar: filters + search + action */}
-      <div className="mb-6 space-y-3">
-        {/* Row 1: Search + New custom provider */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="relative flex-1">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search providers…"
-              className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] py-2.5 pl-10 pr-10 text-sm placeholder:text-[var(--text-muted)] focus:border-accent-400 focus:outline-none focus:ring-2 focus:ring-accent-400/40"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--text-muted)] hover:bg-ink-100 hover:text-[var(--text)] dark:hover:bg-ink-800"
-                aria-label="Clear search"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            )}
-          </div>
-          <Button variant="primary" className="gap-2 shrink-0" onClick={() => setCustomOpen(true)}>
-            <Plus className="h-4 w-4" />
-            New custom provider
-          </Button>
-        </div>
-
-        {/* Row 2: Filter chips */}
-        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filter by service type">
-          {kindFilters.map((k) => {
-            const Icon = k.icon;
-            const active = filter === k.id;
-            return (
-              <button
-                key={k.id}
-                role="tab"
-                aria-selected={active}
-                onClick={() => setFilter(k.id)}
-                className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 ${
-                  active
-                    ? "border-accent-300 bg-accent-50 text-accent-700 shadow-sm dark:border-accent-700 dark:bg-accent-900/30 dark:text-accent-300"
-                    : "border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]"
-                }`}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {k.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-
       {providers.isLoading ? (
-        <Spinner />
-      ) : (
-        <div className="space-y-6">
-          <Card>
-            <CardHeader
-              title="Connected providers"
-              description="These providers have accounts and are ready to use."
-              action={<Badge tone="accent">{connected.length}</Badge>}
-            />
-            {!connected.length ? (
-              <EmptyState
-                title={searchQuery ? `No connected providers match "${searchQuery}"` : "No connected providers yet"}
-                hint={searchQuery ? "Try a different search term." : "Pick a provider below to add your first account."}
-              />
-            ) : (
-              <div className="grid grid-cols-2 gap-px overflow-hidden rounded-b-2xl bg-[var(--border)] sm:grid-cols-3 lg:grid-cols-4">
-                {connected.map((p) => (
-                  <ProviderCard
-                    key={p.id}
-                    provider={p}
-                    accountCount={accountsByProvider.get(p.id)?.length ?? 0}
-                  />
-                ))}
-              </div>
-            )}
-          </Card>
-
-          <Card>
-            <CardHeader
-              title="Available providers"
-              description="Add new providers to expand your routing options."
-              action={<Badge tone="neutral">{available.length}</Badge>}
-            />
-            {!available.length ? (
-              <EmptyState
-                title={searchQuery ? `No providers match "${searchQuery}"` : "No providers for this capability"}
-              />
-            ) : (
-              <div className="grid grid-cols-2 gap-px overflow-hidden rounded-b-2xl bg-[var(--border)] sm:grid-cols-3 lg:grid-cols-4">
-                {available.map((p) => (
-                  <ProviderCard key={p.id} provider={p} accountCount={0} />
-                ))}
-              </div>
-            )}
-          </Card>
+        <div className="space-y-3" aria-busy="true" aria-label="Loading providers">
+          <Skeleton className="h-10 w-full rounded-2xl" />
+          <Skeleton className="h-72 w-full rounded-2xl" />
         </div>
+      ) : providers.isError ? (
+        <ErrorBanner message="Couldn't load providers. Check that the gateway is running, then reload." />
+      ) : noneConnected ? (
+        <EmptyState
+          variant="card"
+          titleAs="h2"
+          icon={ICONS.providers}
+          title="No providers connected"
+          hint="Connect one to start routing requests."
+          action={
+            <Button onClick={() => setPickerOpen(true)}>
+              <Plug aria-hidden="true" />
+              Connect provider
+            </Button>
+          }
+        />
+      ) : (
+        <section aria-labelledby="connected-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+          <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
+            <div className="mr-auto">
+              <SectionTitle id="connected-heading" icon={ICONS.providers} title="Connected" />
+            </div>
+            <div className="relative w-full sm:w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <input
+                ref={searchRef}
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search"
+                aria-label="Search connected providers"
+                aria-keyshortcuts="/"
+                className="h-9 w-full rounded-lg border border-input bg-surface pl-8 pr-9 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              ) : (
+                <kbd aria-hidden="true" className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-line bg-subtle px-1.5 font-mono text-[11px] text-fg-faint">
+                  /
+                </kbd>
+              )}
+            </div>
+            <Select value={filter} onChange={(e) => setFilter(e.target.value)} aria-label="Capability" className="w-full sm:w-44">
+              {kindFilters.map((k) => (
+                <option key={k.id} value={k.id}>
+                  {k.id === "all" ? "All capabilities" : k.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <p className="sr-only" role="status" aria-live="polite">
+            {filtering ? `${connected.length} of ${allConnected.length} connected providers shown` : ""}
+          </p>
+          {connected.length === 0 ? (
+            <div className="px-6 py-10 text-center">
+              <IconTile icon={SearchX} size="md" className="mx-auto mb-2.5" />
+              <p className="text-[13px] font-medium text-fg">No connected provider matches</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery("");
+                  setFilter("all");
+                }}
+                className="mt-1 rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              >
+                Clear filters
+              </button>
+            </div>
+          ) : (
+            <ConnectedTable providers={connected} accountsByProvider={accountsByProvider} healthByProvider={healthByProvider} />
+          )}
+        </section>
       )}
 
-      <CreateCustomProviderModal open={customOpen} onClose={() => setCustomOpen(false)} />
+      {pickerOpen && (
+        <ProviderPicker
+          providers={catalog}
+          accountsByProvider={accountsByProvider}
+          onClose={() => setPickerOpen(false)}
+          onCustom={() => {
+            setPickerOpen(false);
+            setCustomOpen(true);
+          }}
+        />
+      )}
+      {customOpen && <CreateCustomProviderModal onClose={() => setCustomOpen(false)} />}
     </>
   );
 }
 
+// ── Connected providers ─────────────────────────────────────────────────────
+
+type Tone = "ok" | "warn" | "bad" | "neutral";
+const BADGE_TONE = { ok: "success", warn: "warning", bad: "danger", neutral: "neutral" } as const;
+
+// providerStatus answers "is it OK?" in one word: account problems first,
+// then the last 24 hours of traffic.
+function providerStatus(accs: Account[], h?: HealthTimelineProvider): { tone: Tone; label: string } {
+  const attention = accs.filter((a) => a.needs_reconnect).length;
+  if (attention > 0) return { tone: "warn", label: "Reconnect needed" };
+  if (accs.length > 0 && accs.every((a) => a.disabled)) return { tone: "neutral", label: "Paused" };
+  if (!h || !h.requests) return { tone: "neutral", label: "No traffic" };
+  if (h.success_rate >= 0.99) return { tone: "ok", label: "Healthy" };
+  if (h.success_rate >= 0.95) return { tone: "warn", label: "Degraded" };
+  return { tone: "bad", label: "Failing" };
+}
+
+function NoData() {
+  return (
+    <>
+      <span aria-hidden="true">—</span>
+      <span className="sr-only">No data</span>
+    </>
+  );
+}
+
+function ConnectedTable({
+  providers,
+  accountsByProvider,
+  healthByProvider,
+}: {
+  providers: Provider[];
+  accountsByProvider: Map<string, Account[]>;
+  healthByProvider: Map<string, HealthTimelineProvider>;
+}) {
+  const navigate = useNavigate();
+  return (
+    <>
+      <ul className="divide-y divide-line md:hidden" aria-label="Connected providers">
+        {providers.map((p) => {
+          const accs = accountsByProvider.get(p.id) ?? [];
+          const paused = accs.filter((a) => a.disabled).length;
+          const h = healthByProvider.get(p.id);
+          const status = providerStatus(accs, h);
+          const facts = [
+            `${accs.length} account${accs.length === 1 ? "" : "s"}${paused > 0 && paused < accs.length ? ` (${paused} paused)` : ""}`,
+            h && h.requests ? `${h.requests.toLocaleString("en-US")} requests` : null,
+            h && h.requests ? `${(h.success_rate * 100).toFixed(1)}% success` : null,
+            h && h.worst_p95_ms ? `p95 ${fmtLatency(h.worst_p95_ms)}` : null,
+          ].filter(Boolean);
+          return (
+            <li key={p.id} className="px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <Link
+                  to={dashboard(`/providers/${p.id}`)}
+                  className="flex min-w-0 items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                >
+                  <ProviderLogo icon={p.icon} name={p.display_name} size={24} />
+                  <span className="min-w-0">
+                    <span className="block truncate text-[13px] font-medium text-fg">{p.display_name}</span>
+                    <span className="block truncate font-mono text-[11.5px] text-fg-faint">{p.id}</span>
+                  </span>
+                </Link>
+                <span className="shrink-0">
+                  <Badge tone={BADGE_TONE[status.tone]}>
+                    <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+                    {status.label}
+                  </Badge>
+                </span>
+              </div>
+              <p className="mt-1.5 text-[12px] tabular-nums text-fg-muted">{facts.join(" · ")}</p>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full min-w-[820px] text-[13px]">
+          <thead>
+            <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+              <th scope="col" className="px-4 py-2 font-medium">Provider</th>
+              <th scope="col" className="px-4 py-2 font-medium">Status</th>
+              <th scope="col" className="px-4 py-2 text-right font-medium">Accounts</th>
+              <th scope="col" className="px-4 py-2 font-medium">Last 24 hours</th>
+              <th scope="col" className="px-4 py-2 text-right font-medium">Requests</th>
+              <th scope="col" className="px-4 py-2 text-right font-medium">Success</th>
+              <th scope="col" className="px-4 py-2 text-right font-medium">Worst p95</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {providers.map((p) => {
+              const accs = accountsByProvider.get(p.id) ?? [];
+              const paused = accs.filter((a) => a.disabled).length;
+              const h = healthByProvider.get(p.id);
+              const status = providerStatus(accs, h);
+              const badHours = h ? h.buckets.filter((b) => b.status === "degraded" || b.status === "down").length : 0;
+              return (
+                <tr key={p.id} className="cursor-pointer transition-colors hover:bg-hover" onClick={() => navigate(dashboard(`/providers/${p.id}`))}>
+                  <td className="px-4 py-2">
+                    <Link
+                      to={dashboard(`/providers/${p.id}`)}
+                      className="flex items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <ProviderLogo icon={p.icon} name={p.display_name} size={24} />
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-fg">{p.display_name}</span>
+                        <span className="block truncate font-mono text-[11.5px] text-fg-faint">{p.id}</span>
+                      </span>
+                    </Link>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2">
+                    <Badge tone={BADGE_TONE[status.tone]}>
+                      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
+                      {status.label}
+                    </Badge>
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-2 text-right">
+                    <span className="tabular-nums text-fg">{accs.length}</span>
+                    {paused > 0 && paused < accs.length && <span className="block text-[11.5px] text-fg-faint">{paused} paused</span>}
+                  </td>
+                  <td className="px-4 py-2">
+                    {h ? (
+                      <div
+                        className="flex w-40 gap-[2px]"
+                        role="img"
+                        aria-label={badHours ? `${badHours} of ${h.buckets.length} hours had errors` : `No errors in ${h.buckets.length} hours`}
+                      >
+                        {h.buckets.map((b) => (
+                          <span key={b.start} className={cn("h-3.5 min-w-[2px] flex-1 rounded-[1.5px]", TICK_CLASS[b.status] ?? "bg-track")} />
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-[12px] text-fg-faint">No traffic</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2 text-right text-fg">{h ? h.requests.toLocaleString("en-US") : <NoData />}</td>
+                  <td className={cn("px-4 py-2 text-right", h && h.requests ? (h.success_rate >= 0.99 ? "text-fg" : h.success_rate >= 0.95 ? "text-warn" : "text-bad") : "text-fg-faint")}>
+                    {h && h.requests ? `${(h.success_rate * 100).toFixed(1)}%` : <NoData />}
+                  </td>
+                  <td className="px-4 py-2 text-right text-fg-muted">{h && h.worst_p95_ms ? fmtLatency(h.worst_p95_ms) : <NoData />}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+const TICK_CLASS: Record<string, string> = { ok: "bg-ok/70", degraded: "bg-warn", down: "bg-bad", idle: "bg-track" };
+
+function fmtLatency(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+// ── Catalog picker ──────────────────────────────────────────────────────────
+
+// ProviderPicker is the "Connect provider" dialog: search, filter by
+// capability, then pick a provider to open its page and connect it there.
+// Connected providers stay listed (tagged) so more accounts can be added.
+function ProviderPicker({
+  providers,
+  accountsByProvider,
+  onClose,
+  onCustom,
+}: {
+  providers: Provider[];
+  accountsByProvider: ReadonlyMap<string, Account[]>;
+  onClose: () => void;
+  onCustom: () => void;
+}) {
+  const [filter, setFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLowerCase();
+  const visible = providers.filter((p) => matches(p, filter, q));
+  const grouped = GROUPS.map((g) => ({ ...g, items: visible.filter((p) => groupOf(p) === g.id) })).filter((g) => g.items.length > 0);
+
+  return (
+    <ConnectDialog
+      title="Connect a provider"
+      width="xl"
+      onClose={onClose}
+      toolbar={
+        <div className="space-y-2.5">
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            <input
+              type="search"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={`Search ${providers.length} providers`}
+              aria-label="Search providers"
+              className="h-9 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            />
+          </div>
+          <div
+            className="-mx-5 flex gap-1.5 overflow-x-auto px-5 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0"
+            role="radiogroup"
+            aria-label="Capability"
+            onKeyDown={onRadioKeys}
+          >
+            {kindFilters.map((k) => {
+              const active = filter === k.id;
+              return (
+                <button
+                  key={k.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  tabIndex={active ? 0 : -1}
+                  onClick={() => setFilter(k.id)}
+                  className={cn(
+                    "h-8 shrink-0 whitespace-nowrap rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors sm:h-7 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                    active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+                  )}
+                >
+                  {k.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      }
+      footer={
+        <>
+          <span className="mr-auto hidden text-[12.5px] text-fg-muted sm:inline">Not listed?</span>
+          <SecondaryAction onClick={onCustom}>
+            <Plus aria-hidden="true" />
+            New custom provider
+          </SecondaryAction>
+        </>
+      }
+    >
+      <p className="sr-only" role="status" aria-live="polite">
+        {visible.length} provider{visible.length === 1 ? "" : "s"} shown
+      </p>
+      {grouped.length === 0 ? (
+        <div className="py-8 text-center">
+          <IconTile icon={SearchX} size="md" className="mx-auto mb-2.5" />
+          <p className="text-[13px] text-fg-muted">No providers match{q ? ` “${query.trim()}”` : " this capability"}.</p>
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {grouped.map((g) => (
+            <section key={g.id} aria-labelledby={`group-${g.id}`}>
+              <div className="mb-1.5 px-2">
+                <SectionTitle
+                  as="h3"
+                  id={`group-${g.id}`}
+                  icon={g.icon}
+                  title={
+                    <>
+                      {g.title}
+                      <span className="ml-2 text-[12px] font-normal tabular-nums text-fg-faint">{g.items.length}</span>
+                    </>
+                  }
+                />
+              </div>
+              <ul className="grid grid-cols-1 gap-x-2 sm:grid-cols-2">
+                {g.items.map((p) => (
+                  <li key={p.id}>
+                    <CatalogItem provider={p} accountCount={accountsByProvider.get(p.id)?.length ?? 0} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
+    </ConnectDialog>
+  );
+}
+
+function CatalogItem({ provider: p, accountCount }: { provider: Provider; accountCount: number }) {
+  const connected = accountCount > 0;
+  const tag = connected
+    ? { label: "Connected", tone: "success" as const }
+    : p.deprecated
+      ? { label: "Unofficial", tone: "warning" as const }
+      : !p.drivable
+        ? { label: "Coming soon", tone: "neutral" as const }
+        : p.auth_kind === "none"
+          ? { label: "Free", tone: "success" as const }
+          : null;
+  // Connected providers explain why they are still listed: picking one adds
+  // another account rather than reconnecting the existing ones.
+  const subtitle = connected ? `${accountCount} account${accountCount === 1 ? "" : "s"} · add another` : p.id;
+  return (
+    <Link
+      to={dashboard(`/providers/${p.id}`)}
+      className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+    >
+      <ProviderLogo icon={p.icon} name={p.display_name} size={24} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium text-fg">{p.display_name}</span>
+        <span className={cn("block truncate text-[11.5px] text-fg-faint", !connected && "font-mono")}>{subtitle}</span>
+      </span>
+      {tag && (
+        <Badge tone={tag.tone}>
+          {connected ? <Check className="h-3 w-3" aria-hidden="true" /> : p.deprecated && <AlertTriangle className="h-3 w-3" aria-hidden="true" />}
+          {tag.label}
+        </Badge>
+      )}
+    </Link>
+  );
+}
+
+// ── Custom provider ─────────────────────────────────────────────────────────
+
 // CreateCustomProviderModal creates a new dynamic custom provider instance.
 // Each instance gets a unique id so multiple OpenAI-/Anthropic-compatible
 // endpoints stay fully isolated (own base URL, accounts, and models).
-function CreateCustomProviderModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+function CreateCustomProviderModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const toast = useToast();
+  const formId = useId();
   const [name, setName] = useState("");
   const [dialect, setDialect] = useState("openai");
   const [baseURL, setBaseURL] = useState("");
   const [alias, setAlias] = useState("");
   const [error, setError] = useState("");
-
-  const reset = () => {
-    setName("");
-    setDialect("openai");
-    setBaseURL("");
-    setAlias("");
-    setError("");
-  };
+  const [showErrors, setShowErrors] = useState(false);
 
   const create = useMutation({
     mutationFn: () =>
@@ -297,151 +665,99 @@ function CreateCustomProviderModal({ open, onClose }: { open: boolean; onClose: 
     onSuccess: (p) => {
       qc.invalidateQueries({ queryKey: ["providers"] });
       toast.success("Custom provider created", "Add an account and models to start routing.");
-      reset();
       onClose();
       navigate(dashboard(`/providers/${p.id}`));
     },
     onError: (e: Error) => setError(e.message),
   });
 
-  const canSubmit = name.trim().length > 0 && baseURL.trim().length > 0 && !create.isPending;
+  const nameMissing = name.trim().length === 0;
+  const urlMissing = baseURL.trim().length === 0;
+  const canSubmit = !nameMissing && !urlMissing && !create.isPending;
 
   return (
-    <Modal
-      open={open}
-      onClose={() => { reset(); onClose(); }}
+    <ConnectDialog
       title="New custom provider"
-      subtitle="A dedicated instance of an OpenAI- or Anthropic-compatible endpoint. Each instance is isolated with its own base URL, accounts, and models."
+      description="Any OpenAI- or Anthropic-compatible endpoint"
+      onClose={onClose}
+      footer={
+        <>
+          <SecondaryAction onClick={onClose}>Cancel</SecondaryAction>
+          <PrimaryAction type="submit" form={formId} busy={create.isPending}>
+            {!create.isPending && <Plus aria-hidden="true" />}
+            {create.isPending ? "Creating…" : "Create provider"}
+          </PrimaryAction>
+        </>
+      }
     >
       <form
-        className="space-y-4 px-6 py-5"
+        id={formId}
+        className="space-y-3.5"
+        noValidate
         onSubmit={(e) => {
           e.preventDefault();
-          if (canSubmit) create.mutate();
+          if (canSubmit) {
+            create.mutate();
+            return;
+          }
+          if (create.isPending) return;
+          const formEl = e.currentTarget;
+          setShowErrors(true);
+          window.requestAnimationFrame(() => formEl.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
         }}
       >
-        <Field label="Name (required)">
-          <Input
-            value={name}
-            onChange={(e) => { setName(e.target.value); setError(""); }}
-            placeholder="e.g. Local vLLM or Acme Gateway"
-            autoFocus
-          />
-        </Field>
-        <Field label="Dialect">
-          <Select value={dialect} onChange={(e) => setDialect(e.target.value)}>
-            <option value="openai">OpenAI-compatible</option>
-            <option value="anthropic">Anthropic-compatible</option>
-          </Select>
-        </Field>
-        <Field label="Base URL (required)">
-          <Input
-            value={baseURL}
-            onChange={(e) => { setBaseURL(e.target.value); setError(""); }}
-            placeholder="https://llm.example.com/v1"
-          />
-        </Field>
-        <Field label="Alias / prefix (optional)">
-          <Input
-            value={alias}
-            onChange={(e) => {
-              const slug = e.target.value
-                .toLowerCase()
-                .replace(/\s+/g, "-")
-                .replace(/[^a-z0-9-]/g, "")
-                .replace(/-+/g, "-");
-              setAlias(slug);
-              setError("");
-            }}
-            placeholder="e.g. kei-ai — models route as <alias>/<model>"
-            pattern="[A-Za-z0-9-]*"
-            maxLength={32}
-          />
-          <p className="text-xs text-[var(--text-muted)]">
-            Letters, digits, hyphens only (max 32). Leave blank to derive from the name. Models route as <code>&lt;alias&gt;/&lt;model&gt;</code>.
-          </p>
-        </Field>
-        <p className="text-xs text-[var(--text-muted)]">
-          Tip: add two separate instances for two endpoints of the same type — they will never share models or credentials.
-        </p>
-        {error && <ErrorBanner message={error} />}
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <Button type="button" variant="ghost" onClick={() => { reset(); onClose(); }}>
-            Cancel
-          </Button>
-          <Button type="submit" disabled={!canSubmit}>
-            <Plus className="h-4 w-4" />
-            {create.isPending ? "Creating…" : "Create provider"}
-          </Button>
-        </div>
+        <TextField
+          label="Name"
+          required
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            setError("");
+          }}
+          placeholder="Local vLLM"
+          error={showErrors && nameMissing ? "Enter a name." : undefined}
+        />
+        <SelectField label="Dialect" value={dialect} onChange={(e) => setDialect(e.target.value)}>
+          <option value="openai">OpenAI-compatible</option>
+          <option value="anthropic">Anthropic-compatible</option>
+        </SelectField>
+        <TextField
+          label="Base URL"
+          required
+          value={baseURL}
+          onChange={(e) => {
+            setBaseURL(e.target.value);
+            setError("");
+          }}
+          placeholder="https://llm.example.com/v1"
+          className="font-mono"
+          error={showErrors && urlMissing ? "Enter the endpoint's base URL." : undefined}
+        />
+        <TextField
+          label="Route prefix"
+          optional
+          value={alias}
+          onChange={(e) => {
+            const slug = e.target.value
+              .toLowerCase()
+              .replace(/\s+/g, "-")
+              .replace(/[^a-z0-9-]/g, "")
+              .replace(/-+/g, "-");
+            setAlias(slug);
+            setError("");
+          }}
+          placeholder="kei-ai"
+          pattern="[A-Za-z0-9-]*"
+          maxLength={32}
+          className="font-mono"
+          hint={
+            <>
+              Models route as <code className="font-mono text-fg">{alias || "<prefix>"}/&lt;model&gt;</code>. Defaults to the name.
+            </>
+          }
+        />
+        <FormError message={error} />
       </form>
-    </Modal>
-  );
-}
-
-function ProviderCard({ provider: p, accountCount }: { provider: Provider; accountCount: number }) {
-  const navigate = useNavigate();
-  const connected = accountCount > 0;
-
-  return (
-    <button
-      type="button"
-                onClick={() => navigate(dashboard(`/providers/${p.id}`))}
-      aria-label={`Open ${p.display_name}`}
-      className="group relative flex h-full w-full flex-col items-start gap-3 rounded-none bg-[var(--bg-elevated)] p-5 text-left transition-colors hover:bg-ink-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-400/60 dark:hover:bg-ink-800/40"
-    >
-      <div className="flex w-full items-start justify-between gap-2">
-        <ProviderIcon provider={p} />
-        {connected ? (
-          <span className="inline-flex items-center gap-1.5 rounded-md bg-accent-100 px-2 py-0.5 text-xs font-medium text-accent-700 dark:bg-accent-800/40 dark:text-accent-200">
-            <StatusDot tone="success" />
-            Connected
-          </span>
-        ) : p.deprecated ? (
-          <Badge tone="warning" title={p.notice || "Account may be restricted"}>
-            <AlertTriangle className="mr-1 h-3 w-3" />
-            unofficial
-          </Badge>
-        ) : !p.drivable ? (
-          <Badge tone="neutral">soon</Badge>
-        ) : p.auth_kind === "none" ? (
-          <Badge tone="accent">free</Badge>
-        ) : null}
-      </div>
-
-      <div className="min-w-0">
-        <p className="truncate text-sm font-semibold">{p.display_name}</p>
-        <p className="mt-0.5 truncate font-mono text-xs text-[var(--text-muted)]">{p.id}</p>
-      </div>
-
-      <p className="mt-auto text-xs text-[var(--text-muted)]">
-        {connected
-          ? `${accountCount} ${accountCount === 1 ? "account" : "accounts"}`
-          : "Connect"}
-      </p>
-    </button>
-  );
-}
-
-// ProviderIcon renders the provider PNG with a colored fallback initial.
-function ProviderIcon({ provider: p }: { provider: Provider }) {
-  const [errored, setErrored] = useState(false);
-  if (errored || !p.icon) {
-    return (
-      <div
-        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white"
-        style={{ backgroundColor: p.color || "var(--text-muted)" }}
-      >
-        {p.display_name.slice(0, 1).toUpperCase()}
-      </div>
-    );
-  }
-  return (
-    <img
-      src={p.icon}
-      alt={p.display_name}
-      onError={() => setErrored(true)}
-      className="h-10 w-10 shrink-0 rounded-xl object-contain"
-    />
+    </ConnectDialog>
   );
 }

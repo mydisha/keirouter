@@ -50,14 +50,16 @@ Dashboard: http://localhost:5180 (password: `keirouter`)
 
 ## Local Install (Binary)
 
-Build and install the binary + dashboard assets system-wide:
+Download the prebuilt binary + dashboard assets for this OS/CPU (macOS or Linux, amd64 or arm64) and install them system-wide. No Go or Node.js needed:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mydisha/keirouter/main/scripts/install.sh | bash
-keirouter
+keirouter start
 ```
 
-If you prefer Docker and do not want Go/Node.js on the machine:
+Add `-s -- --service` on Linux to run it as a systemd user service that starts on boot, or `-s -- --source` to build from source instead (Go 1.26+, Node.js 20.19+).
+
+If you prefer Docker:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mydisha/keirouter/main/scripts/install.sh | bash -s -- --docker

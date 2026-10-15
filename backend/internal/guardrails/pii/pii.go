@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"sort"
 	"strings"
 
@@ -34,183 +35,309 @@ func NewWithConfig(cfg Config) *Detector {
 	return &Detector{presidio: cfg.Presidio}
 }
 
-// recognize dispatches a recognition call to the engine selected by the
-// policy. The native path is used when engine is unset / "native", or when
-// the Presidio engine returns an error (graceful fallback so a sidecar
-// hiccup doesn't break safety).
-func (d *Detector) recognize(ctx context.Context, text string, cfg *guardrails.PIIConfig, allowed map[Entity]bool, minScore float64) []Match {
-	if d.presidio != nil && strings.EqualFold(cfg.Engine, "presidio") {
-		matches, err := d.presidio.Recognize(ctx, text, allowed, minScore)
-		if err == nil {
-			return matches
-		}
-		// fall through to native on error
-	}
-	return Recognize(text, allowed, minScore)
-}
+// maxFindings caps the findings attached to one decision so a document full
+// of addresses doesn't produce a megabyte audit row.
+const maxFindings = 50
 
 // Name identifies this detector in audit logs and policy config.
 func (*Detector) Name() string { return "pii" }
 
-// Inbound scans the request's text content. When matches exceed the policy
-// threshold, the configured strategy is applied: redact/replace/mask/hash
-// rewrite the text in place, block returns a block decision the engine
-// surfaces to the caller as policy_blocked.
+// Capabilities reports whether the Presidio engine is wired.
+func (d *Detector) Capabilities() map[string]bool {
+	return map[string]bool{"presidio": d.presidio != nil}
+}
+
+// settings is a PIIConfig with defaults applied.
+type settings struct {
+	cfg      *guardrails.PIIConfig
+	allowed  map[Entity]bool
+	blocking map[Entity]bool
+	allowVal map[string]bool
+	minScore float64
+	strategy guardrails.PIIStrategy
+}
+
+func newSettings(cfg *guardrails.PIIConfig) settings {
+	s := settings{
+		cfg:      cfg,
+		allowed:  entitySet(cfg.Types),
+		blocking: entitySet(cfg.BlockTypes),
+		minScore: cfg.MinScore,
+		strategy: cfg.Strategy,
+	}
+	if s.minScore <= 0 {
+		s.minScore = 0.5
+	}
+	if s.strategy == "" {
+		s.strategy = guardrails.PIIStrategyRedact
+	}
+	// Entities that must block are detected even when the type filter
+	// leaves them out.
+	if s.allowed != nil {
+		for e := range s.blocking {
+			s.allowed[e] = true
+		}
+	}
+	if len(cfg.AllowList) > 0 {
+		s.allowVal = make(map[string]bool, len(cfg.AllowList))
+		for _, v := range cfg.AllowList {
+			if v = strings.ToLower(strings.TrimSpace(v)); v != "" {
+				s.allowVal[v] = true
+			}
+		}
+	}
+	return s
+}
+
+// Inbound scans the request and applies the configured strategy. Masking
+// strategies rewrite every affected field in place (system prompt, each
+// message, tool call arguments, tool results); block refuses the request.
 func (d *Detector) Inbound(ctx context.Context, in *guardrails.InboundRequest, p guardrails.Policy) (*guardrails.Decision, error) {
 	cfg := p.PII
 	if cfg == nil || !cfg.Enabled {
 		return nil, nil
 	}
-	allowed := allowedSet(cfg.Types)
-	minScore := cfg.MinScore
-	if minScore <= 0 {
-		minScore = 0.5
-	}
-
-	// Run recognizers across the FlatText composed by the engine; this
-	// covers System + Messages content with role delimiters.
-	matches := d.recognize(ctx, in.FlatText, cfg, allowed, minScore)
-	if len(matches) == 0 {
-		return nil, nil
-	}
-
-	strategy := cfg.Strategy
-	if strategy == "" {
-		strategy = guardrails.PIIStrategyRedact
-	}
-
-	if strategy == guardrails.PIIStrategyBlock {
-		return &guardrails.Decision{
-			Action:   guardrails.ActionBlock,
-			Severity: severityFor(matches),
-			Reason:   buildReason("blocked", matches),
-			Findings: toFindings(matches, nil),
-		}, nil
-	}
-
-	// For mutating strategies we rewrite the most recent user message in
-	// place. We work off the original user-message text (not the engine's
-	// FlatText with role delimiters) so the rewritten payload looks natural
-	// to the provider.
-	userIdx := lastUserMessageIndex(in.Source)
-	if userIdx < 0 {
-		// No user message to rewrite — fall back to redacting the system
-		// prompt only (covers the rare case of system-only prompts).
-		original := in.Source.System
-		rewritten, redactions := d.applyStrategy(ctx, original, cfg, allowed, minScore, strategy)
-		if rewritten == original {
-			return nil, nil
-		}
-		return &guardrails.Decision{
-			Action:       guardrails.ActionMask,
-			Severity:     severityFor(matches),
-			Reason:       buildReason("masked", matches),
-			Findings:     toFindings(matches, redactions),
-			Mutated:      rewritten,
-			MutatedField: guardrails.MutatedFieldSystem,
-		}, nil
-	}
-
-	original := in.Source.Messages[userIdx].TextContent()
-	rewritten, redactions := d.applyStrategy(ctx, original, cfg, allowed, minScore, strategy)
-	if rewritten == original {
-		// All matches were in non-user surfaces; nothing to mutate cleanly
-		// in Phase 1 — surface a Warn so audit captures it.
-		return &guardrails.Decision{
-			Action:   guardrails.ActionWarn,
-			Severity: severityFor(matches),
-			Reason:   buildReason("warned", matches),
-			Findings: toFindings(matches, nil),
-		}, nil
-	}
-
-	return &guardrails.Decision{
-		Action:       guardrails.ActionMask,
-		Severity:     severityFor(matches),
-		Reason:       buildReason("masked", matches),
-		Findings:     toFindings(matches, redactions),
-		Mutated:      rewritten,
-		MutatedField: guardrails.MutatedFieldMessages,
-	}, nil
+	st := newSettings(cfg)
+	surfaces := inboundSurfaces(in, cfg.Scope)
+	return d.evaluate(ctx, surfaces, st, "", guardrails.MutatedFieldInPlace)
 }
 
-// Outbound scans the LLM response for leaked PII when ScanOutput is set.
+// Outbound scans the model response for leaked PII when ScanOutput is set.
 func (d *Detector) Outbound(ctx context.Context, out *guardrails.OutboundResponse, p guardrails.Policy) (*guardrails.Decision, error) {
 	cfg := p.PII
 	if cfg == nil || !cfg.Enabled || !cfg.ScanOutput {
 		return nil, nil
 	}
-	allowed := allowedSet(cfg.Types)
-	minScore := cfg.MinScore
-	if minScore <= 0 {
-		minScore = 0.5
+	st := newSettings(cfg)
+	if out.Source != nil {
+		return d.evaluate(ctx, guardrails.ResponseSurfaces(out.Source), st, "output ", guardrails.MutatedFieldInPlace)
 	}
-	matches := d.recognize(ctx, out.Text, cfg, allowed, minScore)
-	if len(matches) == 0 {
+	// Streaming text: return the rewrite instead of writing it anywhere.
+	text := out.Text
+	surface := guardrails.TextSurface{
+		Kind: guardrails.SurfaceText, Role: core.RoleAssistant, Message: -1,
+		Get: func() string { return text },
+		Set: func(s string) { text = s },
+	}
+	dec, err := d.evaluate(ctx, []guardrails.TextSurface{surface}, st, "output ", guardrails.MutatedFieldResponse)
+	if dec != nil && dec.Action == guardrails.ActionMask {
+		dec.Mutated = text
+	}
+	return dec, err
+}
+
+// inboundSurfaces selects the request fields covered by the policy scope.
+func inboundSurfaces(in *guardrails.InboundRequest, scope string) []guardrails.TextSurface {
+	if in.Source == nil {
+		text := in.FlatText
+		return []guardrails.TextSurface{{
+			Kind: guardrails.SurfaceText, Role: core.RoleUser, Message: -1,
+			Get: func() string { return text },
+			Set: func(s string) { text = s },
+		}}
+	}
+	all := guardrails.RequestSurfaces(in.Source)
+	switch scope {
+	case guardrails.PIIScopeUser:
+		out := all[:0]
+		for _, s := range all {
+			if s.Kind == guardrails.SurfaceToolResult || ((s.Role == core.RoleUser || s.Role == core.RoleTool) && s.Kind == guardrails.SurfaceText) {
+				out = append(out, s)
+			}
+		}
+		return out
+	case guardrails.PIIScopeLastUser:
+		last := -1
+		for i := len(in.Source.Messages) - 1; i >= 0; i-- {
+			if in.Source.Messages[i].Role == core.RoleUser {
+				last = i
+				break
+			}
+		}
+		out := all[:0]
+		for _, s := range all {
+			if s.Message == last && last >= 0 && s.Kind == guardrails.SurfaceText {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return all
+}
+
+func (d *Detector) evaluate(ctx context.Context, surfaces []guardrails.TextSurface, st settings, verb string, field guardrails.MutatedField) (*guardrails.Decision, error) {
+	if len(surfaces) == 0 {
 		return nil, nil
 	}
-	strategy := cfg.Strategy
-	if strategy == "" {
-		strategy = guardrails.PIIStrategyRedact
+	texts := make([]string, len(surfaces))
+	for i, s := range surfaces {
+		texts[i] = s.Get()
 	}
-	if strategy == guardrails.PIIStrategyBlock {
+	perSurface := d.recognizeAll(ctx, texts, st)
+
+	var all []Match
+	blocked := st.strategy == guardrails.PIIStrategyBlock
+	var blockedBy []Match
+	for _, ms := range perSurface {
+		for _, m := range ms {
+			all = append(all, m)
+			if st.blocking[m.Entity] {
+				blocked = true
+				blockedBy = append(blockedBy, m)
+			}
+		}
+	}
+	if len(all) == 0 {
+		return nil, nil
+	}
+
+	if blocked {
+		reasonOn := all
+		if st.strategy != guardrails.PIIStrategyBlock {
+			reasonOn = blockedBy
+		}
 		return &guardrails.Decision{
 			Action:   guardrails.ActionBlock,
-			Severity: severityFor(matches),
-			Reason:   buildReason("output blocked", matches),
-			Findings: toFindings(matches, nil),
+			Severity: severityFor(all),
+			Reason:   buildReason(verb+"blocked", reasonOn),
+			Findings: toFindings(all, nil),
 		}, nil
 	}
-	rewritten, redactions := d.applyStrategy(ctx, out.Text, cfg, allowed, minScore, strategy)
-	if rewritten == out.Text {
-		return nil, nil
+
+	var redactions []string
+	changed := false
+	for i, ms := range perSurface {
+		if len(ms) == 0 {
+			continue
+		}
+		var rewritten string
+		var reps []string
+		if surfaces[i].Kind == guardrails.SurfaceToolArgs {
+			rewritten, reps = d.maskJSON(ctx, texts[i], ms, st)
+		} else {
+			rewritten, reps = applyStrategy(texts[i], ms, st.strategy)
+		}
+		redactions = append(redactions, reps...)
+		if rewritten != texts[i] {
+			surfaces[i].Set(rewritten)
+			changed = true
+		}
+	}
+	if !changed {
+		return &guardrails.Decision{
+			Action:   guardrails.ActionWarn,
+			Severity: severityFor(all),
+			Reason:   buildReason(verb+"warned", all),
+			Findings: toFindings(all, nil),
+		}, nil
 	}
 	return &guardrails.Decision{
 		Action:       guardrails.ActionMask,
-		Severity:     severityFor(matches),
-		Reason:       buildReason("output masked", matches),
-		Findings:     toFindings(matches, redactions),
-		Mutated:      rewritten,
-		MutatedField: guardrails.MutatedFieldResponse,
+		Severity:     severityFor(all),
+		Reason:       buildReason(verb+"masked", all),
+		Findings:     toFindings(all, redactions),
+		MutatedField: field,
 	}, nil
 }
 
-// allowedSet converts the policy's slice of entity names to a lookup set.
-// An empty list means "all entities", encoded as nil.
-func allowedSet(types []string) map[Entity]bool {
+// recognizeAll returns the matches for each text. Presidio receives every
+// text in a single call; the native recognizers run per text and also serve
+// as the fallback when the sidecar fails.
+func (d *Detector) recognizeAll(ctx context.Context, texts []string, st settings) [][]Match {
+	out := make([][]Match, len(texts))
+	if d.presidio != nil && strings.EqualFold(st.cfg.Engine, "presidio") {
+		if res, err := d.presidio.RecognizeBatch(ctx, texts, st.allowed, st.minScore); err == nil {
+			for i := range res {
+				out[i] = st.filter(res[i])
+			}
+			return out
+		}
+	}
+	for i, t := range texts {
+		out[i] = st.filter(Recognize(t, st.allowed, st.minScore))
+	}
+	return out
+}
+
+// filter drops allow-listed values.
+func (st settings) filter(ms []Match) []Match {
+	if len(st.allowVal) == 0 {
+		return ms
+	}
+	out := ms[:0]
+	for _, m := range ms {
+		if !st.allowVal[strings.ToLower(strings.TrimSpace(m.Text))] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// maskJSON masks tool call arguments. A direct splice is used when it keeps
+// the JSON valid; otherwise each string value is masked on its own and the
+// document is re-encoded. Non-JSON (custom tool) input is masked as text.
+func (d *Detector) maskJSON(ctx context.Context, raw string, ms []Match, st settings) (string, []string) {
+	spliced, reps := applyStrategy(raw, ms, st.strategy)
+	if !json.Valid([]byte(raw)) || json.Valid([]byte(spliced)) {
+		return spliced, reps
+	}
+	var v any
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return spliced, reps
+	}
+	reps = reps[:0]
+	v = d.maskValue(ctx, v, st, &reps, 0)
+	b, err := json.Marshal(v)
+	if err != nil {
+		return raw, nil
+	}
+	return string(b), reps
+}
+
+func (d *Detector) maskValue(ctx context.Context, v any, st settings, reps *[]string, depth int) any {
+	if depth > 64 {
+		return v
+	}
+	switch t := v.(type) {
+	case string:
+		ms := st.filter(Recognize(t, st.allowed, st.minScore))
+		if len(ms) == 0 {
+			return t
+		}
+		s, r := applyStrategy(t, ms, st.strategy)
+		*reps = append(*reps, r...)
+		return s
+	case []any:
+		for i := range t {
+			t[i] = d.maskValue(ctx, t[i], st, reps, depth+1)
+		}
+	case map[string]any:
+		for k := range t {
+			t[k] = d.maskValue(ctx, t[k], st, reps, depth+1)
+		}
+	}
+	return v
+}
+
+func entitySet(types []string) map[Entity]bool {
 	if len(types) == 0 {
 		return nil
 	}
 	out := make(map[Entity]bool, len(types))
 	for _, t := range types {
-		out[Entity(strings.ToUpper(strings.TrimSpace(t)))] = true
+		if t = strings.ToUpper(strings.TrimSpace(t)); t != "" {
+			out[Entity(t)] = true
+		}
 	}
 	return out
 }
 
-// lastUserMessageIndex returns the index of the most recent user-role
-// message in the request, or -1 if none.
-func lastUserMessageIndex(req *core.ChatRequest) int {
-	if req == nil {
-		return -1
-	}
-	for i := len(req.Messages) - 1; i >= 0; i-- {
-		if req.Messages[i].Role == core.RoleUser {
-			return i
-		}
-	}
-	return -1
-}
-
-// applyStrategy rewrites text by substituting each match per the chosen
-// strategy. It scans the original text once and emits the rewritten string
-// plus a parallel list of redacted replacements (for audit logs).
-func (d *Detector) applyStrategy(ctx context.Context, text string, cfg *guardrails.PIIConfig, allowed map[Entity]bool, minScore float64, strategy guardrails.PIIStrategy) (string, []string) {
-	matches := d.recognize(ctx, text, cfg, allowed, minScore)
+// applyStrategy splices each match's replacement into text. Matches must not
+// overlap (Recognize guarantees it).
+func applyStrategy(text string, matches []Match, strategy guardrails.PIIStrategy) (string, []string) {
 	if len(matches) == 0 {
 		return text, nil
 	}
-	// Sort by Start so we splice from earliest to latest.
 	sort.Slice(matches, func(i, j int) bool { return matches[i].Start < matches[j].Start })
 
 	var b strings.Builder
@@ -218,9 +345,7 @@ func (d *Detector) applyStrategy(ctx context.Context, text string, cfg *guardrai
 	cursor := 0
 	redactions := make([]string, 0, len(matches))
 	for _, m := range matches {
-		if m.Start < cursor {
-			// Overlap with already-emitted text (mergeOverlaps should prevent
-			// this but be safe).
+		if m.Start < cursor || m.End > len(text) {
 			continue
 		}
 		b.WriteString(text[cursor:m.Start])
@@ -250,7 +375,7 @@ func replacement(m Match, strategy guardrails.PIIStrategy) string {
 
 // maskPreservingEdges keeps the first 2 and last 2 visible characters and
 // replaces the middle with '*'. For short strings (<= 4 chars) everything is
-// masked to a constant token.
+// masked to a constant token. Secrets keep no edges at all.
 func maskPreservingEdges(s string) string {
 	runes := []rune(s)
 	if len(runes) <= 4 {
@@ -302,16 +427,23 @@ func buildReason(verb string, matches []Match) string {
 
 // toFindings converts internal matches into guardrails.Finding records for
 // audit. Redactions is optional; when non-nil it MUST be the same length as
-// matches in the order returned by applyStrategy.
+// matches in the order returned by applyStrategy. Secret values are never
+// copied into the audit log.
 func toFindings(matches []Match, redactions []string) []guardrails.Finding {
-	out := make([]guardrails.Finding, 0, len(matches))
-	for i, m := range matches {
+	n := min(len(matches), maxFindings)
+	out := make([]guardrails.Finding, 0, n)
+	for i, m := range matches[:n] {
 		f := guardrails.Finding{
-			Entity:   string(m.Entity),
-			Score:    m.Score,
-			Start:    m.Start,
-			End:      m.End,
-			Original: truncate(m.Text, 64),
+			Entity: string(m.Entity),
+			Score:  m.Score,
+			Start:  m.Start,
+			End:    m.End,
+		}
+		switch m.Entity {
+		case EntityAPIKey, EntityPassword, EntityPrivateKey:
+			f.Original = maskPreservingEdges(truncate(m.Text, 12))
+		default:
+			f.Original = truncate(m.Text, 64)
 		}
 		if i < len(redactions) {
 			f.Redacted = redactions[i]

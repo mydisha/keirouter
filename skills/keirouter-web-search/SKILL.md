@@ -1,6 +1,6 @@
 ---
 name: keirouter-web-search
-description: Web search via KeiRouter /v1/search using Tavily / Exa / Brave / Serper / SearXNG / Google PSE / Perplexity. Use when the user wants to search the web, look up information, find articles, or query a search engine.
+description: Web search via KeiRouter /v1/search using Tavily / Exa / Brave Search / Serper. Use when the user wants to search the web, look up information, find articles, or query a search engine.
 ---
 
 # KeiRouter — Web Search
@@ -10,12 +10,11 @@ Requires `KEIROUTER_URL` (and `KEIROUTER_KEY` if auth enabled). See https://raw.
 ## Discover
 
 ```bash
-curl $KEIROUTER_URL/v1/models/web | jq '.data[] | select(.kind=="webSearch") | .id'
-# Per-provider params (searchTypes, maxResults, required options like cx for google-pse)
-curl "$KEIROUTER_URL/v1/models/info?id=tavily/search"
+curl $KEIROUTER_URL/v1/models/search | jq '.data[].id'
+curl "$KEIROUTER_URL/v1/models/info?id=tavily/tavily-search"
 ```
 
-IDs end in `/search` (e.g. `tavily/search`). Combos (`owned_by:"combo"`) chain providers with auto-fallback.
+`model` is `provider/model` (e.g. `tavily/tavily-search`), a chain name that lists several search providers for automatic fallback, or an alias.
 
 ## Endpoint
 
@@ -23,11 +22,10 @@ IDs end in `/search` (e.g. `tavily/search`). Combos (`owned_by:"combo"`) chain p
 
 | Field | Required | Notes |
 |---|---|---|
-| `model` (or `provider`) | yes | from `/v1/models/web` (e.g. `tavily` or `brave`) |
+| `model` | yes | from `/v1/models/search` |
 | `query` | yes | search query |
-| `max_results` | no | default 5 |
-| `search_type` | no | `web` (default) / `news` |
-| `country`, `language`, `time_range`, `domain_filter` | no | provider-dependent |
+| `max_results` | no | number of results (provider default when omitted) |
+| `search_type` | no | `web` (default) or `news`, where the provider supports it |
 
 ## Examples
 
@@ -35,7 +33,7 @@ IDs end in `/search` (e.g. `tavily/search`). Combos (`owned_by:"combo"`) chain p
 curl -X POST $KEIROUTER_URL/v1/search \
   -H "Authorization: Bearer $KEIROUTER_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"tavily","query":"KeiRouter open source","max_results":5}'
+  -d '{"model":"tavily/tavily-search","query":"KeiRouter open source","max_results":5}'
 ```
 
 JS:
@@ -44,45 +42,32 @@ JS:
 const r = await fetch(`${process.env.KEIROUTER_URL}/v1/search`, {
   method: "POST",
   headers: { "Authorization": `Bearer ${process.env.KEIROUTER_KEY}`, "Content-Type": "application/json" },
-  body: JSON.stringify({ model: "tavily", query: "latest LLM benchmarks", max_results: 10 }),
+  body: JSON.stringify({ model: "brave-search/brave-search", query: "latest LLM benchmarks", max_results: 10 }),
 });
-console.log(await r.json());
+const { results } = await r.json();
+for (const hit of results) console.log(hit.title, hit.url);
 ```
 
 ## Response shape
 
 ```json
 {
-  "provider": "tavily",
   "query": "KeiRouter open source",
   "results": [
-    {
-      "title": "...", "url": "https://...", "display_url": "github.com/...",
-      "snippet": "...", "position": 1, "score": 0.92,
-      "published_at": null, "favicon_url": null, "content": null,
-      "metadata": { "author": null, "language": null, "source_type": null, "image_url": null },
-      "citation": { "provider": "tavily", "retrieved_at": "2026-...", "rank": 1 }
-    }
-  ],
-  "answer": null,
-  "usage": { "queries_used": 1, "search_cost_usd": 0.008 },
-  "metrics": { "response_time_ms": 850, "upstream_latency_ms": 700, "total_results_available": 12 },
-  "errors": []
+    { "title": "...", "url": "https://...", "snippet": "...", "score": 0.92 }
+  ]
 }
 ```
 
+`snippet` and `score` are omitted when the provider doesn't return them. The `X-KeiRouter-Provider` header names the provider that answered.
+
 ## Provider quick reference
 
-All accept `query` + `max_results`. Optional fields vary:
-
-| Provider | Supports | Required extras |
+| Provider | `model` | Notes |
 |---|---|---|
-| `tavily` | country, domain_filter, news topic | — |
-| `exa` | domain_filter (incl/excl), news category | — |
-| `brave-search` | country, language | — |
-| `serper` | country, language, news endpoint | — |
-| `perplexity` | country, language, domain_filter | — |
-| `google-pse` | country, language, time_range, offset | **`cx` required** (providerOptions) |
-| `searxng` | language, time_range | Self-hosted, **noAuth** |
+| Tavily | `tavily/tavily-search` | Also does web fetch |
+| Exa | `exa/exa-search` | Also does web fetch |
+| Brave Search | `brave-search/brave-search` | |
+| Serper | `serper/serper-search` | Google results |
 
-Provider IS the model — `"provider":"tavily"` ≡ `"model":"tavily"`.
+Google PSE, Linkup, SearchAPI and You.com are listed in the dashboard as coming soon. Chat models with built-in web search (Perplexity, xAI, Gemini) are used through `/v1/chat/completions`, not this endpoint.

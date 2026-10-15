@@ -185,58 +185,24 @@ func (c *OpenAIResponses) Stream(ctx context.Context, req *core.ChatRequest, cre
 		defer close(out)
 		defer resp.Body.Close()
 
-		ttft := newTTFTTracker(cfg)
+		pump := newSSEPump(ctx, c.id, req.Model, out, cfg)
 		terminalSeen := false
-
-		scanner := sseScanner(resp.Body)
-		for scanner.Scan() {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			payload, ok := parseSSEData(scanner.Text())
-			if !ok {
-				continue
-			}
-			chunks, perr := c.codec.ParseStreamLine([]byte(payload), req.Model)
-			if perr != nil {
-				// Check if this was a terminal event that failed to parse.
-				if isResponsesTerminalPayload(payload) {
-					terminalSeen = true
-				}
-				continue
-			}
-			// Track whether we received a terminal event.
-			if isResponsesTerminalPayload(payload) {
+		pump.run(resp.Body, sseDataLines, func(payload []byte) ([]core.StreamChunk, error) {
+			// Track whether we received a terminal event, even when it fails
+			// to parse.
+			if isResponsesTerminalPayload(string(payload)) {
 				terminalSeen = true
 			}
-			for _, ch := range chunks {
-				ttft.maybeReport(ch)
-				select {
-				case out <- ch:
-				case <-ctx.Done():
-					return
-				}
-			}
+			return c.codec.ParseStreamLine(payload, req.Model)
+		})
+		if pump.errored || ctx.Err() != nil {
+			return
 		}
-		if err := scanner.Err(); err != nil {
-			terminalSeen = true // error is itself terminal
-			out <- core.StreamChunk{
-				Type: core.ChunkError,
-				Err:  &core.ProviderError{Kind: core.ErrTimeout, Provider: c.id, Model: req.Model, Message: err.Error(), Cause: err},
-			}
-		}
-
 		// If the stream closed without a terminal event (response.completed,
 		// response.failed, or error), synthesize response.failed + [DONE]
 		// so Codex clients don't hang waiting for a terminal event.
 		if !terminalSeen {
-			out <- core.StreamChunk{
-				Type:  core.ChunkText,
-				Delta: formatResponsesFailureAndDone(),
-			}
+			pump.emit(core.StreamChunk{Type: core.ChunkText, Delta: formatResponsesFailureAndDone()})
 		}
 	}()
 	return out, nil

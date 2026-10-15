@@ -6,12 +6,13 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,6 +20,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/mydisha/keirouter/backend/internal/audit"
 	"github.com/mydisha/keirouter/backend/internal/auth"
 	"github.com/mydisha/keirouter/backend/internal/budget"
 	"github.com/mydisha/keirouter/backend/internal/clitools"
@@ -63,6 +65,7 @@ type Server struct {
 	db                  *store.DB
 	identity            *identity.Service
 	auth                *auth.Service
+	audit               *audit.Recorder
 	pipeline            *pipeline.Pipeline
 	conns               *connectors.Registry
 	chains              *store.ChainRepo
@@ -89,7 +92,9 @@ type Server struct {
 	usageHub            *usagehub.Hub
 	timeoutNotifier     *TimeoutNotifier
 	proxyNotifier       *ProxyNotifier
-	rateLimiter         interface{ SetEnabled(bool) }
+	rateLimiter         RateLimitController
+	authFailures        *ipLimiter
+	loginLimiter        *ipLimiter
 	refresher           dispatch.TokenRefresher
 	reloadPricing       func(context.Context) error
 	syncMarketPrices    func(context.Context) (int, error)
@@ -97,11 +102,13 @@ type Server struct {
 	version             string
 	updates             *update.Checker
 	insightsCache       *ttlCache
+	liveModels          *liveModelCache
 	guardrails          *guardrails.Engine
 	guardrailRepo       *store.GuardrailRepo
 	guardrailLogs       *store.GuardrailLogRepo
 	guardrailHub        *guardrails.LogHub
 	guardrailTenantFlag *guardrails.SettingsTenantPolicy
+	guardrailRetention  int // guardrail_logs retention in days; 0 = forever
 	guardrailTestRL     *guardrailTestRateLimiter
 	health              *store.HealthRepo
 	healthChecker       *healthcheck.Checker
@@ -111,6 +118,11 @@ type Server struct {
 	paymentClient       *payment.Client
 	turnstile           turnstileVerifier
 	router              chi.Router
+	// skillsMu serializes custom-skill writes (load-modify-save on one
+	// settings key); skillsBlock caches the rendered prompt block injected
+	// into every chat request. Nil means not loaded yet.
+	skillsMu    sync.Mutex
+	skillsBlock atomic.Pointer[cachedSkills]
 
 	bansosNoticeMu    sync.RWMutex
 	bansosNoticeCache *bansosNotice
@@ -125,6 +137,7 @@ type Deps struct {
 	DB                   *store.DB
 	Identity             *identity.Service
 	Auth                 *auth.Service
+	Audit                *audit.Recorder // records admin actions; nil disables auditing
 	Pipeline             *pipeline.Pipeline
 	Conns                *connectors.Registry
 	Chains               *store.ChainRepo
@@ -149,7 +162,7 @@ type Deps struct {
 	UsageHub             *usagehub.Hub
 	TimeoutNotifier      *TimeoutNotifier
 	ProxyNotifier        *ProxyNotifier
-	RateLimiter          interface{ SetEnabled(bool) }
+	RateLimiter          RateLimitController
 	Refresher            dispatch.TokenRefresher
 	ReloadPricing        func(context.Context) error
 	SyncMarketPrices     func(context.Context) (int, error)
@@ -159,11 +172,14 @@ type Deps struct {
 	GuardrailLogs        *store.GuardrailLogRepo
 	GuardrailHub         *guardrails.LogHub
 	GuardrailTenantFlags *guardrails.SettingsTenantPolicy
-	Health               *store.HealthRepo
-	HealthChecker        *healthcheck.Checker
-	ProviderHealth       *health.Service
-	ProbeRunner          *health.ProbeRunner
-	Payment              *payment.Client
+	// GuardrailRetentionDays is how long guardrail_logs rows are kept
+	// (0 = forever); the stats endpoint flags windows older than that.
+	GuardrailRetentionDays int
+	Health                 *store.HealthRepo
+	HealthChecker          *healthcheck.Checker
+	ProviderHealth         *health.Service
+	ProbeRunner            *health.ProbeRunner
+	Payment                *payment.Client
 }
 
 // New builds a gateway Server and wires its routes.
@@ -190,6 +206,7 @@ func New(d Deps) *Server {
 		db:                  d.DB,
 		identity:            d.Identity,
 		auth:                d.Auth,
+		audit:               d.Audit,
 		pipeline:            d.Pipeline,
 		conns:               d.Conns,
 		chains:              d.Chains,
@@ -216,6 +233,8 @@ func New(d Deps) *Server {
 		timeoutNotifier:     d.TimeoutNotifier,
 		proxyNotifier:       d.ProxyNotifier,
 		rateLimiter:         d.RateLimiter,
+		authFailures:        newIPLimiter(d.Config.Limits.AuthFailuresPerMinute, time.Minute),
+		loginLimiter:        newIPLimiter(d.Config.Limits.LoginAttemptsPerMinute, time.Minute),
 		refresher:           d.Refresher,
 		reloadPricing:       d.ReloadPricing,
 		syncMarketPrices:    d.SyncMarketPrices,
@@ -223,12 +242,14 @@ func New(d Deps) *Server {
 		version:             d.Version,
 		updates:             d.Updates,
 		insightsCache:       newTTLCache(insightsCacheTTL),
+		liveModels:          newLiveModelCache(),
 		guardrails:          d.Guardrails,
 		guardrailRepo:       d.GuardrailRepo,
 		guardrailLogs:       d.GuardrailLogs,
 		guardrailHub:        d.GuardrailHub,
 		guardrailTenantFlag: d.GuardrailTenantFlags,
-		guardrailTestRL:     newGuardrailTestRateLimiter(10, time.Minute),
+		guardrailRetention:  d.GuardrailRetentionDays,
+		guardrailTestRL:     newGuardrailTestRateLimiter(guardrailTestBurst, time.Minute),
 		health:              d.Health,
 		healthChecker:       d.HealthChecker,
 		providerHealth:      d.ProviderHealth,
@@ -255,6 +276,8 @@ func New(d Deps) *Server {
 		SiteKey:   d.Config.Turnstile.SiteKey,
 		SecretKey: d.Config.Turnstile.SecretKey,
 	})
+	// Dashboard overrides of the limiter knobs win over config.yaml.
+	s.applyLimitSettings(s.loadEndpointSettings(context.Background()))
 	s.router = s.routes()
 	startSystemCollector(d.Resources)
 	return s
@@ -273,7 +296,7 @@ func (s *Server) routes() chi.Router {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: s.cfg.Server.CORSOrigins,
 		AllowedMethods: []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"Authorization", "Content-Type", "x-api-key", "X-KeiRouter-Affinity", "X-KeiRouter-Account", "X-Conversation-ID", "X-Thread-ID", "X-Session-ID", "OpenAI-Conversation-ID"},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "x-api-key", "X-KeiRouter-Affinity", "X-KeiRouter-Account", skipSkillsHeader, "X-Conversation-ID", "X-Thread-ID", "X-Session-ID", "OpenAI-Conversation-ID"},
 		ExposedHeaders: []string{"X-KeiRouter-Provider", "X-KeiRouter-Model", "X-KeiRouter-Account"},
 	}))
 
@@ -323,7 +346,11 @@ func (s *Server) routes() chi.Router {
 		if maxConc <= 0 {
 			maxConc = 100 // sensible default for AI gateway workloads
 		}
-		r.Use(concurrencyLimiter(maxConc))
+		r.Use(concurrencyLimiter(maxConc, func(r *http.Request) {
+			newReqTrace(s.consoleLog, r).reject(http.StatusServiceUnavailable, "Rejected · gateway at capacity",
+				fmt.Sprintf("Limit: %d concurrent requests", maxConc),
+				"Every concurrent-request slot is busy (mostly long streams). Raise server.max_concurrent_requests or add capacity.")
+		}))
 		r.Use(s.authMiddleware)
 		r.Post("/v1/chat/completions", s.handleOpenAIChat)
 		r.Post("/v1/messages", s.handleAnthropicMessages)
@@ -412,6 +439,7 @@ func (s *Server) routes() chi.Router {
 		r.Get("/status", s.handleAuthStatus)
 		r.Group(func(pr chi.Router) {
 			pr.Use(s.sessionMiddleware)
+			pr.Use(s.auditAdmin)
 			s.mountAuthenticatedAuth(pr)
 		})
 	})
@@ -422,6 +450,7 @@ func (s *Server) routes() chi.Router {
 	r.Route("/api", func(r chi.Router) {
 		r.Use(s.loopbackOnly)
 		r.Use(s.sessionMiddleware)
+		r.Use(s.auditAdmin)
 		s.mountAdmin(r)
 	})
 
@@ -443,18 +472,7 @@ func (s *Server) routes() chi.Router {
 	// Serve frontend static files. The dashboard is a Vite SPA; unmatched
 	// paths fall through to index.html so client-side routing works.
 	if s.frontendDir != "" {
-		fs := http.FileServer(http.Dir(s.frontendDir))
-		r.Get("/*", func(w http.ResponseWriter, r *http.Request) {
-			path := r.URL.Path
-			if path == "/" {
-				path = "/index.html"
-			}
-			fullPath := filepath.Join(s.frontendDir, path)
-			if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-				r.URL.Path = "/"
-			}
-			fs.ServeHTTP(w, r)
-		})
+		r.Get("/*", newStaticHandler(s.frontendDir).ServeHTTP)
 	}
 
 	return r

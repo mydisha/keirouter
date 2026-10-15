@@ -42,16 +42,19 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	ok, err := s.auth.VerifyPassword(r.Context(), body.Password)
 	if err != nil || !ok {
+		s.recordLogin(r, http.StatusUnauthorized, "")
 		writeError(w, http.StatusUnauthorized, "invalid password")
 		return
 	}
 
 	token, err := s.auth.IssueSession()
 	if err != nil {
+		s.recordLogin(r, http.StatusInternalServerError, "")
 		writeError(w, http.StatusInternalServerError, "failed to create session")
 		return
 	}
 	s.setSessionCookie(w, r, token)
+	s.recordLogin(r, http.StatusOK, token)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                  true,
 		"using_default":       s.auth.UsingDefaultPassword(r.Context()),
@@ -60,6 +63,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(sessionCookie); err == nil && s.auth.VerifySession(c.Value) {
+		s.recordLogout(r)
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    "",

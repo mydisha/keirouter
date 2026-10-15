@@ -16,15 +16,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/core"
+	"github.com/mydisha/keirouter/backend/internal/errclass"
+	"github.com/mydisha/keirouter/backend/internal/httputil"
 )
 
 // errNonJSONResponse marks a successful HTTP response whose body was not JSON
@@ -39,154 +42,454 @@ var errNonJSONResponse = errors.New("upstream returned a non-JSON (HTML) respons
 // 32 MiB matches the inbound request body limit.
 const maxResponseBodyBytes = 32 << 20 // 32 MiB
 
-// sharedClient is reused across connectors; the transport pools connections.
-// Tuned for AI-proxy workloads: many concurrent long-lived streams to a handful
-// of upstream hosts (OpenAI, Anthropic, Google, etc.).
-var sharedClient = &http.Client{
-	Timeout: 0, // per-request deadlines come from context
-	Transport: &http.Transport{
-		MaxIdleConns:        200,               // keep more idle conns across all hosts
-		MaxIdleConnsPerHost: 20,                // more conns per upstream (parallel streams)
-		MaxConnsPerHost:     50,                // cap total conns per host to prevent FD exhaustion
-		IdleConnTimeout:     120 * time.Second, // keep idle conns longer for bursty traffic
-		TLSHandshakeTimeout: 10 * time.Second,
-		// Time-to-headers safety net. Kept in step with the dashboard's
-		// response_header_timeout default so slow-but-healthy providers
-		// (reasoning models, ollama on modest hardware) aren't cut off before
-		// the operator-configured budget. Per-request context deadlines from
-		// the pipeline still bound the overall call.
-		ResponseHeaderTimeout:  60 * time.Second,
+// Transport tuning for AI-proxy traffic (many long-lived streams to a handful
+// of upstream hosts), plus what Go needs for connection liveness:
+//
+//   - dialTimeout bounds TCP connect. Without it a SYN black-hole stalls for
+//     the kernel's ~2 minute default before the request fails over.
+//   - tcpKeepAlive keeps NAT/LB flow entries alive during long generations.
+//   - http2PingInterval/http2PingTimeout detect half-dead HTTP/2 connections
+//     (NAT timeouts, provider restarts). Without a ping health check Go keeps
+//     multiplexing new streams onto a connection that will never answer.
+//   - maxConnsPerHost is deliberately high: HTTP/1.1 upstreams do not
+//     multiplex, and a low cap makes requests queue inside the transport with
+//     no deadline. FD pressure is bounded by the gateway concurrency limiter.
+const (
+	dialTimeout         = 10 * time.Second
+	tcpKeepAlive        = 30 * time.Second
+	tlsHandshakeTO      = 10 * time.Second
+	idleConnTimeout     = 120 * time.Second
+	http2PingInterval   = 30 * time.Second
+	http2PingTimeout    = 15 * time.Second
+	maxIdleConns        = 512
+	maxIdleConnsPerHost = 32
+	maxConnsPerHost     = 256
+	transportBufSize    = 16 * 1024
+	maxRespHeaderBytes  = 64 * 1024
+
+	// defaultUnaryHeaderTimeout bounds header wait for unary calls issued under
+	// a context without a deadline (admin probes, OAuth refresh). Pipeline
+	// requests always carry a deadline and are not affected.
+	defaultUnaryHeaderTimeout = 120 * time.Second
+)
+
+// errResponseHeaderTimeout marks a request whose upstream headers did not
+// arrive within the configured budget. It wraps context.DeadlineExceeded so
+// the dispatcher treats it like any other self-imposed deadline: fall back,
+// but do not cool the account down (the provider may be slow, not broken).
+var errResponseHeaderTimeout = fmt.Errorf("upstream response headers not received in time: %w", context.DeadlineExceeded)
+
+func newDialer() *net.Dialer {
+	return &net.Dialer{Timeout: dialTimeout, KeepAlive: tcpKeepAlive}
+}
+
+// newTransport builds the pooled transport shared by all unproxied requests
+// and, with a proxy function, the per-proxy transports.
+func newTransport(proxy func(*http.Request) (*url.URL, error)) *http.Transport {
+	return &http.Transport{
+		Proxy:                  proxy,
+		DialContext:            newDialer().DialContext,
+		MaxIdleConns:           maxIdleConns,
+		MaxIdleConnsPerHost:    maxIdleConnsPerHost,
+		MaxConnsPerHost:        maxConnsPerHost,
+		IdleConnTimeout:        idleConnTimeout,
+		TLSHandshakeTimeout:    tlsHandshakeTO,
 		ExpectContinueTimeout:  1 * time.Second,
-		WriteBufferSize:        16 * 1024, // 16 KB write buffer (reduced from 64 KB)
-		ReadBufferSize:         16 * 1024, // 16 KB read buffer (reduced from 64 KB)
-		ForceAttemptHTTP2:      true,      // prefer HTTP/2 for multiplexed streams
-		MaxResponseHeaderBytes: 64 * 1024, // cap response header size
-	},
+		WriteBufferSize:        transportBufSize,
+		ReadBufferSize:         transportBufSize,
+		ForceAttemptHTTP2:      true,
+		MaxResponseHeaderBytes: maxRespHeaderBytes,
+		// ResponseHeaderTimeout is intentionally unset: the header budget is
+		// applied per request (see sendRequest) because unary completions
+		// only send headers after generation finishes and must be bounded by
+		// the request deadline, while streams get the dashboard TTFB budget.
+		HTTP2: &http.HTTP2Config{
+			SendPingTimeout: http2PingInterval,
+			PingTimeout:     http2PingTimeout,
+		},
+	}
+}
+
+// newFreshConnTransport builds a no-keep-alive transport used to replay a
+// request after the pooled transport handed us a stale socket. A fresh TCP
+// connection per request guarantees the replay cannot pick another dead
+// socket from the pool.
+func newFreshConnTransport(proxy func(*http.Request) (*url.URL, error)) *http.Transport {
+	return &http.Transport{
+		Proxy:                  proxy,
+		DialContext:            newDialer().DialContext,
+		DisableKeepAlives:      true,
+		IdleConnTimeout:        1 * time.Second,
+		TLSHandshakeTimeout:    tlsHandshakeTO,
+		ExpectContinueTimeout:  1 * time.Second,
+		WriteBufferSize:        transportBufSize,
+		ReadBufferSize:         transportBufSize,
+		MaxResponseHeaderBytes: maxRespHeaderBytes,
+		ForceAttemptHTTP2:      false,
+	}
+}
+
+// sharedClient is reused across connectors; the transport pools connections.
+// Environment proxies (HTTPS_PROXY, NO_PROXY) are honoured; dashboard/account
+// proxies take precedence via clientFor.
+var sharedClient = &http.Client{
+	Timeout:   0, // per-request deadlines come from context
+	Transport: newTransport(http.ProxyFromEnvironment),
 }
 
 // retryClient is used when a pooled idle connection is known to be stale.
-// Retrying on the same transport can grab another stale socket from the pool,
-// so the replay uses a no-keep-alive transport to force a fresh connection.
 var retryClient = &http.Client{
-	Timeout: 0,
-	Transport: &http.Transport{
-		DisableKeepAlives:     true,
-		MaxIdleConns:          0,
-		MaxIdleConnsPerHost:   0,
-		IdleConnTimeout:       1 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		WriteBufferSize:       16 * 1024,
-		ReadBufferSize:        16 * 1024,
-		ForceAttemptHTTP2:     false, // fresh TCP connection per request
-	},
+	Timeout:   0,
+	Transport: newFreshConnTransport(http.ProxyFromEnvironment),
 }
 
-// proxyTransportCache pools *http.Transport instances keyed by proxy config
-// string. This prevents creating a new transport (and its goroutine/buffer
-// pool) on every proxied request -- a significant memory leak.
-var proxyTransportCache sync.Map
+// proxyTransports caches transports keyed by proxy config so proxied requests
+// reuse pooled connections instead of building a transport (and its
+// goroutines/buffers) per request. Entries are bounded; the least recently
+// used transport is closed when the cache overflows.
+var proxyTransports = newTransportCache(64)
+
+type transportPair struct {
+	pooled http.RoundTripper
+	fresh  http.RoundTripper
+	// closers are the underlying transports, closed on eviction.
+	closers []*http.Transport
+}
+
+// transportCache is a small LRU of proxy transports. Proxy pools can rotate
+// through hundreds of egress URLs; without eviction every URL ever used would
+// pin its idle connections and buffers for the life of the process.
+type transportCache struct {
+	mu    sync.Mutex
+	max   int
+	order []string
+	items map[string]transportPair
+}
+
+func newTransportCache(max int) *transportCache {
+	return &transportCache{max: max, items: make(map[string]transportPair)}
+}
+
+func (c *transportCache) get(key string, build func() transportPair) transportPair {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if tp, ok := c.items[key]; ok {
+		c.touch(key)
+		return tp
+	}
+	tp := build()
+	c.items[key] = tp
+	c.order = append(c.order, key)
+	for len(c.order) > c.max {
+		victim := c.order[0]
+		c.order = c.order[1:]
+		if old, ok := c.items[victim]; ok {
+			delete(c.items, victim)
+			for _, t := range old.closers {
+				t.CloseIdleConnections()
+			}
+		}
+	}
+	return tp
+}
+
+func (c *transportCache) touch(key string) {
+	for i, k := range c.order {
+		if k == key {
+			copy(c.order[i:], c.order[i+1:])
+			c.order[len(c.order)-1] = key
+			return
+		}
+	}
+}
+
+func proxyTransportsFor(creds core.Credentials) transportPair {
+	key := creds.ProxyURL + "|" + creds.RelayURL + "|" + creds.NoProxy
+	return proxyTransports.get(key, func() transportPair {
+		var proxy func(*http.Request) (*url.URL, error)
+		if creds.ProxyURL != "" {
+			if u, err := url.Parse(creds.ProxyURL); err == nil && u.Host != "" {
+				proxy = httputil.ProxyFunc(u, creds.NoProxy)
+			} else {
+				// Fail closed: silently going direct would leak the real
+				// egress IP the operator configured the proxy to hide.
+				proxy = func(*http.Request) (*url.URL, error) {
+					return nil, errors.New("invalid proxy URL")
+				}
+			}
+		}
+		pooled, fresh := newTransport(proxy), newFreshConnTransport(proxy)
+		pooled.OnProxyConnectResponse = rejectFailedProxyConnect
+		fresh.OnProxyConnectResponse = rejectFailedProxyConnect
+		tp := transportPair{pooled: pooled, fresh: fresh, closers: []*http.Transport{pooled, fresh}}
+		if creds.RelayURL != "" {
+			relay, err := url.Parse(creds.RelayURL)
+			if err != nil || relay.Host == "" {
+				relay = nil
+			}
+			tp.pooled = &relayTransport{base: pooled, relay: relay}
+			tp.fresh = &relayTransport{base: fresh, relay: relay}
+		}
+		return tp
+	})
+}
+
+// errProxyRejected marks a CONNECT the proxy answered with a non-200 status
+// (auth required, upstream unreachable, ...). net/http reports it as a bare
+// string error; the typed wrapper lets sendRequest recognise it as an egress
+// failure that never reached the provider.
+type errProxyRejected struct{ status string }
+
+func (e *errProxyRejected) Error() string { return "proxy rejected CONNECT: " + e.status }
+
+func rejectFailedProxyConnect(_ context.Context, _ *url.URL, _ *http.Request, resp *http.Response) error {
+	if resp.StatusCode == http.StatusOK {
+		return nil
+	}
+	return &errProxyRejected{status: resp.Status}
+}
+
+// relayTransport sends every request through a relay (vercel / cloudflare /
+// deno), which forwards it to the origin named by x-relay-target. Doing the
+// rewrite at the transport layer means every client built from the account's
+// egress context — chat, model discovery, quota, token bootstrap, redirects —
+// goes through the relay without each call site remembering to rewrite.
+type relayTransport struct {
+	base  http.RoundTripper
+	relay *url.URL
+}
+
+func (t *relayTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.relay == nil {
+		if req.Body != nil {
+			req.Body.Close()
+		}
+		// Fail closed, as for an unparseable proxy URL.
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("invalid relay URL")}
+	}
+	out := req.Clone(req.Context())
+	httputil.RelayRequest(out, t.relay)
+	return t.base.RoundTrip(out)
+}
 
 // clientFor returns an http.Client configured with proxy settings from creds.
-// When creds carry no proxy config, the shared client is returned. Proxy
-// transports are cached so the same transport is reused across requests.
+// When creds carry no proxy config, the shared client is returned.
 func clientFor(creds core.Credentials) *http.Client {
 	if creds.ProxyURL == "" && creds.RelayURL == "" {
 		return sharedClient
 	}
-	key := creds.ProxyURL + "|" + creds.RelayURL + "|" + creds.NoProxy
-	if v, ok := proxyTransportCache.Load(key); ok {
-		return &http.Client{Transport: v.(*http.Transport)}
-	}
-	t := &http.Transport{
-		MaxIdleConns:          200,
-		MaxIdleConnsPerHost:   20,
-		IdleConnTimeout:       120 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		WriteBufferSize:       16 * 1024,
-		ReadBufferSize:        16 * 1024,
-		ForceAttemptHTTP2:     true,
-	}
-	if creds.ProxyURL != "" {
-		if u, err := url.Parse(creds.ProxyURL); err == nil {
-			t.Proxy = proxyFunc(u, creds.NoProxy)
-		}
-	}
-	actual, _ := proxyTransportCache.LoadOrStore(key, t)
-	return &http.Client{Transport: actual.(*http.Transport)}
+	return &http.Client{Transport: proxyTransportsFor(creds).pooled}
 }
 
-// proxyFunc returns a proxy function that routes requests through proxyURL,
-// skipping hosts that match the comma-separated noProxy bypass list.
-func proxyFunc(proxyURL *url.URL, noProxy string) func(*http.Request) (*url.URL, error) {
-	return func(req *http.Request) (*url.URL, error) {
-		if noProxy != "" {
-			host := req.URL.Hostname()
-			for _, bypass := range strings.Split(noProxy, ",") {
-				bypass = strings.TrimSpace(bypass)
-				if bypass == "" {
-					continue
-				}
-				if bypass == "*" ||
-					strings.EqualFold(host, bypass) ||
-					strings.HasSuffix(host, "."+bypass) {
-					return nil, nil
-				}
+// requestBuilder constructs a fresh *http.Request. sendRequest may call it
+// twice: once for the initial attempt and once more for a single replay on a
+// fresh connection. Bodies are always in-memory byte slices, so rebuilding is
+// cheap and keeps the replay free of half-consumed readers.
+type requestBuilder func() (*http.Request, error)
+
+// cancelOnClose releases the per-request header-timeout context once the
+// response body is closed, so the context (and its timer bookkeeping) does not
+// outlive the response.
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelCauseFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel(context.Canceled)
+	return err
+}
+
+// headerBudget resolves the time-to-headers budget for a request issued under
+// ctx. Streams carry the dashboard "response header timeout" (TTFB); unary
+// calls are bounded by their request deadline, with a safety net for callers
+// that set none.
+func headerBudget(ctx context.Context) time.Duration {
+	if d := core.ResponseHeaderTimeoutFromContext(ctx); d > 0 {
+		return d
+	}
+	if _, hasDeadline := ctx.Deadline(); hasDeadline {
+		return 0
+	}
+	return defaultUnaryHeaderTimeout
+}
+
+// sendRequest performs one upstream call with the resilience rules shared by
+// every connector:
+//
+//   - Headers must arrive within headerBudget(ctx); otherwise the call fails
+//     with ErrTimeout wrapping context.DeadlineExceeded (no cooldown).
+//   - A request that died before any response bytes because the pooled
+//     connection was stale, or because the dial itself failed, is replayed
+//     exactly once on a fresh connection. Replays are safe
+//     here because nothing reached the provider.
+//   - Transport failures are mapped to ProviderErrors via transportError.
+//   - When the account's proxy/relay itself is unreachable and its pool is
+//     not strict, the request is sent once more directly; a strict pool
+//     fails instead, so traffic never leaves from the server's own IP.
+func sendRequest(ctx context.Context, provider, model string, build requestBuilder) (*http.Response, error) {
+	resp, err := sendOnce(ctx, provider, model, build, proxyClient(ctx))
+	if err == nil {
+		return resp, nil
+	}
+	if shouldRetryFreshConnection(ctx, err) {
+		resp, err = sendOnce(ctx, provider, model, build, proxyClientForRetry(ctx))
+		if err == nil {
+			return resp, nil
+		}
+	}
+	creds, _ := core.ProxyFromContext(ctx)
+	if !shouldFallBackDirect(ctx, creds, err) {
+		return nil, egressError(ctx, creds, provider, model, err)
+	}
+	slog.Warn("proxy pool unreachable; sending request directly (pool is not strict)",
+		"provider", provider, "model", model, "account", creds.AccountID, "error", err)
+	return sendOnce(core.WithProxy(ctx, core.Credentials{}), provider, model, build, sharedClient)
+}
+
+// egressError re-scopes a failure of the proxy/relay hop itself. Nothing
+// reached the provider, so it must not cool down the account, model or
+// provider (that would keep the account parked — reported as a rate limit —
+// even after the proxy is fixed). Request scope lets the chain move on to
+// other accounts while this one is retried on the next request.
+func egressError(ctx context.Context, creds core.Credentials, provider, model string, err error) error {
+	if ctx.Err() != nil || (creds.ProxyURL == "" && creds.RelayURL == "") {
+		return err
+	}
+	pe := core.AsProviderError(err)
+	if pe == nil || pe.StatusCode != 0 || pe.Cause == nil || !isEgressFailure(pe.Cause, creds.RelayURL != "") {
+		return err
+	}
+	hop := "proxy"
+	if creds.ProxyURL == "" {
+		hop = "relay"
+	}
+	slog.Warn("proxy pool unreachable; request failed (strict mode, no direct fallback)",
+		"provider", provider, "model", model, "account", creds.AccountID, "hop", hop, "error", pe.Cause)
+	return &core.ProviderError{
+		Kind: core.ErrUpstream, Scope: core.FailureScopeRequest, Provider: provider, Model: model,
+		Message: hop + " unreachable (strict proxy pool): " + pe.Cause.Error(),
+		Cause:   pe.Cause,
+	}
+}
+
+// shouldFallBackDirect reports whether a failed proxied request may be replayed
+// without the proxy: the account's pool is non-strict and the failure happened
+// while reaching the proxy or relay, so nothing was delivered to the provider.
+func shouldFallBackDirect(ctx context.Context, creds core.Credentials, err error) bool {
+	if ctx.Err() != nil || creds.StrictProxy || (creds.ProxyURL == "" && creds.RelayURL == "") {
+		return false
+	}
+	pe := core.AsProviderError(err)
+	if pe.StatusCode != 0 || pe.Cause == nil {
+		return false
+	}
+	return isEgressFailure(pe.Cause, creds.RelayURL != "")
+}
+
+// isEgressFailure reports whether err came from the proxy or relay hop rather
+// than from the provider.
+func isEgressFailure(err error, relay bool) bool {
+	var rejected *errProxyRejected
+	if errors.As(err, &rejected) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if opErr.Op == "proxyconnect" {
+			return true
+		}
+		// In relay mode every dial goes to the relay host.
+		if relay && opErr.Op == "dial" {
+			return true
+		}
+	}
+	var dnsErr *net.DNSError
+	if relay && errors.As(err, &dnsErr) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "socks connect")
+}
+
+func sendOnce(ctx context.Context, provider, model string, build requestBuilder, client *http.Client) (*http.Response, error) {
+	req, err := build()
+	if err != nil {
+		return nil, &core.ProviderError{Kind: core.ErrInternal, Provider: provider, Model: model, Message: err.Error(), Cause: err}
+	}
+	budget := headerBudget(ctx)
+	if budget <= 0 {
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, transportError(ctx, provider, model, err)
+		}
+		return resp, nil
+	}
+
+	hctx, cancel := context.WithCancelCause(ctx)
+	timer := time.AfterFunc(budget, func() { cancel(errResponseHeaderTimeout) })
+	resp, err := client.Do(req.WithContext(hctx))
+	timer.Stop()
+	if err != nil {
+		cancel(context.Canceled)
+		if errors.Is(context.Cause(hctx), errResponseHeaderTimeout) && ctx.Err() == nil {
+			return nil, &core.ProviderError{
+				Kind: core.ErrTimeout, Scope: core.FailureScopeRequest, Provider: provider, Model: model,
+				Message: fmt.Sprintf("upstream did not send response headers within %s", budget),
+				Cause:   errResponseHeaderTimeout,
 			}
 		}
-		return proxyURL, nil
+		return nil, transportError(ctx, provider, model, err)
+	}
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+// jsonRequest returns a builder for a JSON request with the given method.
+func jsonRequest(ctx context.Context, method, url string, body []byte, headers map[string]string) requestBuilder {
+	return func() (*http.Request, error) {
+		var reader io.Reader
+		if body != nil {
+			reader = bytes.NewReader(body)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, url, reader)
+		if err != nil {
+			return nil, err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		return req, nil
 	}
 }
 
-// relayRequest rewrites a request to go through a relay proxy. The relay
-// protocol uses x-relay-target (origin) and x-relay-path (path+query) headers.
-func relayRequest(req *http.Request, relayURL string) {
-	origOrigin := req.URL.Scheme + "://" + req.URL.Host
-	origPath := req.URL.Path
-	if req.URL.RawQuery != "" {
-		origPath += "?" + req.URL.RawQuery
+// readErrorBody drains a bounded prefix of an error response for diagnostics.
+func readErrorBody(resp *http.Response) []byte {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	return b
+}
+
+// readBodyLimited reads at most maxResponseBodyBytes and fails loudly when the
+// body is larger instead of silently truncating it into a parse error.
+func readBodyLimited(provider, model string, resp *http.Response) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes+1))
+	if err != nil {
+		return nil, &core.ProviderError{Kind: core.ErrUpstream, Scope: core.FailureScopeNetwork, Provider: provider, Model: model, Message: "read body: " + err.Error(), Cause: err}
 	}
-	req.Header.Set("x-relay-target", origOrigin)
-	req.Header.Set("x-relay-path", origPath)
-	relay, _ := url.Parse(relayURL)
-	req.URL = relay
-	req.Host = relay.Host
+	if len(b) > maxResponseBodyBytes {
+		return nil, &core.ProviderError{Kind: core.ErrUpstream, Scope: core.FailureScopeRequest, Provider: provider, Model: model,
+			Message: fmt.Sprintf("upstream response exceeds %d bytes", maxResponseBodyBytes)}
+	}
+	return b, nil
 }
 
 // doJSON performs a JSON POST and returns the response body, mapping transport
 // and HTTP errors to structured ProviderErrors.
 func doJSON(ctx context.Context, provider, model, url string, body []byte, headers map[string]string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, &core.ProviderError{Kind: core.ErrInternal, Provider: provider, Model: model, Message: err.Error(), Cause: err}
-	}
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	proxyRewrite(ctx, req)
-	resp, err := proxyClient(ctx).Do(req)
-	if err != nil {
-		return nil, transportError(ctx, provider, model, err)
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
-	if err != nil {
-		return nil, &core.ProviderError{Kind: core.ErrUpstream, Provider: provider, Model: model, Message: "read body: " + err.Error(), Cause: err}
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, httpStatusError(provider, model, resp, respBody)
-	}
-	if perr := checkNonJSONResponse(provider, model, resp, respBody); perr != nil {
-		return nil, perr
-	}
-	return respBody, nil
+	return doJSONMethod(ctx, http.MethodPost, provider, model, url, body, headers)
 }
 
 // doJSONDecode performs a JSON POST and returns a streaming json.Decoder
@@ -197,24 +500,13 @@ func doJSON(ctx context.Context, provider, model, url string, body []byte, heade
 // On error (status >= 400), the body is read and closed internally, and a
 // ProviderError is returned with the decoder set to nil.
 func doJSONDecode(ctx context.Context, provider, model, url string, body []byte, headers map[string]string) (*json.Decoder, io.ReadCloser, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	resp, err := sendRequest(ctx, provider, model, jsonRequest(ctx, http.MethodPost, url, body, headers))
 	if err != nil {
-		return nil, nil, &core.ProviderError{Kind: core.ErrInternal, Provider: provider, Model: model, Message: err.Error(), Cause: err}
-	}
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	proxyRewrite(ctx, req)
-	resp, err := proxyClient(ctx).Do(req)
-	if err != nil {
-		return nil, nil, transportError(ctx, provider, model, err)
+		return nil, nil, err
 	}
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		return nil, nil, httpStatusError(provider, model, resp, errBody)
+		return nil, nil, httpStatusError(provider, model, resp, readErrorBody(resp))
 	}
 	// Guard against an HTML page (web frontend) served with HTTP 200 before
 	// handing the body to the streaming JSON decoder. Body is not buffered here,
@@ -231,24 +523,13 @@ func doJSONDecode(ctx context.Context, provider, model, url string, body []byte,
 // body instead of reading it all into memory. The caller must close the reader.
 // Used for large responses that will be streamed (e.g. direct pipe path).
 func doJSONReader(ctx context.Context, provider, model, url string, body []byte, headers map[string]string) (io.ReadCloser, http.Header, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	resp, err := sendRequest(ctx, provider, model, jsonRequest(ctx, http.MethodPost, url, body, headers))
 	if err != nil {
-		return nil, nil, &core.ProviderError{Kind: core.ErrInternal, Provider: provider, Model: model, Message: err.Error(), Cause: err}
-	}
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	proxyRewrite(ctx, req)
-	resp, err := proxyClient(ctx).Do(req)
-	if err != nil {
-		return nil, nil, transportError(ctx, provider, model, err)
+		return nil, nil, err
 	}
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		return nil, nil, httpStatusError(provider, model, resp, errBody)
+		return nil, nil, httpStatusError(provider, model, resp, readErrorBody(resp))
 	}
 	return resp.Body, resp.Header, nil
 }
@@ -256,31 +537,15 @@ func doJSONReader(ctx context.Context, provider, model, url string, body []byte,
 // doJSONMethod performs a JSON request with an explicit method (GET/POST) and
 // returns the response body. A nil body sends no payload (for GET).
 func doJSONMethod(ctx context.Context, method, provider, model, url string, body []byte, headers map[string]string) ([]byte, error) {
-	var reader io.Reader
-	if body != nil {
-		reader = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, url, reader)
+	resp, err := sendRequest(ctx, provider, model, jsonRequest(ctx, method, url, body, headers))
 	if err != nil {
-		return nil, &core.ProviderError{Kind: core.ErrInternal, Provider: provider, Model: model, Message: err.Error(), Cause: err}
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	proxyRewrite(ctx, req)
-	resp, err := proxyClient(ctx).Do(req)
-	if err != nil {
-		return nil, transportError(ctx, provider, model, err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
+	respBody, err := readBodyLimited(provider, model, resp)
 	if err != nil {
-		return nil, &core.ProviderError{Kind: core.ErrUpstream, Provider: provider, Model: model, Message: "read body: " + err.Error(), Cause: err}
+		return nil, err
 	}
 	if resp.StatusCode >= 400 {
 		return nil, httpStatusError(provider, model, resp, respBody)
@@ -295,26 +560,28 @@ func doJSONMethod(ctx context.Context, method, provider, model, url string, body
 // response body, mapping transport and HTTP errors to ProviderErrors. Used for
 // OAuth token endpoints (refresh, JWT-bearer assertion exchange).
 func doFormPOST(ctx context.Context, provider, model, endpoint string, form url.Values, headers map[string]string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
-	if err != nil {
-		return nil, &core.ProviderError{Kind: core.ErrInternal, Provider: provider, Model: model, Message: err.Error(), Cause: err}
+	encoded := form.Encode()
+	build := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(encoded))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Accept", "application/json")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		return req, nil
 	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "application/json")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	proxyRewrite(ctx, req)
-	resp, err := proxyClient(ctx).Do(req)
+	resp, err := sendRequest(ctx, provider, model, build)
 	if err != nil {
-		return nil, transportError(ctx, provider, model, err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
+	respBody, err := readBodyLimited(provider, model, resp)
 	if err != nil {
-		return nil, &core.ProviderError{Kind: core.ErrUpstream, Provider: provider, Model: model, Message: "read body: " + err.Error(), Cause: err}
+		return nil, err
 	}
 	if resp.StatusCode >= 400 {
 		return nil, httpStatusError(provider, model, resp, respBody)
@@ -332,25 +599,15 @@ type rawResponse struct {
 // doRaw performs a JSON POST but returns the raw response bytes and content
 // type instead of parsing JSON. Used for endpoints that return binary audio.
 func doRaw(ctx context.Context, provider, model, url string, body []byte, headers map[string]string) (*rawResponse, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	resp, err := sendRequest(ctx, provider, model, jsonRequest(ctx, http.MethodPost, url, body, headers))
 	if err != nil {
-		return nil, &core.ProviderError{Kind: core.ErrInternal, Provider: provider, Model: model, Message: err.Error(), Cause: err}
-	}
-	req.Header.Set("Content-Type", "application/json")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	proxyRewrite(ctx, req)
-	resp, err := proxyClient(ctx).Do(req)
-	if err != nil {
-		return nil, transportError(ctx, provider, model, err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
+	respBody, err := readBodyLimited(provider, model, resp)
 	if err != nil {
-		return nil, &core.ProviderError{Kind: core.ErrUpstream, Provider: provider, Model: model, Message: "read body: " + err.Error(), Cause: err}
+		return nil, err
 	}
 	if resp.StatusCode >= 400 {
 		return nil, httpStatusError(provider, model, resp, respBody)
@@ -385,26 +642,29 @@ func doMultipart(ctx context.Context, provider, model, url, fileField, filename 
 	if err := mw.Close(); err != nil {
 		return nil, &core.ProviderError{Kind: core.ErrInternal, Provider: provider, Model: model, Message: err.Error(), Cause: err}
 	}
+	payload := buf.Bytes()
+	contentType := mw.FormDataContentType()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, &buf)
-	if err != nil {
-		return nil, &core.ProviderError{Kind: core.ErrInternal, Provider: provider, Model: model, Message: err.Error(), Cause: err}
+	build := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", contentType)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		return req, nil
 	}
-	req.Header.Set("Content-Type", mw.FormDataContentType())
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	proxyRewrite(ctx, req)
-	resp, err := proxyClient(ctx).Do(req)
+	resp, err := sendRequest(ctx, provider, model, build)
 	if err != nil {
-		return nil, transportError(ctx, provider, model, err)
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes))
+	respBody, err := readBodyLimited(provider, model, resp)
 	if err != nil {
-		return nil, &core.ProviderError{Kind: core.ErrUpstream, Provider: provider, Model: model, Message: "read body: " + err.Error(), Cause: err}
+		return nil, err
 	}
 	if resp.StatusCode >= 400 {
 		return nil, httpStatusError(provider, model, resp, respBody)
@@ -413,42 +673,29 @@ func doMultipart(ctx context.Context, provider, model, url, fileField, filename 
 }
 
 // openStream performs a streaming POST and returns the response for the caller
-// to read SSE lines from. The caller must close resp.Body.
+// to read SSE lines from. The caller must close resp.Body. A stale pooled
+// connection or failed dial is replayed once on a fresh connection by
+// sendRequest; the time-to-headers budget comes from the request context.
 func openStream(ctx context.Context, provider, model, url string, body []byte, headers map[string]string) (*http.Response, error) {
-	resp, err := openStreamWithClient(ctx, provider, model, url, body, headers, proxyClient(ctx))
-	if err == nil || !shouldRetryFreshConnection(ctx, err) {
-		return resp, err
+	build := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "text/event-stream")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		return req, nil
 	}
-	return openStreamForRetry(ctx, provider, model, url, body, headers)
-}
-
-// openStreamForRetry is like openStream but uses the no-keep-alive retry
-// transport. Used when retrying after a transport-level failure to avoid
-// grabbing a stale socket from the shared pool.
-func openStreamForRetry(ctx context.Context, provider, model, url string, body []byte, headers map[string]string) (*http.Response, error) {
-	return openStreamWithClient(ctx, provider, model, url, body, headers, proxyClientForRetry(ctx))
-}
-
-func openStreamWithClient(ctx context.Context, provider, model, url string, body []byte, headers map[string]string, client *http.Client) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	resp, err := sendRequest(ctx, provider, model, build)
 	if err != nil {
-		return nil, &core.ProviderError{Kind: core.ErrInternal, Provider: provider, Model: model, Message: err.Error(), Cause: err}
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "text/event-stream")
-	for k, v := range headers {
-		req.Header.Set(k, v)
-	}
-
-	proxyRewrite(ctx, req)
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, transportError(ctx, provider, model, err)
+		return nil, err
 	}
 	if resp.StatusCode >= 400 {
 		defer resp.Body.Close()
-		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
-		return nil, httpStatusError(provider, model, resp, errBody)
+		return nil, httpStatusError(provider, model, resp, readErrorBody(resp))
 	}
 	// An HTML page served with HTTP 200 on the stream endpoint means the base URL
 	// points at a web frontend, not the SSE API. Detect by content-type before
@@ -510,44 +757,9 @@ func (t *ttftTracker) maybeReport(ch core.StreamChunk) {
 // call) to the first meaningful chunk, so it includes connection time.
 func scanOpenAISSE(ctx context.Context, provider, model string, resp *http.Response, codec streamParser, cfg core.StreamConfig) <-chan core.StreamChunk {
 	out := make(chan core.StreamChunk, 16)
-	go func() {
-		defer close(out)
-		defer resp.Body.Close()
-
-		ttft := newTTFTTracker(cfg)
-
-		scanner := sseScanner(resp.Body)
-		for scanner.Scan() {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			payload, ok := parseSSEData(scanner.Text())
-			if !ok {
-				continue
-			}
-			chunks, perr := codec.ParseStreamLine([]byte(payload), model)
-			if perr != nil {
-				continue
-			}
-			for _, ch := range chunks {
-				ttft.maybeReport(ch)
-				select {
-				case out <- ch:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			out <- core.StreamChunk{
-				Type: core.ChunkError,
-				Err:  &core.ProviderError{Kind: core.ErrTimeout, Provider: provider, Model: model, Message: err.Error(), Cause: err},
-			}
-		}
-	}()
+	go streamSSE(ctx, provider, model, resp.Body, out, cfg, sseDataLines, func(payload []byte) ([]core.StreamChunk, error) {
+		return codec.ParseStreamLine(payload, model)
+	})
 	return out
 }
 
@@ -572,16 +784,7 @@ func isMeaningfulChunk(ch core.StreamChunk) bool {
 // initial buffer to reduce allocation pressure on high-throughput streams.
 func sseScanner(r io.Reader) *bufio.Scanner {
 	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
-	return sc
-}
-
-// sseScannerPooled returns a bufio.Scanner like sseScanner but reuses a buffer
-// from the pool. The caller should NOT return the buffer — the scanner owns it
-// for the lifetime of the stream.
-func sseScannerPooled(r io.Reader) *bufio.Scanner {
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+	sc.Buffer(make([]byte, 0, 64*1024), sseMaxLineBytes)
 	return sc
 }
 
@@ -603,16 +806,25 @@ func isSSEKeepAlive(line string) bool {
 }
 
 // transportError classifies a transport-level failure (DNS, connection, ctx).
+//
+// A net.Error that reports Timeout() (dial timeout, TLS handshake timeout,
+// per-read deadlines) is ErrTimeout at provider scope: the host is reachable
+// but slow, which is worth a short cooldown. Everything else without an HTTP
+// status is a network-scoped ErrUpstream (connection refused, DNS failure,
+// reset) that counts toward the provider circuit breaker.
 func transportError(ctx context.Context, provider, model string, err error) error {
 	kind := core.ErrUpstream
 	scope := core.FailureScopeNetwork
-	switch ctx.Err() {
-	case context.Canceled:
+	switch {
+	case errors.Is(ctx.Err(), context.Canceled):
 		kind = core.ErrClientCanceled
 		scope = core.FailureScopeRequest
-	case context.DeadlineExceeded:
+	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
 		kind = core.ErrTimeout
 		scope = core.FailureScopeRequest
+	case isTimeoutNetError(err):
+		kind = core.ErrTimeout
+		scope = core.FailureScopeProvider
 	}
 	return &core.ProviderError{
 		Kind: kind, Scope: scope, Provider: provider, Model: model,
@@ -620,9 +832,22 @@ func transportError(ctx context.Context, provider, model string, err error) erro
 	}
 }
 
+func isTimeoutNetError(err error) bool {
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
 // shouldRetryFreshConnection permits one replay before response headers exist.
-// Only network-scoped transport errors qualify; HTTP responses and cancellations
-// are handled by normal fallback so a request is never multiplied blindly.
+// Only network-scoped transport errors raised before any response byte arrived
+// qualify:
+//
+//   - the pooled connection was already closed by the server (stale socket);
+//   - the dial itself failed (refused, reset, unreachable, DNS);
+//   - the connection dropped with EOF before headers (the server went away
+//     while the request was in flight).
+//
+// HTTP responses, timeouts and cancellations are handled by normal fallback so
+// a request is never multiplied blindly.
 func shouldRetryFreshConnection(ctx context.Context, err error) bool {
 	if ctx.Err() != nil {
 		return false
@@ -634,12 +859,33 @@ func shouldRetryFreshConnection(ctx context.Context, err error) bool {
 		pe.Cause == nil {
 		return false
 	}
+	if isTimeoutNetError(pe.Cause) {
+		return false
+	}
+	var opErr *net.OpError
+	if errors.As(pe.Cause, &opErr) && opErr.Op == "dial" {
+		return true
+	}
+	var dnsErr *net.DNSError
+	if errors.As(pe.Cause, &dnsErr) {
+		return true
+	}
+	if errors.Is(pe.Cause, io.EOF) || errors.Is(pe.Cause, io.ErrUnexpectedEOF) {
+		return true
+	}
 	message := strings.ToLower(pe.Cause.Error())
 	return strings.Contains(message, "server closed idle connection") ||
-		strings.Contains(message, "use of closed network connection")
+		strings.Contains(message, "use of closed network connection") ||
+		strings.Contains(message, "connection reset by peer") && strings.Contains(message, "write")
 }
 
 // httpStatusError maps an HTTP error status to a structured ProviderError.
+//
+// Classification is body-first: the body text is
+// consulted before the bare status because providers and the gateways in
+// front of them routinely wrap one condition in another status (a 429 inside
+// a 503, a context-window overflow inside a generic 400, a depleted balance
+// inside a 403).
 func httpStatusError(provider, model string, resp *http.Response, body []byte) error {
 	kind := core.ErrUpstream
 	var retryAfter time.Duration
@@ -666,30 +912,56 @@ func httpStatusError(provider, model string, resp *http.Response, body []byte) e
 		}
 	case resp.StatusCode == http.StatusNotFound:
 		kind = core.ErrModelUnavailable
+	case resp.StatusCode == http.StatusRequestTimeout, resp.StatusCode == http.StatusGatewayTimeout:
+		// The provider (or its edge) gave up waiting. Retryable on another
+		// account/model like any upstream fault, surfaced as a timeout.
+		kind = core.ErrTimeout
 	case resp.StatusCode >= 400 && resp.StatusCode < 500:
 		kind = core.ErrBadRequest
+		bodyStr := string(body)
+		switch {
 		// Some backends report unknown or inaccessible models as a plain 400
 		// (Codex: "The 'X' model is not supported when using Codex with a
 		// ChatGPT account"). Classify those as model-unavailable so chains
-		// fall back to the next model/provider instead of hard-failing the
-		// request.
-		if isModelUnsupportedBody(body) {
+		// fall back to the next model/provider instead of hard-failing.
+		case isModelUnsupportedBody(body):
 			kind = core.ErrModelUnavailable
-		}
 		// Anthropic-style APIs return "credit balance is too low" as a plain
 		// 400 invalid_request_error. Treat it as a depleted balance so chains
 		// fall back to the next account instead of surfacing a request error.
-		if kind == core.ErrBadRequest && looksLikeCreditsExhausted(string(body)) {
+		case looksLikeCreditsExhausted(bodyStr):
 			kind = core.ErrQuotaExhausted
 			creditsExhausted = true
+		// Some APIs (Cloudflare) report a rejected token as a plain 400;
+		// treat it as the credential problem it is so the next account is
+		// tried and this one is benched.
+		case errclass.LooksLikeAuthError(bodyStr):
+			kind = core.ErrAuth
+		// The prompt does not fit this model: a larger-context target in the
+		// chain can still serve it.
+		case errclass.LooksLikeContextWindow(bodyStr):
+			kind = core.ErrContextWindow
+		case errclass.LooksLikeContentFilter(bodyStr):
+			kind = core.ErrContentFilter
+		// OpenAI "Request too large" (tokens-per-minute) and similar are
+		// throttling answers dressed as 400/413.
+		case errclass.LooksLikeRateLimitWrapped(body):
+			kind, retryAfter, creditsExhausted = classify429(resp, body)
+		}
+	case resp.StatusCode >= 500:
+		// Gemini/Vertex and several gateways wrap "Resource exhausted" or an
+		// embedded code 429 in a 5xx. Treat it as throttling so the account is
+		// cooled for the hinted window rather than tripping the circuit.
+		if errclass.LooksLikeRateLimitWrapped(body) {
+			kind, retryAfter, creditsExhausted = classify429(resp, body)
 		}
 	}
 
 	scope := core.FailureScopeProvider
 	switch kind {
-	case core.ErrBadRequest:
+	case core.ErrBadRequest, core.ErrContentFilter:
 		scope = core.FailureScopeRequest
-	case core.ErrModelUnavailable:
+	case core.ErrModelUnavailable, core.ErrContextWindow:
 		scope = core.FailureScopeModel
 	case core.ErrAuth, core.ErrRateLimit, core.ErrQuotaExhausted:
 		scope = core.FailureScopeAccount
@@ -705,17 +977,14 @@ func httpStatusError(provider, model string, resp *http.Response, body []byte) e
 		RetryAfter:       retryAfter,
 		CreditsExhausted: creditsExhausted,
 	}
-	// Preserve the existing Retry-After header parsing for non-429 errors.
+	// Honour Retry-After on every status (503 "overloaded, retry in 2s" is
+	// common). Transient hints are capped so a single odd header cannot park
+	// an account for hours; quota resets keep their full horizon.
 	if pe.RetryAfter <= 0 {
-		if ra := resp.Header.Get("Retry-After"); ra != "" {
-			if secs, err := strconv.Atoi(ra); err == nil {
-				pe.RetryAfter = time.Duration(secs) * time.Second
-			} else if retryAt, err := http.ParseTime(ra); err == nil {
-				if wait := time.Until(retryAt); wait > 0 {
-					pe.RetryAfter = wait
-				}
-			}
-		}
+		pe.RetryAfter = parseRetryAfterHeader(resp.Header.Get("Retry-After"))
+	}
+	if pe.Kind != core.ErrQuotaExhausted {
+		pe.RetryAfter = errclass.CapRetryAfter(pe.RetryAfter)
 	}
 	return pe
 }
@@ -836,48 +1105,42 @@ func proxyClient(ctx context.Context) *http.Client {
 	return clientFor(creds)
 }
 
-// proxyClientForRetry returns an http.Client for retry attempts after a
-// transport-level failure. When no proxy is configured, it returns the
-// no-keep-alive retryClient to force a fresh connection (avoiding stale
-// sockets from the shared pool). With a proxy configured, it falls back to
-// the standard clientFor since proxy transports are already isolated.
+// proxyClientForRetry returns a no-keep-alive client for replaying a request
+// after a transport-level failure, so the replay cannot grab a stale socket
+// from the shared pool. Proxied requests get the cached fresh transport for
+// their proxy config.
 func proxyClientForRetry(ctx context.Context) *http.Client {
 	creds, ok := core.ProxyFromContext(ctx)
-	if !ok {
+	if !ok || (creds.ProxyURL == "" && creds.RelayURL == "") {
 		return retryClient
 	}
-	// For proxied requests, create a no-keep-alive variant on the fly.
-	// The proxy transport cache is not used here because retries are rare
-	// and the no-keep-alive transport is intentionally lightweight.
-	if creds.ProxyURL == "" && creds.RelayURL == "" {
-		return retryClient
-	}
-	// Build a minimal no-keep-alive transport with proxy settings.
-	t := &http.Transport{
-		DisableKeepAlives:     true,
-		MaxIdleConns:          0,
-		MaxIdleConnsPerHost:   0,
-		IdleConnTimeout:       1 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 60 * time.Second,
-		ExpectContinueTimeout: 1 * time.Second,
-		ForceAttemptHTTP2:     false,
-	}
-	if creds.ProxyURL != "" {
-		if u, err := url.Parse(creds.ProxyURL); err == nil {
-			t.Proxy = proxyFunc(u, creds.NoProxy)
-		}
-	}
-	return &http.Client{Transport: t}
+	return &http.Client{Transport: proxyTransportsFor(creds).fresh}
 }
 
-// proxyRewrite applies relay header rewriting to req if ctx carries a RelayURL.
-func proxyRewrite(ctx context.Context, req *http.Request) {
-	creds, ok := core.ProxyFromContext(ctx)
-	if !ok || creds.RelayURL == "" {
-		return
+// proxyDo sends a request built outside sendRequest through the account's
+// egress route from ctx (proxy pool, relay or global proxy).
+func proxyDo(ctx context.Context, req *http.Request) (*http.Response, error) {
+	return proxyClient(ctx).Do(req)
+}
+
+// EgressClient returns a client that sends through the egress route carried
+// by ctx (core.WithProxy), for account-scoped calls made outside connectors.
+// timeout bounds each request like http.Client.Timeout; zero means none.
+func EgressClient(ctx context.Context, timeout time.Duration) *http.Client {
+	base := proxyClient(ctx)
+	return &http.Client{Transport: base.Transport, Timeout: timeout}
+}
+
+// egressCtx returns ctx carrying creds' egress route when the caller has not
+// already put one there (e.g. model discovery called with bare credentials).
+func egressCtx(ctx context.Context, creds core.Credentials) context.Context {
+	if existing, ok := core.ProxyFromContext(ctx); ok && (existing.ProxyURL != "" || existing.RelayURL != "") {
+		return ctx
 	}
-	relayRequest(req, creds.RelayURL)
+	if creds.ProxyURL == "" && creds.RelayURL == "" {
+		return ctx
+	}
+	return core.WithProxy(ctx, creds)
 }
 
 // mergeHeaders combines connector defaults with credential-supplied headers.

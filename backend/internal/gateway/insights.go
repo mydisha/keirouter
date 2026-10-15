@@ -4,20 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/mydisha/keirouter/backend/internal/connectors"
 	"github.com/mydisha/keirouter/backend/internal/core"
-	"github.com/mydisha/keirouter/backend/internal/httputil"
 	"github.com/mydisha/keirouter/backend/internal/store"
 	"github.com/mydisha/keirouter/backend/internal/usagehub"
 )
@@ -39,13 +33,25 @@ func sinceForPeriod(period, tz string) time.Time {
 		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
 	case "24h":
 		return time.Now().UTC().Add(-24 * time.Hour)
-	case "week":
+	case "week", "7d":
 		return now.AddDate(0, 0, -7).UTC()
+	case "30d":
+		return now.AddDate(0, 0, -30).UTC()
+	case "90d":
+		return now.AddDate(0, 0, -90).UTC()
 	case "month", "":
 		return now.AddDate(0, -1, 0).UTC()
 	default:
 		return now.AddDate(0, 0, -30).UTC()
 	}
+}
+
+// optionalTime renders a zero time as JSON null instead of 0001-01-01.
+func optionalTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC()
 }
 
 // ---- usage insights ---------------------------------------------------------
@@ -179,14 +185,10 @@ func (s *Server) adminUsageInsightsLegacy(w http.ResponseWriter, r *http.Request
 	}
 
 	// Success rate + average latency, computed from the full period in SQL.
-	// Cache hits count as successful; avg latency excludes cache hits (0ms).
+	// Cache hits count as successful; guardrail blocks and cancellations are
+	// excluded; avg latency excludes cache hits (0ms).
 	// successRate is a 0-1 ratio (frontend multiplies by 100 for display).
-	var successRate float64
-	if sum.TotalRequests > 0 {
-		successRate = float64(sum.SuccessCount) / float64(sum.TotalRequests)
-	} else {
-		successRate = 1
-	}
+	successRate := successRatio(sum.SuccessCount, sum.FailureCount)
 	avgLatency := int(sum.AvgLatencyMS)
 	avgTTFT := int(sum.AvgTTFTMS)
 
@@ -463,8 +465,9 @@ func (s *Server) adminQuotaUsage(w http.ResponseWriter, r *http.Request) {
 			// don't silently suppress the quota/credits detail box. Mirrors
 			// the refresh-then-probe pattern in validateAccountCredentials.
 			quotaAcc := a
+			egress := s.accountEgressContext(ctx, a)
 			if s.refresher != nil {
-				if refreshed, rerr := s.refresher.EnsureFresh(ctx, a); rerr == nil {
+				if refreshed, rerr := s.refresher.EnsureFresh(egress, a); rerr == nil {
 					quotaAcc = refreshed
 				}
 			}
@@ -472,7 +475,7 @@ func (s *Server) adminQuotaUsage(w http.ResponseWriter, r *http.Request) {
 				wg.Add(1)
 				go func(target map[string]any, qs connectors.QuotaSource, creds core.Credentials) {
 					defer wg.Done()
-					quotaCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+					quotaCtx, cancel := context.WithTimeout(egress, 8*time.Second)
 					quota, qerr := qs.FetchQuota(quotaCtx, creds)
 					cancel()
 					if qerr == nil && quota != nil {
@@ -566,430 +569,5 @@ func (s *Server) adminUsageStream(w http.ResponseWriter, r *http.Request) {
 
 // adminConsoleLog returns the buffered log lines from the console log.
 func (s *Server) adminConsoleLog(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"logs": s.consoleLog.Entries()})
-}
-
-// ---- proxy pools ------------------------------------------------------------
-
-func (s *Server) adminListProxyPools(w http.ResponseWriter, r *http.Request) {
-	pools, err := s.pools.List(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Count accounts bound to each pool for the dashboard.
-	accs, _ := s.accounts.ListByTenant(r.Context(), adminTenant)
-	boundCounts := map[string]int{}
-	for _, a := range accs {
-		if a.ProxyPoolID != "" {
-			boundCounts[a.ProxyPoolID]++
-		}
-	}
-
-	out := make([]map[string]any, 0, len(pools))
-	for _, p := range pools {
-		out = append(out, map[string]any{
-			"id": p.ID, "name": p.Name, "type": p.Type,
-			"proxy_url": p.ProxyURL, "no_proxy": p.NoProxy,
-			"strict": p.Strict, "is_active": p.IsActive,
-			"test_status": p.TestStatus, "last_tested": p.LastTested,
-			"last_error":             p.LastError,
-			"bound_connection_count": boundCounts[p.ID],
-		})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"pools": out})
-}
-
-var validProxyPoolTypes = map[string]bool{
-	"http": true, "vercel": true, "cloudflare": true, "deno": true,
-}
-
-func (s *Server) adminCreateProxyPool(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name     string `json:"name"`
-		Type     string `json:"type"`
-		ProxyURL string `json:"proxy_url"`
-		NoProxy  string `json:"no_proxy"`
-		Strict   bool   `json:"strict"`
-		IsActive *bool  `json:"is_active"`
-	}
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-	if body.Name == "" || body.ProxyURL == "" {
-		writeError(w, http.StatusBadRequest, "name and proxy_url are required")
-		return
-	}
-
-	poolType := body.Type
-	if poolType == "" {
-		poolType = "http"
-	}
-	if !validProxyPoolTypes[poolType] {
-		writeError(w, http.StatusBadRequest, "invalid pool type: must be http, vercel, cloudflare, or deno")
-		return
-	}
-	if err := validateProxyPoolURL(poolType, body.ProxyURL); err != nil {
-		s.log.Warn("blocked invalid proxy URL", "url", body.ProxyURL, "type", poolType, "error", err)
-		writeError(w, http.StatusBadRequest, "invalid proxy_url: "+err.Error())
-		return
-	}
-	active := true
-	if body.IsActive != nil {
-		active = *body.IsActive
-	}
-	now := time.Now()
-	pool := store.ProxyPool{
-		ID:         uuid.NewString(),
-		Name:       body.Name,
-		Type:       poolType,
-		ProxyURL:   body.ProxyURL,
-		NoProxy:    body.NoProxy,
-		Strict:     body.Strict,
-		IsActive:   active,
-		TestStatus: "unknown",
-		CreatedAt:  now,
-		UpdatedAt:  now,
-	}
-	if err := s.pools.Create(r.Context(), pool); err != nil {
-		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "proxy pool creation failed"))
-		return
-	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": pool.ID, "name": pool.Name})
-}
-
-func (s *Server) adminUpdateProxyPool(w http.ResponseWriter, r *http.Request) {
-	pool, err := s.pools.Get(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "pool not found")
-		return
-	}
-	var body struct {
-		Name     *string `json:"name"`
-		ProxyURL *string `json:"proxy_url"`
-		NoProxy  *string `json:"no_proxy"`
-		Strict   *bool   `json:"strict"`
-		IsActive *bool   `json:"is_active"`
-	}
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-	if body.Name != nil {
-		name := strings.TrimSpace(*body.Name)
-		if name == "" {
-			writeError(w, http.StatusBadRequest, "name cannot be empty")
-			return
-		}
-		pool.Name = name
-	}
-	if body.ProxyURL != nil {
-		if err := validateProxyPoolURL(pool.Type, *body.ProxyURL); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid proxy_url: "+err.Error())
-			return
-		}
-		pool.ProxyURL = *body.ProxyURL
-	}
-	if body.NoProxy != nil {
-		pool.NoProxy = *body.NoProxy
-	}
-	if body.Strict != nil {
-		pool.Strict = *body.Strict
-	}
-	if body.IsActive != nil {
-		pool.IsActive = *body.IsActive
-	}
-	pool.UpdatedAt = time.Now()
-	if err := s.pools.Update(r.Context(), pool); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func validateProxyPoolURL(poolType, rawURL string) error {
-	if strings.TrimSpace(rawURL) == "" {
-		return fmt.Errorf("URL is required")
-	}
-	if err := httputil.ValidateProxyURL(rawURL); err != nil {
-		return fmt.Errorf("URL blocked by security policy")
-	}
-	if poolType == "http" {
-		return nil
-	}
-	parsed, err := url.Parse(rawURL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		return fmt.Errorf("relay URL must use http or https")
-	}
-	return nil
-}
-
-func (s *Server) adminDeleteProxyPool(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-
-	// Prevent deletion if any accounts are bound to this pool.
-	accs, _ := s.accounts.ListByTenant(r.Context(), adminTenant)
-	bound := 0
-	for _, a := range accs {
-		if a.ProxyPoolID == id {
-			bound++
-		}
-	}
-	if bound > 0 {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error":                  "proxy pool is currently in use",
-			"bound_connection_count": bound,
-		})
-		return
-	}
-
-	if err := s.pools.Delete(r.Context(), id); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) adminTestProxyPool(w http.ResponseWriter, r *http.Request) {
-	pool, err := s.pools.Get(r.Context(), chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "pool not found")
-		return
-	}
-
-	now := time.Now()
-	pool.LastTested = &now
-
-	result := testProxyPoolConnectivity(pool)
-
-	pool.TestStatus = result.status
-	pool.LastError = result.lastError
-	pool.IsActive = result.status == "active"
-	_ = s.pools.Update(r.Context(), pool)
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":      pool.TestStatus,
-		"last_tested": pool.LastTested,
-		"elapsed_ms":  result.elapsedMS,
-		"error":       result.lastError,
-	})
-}
-
-type proxyTestResult struct {
-	status     string
-	lastError  string
-	elapsedMS  int64
-	httpStatus int
-}
-
-// testProxyPoolConnectivity performs a real connectivity check against a proxy
-// pool. For HTTP proxies it routes a GET httpbin.org/ip through the proxy; for
-// relay types (vercel/cloudflare/deno) it sends relay headers.
-func testProxyPoolConnectivity(pool store.ProxyPool) proxyTestResult {
-	timeout := 10 * time.Second
-
-	switch pool.Type {
-	case "vercel", "cloudflare", "deno":
-		return testRelayPool(pool.ProxyURL, timeout)
-	default: // "http"
-		return testHTTPPool(pool.ProxyURL, timeout)
-	}
-}
-
-func testHTTPPool(proxyURL string, timeout time.Duration) proxyTestResult {
-	start := time.Now()
-	parsed, err := url.Parse(proxyURL)
-	if err != nil {
-		return proxyTestResult{status: "error", lastError: "invalid proxy URL: " + err.Error()}
-	}
-	transport := &http.Transport{Proxy: http.ProxyURL(parsed)}
-	client := &http.Client{Transport: transport, Timeout: timeout}
-	req, err := http.NewRequest("GET", "https://httpbin.org/ip", nil)
-	if err != nil {
-		return proxyTestResult{status: "error", lastError: err.Error()}
-	}
-	resp, err := client.Do(req)
-	elapsed := time.Since(start).Milliseconds()
-	if err != nil {
-		return proxyTestResult{status: "error", lastError: err.Error(), elapsedMS: elapsed}
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return proxyTestResult{status: "error", lastError: fmt.Sprintf("proxy returned HTTP %d", resp.StatusCode), elapsedMS: elapsed, httpStatus: resp.StatusCode}
-	}
-	return proxyTestResult{status: "active", elapsedMS: elapsed, httpStatus: resp.StatusCode}
-}
-
-func testRelayPool(relayURL string, timeout time.Duration) proxyTestResult {
-	start := time.Now()
-	client := &http.Client{Timeout: timeout}
-	req, err := http.NewRequest("GET", relayURL, nil)
-	if err != nil {
-		return proxyTestResult{status: "error", lastError: err.Error()}
-	}
-	req.Header.Set("x-relay-target", "https://echo.free.beeceptor.com")
-	req.Header.Set("x-relay-path", "/")
-	probeID := uuid.NewString()
-	req.Header.Set("x-keirouter-relay-probe", probeID)
-	resp, err := client.Do(req)
-	elapsed := time.Since(start).Milliseconds()
-	if err != nil {
-		return proxyTestResult{status: "error", lastError: err.Error(), elapsedMS: elapsed}
-	}
-	defer resp.Body.Close()
-	raw, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 400 {
-		return proxyTestResult{status: "error", lastError: fmt.Sprintf("relay returned HTTP %d", resp.StatusCode), elapsedMS: elapsed, httpStatus: resp.StatusCode}
-	}
-	if readErr != nil {
-		return proxyTestResult{status: "error", lastError: "could not read relay probe response", elapsedMS: elapsed, httpStatus: resp.StatusCode}
-	}
-	var echoed struct {
-		Headers map[string]any `json:"headers"`
-	}
-	if json.Unmarshal(raw, &echoed) != nil || !relayProbeHeaderMatches(echoed.Headers, probeID) {
-		return proxyTestResult{status: "error", lastError: "relay response did not confirm request forwarding", elapsedMS: elapsed, httpStatus: resp.StatusCode}
-	}
-	return proxyTestResult{status: "active", elapsedMS: elapsed, httpStatus: resp.StatusCode}
-}
-
-func relayProbeHeaderMatches(headers map[string]any, probeID string) bool {
-	for key, value := range headers {
-		if strings.EqualFold(key, "x-keirouter-relay-probe") && fmt.Sprint(value) == probeID {
-			return true
-		}
-	}
-	return false
-}
-
-// ---- skills -----------------------------------------------------------------
-
-// skillsKey is the settings key under which skill toggles are stored. Skills
-// are reusable system-prompt augmentations the gateway can apply.
-const skillsKey = "skills"
-
-type skill struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Prompt      string `json:"prompt"`
-	Enabled     bool   `json:"enabled"`
-	CreatedAt   string `json:"created_at"`
-}
-
-func (s *Server) loadSkills(r *http.Request) []skill {
-	skills := []skill{}
-	if s.settings == nil {
-		return skills
-	}
-	raw, err := s.settings.Get(r.Context(), skillsKey)
-	if err != nil || raw == "" {
-		return skills
-	}
-	_ = json.Unmarshal([]byte(raw), &skills)
-	return skills
-}
-
-func (s *Server) saveSkills(r *http.Request, skills []skill) error {
-	raw, err := json.Marshal(skills)
-	if err != nil {
-		return err
-	}
-	return s.settings.Set(r.Context(), skillsKey, string(raw))
-}
-
-func (s *Server) adminListSkills(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"skills": s.loadSkills(r)})
-}
-
-func (s *Server) adminCreateSkill(w http.ResponseWriter, r *http.Request) {
-	if s.settings == nil {
-		writeError(w, http.StatusInternalServerError, "settings store not configured")
-		return
-	}
-	var body struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Prompt      string `json:"prompt"`
-		Enabled     *bool  `json:"enabled"`
-	}
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-	if body.Name == "" {
-		writeError(w, http.StatusBadRequest, "name is required")
-		return
-	}
-	enabled := true
-	if body.Enabled != nil {
-		enabled = *body.Enabled
-	}
-	sk := skill{
-		ID:          uuid.NewString(),
-		Name:        body.Name,
-		Description: body.Description,
-		Prompt:      body.Prompt,
-		Enabled:     enabled,
-		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
-	}
-	skills := append(s.loadSkills(r), sk)
-	if err := s.saveSkills(r, skills); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, sk)
-}
-
-func (s *Server) adminUpdateSkill(w http.ResponseWriter, r *http.Request) {
-	if s.settings == nil {
-		writeError(w, http.StatusInternalServerError, "settings store not configured")
-		return
-	}
-	id := chi.URLParam(r, "id")
-	var body struct {
-		Enabled *bool `json:"enabled"`
-	}
-	if !decodeJSON(w, r, &body) {
-		return
-	}
-	skills := s.loadSkills(r)
-	found := false
-	for i := range skills {
-		if skills[i].ID == id {
-			if body.Enabled != nil {
-				skills[i].Enabled = *body.Enabled
-			}
-			found = true
-			break
-		}
-	}
-	if !found {
-		writeError(w, http.StatusNotFound, "skill not found")
-		return
-	}
-	if err := s.saveSkills(r, skills); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) adminDeleteSkill(w http.ResponseWriter, r *http.Request) {
-	if s.settings == nil {
-		writeError(w, http.StatusInternalServerError, "settings store not configured")
-		return
-	}
-	id := chi.URLParam(r, "id")
-	skills := s.loadSkills(r)
-	out := skills[:0]
-	for _, sk := range skills {
-		if sk.ID != id {
-			out = append(out, sk)
-		}
-	}
-	if err := s.saveSkills(r, out); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]any{"epoch": s.consoleLog.Epoch(), "logs": s.consoleLog.Entries()})
 }

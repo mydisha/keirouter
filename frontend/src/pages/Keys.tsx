@@ -1,27 +1,29 @@
-import { useState, useCallback, useEffect, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useCallback, useEffect, useId, useMemo, type ReactNode } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus, Copy, Check, ToggleLeft, ToggleRight, ArrowLeft, ArrowRight, Trash2, Wallet, Wrench, DollarSign, Gauge, Link2, Activity, Ban, ListFilter, Search, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Link2,
+  MoreHorizontal,
+  Plus,
+  Search,
+  Settings2,
+  Trash2,
+  X,
+} from "lucide-react";
 import { api, type APIKey, type BudgetStatus, type CreatedKey, type Plan } from "../lib/api";
 import { dashboard } from "../lib/dashboardRoutes";
-import { microsToUSD, formatTokens, formatSpendUSD } from "../lib/format";
+import { microsToUSD, formatTokens, formatDate, formatDateTime, formatSpendUSD } from "../lib/format";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
-import { formatTokenLimit, FormattedTokenInput, ModelMultiSelect } from "../components/ModelSelect";
-import {
-  Card,
-  CardHeader,
-  Button,
-  Input,
-  Select,
-  Field,
-  Badge,
-  Spinner,
-  Toggle,
-  Modal,
-  TablePagination,
-  useClientPagination,
-} from "../components/ui";
+import { formatTokenLimit, ModelMultiSelect } from "../components/ModelSelect";
+import { Badge, Button, IconTile, Input, SectionTitle, Select, Skeleton, Toggle, Modal, ErrorBanner, TablePagination, useClientPagination, EmptyState } from "../components/ui";
+import { ICONS } from "../lib/icons";
+import { useConfirm } from "../components/ui/confirm-dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 
 const budgetPeriods = [
   { value: "daily", label: "Daily" },
@@ -30,249 +32,168 @@ const budgetPeriods = [
   { value: "total", label: "All time" },
 ];
 
-type KeySummary = {
-  total: number;
-  active: number;
-  disabled: number;
-  restricted: number;
-};
+type StatusFilter = "all" | "active" | "inactive";
+type SortKey = "created_desc" | "created_asc" | "name_asc" | "name_desc";
 
-function getKeySummary(keys: APIKey[] = []): KeySummary {
-  return keys.reduce(
-    (acc, key) => {
-      acc.total += 1;
-      if (key.disabled) acc.disabled += 1;
-      else acc.active += 1;
-      if ((key.allowed_models ?? []).length > 0) acc.restricted += 1;
-      return acc;
-    },
-    { total: 0, active: 0, disabled: 0, restricted: 0 },
-  );
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "active", label: "Active" },
+  { value: "inactive", label: "Disabled" },
+];
+
+const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+
+function usedAt(iso?: string | null): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  // Go's zero time ("0001-01-01…") parses to a negative epoch: treat as never.
+  return Number.isFinite(t) && t > 0 ? t : null;
 }
 
-function StatusPill({ disabled }: { disabled: boolean }) {
-  if (disabled) {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-1 py-0.5 text-[11px] font-medium text-[var(--text-muted)]">
-        <span className="relative flex h-1.5 w-1.5">
-          <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-red-500 opacity-60"></span>
-        </span>
-        Inactive
-      </span>
-    );
-  }
-
-  return (
-    <span className="inline-flex items-center gap-1.5 px-1 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-      Active
-    </span>
-  );
+function getStatusCounts(keys: APIKey[] = []): Record<StatusFilter, number> {
+  const disabled = keys.filter((k) => k.disabled).length;
+  return { all: keys.length, active: keys.length - disabled, inactive: disabled };
 }
 
-function SummaryItem({
-  icon: Icon,
-  label,
-  value,
-  tone = "default",
-}: {
-  icon: typeof KeyRound;
-  label: string;
-  value: number;
-  tone?: "default" | "danger" | "warning";
-}) {
-  const iconTone =
-    tone === "danger"
-      ? "text-red-600 dark:text-red-400"
-      : tone === "warning"
-        ? "text-amber-600 dark:text-amber-400"
-        : "text-secondary-600 dark:text-secondary-300";
-  return (
-    <div className="flex min-w-0 items-center gap-3 px-4 py-3 sm:px-5">
-      <Icon className={`h-4 w-4 shrink-0 ${iconTone}`} strokeWidth={2} />
-      <div className="min-w-0">
-        <p className="truncate text-[11px] font-semibold uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</p>
-        <p className="mt-0.5 text-lg font-semibold leading-none tabular-nums text-[var(--text)]">{value}</p>
-      </div>
-    </div>
-  );
+// relativeTime renders "3 min ago" style labels for last-used timestamps.
+function relativeTime(iso?: string | null): string {
+  const t = usedAt(iso);
+  if (t === null) return "Never";
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 45) return "Just now";
+  const m = s / 60;
+  if (m < 60) return `${Math.max(1, Math.round(m))} min ago`;
+  const h = m / 60;
+  if (h < 24) return `${Math.round(h)} h ago`;
+  const d = h / 24;
+  if (d < 30) return `${Math.round(d)} d ago`;
+  return formatDate(t);
 }
 
-function KeyCopyButton({
-  icon,
-  label,
-  value,
-  copiedMessage,
-  className = "",
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  copiedMessage: string;
-  className?: string;
-}) {
+// The customer portal signs users in with Google and resolves their own key,
+// so the link no longer carries a key id.
+function portalUrlFor(_id: string) {
+  return `${window.location.origin}/portal`;
+}
+
+function useCopy() {
   const toast = useToast();
-
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        navigator.clipboard.writeText(value).then(
-          () => toast.success(label, copiedMessage),
-          () => toast.error("Copy failed", "Your browser blocked clipboard access."),
-        );
-      }}
-      className={`group inline-flex min-h-10 min-w-0 items-center gap-2 rounded-lg px-2 text-left text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50 ${className}`}
-    >
-      <span className="shrink-0">{icon}</span>
-      <span className="min-w-0 truncate font-mono text-[11px] font-medium">
-        {value}
-      </span>
-      <Copy className="h-3.5 w-3.5 shrink-0 opacity-60 transition-opacity group-hover:opacity-100" />
-    </button>
+  return useCallback(
+    (value: string, title: string, description?: string) =>
+      navigator.clipboard.writeText(value).then(
+        () => {
+          toast.success(title, description);
+          return true;
+        },
+        () => {
+          toast.error("Copy failed", "Your browser blocked clipboard access. Select the text and copy it manually.");
+          return false;
+        },
+      ),
+    [toast],
   );
 }
 
-function KeyEmptyState({ onCreate }: { onCreate: () => void }) {
+function planLimitText(p: Plan): string {
+  const parts: string[] = [];
+  if (p.limit_micros > 0) parts.push(`${microsToUSD(p.limit_micros)} / ${p.period}`);
+  if (p.limit_tokens > 0) parts.push(`${formatTokens(p.limit_tokens)} tokens / ${p.period}`);
+  if (parts.length === 0) parts.push("No spend limit");
+  return parts.join(" · ");
+}
+
+function planSummary(p: Plan): string {
+  const models = (p.allowed_models ?? []).length;
+  return [
+    planLimitText(p),
+    models > 0 ? `${models} model${models === 1 ? "" : "s"}` : "All models",
+    p.hard_cutoff ? "Hard cutoff" : "Alerts only",
+  ].join(" · ");
+}
+
+// ── Form primitives (match ConnectKit field styling) ─────────────────────────
+
+function FormField({
+  id,
+  label,
+  hint,
+  optional,
+  required,
+  children,
+}: {
+  id: string;
+  label: string;
+  hint?: ReactNode;
+  optional?: boolean;
+  required?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <div className="px-6 py-14">
-      <div className="mx-auto max-w-md text-center">
-        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-secondary-100 text-secondary-700 dark:bg-secondary-900/40 dark:text-secondary-200">
-          <KeyRound className="h-5 w-5" />
-        </div>
-        <h3 className="mt-4 text-base font-semibold tracking-tight text-[var(--text)]">No API keys yet</h3>
-        <p className="mt-2 text-sm leading-relaxed text-[var(--text-muted)]">
-          Create a key for CLI tools, apps, or teammates. Full secrets are shown once, then stored hashed.
-        </p>
-        <div className="mt-5 flex justify-center">
-          <Button onClick={onCreate}>
-            <Plus className="h-4 w-4" />
-            Create first key
-          </Button>
-        </div>
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <label htmlFor={id} className="text-[12.5px] font-medium text-fg">
+          {label}
+        </label>
+        {optional && <span className="text-[12px] text-fg-faint">Optional</span>}
+        {required && <span className="text-[12px] text-fg-faint">Required</span>}
       </div>
+      {children}
+      {hint && (
+        <p id={`${id}-hint`} className="text-[12px] leading-5 text-fg-muted">
+          {hint}
+        </p>
+      )}
     </div>
   );
 }
 
-function KeyRow({
-  apiKey,
-  budget,
-  selected,
-  onSelect,
-  onToggle,
-  onConfigure,
-  onRevoke,
-  togglePending,
-}: {
-  apiKey: APIKey;
-  budget?: BudgetStatus;
-  selected: boolean;
-  onSelect: () => void;
-  onToggle: () => void;
-  onConfigure: () => void;
-  onRevoke: () => void;
-  togglePending: boolean;
-}) {
-  const portalUrl = `${window.location.origin}/portal`;
-  const modelCount = apiKey.allowed_models?.length ?? 0;
-
+/** Token count input that keeps the thousand separators visible while typing. */
+function TokenInput({ id, value, onChange, placeholder }: { id: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
   return (
-    <article
-      className={`grid gap-2 px-4 py-3 transition-colors md:grid-cols-[minmax(190px,1.2fr)_minmax(160px,0.9fr)_minmax(120px,0.7fr)_auto] md:items-center md:px-5 ${
-        selected ? "bg-secondary-50/50 dark:bg-secondary-950/20" : "hover:bg-[var(--bg-subtle)]/70"
-      }`}
-    >
-      <div className="flex min-w-0 items-center gap-2">
-        <label className="flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-lg hover:bg-[var(--bg-subtle)]">
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={onSelect}
-            className="h-4 w-4 rounded border-[var(--border)] accent-[var(--color-accent)]"
-            aria-label={`Select ${apiKey.name}`}
-          />
-        </label>
-        <button type="button" onClick={onConfigure} className="group min-w-0 flex-1 rounded-lg py-1 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50">
-          <div className="flex items-center gap-2">
-            <h3 className="truncate text-sm font-semibold tracking-tight text-[var(--text)] group-hover:text-secondary-700 dark:group-hover:text-secondary-300">{apiKey.name}</h3>
-            <StatusPill disabled={apiKey.disabled} />
-          </div>
-          <p className="mt-0.5 truncate text-xs text-[var(--text-muted)]">Created {new Date(apiKey.created_at).toLocaleDateString()}</p>
-        </button>
-      </div>
-
-      <div className="min-w-0 pl-12 md:pl-0">
-        <KeyCopyButton icon={<KeyRound className="h-3 w-3" />} label="Key copied" value={apiKey.display} copiedMessage="Masked key identifier copied." />
-      </div>
-
-      <div className="min-w-0 pl-12 text-xs md:pl-0">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate font-medium text-[var(--text)]">{apiKey.plan_name || "Custom plan"}</span>
-          <span className="text-[var(--text-muted)]">·</span>
-          <span className={modelCount > 0 ? "truncate text-amber-600 dark:text-amber-400" : "truncate text-[var(--text-muted)]"}>
-            {modelCount > 0 ? `${modelCount} model${modelCount > 1 ? "s" : ""}` : "Plan defaults"}
-          </span>
-        </div>
-        {budget && budget.limit_micros > 0 && (() => {
-          const limit = budget.limit_micros / 1_000_000;
-          const spent = budget.spent_micros / 1_000_000;
-          const pct = Math.min((spent / limit) * 100, 100);
-          const tone = pct >= 100 ? "bg-red-500" : pct >= (budget.alert_pct || 100) ? "bg-amber-500" : "bg-emerald-500";
-          return (
-            <div className="mt-2 min-w-[160px]" title={`${formatSpendUSD(spent)} of ${formatSpendUSD(limit)}`}>
-              <div className="mb-1 flex justify-between text-[11px] text-[var(--text-muted)]">
-                <span className="tabular-nums">{formatSpendUSD(spent)} spent</span>
-                <span className="tabular-nums">{formatSpendUSD(limit)}</span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-[var(--bg-subtle)]">
-                <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct}%` }} />
-              </div>
-            </div>
-          );
-        })()}
-      </div>
-
-      <div className="flex items-center gap-1 pl-11 md:justify-end md:pl-0">
-        <KeyCopyButton
-          icon={<Link2 className="h-4 w-4" />}
-          label="Portal link copied"
-          value={portalUrl}
-          copiedMessage="Owner usage portal link copied."
-          className="w-10 justify-center px-0 [&_span:nth-child(2)]:hidden [&_svg:last-child]:hidden"
-        />
-        <button
-          type="button"
-          onClick={onToggle}
-          disabled={togglePending}
-          aria-label={apiKey.disabled ? "Enable key" : "Disable key"}
-          className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-subtle)] hover:text-[var(--text)] disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
-          title={apiKey.disabled ? "Enable key" : "Disable key"}
-        >
-          {apiKey.disabled ? <ToggleLeft className="h-4 w-4" /> : <ToggleRight className="h-4 w-4" />}
-        </button>
-        <button
-          type="button"
-          onClick={onRevoke}
-          aria-label={`Revoke ${apiKey.name}`}
-          className="flex h-10 w-10 items-center justify-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-red-100 hover:text-red-600 dark:hover:bg-red-900/30 focus:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50"
-          title="Revoke key"
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
-        <Button variant="ghost" onClick={onConfigure} className="ml-1">
-          Details
-          <ArrowRight className="h-4 w-4" />
-        </Button>
-      </div>
-    </article>
+    <Input
+      id={id}
+      type="text"
+      inputMode="numeric"
+      value={formatTokenLimit(value)}
+      onChange={(e) => onChange(e.target.value.replace(/[^\d]/g, ""))}
+      placeholder={placeholder ? (/^\d+$/.test(placeholder) ? formatTokenLimit(placeholder) : placeholder) : undefined}
+      className="tabular-nums"
+    />
   );
 }
+
+function SettingRow({ id, label, children }: { id: string; label: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-3 py-2.5">
+      <span id={id} className="min-w-0 text-[13px] font-medium text-fg">
+        {label}
+      </span>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+}
+
+// Phones: buttons stack full width in DOM order (primary last); the body above
+// scrolls so the footer never leaves the screen.
+function DialogFooter({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-b-2xl border-t border-line bg-subtle px-5 py-3 sm:flex-row sm:items-center sm:justify-end [&>button]:w-full sm:[&>button]:w-auto">
+      {children}
+    </div>
+  );
+}
+
+const DIALOG_BODY = "max-h-[calc(100dvh-12rem)] overflow-y-auto sm:max-h-[calc(100dvh-10rem)]";
+
+// ── Page ─────────────────────────────────────────────────────────────────────
 
 export function KeysPage() {
+  const confirm = useConfirm();
   const qc = useQueryClient();
   const toast = useToast();
+  const copy = useCopy();
   const navigate = useNavigate();
+  const fid = useId();
   const keys = useQuery({ queryKey: ["keys"], queryFn: () => api.listKeys() });
   const access = useQuery({ queryKey: ["access-settings"], queryFn: () => api.accessSettings() });
   const budgetStatus = useQuery({ queryKey: ["budget-status"], queryFn: () => api.budgetStatus() });
@@ -285,10 +206,12 @@ export function KeysPage() {
   }, [budgetStatus.data]);
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [sortKey, setSortKey] = useState<"created_desc" | "created_asc" | "name_asc" | "name_desc">("created_desc");
+  const [sortKey, setSortKey] = useState<SortKey>("created_desc");
+
+  const allKeys = keys.data?.keys ?? [];
+  const statusCounts = useMemo(() => getStatusCounts(keys.data?.keys ?? []), [keys.data]);
 
   const visibleKeys = useMemo(() => {
     const all = keys.data?.keys ?? [];
@@ -328,10 +251,11 @@ export function KeysPage() {
     pagination.setPage(1);
   }, [statusFilter, searchQuery, sortKey]);
 
-  // Step 1 — name
+  // Essentials
   const [name, setName] = useState("");
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
-  // Step 2 — budget
+  // Advanced — limits and models
   const [budgetLimit, setBudgetLimit] = useState("");
   const [budgetLimitTokens, setBudgetLimitTokens] = useState("");
   const [budgetPeriod, setBudgetPeriod] = useState("monthly");
@@ -339,9 +263,14 @@ export function KeysPage() {
   const [budgetHardCutoff, setBudgetHardCutoff] = useState(true);
   const [allowedModels, setAllowedModels] = useState<string[]>([]);
 
-  // Step 3 — result
+  // Result
   const [created, setCreated] = useState<CreatedKey | null>(null);
   const [copied, setCopied] = useState(false);
+
+  // Plan selection
+  const plans = useQuery({ queryKey: ["plans"], queryFn: () => api.listPlans() });
+  const [selectedPlanId, setSelectedPlanId] = useState<string>("custom");
+  const [customizePlan, setCustomizePlan] = useState(false);
 
   const openModal = () => {
     setName("");
@@ -353,9 +282,9 @@ export function KeysPage() {
     setBudgetAlertPct(80);
     setBudgetHardCutoff(true);
     setAllowedModels([]);
+    setShowAdvanced(false);
     setCreated(null);
     setCopied(false);
-    setStep(1);
     setModalOpen(true);
   };
 
@@ -366,11 +295,6 @@ export function KeysPage() {
       setCopied(false);
     }
   };
-
-  // Plan selection
-  const plans = useQuery({ queryKey: ["plans"], queryFn: () => api.listPlans() });
-  const [selectedPlanId, setSelectedPlanId] = useState<string>("custom");
-  const [customizePlan, setCustomizePlan] = useState(false);
 
   const create = useMutation({
     mutationFn: () => {
@@ -400,16 +324,9 @@ export function KeysPage() {
       qc.invalidateQueries({ queryKey: ["budget-status"] });
       qc.invalidateQueries({ queryKey: ["plans"] });
       setCreated(data);
-      setStep(4);
-      const planMsg = data.plan ? ` Plan: ${data.plan.name}.` : "";
-      const parts = [];
-      if (data.budget && data.budget.limit_micros > 0) parts.push(`$${(data.budget.limit_micros / 1_000_000).toFixed(2)}`);
-      if (data.budget && data.budget.limit_tokens > 0) parts.push(`${(data.budget.limit_tokens / 1_000_000).toFixed(0)}M tokens`);
-      const budgetMsg = parts.length > 0 ? ` Budget: ${parts.join(" + ")} / ${data.budget?.period}.` : "";
-      const modelMsg = data.allowed_models?.length ? ` Models: ${data.allowed_models.join(", ")}.` : "";
-      toast.success("Key created", `Copy the key below — it won't be shown again.${planMsg}${budgetMsg}${modelMsg}`);
+      toast.success("Key created", "Copy it now. It won't be shown again.");
     },
-    onError: (e: Error) => toast.error("Key creation failed", e.message),
+    onError: (e: Error) => toast.error("Couldn't create key", e.message),
   });
 
   // Multi-select state
@@ -444,15 +361,15 @@ export function KeysPage() {
     onSuccess: (_, ids) => {
       qc.invalidateQueries({ queryKey: ["keys"] });
       clearSelection();
-      toast.success(`${ids.length} key${ids.length > 1 ? "s" : ""} revoked`, "All selected keys have been permanently deleted.");
+      toast.success(`${ids.length} key${ids.length > 1 ? "s" : ""} revoked`, "They can no longer authenticate requests.");
     },
-    onError: (e: Error) => toast.error("Bulk revocation failed", e.message),
+    onError: (e: Error) => toast.error("Couldn't revoke keys", e.message),
   });
 
-  const handleBulkDelete = () => {
+  const handleBulkDelete = async () => {
     const ids = Array.from(selectedIds);
     if (!ids.length) return;
-    if (!confirm(`Revoke ${ids.length} key${ids.length > 1 ? "s" : ""}? This cannot be undone.`)) return;
+    if (!(await confirm({ title: `Revoke ${ids.length} key${ids.length > 1 ? "s" : ""}?`, description: "Tools using them stop authenticating immediately. This cannot be undone.", confirmLabel: "Revoke", tone: "danger" }))) return;
     bulkRemove.mutate(ids);
   };
 
@@ -460,9 +377,9 @@ export function KeysPage() {
     mutationFn: (id: string) => api.deleteKey(id),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["keys"] });
-      toast.success("Key revoked", "The key has been permanently deleted and can no longer authenticate requests.");
+      toast.success("Key revoked", "It can no longer authenticate requests.");
     },
-    onError: (e: Error) => toast.error("Revocation failed", e.message),
+    onError: (e: Error) => toast.error("Couldn't revoke key", e.message),
   });
 
   const toggleDisabled = useMutation({
@@ -471,76 +388,221 @@ export function KeysPage() {
       qc.invalidateQueries({ queryKey: ["keys"] });
       toast.success(
         data.disabled ? "Key disabled" : "Key enabled",
-        data.disabled
-          ? "Requests using this key will be rejected until re-enabled."
-          : "This key can now authenticate requests again.",
+        data.disabled ? "Requests using this key are rejected." : "This key can authenticate requests again.",
       );
     },
-    onError: (e: Error) => toast.error("Key update failed", e.message),
+    onError: (e: Error) => toast.error("Couldn't update key", e.message),
   });
+
+  const revokeOne = async (k: APIKey) => {
+    if (!(await confirm({ title: `Revoke ${k.name}?`, description: "Tools using this key stop authenticating immediately. This cannot be undone.", confirmLabel: "Revoke", tone: "danger" }))) return;
+    remove.mutate(k.id);
+  };
+
+  // Same handlers for the desktop row and the phone card.
+  const itemProps = (k: APIKey): KeyItemProps => ({
+    apiKey: k,
+    budget: budgetByKey.get(k.id),
+    selected: selectedIds.has(k.id),
+    onSelect: () => toggleSelect(k.id),
+    onOpen: () => navigate(dashboard(`/keys/${k.id}`)),
+    onToggle: () => toggleDisabled.mutate({ id: k.id, disabled: !k.disabled }),
+    togglePending: toggleDisabled.isPending && toggleDisabled.variables?.id === k.id,
+    onCopyKey: () => copy(k.display, "Masked key copied"),
+    onCopyPortal: () => copy(portalUrlFor(k.id), "Portal link copied"),
+    onRevoke: () => revokeOne(k),
+  });
+
+  const allVisibleSelected = visibleKeys.length > 0 && visibleKeys.every((k) => selectedIds.has(k.id));
+  const someVisibleSelected = visibleKeys.some((k) => selectedIds.has(k.id));
+  const filtering = searchQuery.trim() !== "" || statusFilter !== "all";
+  const isEmpty = !keys.isLoading && !keys.isError && allKeys.length === 0;
+
+  // ── Create form ────────────────────────────────────────────────────────────
+  const planList = plans.data?.plans ?? [];
+  const isCustom = selectedPlanId === "custom";
+  const selectedPlan = planList.find((p) => p.id === selectedPlanId);
+  const ids = {
+    name: `${fid}-name`,
+    plan: `${fid}-plan`,
+    advanced: `${fid}-advanced`,
+    usd: `${fid}-usd`,
+    tokens: `${fid}-tokens`,
+    period: `${fid}-period`,
+    models: `${fid}-models`,
+    alert: `${fid}-alert`,
+    cutoff: `${fid}-cutoff`,
+    override: `${fid}-override`,
+  };
+
+  const createForm = (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (name.trim() && !create.isPending) create.mutate();
+      }}
+    >
+      <div className={cn("space-y-4 px-5 py-4", DIALOG_BODY)}>
+        <FormField id={ids.name} label="Name" required>
+          <Input
+            id={ids.name}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. laptop, ci-runner, alice"
+            required
+            aria-required="true"
+            autoFocus
+          />
+        </FormField>
+
+        <FormField
+          id={ids.plan}
+          label="Plan"
+          hint={isCustom ? "No plan. Set limits under Advanced." : selectedPlan ? planSummary(selectedPlan) : undefined}
+        >
+          <Select
+            id={ids.plan}
+            value={selectedPlanId}
+            onChange={(e) => setSelectedPlanId(e.target.value)}
+            disabled={plans.isLoading}
+            aria-describedby={isCustom || selectedPlan ? `${ids.plan}-hint` : undefined}
+          >
+            <option value="custom">Custom</option>
+            {plans.isLoading && <option disabled>Loading plans…</option>}
+            {planList.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </Select>
+        </FormField>
+
+        <div className="rounded-lg border border-line">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            aria-expanded={showAdvanced}
+            aria-controls={ids.advanced}
+            className={cn(
+              "flex min-h-10 w-full items-center justify-between gap-2 rounded-lg px-3 text-left text-[13px] font-medium text-fg transition-colors hover:bg-hover",
+              FOCUS_RING,
+            )}
+          >
+            <span>
+              Advanced <span className="font-normal text-fg-muted">· limits and models</span>
+            </span>
+            <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showAdvanced && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+
+          {showAdvanced && (
+            <div id={ids.advanced} className="space-y-4 border-t border-line px-3 py-3">
+              {!isCustom && (
+                <div className="-mx-3 -mt-3 border-b border-line">
+                  <SettingRow id={ids.override} label="Override plan for this key">
+                    <Toggle checked={customizePlan} onChange={setCustomizePlan} aria-labelledby={ids.override} />
+                  </SettingRow>
+                </div>
+              )}
+
+              {(isCustom || customizePlan) && (
+                <>
+                  <div className={cn("grid gap-3", isCustom ? "sm:grid-cols-[1fr_1fr_8.5rem]" : "sm:grid-cols-2")}>
+                    <FormField id={ids.usd} label="Limit (USD)" optional>
+                      <Input
+                        id={ids.usd}
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={budgetLimit}
+                        onChange={(e) => setBudgetLimit(e.target.value)}
+                        placeholder={isCustom ? "50.00" : "Plan default"}
+                        className="tabular-nums"
+                      />
+                    </FormField>
+                    <FormField id={ids.tokens} label="Limit (tokens)" optional>
+                      <TokenInput id={ids.tokens} value={budgetLimitTokens} onChange={setBudgetLimitTokens} placeholder={isCustom ? "100000000" : "Plan default"} />
+                    </FormField>
+                    {isCustom && (
+                      <FormField id={ids.period} label="Period">
+                        <Select id={ids.period} value={budgetPeriod} onChange={(e) => setBudgetPeriod(e.target.value)}>
+                          {budgetPeriods.map((p) => (
+                            <option key={p.value} value={p.value}>{p.label}</option>
+                          ))}
+                        </Select>
+                      </FormField>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5" role="group" aria-labelledby={ids.models} aria-describedby={`${ids.models}-hint`}>
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span id={ids.models} className="text-[12.5px] font-medium text-fg">Allowed models</span>
+                      <span className="text-[12px] text-fg-faint">Optional</span>
+                    </div>
+                    <ModelMultiSelect value={allowedModels} onChange={setAllowedModels} aria-labelledby={ids.models} />
+                    <p id={`${ids.models}-hint`} className="text-[12px] leading-5 text-fg-muted">
+                      {isCustom ? (
+                        <>Empty allows every model. <span className="font-mono">*</span> matches many, e.g. <span className="font-mono">claude-*</span>.</>
+                      ) : (
+                        "Empty keeps the plan's models."
+                      )}
+                    </p>
+                  </div>
+
+                  {isCustom && (
+                    <div className="divide-y divide-line rounded-lg border border-line">
+                      <SettingRow id={ids.alert} label="Alert at">
+                        <span className="flex items-center gap-1.5">
+                          <Input
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={budgetAlertPct}
+                            onChange={(e) => setBudgetAlertPct(parseInt(e.target.value) || 80)}
+                            className="w-20 text-right tabular-nums"
+                            aria-labelledby={ids.alert}
+                            aria-describedby={`${ids.alert}-unit`}
+                          />
+                          <span id={`${ids.alert}-unit`} className="text-[13px] text-fg-muted">% of budget</span>
+                        </span>
+                      </SettingRow>
+                      <SettingRow id={ids.cutoff} label="Block requests when the budget is used up">
+                        <Toggle checked={budgetHardCutoff} onChange={setBudgetHardCutoff} aria-labelledby={ids.cutoff} />
+                      </SettingRow>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <DialogFooter>
+        <Button type="button" variant="ghost" onClick={closeModal}>Cancel</Button>
+        <Button type="submit" disabled={!name.trim() || create.isPending}>
+          {create.isPending ? "Creating…" : "Create key"}
+        </Button>
+      </DialogFooter>
+    </form>
+  );
 
   return (
     <>
       <PageHeader
-        title="API Keys"
-        icon={KeyRound}
-        description="Manage authentication keys, owner portal links, model access, and spend controls."
+        title="API keys"
+        description="Keys your tools and teammates use to call KeiRouter."
         action={
-          <Button onClick={openModal}>
-            <Plus className="h-4 w-4" />
-            New key
-          </Button>
+          isEmpty ? undefined : (
+            <Button onClick={openModal}>
+              <Plus aria-hidden="true" />
+              New key
+            </Button>
+          )
         }
       />
 
-      <Modal
-        open={modalOpen}
-        onClose={closeModal}
-        title={step === 4 ? "Key created" : "Create API key"}
-        subtitle={
-          step === 1
-            ? "Name your key so you can identify it later."
-            : step === 2
-              ? "Choose a plan or set custom limits."
-              : step === 3
-                ? "Optionally override plan settings for this key."
-                : undefined
-        }
-      >
-        {step === 1 && <StepName name={name} setName={setName} onNext={() => setStep(2)} />}
-        {step === 2 && (
-          <StepPlanSelect
-            plans={plans.data?.plans ?? []}
-            selectedPlanId={selectedPlanId}
-            setSelectedPlanId={setSelectedPlanId}
-            onBack={() => setStep(1)}
-            onNext={() => setStep(3)}
-          />
-        )}
-        {step === 3 && (
-          <StepConfigure
-            selectedPlanId={selectedPlanId}
-            plans={plans.data?.plans ?? []}
-            customizePlan={customizePlan}
-            setCustomizePlan={setCustomizePlan}
-            budgetLimit={budgetLimit}
-            setBudgetLimit={setBudgetLimit}
-            budgetLimitTokens={budgetLimitTokens}
-            setBudgetLimitTokens={setBudgetLimitTokens}
-            budgetPeriod={budgetPeriod}
-            setBudgetPeriod={setBudgetPeriod}
-            budgetAlertPct={budgetAlertPct}
-            setBudgetAlertPct={setBudgetAlertPct}
-            budgetHardCutoff={budgetHardCutoff}
-            setBudgetHardCutoff={setBudgetHardCutoff}
-            allowedModels={allowedModels}
-            setAllowedModels={setAllowedModels}
-            onBack={() => setStep(2)}
-            onCreate={() => create.mutate()}
-            isPending={create.isPending}
-          />
-        )}
-        {step === 4 && created && (
+      <Modal open={modalOpen} onClose={closeModal} maxWidth="max-w-lg" title={created ? "Key created" : "Create API key"}>
+        {created ? (
           <StepSuccess
             created={created}
             copied={copied}
@@ -549,483 +611,407 @@ export function KeysPage() {
             endpointUrl={access.data?.endpoint_url ?? window.location.origin}
             planName={created.plan?.name ?? "Custom"}
             availableModelsText={
-              created.allowed_models && created.allowed_models.length >0
+              created.allowed_models && created.allowed_models.length > 0
                 ? created.allowed_models.join(", ")
                 : selectedPlanId !== "custom"
                   ? (plans.data?.plans ?? []).find((p) => p.id === selectedPlanId)?.allowed_models?.join(", ") || "all models"
                   : "all models"
             }
           />
+        ) : (
+          createForm
         )}
       </Modal>
 
-      {(() => {
-        const summary = getKeySummary(keys.data?.keys ?? []);
-        return (
-          <Card className="mb-4 shadow-none">
-            <div className="grid grid-cols-2 divide-x divide-y divide-[var(--border)] sm:grid-cols-4 sm:divide-y-0">
-              <SummaryItem label="Total keys" value={summary.total} icon={KeyRound} />
-              <SummaryItem label="Active" value={summary.active} icon={Activity} />
-              <SummaryItem label="Disabled" value={summary.disabled} icon={Ban} tone="danger" />
-              <SummaryItem label="Restricted" value={summary.restricted} icon={ListFilter} tone="warning" />
-            </div>
-          </Card>
-        );
-      })()}
-
-      <Card className="overflow-hidden">
-        <CardHeader
-          title={selectedIds.size > 0 ? `${selectedIds.size} selected` : "Key inventory"}
-          description="Copy identifiers, share owner portals, and control access from one place."
+      {keys.isLoading ? (
+        <div className="space-y-3" aria-busy="true" aria-label="Loading API keys">
+          <Skeleton className="h-12 w-full rounded-2xl" />
+          <Skeleton className="h-80 w-full rounded-2xl" />
+        </div>
+      ) : keys.isError ? (
+        <div className="space-y-3">
+          <ErrorBanner message={`Couldn't load API keys. ${keys.error instanceof Error ? keys.error.message : ""}`.trim()} />
+          <Button variant="secondary" onClick={() => keys.refetch()}>Retry</Button>
+        </div>
+      ) : allKeys.length === 0 ? (
+        <EmptyState
+          variant="card"
+          titleAs="h2"
+          icon={ICONS.keys}
+          title="No API keys yet"
+          hint="Create a key for each tool, app or teammate that calls KeiRouter."
           action={
-            selectedIds.size > 0 ? (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={clearSelection}
-                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
-                >
-                  Clear
-                </button>
-                <Button variant="danger" onClick={handleBulkDelete} disabled={bulkRemove.isPending}>
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Revoke {selectedIds.size}
-                </Button>
-              </div>
-            ) : undefined
+            <Button onClick={openModal}>
+              <Plus aria-hidden="true" />
+              Create key
+            </Button>
           }
         />
-        {keys.isLoading ? (
-          <Spinner />
-        ) : !keys.data?.keys?.length ? (
-          <KeyEmptyState onCreate={openModal} />
-        ) : (
-          <div>
-            <div className="flex flex-col gap-3 border-b border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3 lg:flex-row lg:items-center lg:justify-between lg:px-5">
-              <label className="flex min-h-10 cursor-pointer items-center gap-3 rounded-lg pr-3">
-                <input
-                  type="checkbox"
-                  checked={visibleKeys.length >0 && visibleKeys.every((k) => selectedIds.has(k.id))}
-                  onChange={toggleSelectAll}
-                  className="h-4 w-4 rounded border-[var(--border)] accent-[var(--color-accent)]"
-                  aria-label="Select all visible API keys"
-                />
-                <span className="text-xs font-semibold text-[var(--text-muted)]">
-                  Select all <span className="tabular-nums">({visibleKeys.length})</span>
-                </span>
-              </label>
-              <div className="flex flex-1 flex-col gap-2 sm:flex-row lg:max-w-3xl lg:justify-end">
-                <div className="relative min-w-0 flex-1 lg:max-w-sm">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search keys…"
-                    className="min-h-10 w-full rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] py-2 pl-9 pr-10 text-sm transition-[border-color,box-shadow] placeholder:text-[var(--text-muted)] hover:border-[var(--border-strong)] focus:border-accent-400 focus:outline-none focus:ring-2 focus:ring-accent-400/30"
-                  />
-                  {searchQuery && (
-                    <button
-                      type="button"
-                      onClick={() => setSearchQuery("")}
-                      className="absolute right-0 top-1/2 flex h-10 w-10 -translate-y-1/2 items-center justify-center rounded-lg text-[var(--text-muted)] hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
-                      aria-label="Clear search"
-                    >
-                      <X className="h-4 w-4" />
-                    </button>
-                  )}
-                </div>
-                <label className="sr-only" htmlFor="key-sort">Sort keys</label>
-                <Select id="key-sort" className="w-full sm:w-40" value={sortKey} onChange={(e) => setSortKey(e.target.value as typeof sortKey)}>
-                  <option value="created_desc">Newest first</option>
-                  <option value="created_asc">Oldest first</option>
-                  <option value="name_asc">Name A–Z</option>
-                  <option value="name_desc">Name Z–A</option>
-                </Select>
-                <label className="sr-only" htmlFor="key-status">Filter by status</label>
-                <Select id="key-status" className="w-full sm:w-32" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)}>
-                  <option value="all">All status</option>
-                  <option value="active">Active</option>
-                  <option value="inactive">Inactive</option>
-                </Select>
-              </div>
-            </div>
-            {visibleKeys.length ===0 ? (
-              <div className="px-6 py-10 text-center text-sm text-[var(--text-muted)]">
-                No keys match your search or filters.
-              </div>
-            ) : (
-              <div className="divide-y divide-[var(--border)]">
-                {pagination.paged.map((k) => (
-                  <KeyRow
-                    key={k.id}
-                    apiKey={k}
-                    budget={budgetByKey.get(k.id)}
-                    selected={selectedIds.has(k.id)}
-                    onSelect={() => toggleSelect(k.id)}
-                    onToggle={() => toggleDisabled.mutate({ id: k.id, disabled: !k.disabled })}
-                    onConfigure={() => navigate(dashboard(`/keys/${k.id}`))}
-                    onRevoke={() => {
-                      if (!confirm(`Revoke ${k.name}? This cannot be undone.`)) return;
-                      remove.mutate(k.id);
-                    }}
-                    togglePending={toggleDisabled.isPending}
-                  />
-                ))}
-              </div>
-            )}
-            <TablePagination
-              page={pagination.page}
-              pages={pagination.pages}
-              total={pagination.total}
-              onPage={pagination.setPage}
+      ) : (
+        <section aria-labelledby={`${fid}-list`} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+          <div className="border-b border-line px-4 py-3">
+            <SectionTitle
+              icon={ICONS.keys}
+              title="Keys"
+              id={`${fid}-list`}
+              action={
+                <>
+                  <span role="status" className="text-[12.5px] tabular-nums text-fg-muted">
+                    {filtering ? `${visibleKeys.length} of ${allKeys.length}` : ""}
+                  </span>
+                  <label className="sr-only" htmlFor={`${fid}-sort`}>Sort keys</label>
+                  <Select id={`${fid}-sort`} className="h-9 w-40" value={sortKey} onChange={(e) => setSortKey(e.target.value as SortKey)}>
+                    <option value="created_desc">Newest first</option>
+                    <option value="created_asc">Oldest first</option>
+                    <option value="name_asc">Name A–Z</option>
+                    <option value="name_desc">Name Z–A</option>
+                  </Select>
+                </>
+              }
             />
           </div>
-        )}
-      </Card>
+
+          <div className="flex flex-col gap-2 border-b border-line px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="relative sm:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <input
+                type="search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search name, key or plan"
+                aria-label="Search keys"
+                className={cn(
+                  "h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500",
+                  FOCUS_RING,
+                )}
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className={cn("absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg", FOCUS_RING)}
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Filter by status">
+              {STATUS_FILTERS.map((f) => {
+                const active = statusFilter === f.value;
+                return (
+                  <button
+                    key={f.value}
+                    type="button"
+                    role="radio"
+                    aria-checked={active}
+                    onClick={() => setStatusFilter(f.value)}
+                    className={cn(
+                      "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors",
+                      FOCUS_RING,
+                      active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+                    )}
+                  >
+                    {f.label}
+                    <span className={cn("font-normal tabular-nums", active ? "text-link" : "text-fg-faint")}>{statusCounts[f.value]}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <p role="status" className="sr-only">
+            {selectedIds.size > 0 ? `${selectedIds.size} key${selectedIds.size === 1 ? "" : "s"} selected` : ""}
+          </p>
+          {selectedIds.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-b border-line bg-subtle px-4 py-2">
+              <span className="text-[13px] font-medium tabular-nums text-fg">{selectedIds.size} selected</span>
+              <div className="ml-auto flex items-center gap-1.5">
+                <Button variant="danger" onClick={handleBulkDelete} disabled={bulkRemove.isPending}>
+                  <Trash2 aria-hidden="true" />
+                  Revoke {selectedIds.size}
+                </Button>
+                <button
+                  type="button"
+                  onClick={clearSelection}
+                  aria-label="Clear selection"
+                  className={cn("flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg", FOCUS_RING)}
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {visibleKeys.length === 0 ? (
+            <div className="px-6 py-10 text-center">
+              <h3 className="text-[13px] font-semibold text-fg">No keys match</h3>
+              <Button
+                variant="ghost"
+                className="mt-3"
+                onClick={() => {
+                  setSearchQuery("");
+                  setStatusFilter("all");
+                }}
+              >
+                Clear filters
+              </Button>
+            </div>
+          ) : (
+            <>
+            {/* Phones: one card per key, controls on their own line. */}
+            {visibleKeys.length > 1 && (
+              <div className="border-b border-line bg-subtle px-4 py-1 md:hidden">
+                <label className="inline-flex min-h-9 cursor-pointer items-center gap-2.5 text-[12.5px] text-fg-muted">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected;
+                    }}
+                    onChange={toggleSelectAll}
+                    className="h-4 w-4 rounded border-input accent-accent-500"
+                  />
+                  Select all {visibleKeys.length} shown
+                </label>
+              </div>
+            )}
+            <ul className="divide-y divide-line md:hidden" aria-label="API keys">
+              {pagination.paged.map((k) => (
+                <KeyCard key={k.id} {...itemProps(k)} />
+              ))}
+            </ul>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full min-w-[620px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                    <th scope="col" className="w-10 px-4 py-2">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        ref={(el) => {
+                          if (el) el.indeterminate = someVisibleSelected && !allVisibleSelected;
+                        }}
+                        onChange={toggleSelectAll}
+                        className="h-4 w-4 rounded border-input accent-accent-500"
+                        aria-label={`Select all ${visibleKeys.length} shown keys`}
+                      />
+                    </th>
+                    <th scope="col" className="px-2 py-2 font-medium">Name</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Plan</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Status</th>
+                    <th scope="col" className="px-4 py-2 font-medium">Last used</th>
+                    <th scope="col" className="hidden px-4 py-2 font-medium xl:table-cell">Created</th>
+                    <th scope="col" className="w-10 px-2 py-2"><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {pagination.paged.map((k) => (
+                    <KeyRow key={k.id} {...itemProps(k)} />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            </>
+          )}
+          <TablePagination page={pagination.page} pages={pagination.pages} total={pagination.total} onPage={pagination.setPage} />
+        </section>
+      )}
     </>
   );
 }
 
-/* ── Step 1: Name ───────────────────────────────────────────────── */
+type KeyItemProps = {
+  apiKey: APIKey;
+  budget?: BudgetStatus;
+  selected: boolean;
+  onSelect: () => void;
+  onOpen: () => void;
+  onToggle: () => void;
+  togglePending: boolean;
+  onCopyKey: () => void;
+  onCopyPortal: () => void;
+  onRevoke: () => void;
+};
 
-function StepName({
-  name,
-  setName,
-  onNext,
-}: {
-  name: string;
-  setName: (v: string) => void;
-  onNext: () => void;
-}) {
+function KeyActionsMenu({ apiKey: k, onOpen, onCopyKey, onCopyPortal, onRevoke }: Pick<KeyItemProps, "apiKey" | "onOpen" | "onCopyKey" | "onCopyPortal" | "onRevoke">) {
   return (
-    <div className="space-y-4 px-6 py-5">
-      <Field label="Key name">
-        <Input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="laptop"
-          autoFocus
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && name.trim()) {
-              e.preventDefault();
-              onNext();
-            }
-          }}
-        />
-      </Field>
-      <div className="flex gap-2 pt-1">
-        <Button className="flex-1" onClick={onNext} disabled={!name.trim()}>
-          Next
-          <ArrowRight className="h-4 w-4" />
-        </Button>
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label={`Actions for ${k.name}`}
+        className={cn("flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg md:h-8 md:w-8", FOCUS_RING)}
+      >
+        <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onSelect={onOpen}>
+          <Settings2 aria-hidden="true" />
+          Configure
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onCopyKey}>
+          <Copy aria-hidden="true" />
+          Copy masked key
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onCopyPortal}>
+          <Link2 aria-hidden="true" />
+          Copy portal link
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem tone="danger" onSelect={onRevoke}>
+          <Trash2 aria-hidden="true" />
+          Revoke key
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/** Budget spend vs limit for a key; hidden when the key has no USD limit. */
+function KeySpendBar({ budget }: { budget?: BudgetStatus }) {
+  if (!budget || budget.limit_micros <= 0) return null;
+  const limit = budget.limit_micros / 1_000_000;
+  const spent = budget.spent_micros / 1_000_000;
+  const pct = Math.min((spent / limit) * 100, 100);
+  const tone = pct >= 100 ? "bg-bad" : pct >= (budget.alert_pct || 100) ? "bg-warn" : "bg-ok";
+  return (
+    <div className="mt-2 min-w-[160px] max-w-[260px]" title={`${formatSpendUSD(spent)} of ${formatSpendUSD(limit)}`}>
+      <div className="mb-1 flex justify-between text-[11px] text-fg-muted">
+        <span className="tabular-nums">{formatSpendUSD(spent)} spent</span>
+        <span className="tabular-nums">{formatSpendUSD(limit)}</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-subtle">
+        <div className={cn("h-full rounded-full", tone)} style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
 }
 
-/* ── Step 2: Plan Select ────────────────────────────────────────── */
+function KeyStatusBadge({ disabled }: { disabled: boolean }) {
+  return disabled ? <Badge tone="neutral">Disabled</Badge> : <Badge tone="success">Active</Badge>;
+}
 
-function StepPlanSelect({
-  plans,
-  selectedPlanId,
-  setSelectedPlanId,
-  onBack,
-  onNext,
-}: {
-  plans: Plan[];
-  selectedPlanId: string;
-  setSelectedPlanId: (v: string) => void;
-  onBack: () => void;
-  onNext: () => void;
-}) {
+/** Phone layout of a key: identity + status, facts, then the controls. */
+function KeyCard(props: KeyItemProps) {
+  const { apiKey: k, budget, selected, onSelect, onToggle, togglePending } = props;
+  const toggleId = useId();
+  const modelCount = k.allowed_models?.length ?? 0;
+  const lastUsed = usedAt(k.last_used_at);
+  const facts = [
+    k.plan_name || "Custom",
+    modelCount > 0 ? `${modelCount} model${modelCount > 1 ? "s" : ""}` : null,
+    lastUsed ? `Used ${relativeTime(k.last_used_at).toLowerCase()}` : "Never used",
+  ].filter(Boolean);
+
   return (
-    <div className="space-y-4 px-6 py-5">
-      <p className="text-xs text-[var(--text-muted)]">
-        Select a plan to inherit its budget rules, or choose Custom to set everything yourself.
-      </p>
-
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {plans.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setSelectedPlanId(p.id)}
-            className={`rounded-xl border px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/40 ${
-              selectedPlanId === p.id
-                ? "border-accent-400 bg-accent-500/10"
-                : "border-[var(--border)] bg-[var(--bg-subtle)] hover:bg-[var(--bg)]"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <Wallet className="h-4 w-4 text-[var(--text-muted)]" />
-              <span className="text-sm font-medium">{p.name}</span>
-            </div>
-            <div className="mt-1.5 space-y-0.5 text-xs text-[var(--text-muted)]">
-              {p.limit_micros > 0 && <p>{microsToUSD(p.limit_micros)} / {p.period}</p>}
-              {p.limit_tokens > 0 && <p>{formatTokens(p.limit_tokens)} tokens / {p.period}</p>}
-              {p.limit_micros === 0 && p.limit_tokens === 0 && <p>No spend limit</p>}
-              {(p.allowed_models ?? []).length > 0 && <p>{(p.allowed_models ?? []).length} model restriction(s)</p>}
-              <p>{p.key_count} key{p.key_count !== 1 ? "s" : ""}</p>
-            </div>
-          </button>
-        ))}
-
-        {/* Custom option */}
-        <button
-          type="button"
-          onClick={() => setSelectedPlanId("custom")}
-          className={`rounded-xl border border-dashed px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/40 ${
-            selectedPlanId === "custom"
-              ? "border-accent-400 bg-accent-500/10"
-              : "border-[var(--border)] bg-[var(--bg-subtle)] hover:bg-[var(--bg)]"
-          }`}
+    <li className={cn("px-4 py-3", selected && "bg-accent-500/5")}>
+      <div className="flex items-center gap-2">
+        {/* The label widens the checkbox's tap target to 36px. */}
+        <label className="-my-2 -ml-2.5 flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={onSelect}
+            className="h-4 w-4 rounded border-input accent-accent-500"
+            aria-label={`Select ${k.name}`}
+          />
+        </label>
+        <Link
+          to={dashboard(`/keys/${k.id}`)}
+          className={cn("min-w-0 flex-1 truncate rounded-sm text-[13px] font-medium hover:underline", FOCUS_RING, k.disabled ? "text-fg-muted" : "text-fg")}
+          title={k.name}
         >
-          <div className="flex items-center gap-2">
-            <Wrench className="h-4 w-4 text-[var(--text-muted)]" />
-            <span className="text-sm font-medium">Custom</span>
-          </div>
-          <div className="mt-1.5 text-xs text-[var(--text-muted)]">
-            <p>No preset</p>
-            <p>Set everything yourself</p>
-          </div>
-        </button>
+          {k.name}
+        </Link>
+        <span aria-hidden="true" className="shrink-0">
+          <KeyStatusBadge disabled={k.disabled} />
+        </span>
       </div>
-
-      <div className="flex gap-2 pt-2 border-t border-[var(--border)]">
-        <Button variant="ghost" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Button>
-        <div className="flex-1" />
-        <Button onClick={onNext}>
-          Next
-          <ArrowRight className="h-4 w-4" />
-        </Button>
+      <div className="pl-[34px]">
+        <p className="truncate font-mono text-[12px] text-fg-faint">{k.display}</p>
+        <p className="mt-0.5 truncate text-[12px] tabular-nums text-fg-muted">{facts.join(" · ")}</p>
+        <KeySpendBar budget={budget} />
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <span className="flex min-h-9 items-center gap-2.5">
+            <Toggle id={toggleId} checked={!k.disabled} onChange={onToggle} disabled={togglePending} label={`${k.name} active`} />
+            <label htmlFor={toggleId} className="text-[12.5px] text-fg-muted">Accept requests</label>
+          </span>
+          <KeyActionsMenu {...props} />
+        </div>
       </div>
-    </div>
+    </li>
   );
 }
 
-/* ── Step 3: Configure (plan details / custom) ──────────────────── */
+function KeyRow({
+  apiKey: k,
+  budget,
+  selected,
+  onSelect,
+  onOpen,
+  onToggle,
+  togglePending,
+  onCopyKey,
+  onCopyPortal,
+  onRevoke,
+}: KeyItemProps) {
+  const modelCount = k.allowed_models?.length ?? 0;
+  const lastUsed = usedAt(k.last_used_at);
+  const stop = (e: React.MouseEvent) => e.stopPropagation();
 
-function StepConfigure({
-  selectedPlanId,
-  plans,
-  customizePlan,
-  setCustomizePlan,
-  budgetLimit,
-  setBudgetLimit,
-  budgetLimitTokens,
-  setBudgetLimitTokens,
-  budgetPeriod,
-  setBudgetPeriod,
-  budgetAlertPct,
-  setBudgetAlertPct,
-  budgetHardCutoff,
-  setBudgetHardCutoff,
-  allowedModels,
-  setAllowedModels,
-  onBack,
-  onCreate,
-  isPending,
-}: {
-  selectedPlanId: string;
-  plans: Plan[];
-  customizePlan: boolean;
-  setCustomizePlan: (v: boolean) => void;
-  budgetLimit: string;
-  setBudgetLimit: (v: string) => void;
-  budgetLimitTokens: string;
-  setBudgetLimitTokens: (v: string) => void;
-  budgetPeriod: string;
-  setBudgetPeriod: (v: string) => void;
-  budgetAlertPct: number;
-  setBudgetAlertPct: (v: number) => void;
-  budgetHardCutoff: boolean;
-  setBudgetHardCutoff: (v: boolean) => void;
-  allowedModels: string[];
-  setAllowedModels: (v: string[]) => void;
-  onBack: () => void;
-  onCreate: () => void;
-  isPending: boolean;
-}) {
-  const isCustom = selectedPlanId === "custom";
-  const selectedPlan = plans.find((p) => p.id === selectedPlanId);
-  const models = selectedPlan?.allowed_models ?? [];
-
-  if (isCustom) {
-    // Full custom config (same as old StepBudget)
-    return (
-      <div className="space-y-4 px-6 py-5">
-        <div className="flex gap-3">
-          <div className="flex-1">
-            <Field label="Limit (USD)">
-              <Input
-                type="number"
-                min="0"
-                step="0.01"
-                value={budgetLimit}
-                onChange={(e) => setBudgetLimit(e.target.value)}
-                placeholder="50.00"
-              />
-            </Field>
-          </div>
-          <div className="flex-1">
-            <Field label="Limit (Tokens)">
-              <FormattedTokenInput
-                value={budgetLimitTokens}
-                onChange={setBudgetLimitTokens}
-                placeholder="100000000"
-              />
-            </Field>
-          </div>
-          <div className="w-36">
-            <Field label="Period">
-              <Select value={budgetPeriod} onChange={(e) => setBudgetPeriod(e.target.value)}>
-                {budgetPeriods.map((p) => (
-                  <option key={p.value} value={p.value}>{p.label}</option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-        </div>
-
-        <Field label="Allowed models">
-          <ModelMultiSelect value={allowedModels} onChange={setAllowedModels} />
-          <p className="mt-1 text-[10px] text-[var(--text-muted)]">
-            Select models or add custom patterns with * wildcard (e.g. claude-*)
-          </p>
-        </Field>
-
-        <div className="flex items-end gap-6">
-          <div className="w-40">
-            <Field label="Alert threshold (%)">
-              <Input
-                type="number"
-                min="1"
-                max="100"
-                value={budgetAlertPct}
-                onChange={(e) => setBudgetAlertPct(parseInt(e.target.value) || 80)}
-              />
-            </Field>
-          </div>
-          <div className="flex items-center gap-2 pb-0.5">
-            <Toggle checked={budgetHardCutoff} onChange={setBudgetHardCutoff} />
-            <span className="text-sm">Hard cutoff (block when exhausted)</span>
-          </div>
-        </div>
-
-        <div className="flex gap-2 pt-2 border-t border-[var(--border)]">
-          <Button variant="ghost" onClick={onBack}>
-            <ArrowLeft className="h-4 w-4" />
-            Back
-          </Button>
-          <div className="flex-1" />
-          <Button variant="ghost" onClick={onCreate} disabled={isPending}>
-            {isPending ? "Creating…" : "Skip budget"}
-          </Button>
-          <Button onClick={onCreate} disabled={isPending}>
-            {isPending ? "Creating…" : "Create key"}
-          </Button>
-        </div>
-      </div>
-    );
-  }
-
-  // Plan selected — show summary + optional override toggle
   return (
-    <div className="space-y-4 px-6 py-5">
-      {/* Plan summary card */}
-      {selectedPlan && (
-        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-          <div className="flex items-center gap-2">
-            <Wallet className="h-4 w-4 text-accent-500" />
-            <span className="text-sm font-medium">{selectedPlan.name}</span>
-            <Badge>{selectedPlan.period}</Badge>
-            {selectedPlan.hard_cutoff ? <Badge tone="danger">hard cutoff</Badge> : <Badge tone="neutral">advisory</Badge>}
-          </div>
-          {selectedPlan.description && (
-            <p className="mt-1 text-xs text-[var(--text-muted)]">{selectedPlan.description}</p>
-          )}
-          <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[var(--text-muted)]">
-            {selectedPlan.limit_micros > 0 && (
-              <span className="flex items-center gap-1"><DollarSign className="h-3 w-3" />{microsToUSD(selectedPlan.limit_micros)}</span>
-            )}
-            {selectedPlan.limit_tokens > 0 && (
-              <span className="flex items-center gap-1"><Gauge className="h-3 w-3" />{formatTokens(selectedPlan.limit_tokens)} tok</span>
-            )}
-            {selectedPlan.limit_micros === 0 && selectedPlan.limit_tokens === 0 && <span>No spend limit</span>}
-            <span>Alert at {selectedPlan.alert_pct}%</span>
-          </div>
-          {models.length > 0 && (
-            <p className="mt-1.5 text-xs text-[var(--text-muted)]">Models: {models.join(", ")}</p>
-          )}
-        </div>
-      )}
-
-      {/* Override toggle */}
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm font-medium">Customize for this key</p>
-            <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-              Override plan limits with per-key settings.
-            </p>
-          </div>
-          <Toggle checked={customizePlan} onChange={setCustomizePlan} />
-        </div>
-      </div>
-
-      {/* Override fields */}
-      {customizePlan && (
-        <div className="space-y-4 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <Field label="Override USD limit">
-                <Input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={budgetLimit}
-                  onChange={(e) => setBudgetLimit(e.target.value)}
-                  placeholder="Leave empty to use plan"
-                />
-              </Field>
-            </div>
-            <div className="flex-1">
-              <Field label="Override token limit">
-                <FormattedTokenInput
-                  value={budgetLimitTokens}
-                  onChange={setBudgetLimitTokens}
-                  placeholder="Leave empty to use plan"
-                />
-              </Field>
-            </div>
-          </div>
-          <Field label="Override allowed models">
-            <ModelMultiSelect value={allowedModels} onChange={setAllowedModels} />
-            <p className="mt-1 text-[10px] text-[var(--text-muted)]">
-              Leave empty to use plan's model restrictions.
-            </p>
-          </Field>
-        </div>
-      )}
-
-      <div className="flex gap-2 pt-2 border-t border-[var(--border)]">
-        <Button variant="ghost" onClick={onBack}>
-          <ArrowLeft className="h-4 w-4" />
-          Back
-        </Button>
-        <div className="flex-1" />
-        <Button onClick={onCreate} disabled={isPending}>
-          {isPending ? "Creating…" : "Create key"}
-        </Button>
-      </div>
-    </div>
+    <tr className={cn("cursor-pointer transition-colors", selected ? "bg-accent-500/5" : "hover:bg-hover")} onClick={onOpen}>
+      <td className="px-4 py-2.5" onClick={stop}>
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onSelect}
+          className="h-4 w-4 rounded border-input accent-accent-500"
+          aria-label={`Select ${k.name}`}
+        />
+      </td>
+      <td className="max-w-[300px] px-2 py-2.5">
+        <Link
+          to={dashboard(`/keys/${k.id}`)}
+          onClick={stop}
+          className={cn("block truncate rounded-sm font-medium hover:underline", FOCUS_RING, k.disabled ? "text-fg-muted" : "text-fg")}
+          title={k.name}
+        >
+          {k.name}
+        </Link>
+        <span className="block truncate font-mono text-[12px] text-fg-faint">{k.display}</span>
+      </td>
+      <td className="max-w-[220px] px-4 py-2.5">
+        <span className="block truncate text-fg">{k.plan_name || "Custom"}</span>
+        {modelCount > 0 && (
+          <span className="block truncate text-[12px] text-fg-muted">
+            {modelCount} model{modelCount > 1 ? "s" : ""}
+          </span>
+        )}
+        <KeySpendBar budget={budget} />
+      </td>
+      <td className="px-4 py-2.5" onClick={stop}>
+        <span className="inline-flex items-center gap-2">
+          <Toggle checked={!k.disabled} onChange={onToggle} disabled={togglePending} label={`${k.name} active`} />
+          {/* The switch already shows the state; the word is for scanning a long list. */}
+          <span aria-hidden="true" className={cn("w-14 text-[12px]", k.disabled ? "text-fg-faint" : "text-fg-muted")}>
+            {k.disabled ? "Disabled" : "Active"}
+          </span>
+        </span>
+      </td>
+      <td className="whitespace-nowrap px-4 py-2.5" title={lastUsed ? formatDateTime(lastUsed) : undefined}>
+        <span className={lastUsed ? "text-fg" : "text-fg-muted"}>{relativeTime(k.last_used_at)}</span>
+      </td>
+      <td className="hidden whitespace-nowrap px-4 py-2.5 text-fg-muted xl:table-cell" title={formatDateTime(k.created_at)}>
+        {formatDate(k.created_at, { short: true })}
+      </td>
+      <td className="px-2 py-2.5" onClick={stop}>
+        <KeyActionsMenu apiKey={k} onOpen={onOpen} onCopyKey={onCopyKey} onCopyPortal={onCopyPortal} onRevoke={onRevoke} />
+      </td>
+    </tr>
   );
 }
 
-/* ── Step 4: Success / Copy ─────────────────────────────────────── */
+/* ── Created: one-time secret reveal ─────────────────────────────── */
 
 function StepSuccess({
   created,
@@ -1044,9 +1030,13 @@ function StepSuccess({
   planName: string;
   availableModelsText: string;
 }) {
+  const copy = useCopy();
+  const uid = useId();
+  const [justCopied, setJustCopied] = useState(false);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [copiedAll, setCopiedAll] = useState(false);
-  const portalUrl = `${window.location.origin}/portal`;
+  const [showSetup, setShowSetup] = useState(false);
+  const portalUrl = portalUrlFor(created.id);
 
   const shareText = [
     "Keirouter",
@@ -1057,88 +1047,134 @@ function StepSuccess({
     `Available model : ${availableModelsText}`,
   ].join("\n");
 
+  const flash = (set: (v: boolean) => void, ms: number) => {
+    set(true);
+    setTimeout(() => set(false), ms);
+  };
+
+  const secretLabelId = `${uid}-secret`;
+  const warnId = `${uid}-warn`;
+  const setupId = `${uid}-setup`;
+
   return (
-    <div className="space-y-4 px-6 py-5">
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-        <p className="text-xs font-medium text-[var(--text-muted)]">Your new key — copy it now, it won't be shown again.</p>
-        <div className="mt-2 flex items-center gap-2">
-          <code className="flex-1 overflow-x-auto rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 font-mono text-sm">
-            {created.key}
-          </code>
-          <Button
-            onClick={() => {
-              navigator.clipboard.writeText(created.key);
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            }}
-          >
-            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copied ? "Copied" : "Copy"}
-          </Button>
-        </div>
-      </div>
+    <>
+      <div className={cn("space-y-4 px-5 py-4", DIALOG_BODY)}>
+        <div className="space-y-3">
+          <div className="flex items-center gap-3" id={warnId}>
+            <IconTile icon={Check} size="md" tone="ok" />
+            <p className="min-w-0 text-[13px] leading-5">
+              <span className="block font-medium text-fg">Copy this key now</span>
+              <span className="block text-fg-muted">It won't be shown again.</span>
+            </p>
+          </div>
 
-      <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] p-4">
-        <p className="text-xs font-medium text-[var(--text-muted)]">Telemetry Portal URL — share this with the key owner to let them track their usage.</p>
-        <div className="mt-2 flex items-center gap-2">
-          <code className="flex-1 overflow-x-auto rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 font-mono text-xs whitespace-nowrap">
-            {portalUrl}
-          </code>
-          <Button
-            onClick={() => {
-              navigator.clipboard.writeText(portalUrl);
-              setCopiedUrl(true);
-              setTimeout(() => setCopiedUrl(false), 1500);
-            }}
-          >
-            {copiedUrl ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copiedUrl ? "Copied" : "Copy"}
-          </Button>
-        </div>
-      </div>
+          <p id={secretLabelId} className="sr-only">Secret key</p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
+            <code
+              aria-labelledby={secretLabelId}
+              className="min-w-0 flex-1 select-all break-all rounded-lg border border-line-strong bg-subtle px-3 py-2.5 font-mono text-[13px] leading-5 text-fg"
+            >
+              {created.key}
+            </code>
+            <Button
+              variant="primary"
+              className="shrink-0 sm:self-start"
+              aria-describedby={warnId}
+              onClick={() => {
+                copy(created.key, "Key copied", "Store it somewhere safe.").then((ok) => {
+                  if (!ok) return;
+                  setCopied(true);
+                  flash(setJustCopied, 1500);
+                });
+              }}
+            >
+              {justCopied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+              {justCopied ? "Copied" : "Copy key"}
+            </Button>
+          </div>
 
-      {created.budget && (
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
-          <p className="text-xs font-medium text-[var(--text-muted)]">Plan attached</p>
-          <p className="mt-0.5 text-sm">
-            {created.budget.limit_micros > 0 && `$${(created.budget.limit_micros / 1_000_000).toFixed(2)}`}
-            {created.budget.limit_micros > 0 && created.budget.limit_tokens > 0 && " + "}
-            {created.budget.limit_tokens > 0 &&
-              `${formatTokenLimit(String(created.budget.limit_tokens))} tokens`}
-            {` / ${created.budget.period}`}
-            {created.budget.hard_cutoff ? " (hard cutoff)" : ""}
+          <p role="status" className="min-h-5 text-[12.5px]">
+            {copied && (
+              <span className="inline-flex items-center gap-1.5 text-ok">
+                <Check className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
+                Key copied to your clipboard.
+              </span>
+            )}
           </p>
         </div>
-      )}
 
-      {created.allowed_models && created.allowed_models.length > 0 && (
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-3">
-          <p className="text-xs font-medium text-[var(--text-muted)]">Allowed models</p>
-          <p className="mt-0.5 text-sm">{created.allowed_models.join(", ")}</p>
-        </div>
-      )}
+        <dl className="divide-y divide-line rounded-lg border border-line text-[12.5px]">
+          <div className="flex items-center gap-3 px-3 py-1.5">
+            <dt className="w-24 shrink-0 text-fg-muted">Owner portal</dt>
+            <dd className="flex min-w-0 flex-1 items-center gap-1">
+              <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-fg" title={portalUrl}>{portalUrl}</span>
+              <button
+                type="button"
+                onClick={() => copy(portalUrl, "Portal link copied", "Share it with the key owner.").then((ok) => ok && flash(setCopiedUrl, 1500))}
+                aria-label="Copy portal link"
+                title="Copy portal link"
+                className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-faint transition-colors hover:bg-hover hover:text-fg sm:h-8 sm:w-8", FOCUS_RING)}
+              >
+                {copiedUrl ? <Check className="h-4 w-4 text-ok" strokeWidth={1.75} aria-hidden="true" /> : <Copy className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />}
+              </button>
+            </dd>
+          </div>
+          <div className="flex items-center gap-3 px-3 py-2">
+            <dt className="w-24 shrink-0 text-fg-muted">Plan</dt>
+            <dd className="min-w-0 flex-1 text-fg">{planName}</dd>
+          </div>
+          {created.budget && (
+            <div className="flex items-center gap-3 px-3 py-2">
+              <dt className="w-24 shrink-0 text-fg-muted">Budget</dt>
+              <dd className="min-w-0 flex-1 tabular-nums text-fg">
+                {created.budget.limit_micros > 0 && `$${(created.budget.limit_micros / 1_000_000).toFixed(2)}`}
+                {created.budget.limit_micros > 0 && created.budget.limit_tokens > 0 && " + "}
+                {created.budget.limit_tokens > 0 && `${formatTokenLimit(String(created.budget.limit_tokens))} tokens`}
+                {` / ${created.budget.period}`}
+                {created.budget.hard_cutoff ? " · hard cutoff" : ""}
+              </dd>
+            </div>
+          )}
+          {created.allowed_models && created.allowed_models.length > 0 && (
+            <div className="flex items-start gap-3 px-3 py-2">
+              <dt className="w-24 shrink-0 text-fg-muted">Models</dt>
+              <dd className="min-w-0 flex-1 break-words font-mono text-[12px] text-fg">{created.allowed_models.join(", ")}</dd>
+            </div>
+          )}
+        </dl>
 
-      <div className="rounded-xl border border-accent-400/40 bg-accent-500/5 p-4">
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-xs font-semibold uppercase tracking-wider text-[var(--text-muted)]">Ready to copy</p>
-          <Button
-            variant="ghost"
-            onClick={() => {
-              navigator.clipboard.writeText(shareText);
-              setCopiedAll(true);
-              setTimeout(() => setCopiedAll(false),2000);
-            }}
-          >
-            {copiedAll ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-            {copiedAll ? "Copied" : "Copy all"}
-          </Button>
+        <div className="rounded-lg border border-line">
+          <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 px-3 py-1.5">
+            <button
+              type="button"
+              onClick={() => setShowSetup((v) => !v)}
+              aria-expanded={showSetup}
+              aria-controls={setupId}
+              className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-md text-[12.5px] font-medium text-fg hover:underline", FOCUS_RING)}
+            >
+              <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showSetup && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+              Setup message
+            </button>
+            <button
+              type="button"
+              onClick={() => copy(shareText, "Setup message copied", "Endpoint, key, portal and plan.").then((ok) => ok && flash(setCopiedAll, 2000))}
+              className={cn("inline-flex h-8 items-center gap-1.5 rounded-md px-2 text-[12.5px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg", FOCUS_RING)}
+            >
+              {copiedAll ? <Check className="h-3.5 w-3.5 text-ok" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+              {copiedAll ? "Copied" : "Copy setup message"}
+            </button>
+          </div>
+          {showSetup && (
+            <pre id={setupId} className="max-h-48 overflow-auto whitespace-pre-wrap break-all border-t border-line px-3 py-2.5 font-mono text-[12px] leading-5 text-fg">
+              {shareText}
+            </pre>
+          )}
         </div>
-        <pre className="mt-2 overflow-x-auto rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 font-mono text-xs leading-relaxed text-[var(--text)] whitespace-pre-wrap">{shareText}</pre>
       </div>
 
-      <Button className="w-full" onClick={onClose}>
-        Done
-      </Button>
-    </div>
+      <DialogFooter>
+        <Button variant="secondary" onClick={onClose}>Done</Button>
+      </DialogFooter>
+    </>
   );
 }

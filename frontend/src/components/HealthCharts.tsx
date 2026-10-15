@@ -1,181 +1,216 @@
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { useId, useMemo } from "react";
+import { Hourglass } from "lucide-react";
+import { ChartCard, TimeBars, TimeLines, clockLabel, dayLabel } from "./charts/TimeSeries";
 import type { HealthSnapshot } from "../lib/api";
+import { cn } from "@/lib/utils";
+import { ICONS } from "@/lib/icons";
+import { EmptyState, SectionTitle } from "./ui";
 import { fmtIssue } from "./HealthBadge";
 
-const tooltipStyle = {
-  fontSize: 12,
-  background: "var(--bg-elevated)",
-  border: "1px solid var(--border)",
-  borderRadius: 6,
-  boxShadow: "0 4px 6px -1px rgb(0 0 0 / 0.1)",
+// Provider-health trend charts. Raw snapshots are one row per minute per
+// account/model/capability, so they are first folded into ~48 equal time
+// buckets (counts summed, p50 request-weighted, p95/p99 worst-of). The
+// charts are plain HTML/SVG in the same visual language as the Overview
+// traffic chart — no charting library on this page.
+
+const RANGE_MS: Record<string, number> = {
+  "15m": 15 * 60_000,
+  "1h": 3_600_000,
+  "6h": 6 * 3_600_000,
+  "24h": 24 * 3_600_000,
+  "7d": 7 * 86_400_000,
+  "30d": 30 * 86_400_000,
 };
-const axisTick = { fontSize: 10, fill: "var(--text-muted)", fontWeight: 500 };
 
-function fmtTime(t: string) {
-  const d = new Date(t);
-  if (isNaN(d.getTime())) return t;
-  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+export interface HealthBucket {
+  start: number;
+  requests: number;
+  failures: number;
+  fallbacks: number;
+  p50: number;
+  p95: number;
+  p99: number;
+  ttft95: number;
 }
 
-function fmtMs(v?: number) {
-  if (v == null) return "0";
-  if (v < 1000) return `${v}ms`;
-  return `${(v / 1000).toFixed(1)}s`;
+export function bucketSnapshots(snapshots: HealthSnapshot[], range: string, count = 48): HealthBucket[] {
+  const span = RANGE_MS[range] ?? RANGE_MS["24h"];
+  const n = range === "15m" ? 15 : range === "1h" ? 30 : count;
+  const end = Date.now();
+  const start = end - span;
+  const width = span / n;
+  const buckets: (HealthBucket & { p50w: number })[] = Array.from({ length: n }, (_, i) => ({
+    start: start + i * width,
+    requests: 0,
+    failures: 0,
+    fallbacks: 0,
+    p50: 0,
+    p95: 0,
+    p99: 0,
+    ttft95: 0,
+    p50w: 0,
+  }));
+  for (const s of snapshots) {
+    const t = new Date(s.bucket_start).getTime();
+    if (!(t >= start && t <= end)) continue;
+    const b = buckets[Math.min(n - 1, Math.floor((t - start) / width))];
+    b.requests += s.request_count;
+    b.failures += s.failure_count;
+    b.fallbacks += s.fallback_count;
+    if (s.latency_p50_ms && s.request_count) {
+      b.p50 += s.latency_p50_ms * s.request_count;
+      b.p50w += s.request_count;
+    }
+    b.p95 = Math.max(b.p95, s.latency_p95_ms ?? 0);
+    b.p99 = Math.max(b.p99, s.latency_p99_ms ?? 0);
+    b.ttft95 = Math.max(b.ttft95, s.ttft_p95_ms ?? 0);
+  }
+  return buckets.map(({ p50w, ...b }) => ({ ...b, p50: p50w ? b.p50 / p50w : 0 }));
 }
 
-function emptyState() {
+export function fmtMs(v: number): string {
+  if (!Number.isFinite(v) || v <= 0) return "—";
+  return v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(v < 10_000 ? 2 : 1)} s`;
+}
+
+const isLongRange = (range: string) => range === "7d" || range === "30d";
+const tickFor = (range: string) => (isLongRange(range) ? dayLabel : clockLabel);
+const tipFor = (range: string) => (ms: number) =>
+  new Date(ms).toLocaleString(undefined, isLongRange(range) ? { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" } : { hour: "2-digit", minute: "2-digit" });
+
+// ── Assembled view ───────────────────────────────────────────────────────────
+
+// Series colours are CSS variables so they follow the white-label accent
+// palette; the chart kit takes colour strings, not classes.
+const C = {
+  ok: "var(--color-accent-500)",
+  soft: "var(--color-accent-300)",
+  alt: "var(--series-alt)",
+  bad: "var(--status-bad)",
+  warn: "var(--status-warn)",
+};
+
+export function HealthTrends({ snapshots, range }: { snapshots: HealthSnapshot[]; range: string }) {
+  const data = useMemo(() => bucketSnapshots(snapshots, range), [snapshots, range]);
+  const totals = data.reduce(
+    (acc, b) => ({ requests: acc.requests + b.requests, failures: acc.failures + b.failures, fallbacks: acc.fallbacks + b.fallbacks }),
+    { requests: 0, failures: 0, fallbacks: 0 },
+  );
+  if (!snapshots.length) {
+    return (
+      <EmptyState variant="card" size="sm" icon={ICONS.trend} title="No trend data in this range" hint="Trends appear once requests or probes run." />
+    );
+  }
   return (
-    <div className="flex h-full items-center justify-center text-xs font-medium uppercase tracking-wider text-[var(--text-muted)]">
-      No data
+    <div className="grid gap-4 lg:grid-cols-2">
+      <ChartCard
+        icon={ICONS.requests}
+        title="Requests"
+        subtitle={`${totals.requests.toLocaleString("en-US")} total · ${totals.failures.toLocaleString("en-US")} failed`}
+        legend={[
+          { label: "Succeeded", color: C.ok },
+          { label: "Failed", color: C.alt },
+        ]}
+        className="lg:col-span-2"
+      >
+        <TimeBars
+          data={data}
+          x={(b) => b.start}
+          xFormat={tickFor(range)}
+          tooltipTime={tipFor(range)}
+          label="Requests over time"
+          series={[
+            { key: "ok", label: "Succeeded", color: C.ok, value: (b) => Math.max(0, b.requests - b.failures) },
+            { key: "failed", label: "Failed", color: C.alt, value: (b) => b.failures },
+          ]}
+        />
+      </ChartCard>
+
+      <ChartCard
+        icon={ICONS.latency}
+        title="Latency"
+        subtitle="Worst p95 and p99 per bucket"
+        legend={[
+          { label: "p50", color: C.soft },
+          { label: "p95", color: C.ok },
+          { label: "p99", color: C.alt },
+        ]}
+      >
+        <TimeLines
+          data={data}
+          x={(b) => b.start}
+          format={fmtMs}
+          xFormat={tickFor(range)}
+          tooltipTime={tipFor(range)}
+          label="Latency percentiles over time"
+          series={[
+            { key: "p50", label: "p50", color: C.soft, value: (b) => b.p50 },
+            { key: "p95", label: "p95", color: C.ok, value: (b) => b.p95 },
+            { key: "p99", label: "p99", color: C.alt, value: (b) => b.p99 },
+          ]}
+        />
+      </ChartCard>
+
+      <ChartCard icon={Hourglass} title="Time to first token" subtitle="Streaming requests, worst p95 per bucket" legend={[{ label: "TTFT p95", color: C.ok }]}>
+        <TimeLines data={data} x={(b) => b.start} format={fmtMs} xFormat={tickFor(range)} tooltipTime={tipFor(range)} label="Time to first token over time" series={[{ key: "ttft", label: "TTFT p95", color: C.ok, value: (b) => b.ttft95 }]} />
+      </ChartCard>
+
+      <ChartCard icon={ICONS.errors} title="Error rate" legend={[{ label: "Errors", color: C.bad }]}>
+        <TimeBars
+          data={data}
+          x={(b) => b.start}
+          xFormat={tickFor(range)}
+          tooltipTime={tipFor(range)}
+          label="Error rate over time"
+          format={(v) => `${Math.round(v * 10) / 10}%`}
+          series={[{ key: "err", label: "Error rate", color: C.bad, value: (b) => (b.requests ? (b.failures / b.requests) * 100 : 0) }]}
+        />
+      </ChartCard>
+
+      <ChartCard icon={ICONS.fallbacks} title="Fallbacks" subtitle={`${totals.fallbacks.toLocaleString("en-US")} moved to another target`} legend={[{ label: "Fell over", color: C.warn }]}>
+        <TimeBars data={data} x={(b) => b.start} xFormat={tickFor(range)} tooltipTime={tipFor(range)} label="Fallbacks over time" series={[{ key: "fb", label: "Fell over", color: C.warn, value: (b) => b.fallbacks }]} />
+      </ChartCard>
     </div>
   );
 }
 
-export function RequestVolumeChart({ data }: { data: HealthSnapshot[] }) {
-  if (!data.length) return emptyState();
+// ErrorTypeBreakdown ranks error classes in one list with proportional bars;
+// rate limiting is a warning, everything else an error.
+export function ErrorTypeBreakdown({ breakdown }: { breakdown: Record<string, number> }) {
+  const rows = Object.entries(breakdown)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1]);
+  const total = rows.reduce((n, [, v]) => n + v, 0);
+  const titleId = useId();
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={data} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-        <defs>
-          <linearGradient id="reqFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="var(--color-chart-1)" stopOpacity={0.2} />
-            <stop offset="95%" stopColor="var(--color-chart-1)" stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid vertical={false} stroke="var(--border)" opacity={0.3} />
-        <XAxis dataKey="bucket_start" tickFormatter={fmtTime} tick={axisTick} tickLine={false} axisLine={false} dy={10} />
-        <YAxis tick={axisTick} tickLine={false} axisLine={false} width={50} />
-        <Tooltip contentStyle={tooltipStyle} labelFormatter={fmtTime} />
-        <Area type="monotone" dataKey="request_count" name="Requests" stroke="var(--color-chart-1)" strokeWidth={2} fill="url(#reqFill)" />
-      </AreaChart>
-    </ResponsiveContainer>
-  );
-}
-
-export function ErrorRateChart({ data }: { data: HealthSnapshot[] }) {
-  if (!data.length) return emptyState();
-  const series = data.map((d) => ({
-    bucket_start: d.bucket_start,
-    error_rate: d.request_count > 0 ? (d.failure_count / d.request_count) * 100 : 0,
-  }));
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={series} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-        <defs>
-          <linearGradient id="errFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="var(--color-danger)" stopOpacity={0.2} />
-            <stop offset="95%" stopColor="var(--color-danger)" stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid vertical={false} stroke="var(--border)" opacity={0.3} />
-        <XAxis dataKey="bucket_start" tickFormatter={fmtTime} tick={axisTick} tickLine={false} axisLine={false} dy={10} />
-        <YAxis tick={axisTick} tickLine={false} axisLine={false} width={40} tickFormatter={(v: number) => `${v}%`} />
-        <Tooltip contentStyle={tooltipStyle} labelFormatter={fmtTime} formatter={(v: number) => [`${v.toFixed(1)}%`, "Error rate"]} />
-        <Area type="monotone" dataKey="error_rate" stroke="var(--color-danger)" strokeWidth={2} fill="url(#errFill)" />
-      </AreaChart>
-    </ResponsiveContainer>
-  );
-}
-
-export function LatencyChart({ data }: { data: HealthSnapshot[] }) {
-  if (!data.length) return emptyState();
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={data} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="var(--border)" opacity={0.3} />
-        <XAxis dataKey="bucket_start" tickFormatter={fmtTime} tick={axisTick} tickLine={false} axisLine={false} dy={10} />
-        <YAxis tick={axisTick} tickLine={false} axisLine={false} width={50} tickFormatter={fmtMs} />
-        <Tooltip contentStyle={tooltipStyle} labelFormatter={fmtTime} formatter={(v: number) => [fmtMs(v), ""]} />
-        <Line type="monotone" dataKey="latency_p50_ms" name="p50" stroke="var(--color-chart-3)" strokeWidth={1.5} dot={false} />
-        <Line type="monotone" dataKey="latency_p95_ms" name="p95" stroke="var(--color-warning)" strokeWidth={2} dot={false} />
-        <Line type="monotone" dataKey="latency_p99_ms" name="p99" stroke="var(--color-danger)" strokeWidth={1.5} dot={false} />
-      </LineChart>
-    </ResponsiveContainer>
-  );
-}
-
-export function TTFTChart({ data }: { data: HealthSnapshot[] }) {
-  if (!data.length) return emptyState();
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={data} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-        <defs>
-          <linearGradient id="ttftFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="var(--color-chart-2)" stopOpacity={0.2} />
-            <stop offset="95%" stopColor="var(--color-chart-2)" stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid vertical={false} stroke="var(--border)" opacity={0.3} />
-        <XAxis dataKey="bucket_start" tickFormatter={fmtTime} tick={axisTick} tickLine={false} axisLine={false} dy={10} />
-        <YAxis tick={axisTick} tickLine={false} axisLine={false} width={50} tickFormatter={fmtMs} />
-        <Tooltip contentStyle={tooltipStyle} labelFormatter={fmtTime} formatter={(v: number) => [fmtMs(v), "TTFT p95"]} />
-        <Area type="monotone" dataKey="ttft_p95_ms" stroke="var(--color-chart-2)" strokeWidth={2} fill="url(#ttftFill)" />
-      </AreaChart>
-    </ResponsiveContainer>
-  );
-}
-
-export function FallbackChart({ data }: { data: HealthSnapshot[] }) {
-  if (!data.length) return emptyState();
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} margin={{ top: 10, right: 0, left: -20, bottom: 0 }}>
-        <CartesianGrid vertical={false} stroke="var(--border)" opacity={0.3} />
-        <XAxis dataKey="bucket_start" tickFormatter={fmtTime} tick={axisTick} tickLine={false} axisLine={false} dy={10} />
-        <YAxis tick={axisTick} tickLine={false} axisLine={false} width={40} />
-        <Tooltip contentStyle={tooltipStyle} labelFormatter={fmtTime} />
-        <Bar dataKey="fallback_count" name="Fallbacks" fill="var(--color-secondary-500)" radius={[3, 3, 0, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
-  );
-}
-
-export function ErrorBreakdownChart({ data }: { data: HealthSnapshot[] }) {
-  if (!data.length) return emptyState();
-  const totals = data.reduce(
-    (acc, d) => {
-      acc.rate_limited += d.rate_limited_count;
-      acc.auth += d.auth_error_count;
-      acc.quota += d.quota_exceeded_count;
-      acc.timeout += d.timeout_count;
-      acc.five_xx += d.provider_5xx_count;
-      acc.bad_request += d.bad_request_count;
-      acc.network += d.network_error_count;
-      return acc;
-    },
-    { rate_limited: 0, auth: 0, quota: 0, timeout: 0, five_xx: 0, bad_request: 0, network: 0 },
-  );
-  const series = [
-    { name: fmtIssue("rate_limited"), value: totals.rate_limited, fill: "var(--color-warning)" },
-    { name: fmtIssue("auth_error"), value: totals.auth, fill: "var(--color-danger)" },
-    { name: fmtIssue("quota_exceeded"), value: totals.quota, fill: "var(--color-secondary-500)" },
-    { name: fmtIssue("timeout"), value: totals.timeout, fill: "var(--color-chart-3)" },
-    { name: "Provider 5xx", value: totals.five_xx, fill: "var(--color-chart-4)" },
-    { name: fmtIssue("bad_request"), value: totals.bad_request, fill: "var(--color-chart-5)" },
-    { name: fmtIssue("network_error"), value: totals.network, fill: "var(--color-chart-2)" },
-  ].filter((s) => s.value > 0);
-  if (!series.length) return emptyState();
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={series} layout="vertical" margin={{ top: 5, right: 10, left: 20, bottom: 5 }}>
-        <CartesianGrid horizontal={false} stroke="var(--border)" opacity={0.3} />
-        <XAxis type="number" tick={axisTick} tickLine={false} axisLine={false} />
-        <YAxis type="category" dataKey="name" tick={axisTick} tickLine={false} axisLine={false} width={80} />
-        <Tooltip contentStyle={tooltipStyle} />
-        <Bar dataKey="value" radius={[0, 3, 3, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
+    <section aria-labelledby={titleId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="border-b border-line px-4 py-3">
+        <SectionTitle
+          id={titleId}
+          icon={ICONS.errors}
+          title="Errors by type"
+          subtitle={total > 0 ? <span className="tabular-nums">{total.toLocaleString("en-US")} failed attempts</span> : undefined}
+        />
+      </div>
+      {rows.length === 0 ? (
+        <p className="px-4 py-8 text-center text-[13px] text-fg-muted">Every attempt in this range succeeded.</p>
+      ) : (
+        <ul className="space-y-3 px-4 py-4">
+          {rows.map(([k, v]) => (
+            <li key={k}>
+              <div className="mb-1 flex items-baseline justify-between gap-2 text-[13px]">
+                <span className="text-fg">{k === "provider_5xx" ? "Provider 5xx" : fmtIssue(k)}</span>
+                <span className="tabular-nums text-fg-muted">
+                  {v.toLocaleString("en-US")} <span className="text-fg-faint">· {Math.round((v / total) * 100)}%</span>
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-track" aria-hidden="true">
+                <div className={cn("h-full rounded-full", k === "rate_limited" || k === "quota_exceeded" ? "bg-warn" : "bg-bad")} style={{ width: `${(v / total) * 100}%` }} />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }

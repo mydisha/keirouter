@@ -208,7 +208,7 @@ func (c *Cursor) do(ctx context.Context, req *core.ChatRequest, creds core.Crede
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := sharedClient.Do(httpReq)
+	resp, err := proxyDo(egressCtx(ctx, creds), httpReq)
 	if err != nil {
 		return nil, transportError(ctx, c.id, req.Model, err)
 	}

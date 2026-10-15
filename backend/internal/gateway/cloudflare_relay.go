@@ -27,8 +27,31 @@ const (
 	cloudflareReadinessProbeTimeout = 8 * time.Second
 )
 
-const cloudflareRelayWorker = `export default {
+// cloudflareRelayKeyPlaceholder is replaced with a per-deploy secret. The
+// Worker only relays requests carrying it as ?key=, so a discovered
+// workers.dev URL cannot be used as an open proxy on the operator's account.
+const cloudflareRelayKeyPlaceholder = "__KEIROUTER_RELAY_KEY__"
+
+// cloudflareRelayWorker forwards x-relay-target + x-relay-path. It drops the
+// headers Cloudflare adds about the caller (CF-Connecting-IP, X-Forwarded-For,
+// ...): forwarding them would hand the provider the KeiRouter server's own IP,
+// defeating the relay.
+const cloudflareRelayWorker = `const RELAY_KEY = "` + cloudflareRelayKeyPlaceholder + `";
+const DROP_HEADERS = [
+  "x-relay-target", "x-relay-path", "host",
+  "cf-connecting-ip", "cf-connecting-ipv6", "cf-ipcountry", "cf-ray", "cf-visitor",
+  "cf-worker", "cf-ew-via", "cdn-loop", "true-client-ip",
+  "x-forwarded-for", "x-forwarded-proto", "x-forwarded-host", "x-real-ip", "forwarded",
+];
+
+export default {
   async fetch(request) {
+    if (new URL(request.url).searchParams.get("key") !== RELAY_KEY) {
+      return new Response(JSON.stringify({ error: "Forbidden" }), {
+        status: 403,
+        headers: { "content-type": "application/json" },
+      });
+    }
     const target = request.headers.get("x-relay-target");
     const relayPath = request.headers.get("x-relay-path") || "/";
 
@@ -40,10 +63,14 @@ const cloudflareRelayWorker = `export default {
     }
 
     const targetUrl = target.replace(/\/$/, "") + relayPath;
+    if (!/^https?:\/\/[^/?#]+$/.test(target.replace(/\/$/, ""))) {
+      return new Response(JSON.stringify({ error: "Invalid x-relay-target header" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    }
     const headers = new Headers(request.headers);
-    headers.delete("x-relay-target");
-    headers.delete("x-relay-path");
-    headers.delete("host");
+    for (const name of DROP_HEADERS) headers.delete(name);
 
     const init = { method: request.method, headers };
     if (request.method !== "GET" && request.method !== "HEAD") {
@@ -174,7 +201,7 @@ func (s *Server) runRelayReadiness(
 	poolID string,
 	attempts int,
 	interval time.Duration,
-	probe func(string, time.Duration) proxyTestResult,
+	probe func(context.Context, string, time.Duration) proxyTestResult,
 ) {
 	if attempts < 1 {
 		attempts = 1
@@ -194,26 +221,22 @@ func (s *Server) runRelayReadiness(
 		if err != nil {
 			return
 		}
-		result := probe(pool.ProxyURL, cloudflareReadinessProbeTimeout)
+		result := probe(ctx, pool.ProxyURL, cloudflareReadinessProbeTimeout)
 		now := time.Now()
-		pool.LastTested = &now
-		pool.IsActive = result.status == "active"
-		if pool.IsActive {
-			pool.TestStatus = "active"
-			pool.LastError = ""
-			_ = s.pools.Update(ctx, pool)
+		// Narrow writes: the operator may rename or edit the pool while the
+		// Worker propagates, and a full-row update would revert that.
+		if result.status == "active" {
+			active := true
+			_ = s.pools.RecordTest(ctx, poolID, "active", now, "", &active)
 			return
 		}
 
 		if attempt == attempts || !retryableRelayReadiness(result) {
-			pool.TestStatus = "error"
-			pool.LastError = result.lastError
-			_ = s.pools.Update(ctx, pool)
+			_ = s.pools.RecordTest(ctx, poolID, "error", now, result.lastError, nil)
 			return
 		}
-		pool.TestStatus = "testing"
-		pool.LastError = fmt.Sprintf("Worker propagation in progress (%s); retry %d/%d is scheduled automatically", result.lastError, attempt+1, attempts)
-		if err := s.pools.Update(ctx, pool); err != nil {
+		msg := fmt.Sprintf("Worker propagation in progress (%s); retry %d/%d is scheduled automatically", result.lastError, attempt+1, attempts)
+		if err := s.pools.RecordTest(ctx, poolID, "testing", now, msg, nil); err != nil {
 			return
 		}
 	}
@@ -245,7 +268,8 @@ func deployCloudflareWorker(r *http.Request, client *http.Client, apiBase string
 	if err != nil {
 		return "", fmt.Errorf("build worker upload: %w", err)
 	}
-	if _, err := io.WriteString(part, cloudflareRelayWorker); err != nil {
+	relayKey := strings.ReplaceAll(uuid.NewString()+uuid.NewString(), "-", "")
+	if _, err := io.WriteString(part, strings.Replace(cloudflareRelayWorker, cloudflareRelayKeyPlaceholder, relayKey, 1)); err != nil {
 		return "", fmt.Errorf("build worker upload: %w", err)
 	}
 
@@ -285,7 +309,7 @@ func deployCloudflareWorker(r *http.Request, client *http.Client, apiBase string
 	if !cloudflareWorkerName.MatchString(subdomain) {
 		return "", fmt.Errorf("worker deployed but Cloudflare returned an invalid workers.dev subdomain")
 	}
-	deployURL := "https://" + input.ProjectName + "." + subdomain + ".workers.dev"
+	deployURL := "https://" + input.ProjectName + "." + subdomain + ".workers.dev/?key=" + relayKey
 	if err := validateProxyPoolURL("cloudflare", deployURL); err != nil {
 		return "", fmt.Errorf("worker deployed but the relay URL is invalid: %w", err)
 	}

@@ -1,32 +1,74 @@
-import { useEffect, useState, useMemo } from "react";
-import { useParams, Link } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, Plus, Trash2, KeyRound, Play, Copy, Check,
-  Image, AudioLines, Mic, Search, Globe, Boxes, ExternalLink,
-  ToggleLeft, ToggleRight, Loader2,
+  cloneElement,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type ReactElement,
+  type ReactNode,
+} from "react";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ArrowLeft,
+  AudioLines,
+  Boxes,
+  Check,
+  Clock3,
+  Copy,
+  Download,
+  ExternalLink,
+  FileAudio,
+  Globe,
+  Image,
+  Inbox,
+  Loader2,
+  Mic,
+  MoreHorizontal,
+  Pause,
+  Play,
+  Plug,
+  Search,
+  Trash2,
 } from "lucide-react";
-import { api, type Provider, type Account } from "../lib/api";
-import { dashboard } from "../lib/dashboardRoutes";
+import { api, type Account, type Provider, type ProviderModel } from "../lib/api";
+import { cn } from "@/lib/utils";
+import { ProviderLogo } from "../components/ProviderLogo";
 import { useToast } from "../components/Toast";
-import {
-  Card, SectionHeader, CardHeader, Button, Input, Field,
-  Badge, Spinner, EmptyState, Select,
-} from "../components/ui";
+import { CodeBlock } from "../components/ui/code-block";
+import { useConfirm } from "../components/ui/confirm-dialog";
+import { Badge, Button, ErrorBanner, IconTile, Input, Kpi, KpiGrid, Modal, ModalFooter, SectionTitle, Select, Skeleton, TablePagination, Toggle, useClientPagination, EmptyState } from "../components/ui";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
+import { Segmented } from "./settings/shared";
+import { ICONS } from "../lib/icons";
+import { dashboard } from "../lib/dashboardRoutes";
 
-const kindMeta: Record<string, { label: string; icon: typeof Image; color: string }> = {
-  embedding: { label: "Embeddings", icon: Boxes, color: "var(--color-brand-kilo)" },
-  image: { label: "Image Generation", icon: Image, color: "var(--color-brand-openclaw)" },
-  tts: { label: "Text-to-Speech", icon: AudioLines, color: "var(--color-brand-opencode)" },
-  stt: { label: "Speech-to-Text", icon: Mic, color: "var(--color-brand-droid)" },
-  search: { label: "Web Search", icon: Search, color: "var(--color-brand-cline)" },
-  fetch: { label: "Web Fetch", icon: Globe, color: "var(--color-brand-copilot)" },
+type Tab = "accounts" | "models" | "playground";
+type Capability = "embedding" | "image" | "tts" | "stt" | "search" | "fetch";
+
+const kindMeta: Record<Capability, { label: string; short: string; icon: typeof Image }> = {
+  embedding: { label: "Embeddings", short: "Embeddings", icon: Boxes },
+  image: { label: "Image generation", short: "Image", icon: Image },
+  tts: { label: "Text-to-speech", short: "Text-to-speech", icon: AudioLines },
+  stt: { label: "Speech-to-text", short: "Speech-to-text", icon: Mic },
+  search: { label: "Web search", short: "Web search", icon: Search },
+  fetch: { label: "Web fetch", short: "Web fetch", icon: Globe },
 };
+const CAPABILITIES = Object.keys(kindMeta) as Capability[];
+
+function isCapability(k: string | undefined): k is Capability {
+  return !!k && k in kindMeta;
+}
 
 export function MediaProviderDetailPage() {
   const { kind, id } = useParams<{ kind: string; id: string }>();
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
+  const [params, setParams] = useSearchParams();
+  const [addOpen, setAddOpen] = useState(false);
 
   const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.providers() });
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api.listAccounts() });
@@ -39,74 +81,7 @@ export function MediaProviderDetailPage() {
 
   const provider = providers.data?.providers.find((p) => p.id === id);
   const myAccounts = (accounts.data?.accounts ?? []).filter((a) => a.provider === id);
-
-  const [label, setLabel] = useState("");
-  const [apiKey, setApiKey] = useState("");
-  const [baseURL, setBaseURL] = useState("");
-  const [region, setRegion] = useState("");
-  const [accountID, setAccountID] = useState("");
-  const [azureEndpoint, setAzureEndpoint] = useState("");
-  const [azureDeployment, setAzureDeployment] = useState("");
-  const [azureAPIVersion, setAzureAPIVersion] = useState("2024-10-01-preview");
-  const [azureOrganization, setAzureOrganization] = useState("");
-  const [error, setError] = useState("");
-
-  // Model search and pagination
-  const [modelSearchQuery, setModelSearchQuery] = useState("");
-  const [modelPage, setModelPage] = useState(1);
-  const MODELS_PER_PAGE = 12;
-
-  const filteredModels = useMemo(() => {
-    if (!models.data?.models) return [];
-    if (!modelSearchQuery.trim()) return models.data.models;
-    const lowerQ = modelSearchQuery.toLowerCase();
-    return models.data.models.filter(m => 
-      m.id.toLowerCase().includes(lowerQ) || 
-      (m.name && m.name.toLowerCase().includes(lowerQ))
-    );
-  }, [models.data?.models, modelSearchQuery]);
-
-  useEffect(() => {
-    setModelPage(1);
-  }, [modelSearchQuery]);
-
-  const totalModelPages = Math.ceil(filteredModels.length / MODELS_PER_PAGE);
-  const paginatedModels = filteredModels.slice(
-    (modelPage - 1) * MODELS_PER_PAGE, 
-    modelPage * MODELS_PER_PAGE
-  );
-
-  const create = useMutation({
-    mutationFn: () => api.createAccount({
-      provider: id!,
-      label,
-      api_key: apiKey || undefined,
-      base_url: baseURL || undefined,
-      region: provider?.regions?.length ? region || provider.default_region : undefined,
-      account_id: accountID || undefined,
-      azure_endpoint: azureEndpoint || undefined,
-      azure_deployment: azureDeployment || undefined,
-      azure_api_version: azureAPIVersion || undefined,
-      azure_organization: azureOrganization || undefined,
-    }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["accounts"] });
-      setLabel("");
-      setApiKey("");
-      setBaseURL("");
-      setAccountID("");
-      setAzureEndpoint("");
-      setAzureDeployment("");
-      setAzureAPIVersion("2024-10-01-preview");
-      setAzureOrganization("");
-      setError("");
-      toast.success("Account connected", "Upstream credentials saved and encrypted. The account is ready for routing.");
-    },
-    onError: (e: Error) => {
-      setError(e.message);
-      toast.error("Account connection failed", e.message);
-    },
-  });
+  const modelList = models.data?.models ?? [];
 
   const remove = useMutation({
     mutationFn: (accountId: string) => api.deleteAccount(accountId),
@@ -123,294 +98,923 @@ export function MediaProviderDetailPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
   });
 
-  const meta = kindMeta[kind ?? ""] ?? kindMeta.embedding;
-  const hasRegions = (provider?.regions?.length ?? 0) > 0;
-  const isNoAuth = provider?.auth_kind === "none" || provider?.auth_modes.includes("none");
-  const isAzure = provider?.id === "azure";
-  const isCloudflare = provider?.id === "cloudflare-ai";
-  const requiresBaseURL = provider?.id === "custom-openai" || provider?.id === "custom-anthropic";
-  const canSubmit =
-    !!provider &&
-    (isNoAuth || !!apiKey.trim()) &&
-    (!isCloudflare || !!accountID.trim()) &&
-    (!isAzure || (!!azureEndpoint.trim() && !!azureDeployment.trim())) &&
-    (!requiresBaseURL || !!baseURL.trim());
+  const metaKind: Capability = isCapability(kind) ? kind : "embedding";
+  const meta = kindMeta[metaKind];
+  // Search and fetch providers have no model catalog worth listing.
+  const showModels = kind !== "search" && kind !== "fetch";
+  const rawTab = params.get("tab") as Tab | null;
+  const tab: Tab = rawTab === "playground" || (rawTab === "models" && showModels) ? rawTab : "accounts";
+  const setTab = (t: Tab) =>
+    setParams((p) => {
+      if (t === "accounts") p.delete("tab");
+      else p.set("tab", t);
+      return p;
+    }, { replace: true });
 
-  if (providers.isLoading) return <Spinner />;
+  if (providers.isLoading) {
+    return (
+      <div className="space-y-4" aria-busy="true" aria-label="Loading provider">
+        <Skeleton className="h-5 w-40" />
+        <Skeleton className="h-14 w-full rounded-2xl" />
+        <Skeleton className="h-64 w-full rounded-2xl" />
+      </div>
+    );
+  }
 
   if (!provider) {
     return (
-      <div className="space-y-4">
-        <Link to={dashboard(`/media/${kind}`)} className="flex items-center gap-1 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
-          <ArrowLeft className="h-4 w-4" /> Back to {meta.label}
-        </Link>
-        <EmptyState title="Provider not found" />
-      </div>
+      <EmptyState
+        variant="card"
+        titleAs="h1"
+        icon={ICONS.media}
+        title="This provider doesn't exist"
+        action={<Link to={dashboard(`/media/${kind}`)} className="rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">Back to {meta.label.toLowerCase()}</Link>}
+      />
     );
   }
+
+  const isNoAuth = provider.auth_kind === "none" || provider.auth_modes.includes("none");
+  const connectLabel = isNoAuth ? "Connect" : "Add account";
+  const canPlay = provider.drivable && myAccounts.length > 0;
+
+  const removeOne = async (a: Account) => {
+    const ok = await confirm({
+      title: `Remove ${a.label || provider.display_name}?`,
+      description: `Requests for ${provider.display_name} stop using this account and its encrypted credentials are purged. This cannot be undone.`,
+      confirmLabel: "Remove account",
+      tone: "danger",
+    });
+    if (ok) remove.mutate(a.id);
+  };
+
+  const tabs: [Tab, string, number | null][] = [
+    ["accounts", "Accounts", myAccounts.length],
+    ...(showModels ? ([["models", "Models", modelList.length]] as [Tab, string, number | null][]) : []),
+    ["playground", "Playground", null],
+  ];
+
+  const onTabKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const i = tabs.findIndex(([v]) => v === tab);
+    const n = tabs.length;
+    const next =
+      event.key === "Home" ? 0 : event.key === "End" ? n - 1 : (i + (event.key === "ArrowRight" ? 1 : -1) + n) % n;
+    const value = tabs[next][0];
+    setTab(value);
+    document.getElementById(`media-tab-${value}`)?.focus();
+  };
+
+  return (
+    <>
+      <nav aria-label="Breadcrumb" className="mb-3 text-[13px] text-fg-muted">
+        <ol className="flex items-center gap-1.5">
+          <li>
+            <Link
+              to={dashboard(`/media/${kind}`)}
+              className="inline-flex min-h-6 items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+              {meta.label}
+            </Link>
+          </li>
+          <li aria-hidden="true" className="text-fg-faint">
+            /
+          </li>
+          <li className="truncate text-fg" aria-current="page">
+            {provider.display_name}
+          </li>
+        </ol>
+      </nav>
+
+      <header className="mb-5 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <ProviderLogo icon={provider.icon} name={provider.display_name} size={40} className="rounded-lg" />
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{provider.display_name}</h1>
+              {!provider.drivable && <Badge tone="neutral">Coming soon</Badge>}
+              {isNoAuth && <Badge tone="neutral">No credentials</Badge>}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-fg-muted">
+              <span className="break-all font-mono text-[12.5px]">{provider.id}</span>
+              <Dot />
+              <CapabilityChips provider={provider} current={metaKind} />
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          {provider.api_key_url && (
+            <a
+              href={provider.api_key_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            >
+              Get API key
+              <ExternalLink className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <span className="sr-only">(opens in a new tab)</span>
+            </a>
+          )}
+          {provider.drivable && (
+            <Button onClick={() => setAddOpen(true)}>
+              <Plug aria-hidden="true" />
+              {connectLabel}
+            </Button>
+          )}
+        </div>
+      </header>
+
+      <div
+        className="mb-5 flex gap-1 overflow-x-auto border-b border-line"
+        role="tablist"
+        aria-label={`${provider.display_name} sections`}
+        onKeyDown={onTabKeyDown}
+      >
+        {tabs.map(([value, label, count]) => {
+          const on = tab === value;
+          return (
+            <button
+              key={value}
+              id={`media-tab-${value}`}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              aria-controls="media-tab-panel"
+              tabIndex={on ? 0 : -1}
+              onClick={() => setTab(value)}
+              className={cn(
+                "relative -mb-px inline-flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                on ? "text-fg" : "text-fg-muted hover:text-fg",
+              )}
+            >
+              {label}
+              {count != null && <span className="rounded-md bg-subtle px-1.5 text-[11.5px] tabular-nums text-fg-muted">{count}</span>}
+              {on && <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
+            </button>
+          );
+        })}
+      </div>
+
+      <div id="media-tab-panel" role="tabpanel" aria-labelledby={`media-tab-${tab}`}>
+      {tab === "accounts" && (
+        <AccountsPanel
+          provider={provider}
+          accounts={myAccounts}
+          loading={accounts.isLoading}
+          connectLabel={connectLabel}
+          onConnect={() => setAddOpen(true)}
+          onToggle={(a) => toggleAccount.mutate({ accId: a.id, disabled: !a.disabled })}
+          onRemove={removeOne}
+        />
+      )}
+      {tab === "models" && showModels && <ModelsPanel provider={provider} models={modelList} loading={models.isLoading} label={meta.label} />}
+      {tab === "playground" &&
+        (canPlay ? (
+          <Playground provider={provider} initial={metaKind} models={modelList} />
+        ) : (
+          <EmptyState
+            variant="card"
+            titleAs="h2"
+            icon={Play}
+            title={provider.drivable ? "Connect an account to use the playground" : "The playground isn't available yet"}
+            hint={
+              provider.drivable
+                ? `Test requests run through one of your ${provider.display_name} accounts.`
+                : `Routing to ${provider.display_name} isn't supported yet.`
+            }
+            action={
+              provider.drivable && (
+                <Button variant="secondary" onClick={() => setAddOpen(true)}>
+                  <Plug aria-hidden="true" />
+                  {connectLabel}
+                </Button>
+              )
+            }
+          />
+        ))}
+      </div>
+
+      {provider.drivable && <AddAccountDialog provider={provider} open={addOpen} onClose={() => setAddOpen(false)} />}
+    </>
+  );
+}
+
+// CapabilityChips lists the media capabilities this provider serves; the one
+// this page is opened for gets the section tint.
+function CapabilityChips({ provider, current }: { provider: Provider; current: Capability }) {
+  const caps = CAPABILITIES.filter((c) => c === current || provider.service_kinds.includes(c));
+  return (
+    <ul className="flex flex-wrap items-center gap-1" aria-label="Capabilities">
+      {caps.map((c) => {
+        const Icon = kindMeta[c].icon;
+        const on = c === current;
+        return (
+          <li key={c}>
+            <Badge tone={on ? "secondary" : "neutral"}>
+              <Icon className={cn("h-3 w-3", on ? "text-tone" : "text-fg-faint")} strokeWidth={1.75} aria-hidden="true" />
+              {kindMeta[c].short}
+              {on && <span className="sr-only"> (this page)</span>}
+            </Badge>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function Dot() {
+  return (
+    <span aria-hidden="true" className="text-fg-faint">
+      ·
+    </span>
+  );
+}
+
+// ── Form primitives ─────────────────────────────────────────────────────────
+
+// FormField labels its single child control (id + aria-describedby are
+// attached automatically) and marks required/optional fields in text.
+function FormField({
+  label,
+  optional,
+  required,
+  hint,
+  children,
+}: {
+  label: string;
+  optional?: boolean;
+  required?: boolean;
+  hint?: ReactNode;
+  children: ReactElement<Record<string, unknown>>;
+}) {
+  const id = useId();
+  const hintId = `${id}-hint`;
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
+        {label}
+        {optional && <span className="text-[12px] font-normal text-fg-faint">Optional</span>}
+        {required && <span className="text-[12px] font-normal text-fg-faint">Required</span>}
+      </label>
+      {cloneElement(children, {
+        id,
+        ...(hint ? { "aria-describedby": hintId } : {}),
+        ...(required ? { "aria-required": true } : {}),
+      })}
+      {hint && (
+        <p id={hintId} className="text-[12px] leading-5 text-fg-muted">
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
+
+const textareaClass =
+  "w-full rounded-lg border border-input bg-surface px-3 py-2 text-[13px] leading-5 text-fg placeholder:text-fg-faint transition-colors hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+// ── Add account ─────────────────────────────────────────────────────────────
+
+const EMPTY_FORM = {
+  label: "",
+  apiKey: "",
+  baseURL: "",
+  region: "",
+  accountID: "",
+  azureEndpoint: "",
+  azureDeployment: "",
+  azureAPIVersion: "2024-10-01-preview",
+  azureOrganization: "",
+};
+type AccountForm = typeof EMPTY_FORM;
+
+// AddAccountDialog stays mounted while closed so a half-filled form survives
+// closing and reopening; it resets only after a successful connect.
+function AddAccountDialog({ provider, open, onClose }: { provider: Provider; open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [form, setForm] = useState<AccountForm>(EMPTY_FORM);
+  const [error, setError] = useState("");
+  const set = (key: keyof AccountForm) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setForm((f) => ({ ...f, [key]: e.target.value }));
+
+  const create = useMutation({
+    mutationFn: () => api.createAccount({
+      provider: provider.id,
+      label: form.label,
+      api_key: form.apiKey || undefined,
+      base_url: form.baseURL || undefined,
+      region: provider.regions?.length ? form.region || provider.default_region : undefined,
+      account_id: form.accountID || undefined,
+      azure_endpoint: form.azureEndpoint || undefined,
+      azure_deployment: form.azureDeployment || undefined,
+      azure_api_version: form.azureAPIVersion || undefined,
+      azure_organization: form.azureOrganization || undefined,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      // Region is intentionally kept, matching the previous inline form.
+      setForm((f) => ({ ...EMPTY_FORM, region: f.region }));
+      setError("");
+      toast.success("Account connected", "Upstream credentials saved and encrypted. The account is ready for routing.");
+      onClose();
+    },
+    onError: (e: Error) => {
+      setError(e.message);
+      toast.error("Account connection failed", e.message);
+    },
+  });
+
+  const hasRegions = (provider.regions?.length ?? 0) > 0;
+  const isNoAuth = provider.auth_kind === "none" || provider.auth_modes.includes("none");
+  const isAzure = provider.id === "azure";
+  const isCloudflare = provider.id === "cloudflare-ai";
+  const requiresBaseURL = provider.id === "custom-openai" || provider.id === "custom-anthropic";
+  const canSubmit =
+    (isNoAuth || !!form.apiKey.trim()) &&
+    (!isCloudflare || !!form.accountID.trim()) &&
+    (!isAzure || (!!form.azureEndpoint.trim() && !!form.azureDeployment.trim())) &&
+    (!requiresBaseURL || !!form.baseURL.trim());
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={isNoAuth ? `Connect ${provider.display_name}` : `Add ${provider.display_name} account`}
+      subtitle={isNoAuth ? "No credentials needed." : "The key is encrypted and never shown again."}
+    >
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canSubmit) create.mutate();
+        }}
+      >
+        <div className="space-y-3.5 px-5 py-4">
+          {!isNoAuth && (
+            <FormField
+              label="API key"
+              required
+              hint={provider.api_key_url ? (
+                <>
+                  Create one at{" "}
+                  <a href={provider.api_key_url} target="_blank" rel="noopener noreferrer" className="rounded-sm font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+                    {hostOf(provider.api_key_url)}
+                    <span className="sr-only"> (opens in a new tab)</span>
+                  </a>
+                  .
+                </>
+              ) : undefined}
+            >
+              <Input value={form.apiKey} onChange={set("apiKey")} placeholder="sk-..." type="password" autoComplete="off" className="font-mono" />
+            </FormField>
+          )}
+          <FormField label="Label" optional hint="Shown in routing and usage.">
+            <Input value={form.label} onChange={set("label")} placeholder="my-key" />
+          </FormField>
+          {isCloudflare && (
+            <FormField label="Account ID" required>
+              <Input value={form.accountID} onChange={set("accountID")} placeholder="abc123def456..." className="font-mono" />
+            </FormField>
+          )}
+          {isAzure ? (
+            <div className="space-y-3.5 rounded-xl border border-line bg-subtle p-3.5">
+              <FormField label="Azure endpoint" required>
+                <Input value={form.azureEndpoint} onChange={set("azureEndpoint")} placeholder="https://resource.openai.azure.com" className="font-mono" />
+              </FormField>
+              <div className="grid gap-3.5 sm:grid-cols-2">
+                <FormField label="Deployment" required>
+                  <Input value={form.azureDeployment} onChange={set("azureDeployment")} placeholder="gpt-4o" className="font-mono" />
+                </FormField>
+                <FormField label="API version" optional>
+                  <Input value={form.azureAPIVersion} onChange={set("azureAPIVersion")} placeholder="2024-10-01-preview" className="font-mono" />
+                </FormField>
+              </div>
+              <FormField label="Organization" optional>
+                <Input value={form.azureOrganization} onChange={set("azureOrganization")} placeholder="org_..." className="font-mono" />
+              </FormField>
+            </div>
+          ) : hasRegions ? (
+            <FormField label="Region">
+              <Select value={form.region || provider.default_region || ""} onChange={set("region")}>
+                {(provider.regions ?? []).map((r) => (
+                  <option key={r.id} value={r.id}>{r.label}</option>
+                ))}
+              </Select>
+            </FormField>
+          ) : (
+            <FormField
+              label="Base URL"
+              optional={!requiresBaseURL}
+              required={requiresBaseURL}
+              hint={requiresBaseURL ? undefined : "Only for custom or self-hosted endpoints."}
+            >
+              <Input value={form.baseURL} onChange={set("baseURL")} placeholder="https://…" className="font-mono" />
+            </FormField>
+          )}
+          {error && <ErrorBanner message={error} />}
+        </div>
+        <ModalFooter>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={create.isPending || !canSubmit}>
+            {create.isPending && <Loader2 className="animate-spin" aria-hidden="true" />}
+            {create.isPending ? "Adding…" : isNoAuth ? "Connect" : "Add account"}
+          </Button>
+        </ModalFooter>
+      </form>
+    </Modal>
+  );
+}
+
+// ── Accounts ────────────────────────────────────────────────────────────────
+
+function AccountsPanel({
+  provider,
+  accounts,
+  loading,
+  connectLabel,
+  onConnect,
+  onToggle,
+  onRemove,
+}: {
+  provider: Provider;
+  accounts: Account[];
+  loading: boolean;
+  connectLabel: string;
+  onConnect: () => void;
+  onToggle: (a: Account) => void;
+  onRemove: (a: Account) => void;
+}) {
+  if (loading) return <Skeleton className="h-48 w-full rounded-2xl" />;
+
+  if (accounts.length === 0) {
+    return (
+      <EmptyState
+        variant="card"
+        titleAs="h2"
+        icon={ICONS.account}
+        title={`No ${provider.display_name} accounts yet`}
+        hint={provider.drivable ? "Add an account to start routing requests here." : "Routing to this provider isn't available yet, so accounts can't be added."}
+        action={
+          provider.drivable && (
+            <Button variant="secondary" onClick={onConnect}>
+              <Plug aria-hidden="true" />
+              {connectLabel}
+            </Button>
+          )
+        }
+      />
+    );
+  }
+
+  const active = accounts.filter((a) => !a.disabled && !a.needs_reconnect).length;
+  const paused = accounts.filter((a) => a.disabled).length;
+  const reconnect = accounts.filter((a) => a.needs_reconnect).length;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="space-y-4">
-        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-[var(--text-muted)]">
-          <Link
-            to={dashboard(`/media/${kind}`)}
-            className="inline-flex min-h-9 items-center gap-2 rounded-lg px-1 font-medium transition-colors hover:text-[var(--text)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
-          >
-            <ArrowLeft className="h-4 w-4" />
-            {meta.label}
-          </Link>
-          <span aria-hidden="true" className="text-[var(--border-strong)]">/</span>
-          <span className="truncate text-[var(--text)]">{provider.display_name}</span>
-        </nav>
-        <Card>
-          <div className="flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-            <div className="flex min-w-0 items-center gap-4">
-              <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-subtle)] p-2 shadow-sm">
-                <ProviderIcon provider={provider} />
-              </div>
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h1 className="font-display text-2xl font-semibold tracking-tight">{provider.display_name}</h1>
-                  <Badge tone="accent">{meta.label}</Badge>
-                  <Badge tone={provider.drivable ? "success" : "neutral"}>{provider.drivable ? "Available" : "Coming soon"}</Badge>
-                </div>
-                <p className="mt-1 text-sm leading-6 text-[var(--text-muted)]">
-                  {myAccounts.length} connected {myAccounts.length === 1 ? "account" : "accounts"} · {models.data?.models.length ?? 0} models
-                </p>
-                <code className="mt-1 block font-mono text-xs text-[var(--text-muted)]">{provider.id}</code>
-              </div>
-            </div>
-            {provider.api_key_url && (
-              <a
-                href={provider.api_key_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3.5 py-2 text-sm font-semibold shadow-sm transition-colors hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/50"
-              >
-                Get API key <ExternalLink className="h-4 w-4" />
-              </a>
-            )}
-          </div>
-        </Card>
-      </div>
-
-      {/* Accounts */}
-      <Card>
-        <SectionHeader title="Accounts" description="Provider credentials for this service." icon={KeyRound} />
-        <div className="space-y-3 px-6 pb-6">
-          {myAccounts.length > 0 && (
-            <div className="space-y-2">
-              {myAccounts.map((a) => (
-                <AccountRow
-                  key={a.id}
-                  account={a}
-                  onRemove={() => remove.mutate(a.id)}
-                  onToggle={() => toggleAccount.mutate({ accId: a.id, disabled: !a.disabled })}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Add account form */}
-          {provider.drivable && (
-            <form
-              className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (canSubmit) create.mutate();
-              }}
-            >
-              <Field label="Label (optional)">
-                <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="my-key" />
-              </Field>
-              {!isNoAuth && (
-                <Field label="API Key">
-                  <Input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." type="password" />
-                </Field>
-              )}
-              {isCloudflare && (
-                <Field label="Account ID">
-                  <Input value={accountID} onChange={(e) => setAccountID(e.target.value)} placeholder="abc123def456..." />
-                </Field>
-              )}
-              {isAzure ? (
-                <>
-                  <Field label="Azure endpoint">
-                    <Input value={azureEndpoint} onChange={(e) => setAzureEndpoint(e.target.value)} placeholder="https://resource.openai.azure.com" />
-                  </Field>
-                  <Field label="Deployment">
-                    <Input value={azureDeployment} onChange={(e) => setAzureDeployment(e.target.value)} placeholder="gpt-4o" />
-                  </Field>
-                  <Field label="API version">
-                    <Input value={azureAPIVersion} onChange={(e) => setAzureAPIVersion(e.target.value)} placeholder="2024-10-01-preview" />
-                  </Field>
-                  <Field label="Organization">
-                    <Input value={azureOrganization} onChange={(e) => setAzureOrganization(e.target.value)} placeholder="org_..." />
-                  </Field>
-                </>
-              ) : hasRegions ? (
-                <Field label="Region">
-                  <select
-                    value={region || provider.default_region || ""}
-                    onChange={(e) => setRegion(e.target.value)}
-                    className="w-full rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-sm focus:border-accent-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/40"
-                  >
-                    {(provider.regions ?? []).map((r) => (
-                      <option key={r.id} value={r.id}>{r.label}</option>
-                    ))}
-                  </select>
-                </Field>
-              ) : (
-                <Field label={requiresBaseURL ? "Base URL" : "Base URL (optional)"}>
-                  <Input value={baseURL} onChange={(e) => setBaseURL(e.target.value)} placeholder="for custom endpoints" />
-                </Field>
-              )}
-              <Button type="submit" disabled={create.isPending || !canSubmit} className="self-end">
-                <Plus className="h-4 w-4" />
-                {create.isPending ? "Adding…" : isNoAuth ? "Connect" : "Add"}
-              </Button>
-            </form>
-          )}
-          {error && <p className="text-xs text-[color:var(--color-danger)]">{error}</p>}
-        </div>
-      </Card>
-
-      {/* Models */}
-      {kind !== "search" && kind !== "fetch" && models.data?.models && models.data.models.length > 0 && (
-        <Card>
-          <CardHeader title="Model catalog" description={`${models.data.models.length} models available for ${meta.label.toLowerCase()}.`} />
-          <div className="border-t border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-4 sm:px-6">
-            <div className="relative w-full sm:max-w-md">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
-              <Input
-                aria-label="Search media models"
-                placeholder="Search models…"
-                value={modelSearchQuery}
-                onChange={(event) => setModelSearchQuery(event.target.value)}
-                className="pl-10"
-              />
-            </div>
-          </div>
-          {filteredModels.length === 0 ? (
-            <div className="px-6 py-12 text-center text-sm text-[var(--text-muted)] border-t border-[var(--border)]">
-              No models found matching "{modelSearchQuery}"
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 gap-3 border-t border-[var(--border)] bg-[var(--bg-subtle)] p-4 sm:grid-cols-2 sm:p-5 lg:grid-cols-3">
-              {paginatedModels.map((model) => (
-                <article key={model.id} className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-[var(--shadow-card)]">
-                  <Badge tone="success">Available</Badge>
-                  <h3 className="mt-3 truncate text-sm font-semibold" title={model.name || model.id}>{model.name || model.id}</h3>
-                  <code className="mt-2 block truncate rounded-lg bg-[var(--bg-subtle)] px-2.5 py-2 font-mono text-xs text-[var(--text-muted)]" title={model.id}>{model.id}</code>
-                </article>
-              ))}
-            </div>
-          )}
-          {totalModelPages > 0 && (
-            <div className="flex items-center justify-between rounded-b-2xl border-t border-[var(--border)] bg-[var(--bg-subtle)] px-6 py-3">
-              <span className="text-xs text-[var(--text-muted)]">
-                Showing {(modelPage - 1) * MODELS_PER_PAGE + 1} to {Math.min(modelPage * MODELS_PER_PAGE, filteredModels.length)} of {filteredModels.length} models
-              </span>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  className="h-8 px-2 text-xs"
-                  disabled={modelPage === 1}
-                  onClick={() => setModelPage((p) => p - 1)}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="h-8 px-2 text-xs"
-                  disabled={modelPage === totalModelPages}
-                  onClick={() => setModelPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
-        </Card>
-      )}
-
-      {/* Test card */}
-      {provider.drivable && myAccounts.length > 0 && (
-        <TestCard kind={kind ?? "embedding"} provider={provider} models={models.data?.models ?? []} />
-      )}
-    </div>
-  );
-}
-
-function AccountRow({ account: a, onRemove, onToggle }: { account: Account; onRemove: () => void; onToggle: () => void }) {
-  return (
-    <div className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-2.5">
-      <div className="flex items-center gap-3">
-        <button onClick={onToggle} className="text-[var(--text-muted)] hover:text-[var(--text)]">
-          {a.disabled ? <ToggleLeft className="h-5 w-5 text-[var(--text-muted)]" /> : <ToggleRight className="h-5 w-5 text-green-500 dark:text-green-400" />}
-        </button>
-        <div>
-          <span className="text-sm font-medium">{a.label || a.provider}</span>
-          {a.disabled && <span className="ml-2"><Badge tone="neutral">disabled</Badge></span>}
-        </div>
-      </div>
-      <Button variant="ghost" onClick={onRemove} className="px-2">
-        <Trash2 className="h-4 w-4 text-[var(--text-muted)]" />
-      </Button>
-    </div>
-  );
-}
-
-function ProviderIcon({ provider: p }: { provider: Provider }) {
-  const [errored, setErrored] = useState(false);
-  if (errored || !p.icon) {
-    return (
-      <div
-        className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl text-lg font-bold text-white"
-        style={{ backgroundColor: p.color || "var(--text-muted)" }}
+      <KpiGrid cols={3} label={`${provider.display_name} account status`}>
+        <Kpi icon={ICONS.successRate} label="Active" value={active} hint={`of ${accounts.length}`} tone={active > 0 ? "ok" : "section"} />
+        <Kpi icon={Pause} label="Paused" value={paused} />
+        <Kpi icon={ICONS.errors} label="Reconnect needed" value={reconnect} tone={reconnect > 0 ? "warn" : "section"} />
+      </KpiGrid>
+      <section
+        aria-labelledby="media-accounts-heading"
+        className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
       >
-        {p.display_name.slice(0, 1).toUpperCase()}
-      </div>
+        <div className="border-b border-line px-4 py-3">
+          <SectionTitle id="media-accounts-heading" icon={ICONS.account} title="Accounts" />
+        </div>
+        <ul className="divide-y divide-line" aria-label={`${provider.display_name} accounts`}>
+          {accounts.map((a) => {
+            const name = a.label || a.provider;
+            return (
+              <li key={a.id} className={cn("flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-hover/60", a.disabled && "bg-subtle/60")}>
+                <span
+                  className={cn("h-2 w-2 shrink-0 rounded-full", a.needs_reconnect ? "bg-warn" : a.disabled ? "bg-fg-faint" : "bg-ok")}
+                  aria-hidden="true"
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[13px] font-medium text-fg">{name}</p>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[12px] text-fg-muted">
+                    <span>{a.auth_kind === "oauth" ? "Signed in" : a.auth_kind === "none" ? "No credentials" : "API key"}</span>
+                    {a.disabled && <Badge tone="neutral">Paused · no traffic</Badge>}
+                    {a.needs_reconnect && <Badge tone="warning">Reconnect needed</Badge>}
+                    {!a.disabled && !a.needs_reconnect && <span className="sr-only">Active</span>}
+                  </div>
+                </div>
+                <Toggle checked={!a.disabled} onChange={() => onToggle(a)} label={`Route traffic to ${name}`} />
+                <DropdownMenu>
+                  <DropdownMenuTrigger
+                    aria-label={`Actions for ${name}`}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 md:h-8 md:w-8"
+                  >
+                    <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem tone="danger" onSelect={() => onRemove(a)}>
+                      <Trash2 aria-hidden="true" />
+                      Remove account
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+// ── Models ──────────────────────────────────────────────────────────────────
+
+const MODELS_PER_PAGE = 12;
+
+function ModelsPanel({ provider, models, loading, label }: { provider: Provider; models: ProviderModel[]; loading: boolean; label: string }) {
+  const [modelSearchQuery, setModelSearchQuery] = useState("");
+
+  const filteredModels = useMemo(() => {
+    if (!modelSearchQuery.trim()) return models;
+    const lowerQ = modelSearchQuery.toLowerCase();
+    return models.filter((m) =>
+      m.id.toLowerCase().includes(lowerQ) ||
+      (m.name && m.name.toLowerCase().includes(lowerQ)),
+    );
+  }, [models, modelSearchQuery]);
+
+  const { page, pages, paged, setPage, total } = useClientPagination(filteredModels, MODELS_PER_PAGE);
+  useEffect(() => setPage(1), [modelSearchQuery, setPage]);
+
+  if (loading) return <Skeleton className="h-72 w-full rounded-2xl" />;
+
+  if (models.length === 0) {
+    return (
+      <EmptyState
+        variant="card"
+        titleAs="h2"
+        icon={ICONS.model}
+        title="No models listed"
+        hint={`${provider.display_name} has no ${label.toLowerCase()} model catalog. You can still route by model id.`}
+      />
     );
   }
-  return <img src={p.icon} alt={p.display_name} onError={() => setErrored(true)} className="h-12 w-12 shrink-0 rounded-xl object-contain" />;
+
+  return (
+    <section
+      aria-labelledby="media-models-heading"
+      className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
+    >
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-3">
+        <SectionTitle
+          id="media-models-heading"
+          icon={ICONS.model}
+          title="Models"
+          subtitle={
+            <span className="tabular-nums" role="status">
+              {filteredModels.length === models.length ? `${models.length} models` : `${filteredModels.length} of ${models.length} shown`}
+            </span>
+          }
+        />
+        <div className="relative w-full sm:ml-auto sm:w-72">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          <input
+            type="search"
+            aria-label={`Filter ${provider.display_name} models`}
+            placeholder="Filter models"
+            value={modelSearchQuery}
+            onChange={(event) => setModelSearchQuery(event.target.value)}
+            className="h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+          />
+        </div>
+      </div>
+      {filteredModels.length === 0 ? (
+        <p className="px-6 py-10 text-center text-[13px] text-fg-muted">No models match “{modelSearchQuery}”.</p>
+      ) : (
+        <>
+          <ul className="divide-y divide-line md:hidden" aria-label={`${provider.display_name} models`}>
+            {paged.map((m) => {
+              const route = `${provider.id}/${m.id}`;
+              return (
+                <li key={m.id} className="px-4 py-2.5 text-[13px]">
+                  <ModelName model={m} />
+                  <div className="flex min-w-0 items-center gap-2 text-[12px] text-fg-muted">
+                    {m.kind && (
+                      <>
+                        <span className="shrink-0">{m.kind}</span>
+                        <span aria-hidden="true" className="text-fg-faint">
+                          ·
+                        </span>
+                      </>
+                    )}
+                    <span className="min-w-0">
+                      <RouteCopy route={route} />
+                    </span>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="hidden overflow-x-auto md:block">
+            <table className="w-full min-w-[560px] text-[13px]">
+              <caption className="sr-only">{provider.display_name} models</caption>
+              <thead>
+                <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                  <th scope="col" className="px-4 py-2 font-medium">Model</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Kind</th>
+                  <th scope="col" className="px-4 py-2 font-medium">Route as</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {paged.map((m) => (
+                  <ModelRow key={m.id} model={m} route={`${provider.id}/${m.id}`} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      <TablePagination page={page} pages={pages} total={total} onPage={setPage} />
+    </section>
+  );
 }
 
-// ─── Test Cards ──────────────────────────────────────────────────────────────
-
-function TestCard({ kind, provider, models }: { kind: string; provider: Provider; models: { id: string }[] }) {
-  switch (kind) {
-    case "embedding":
-      return <EmbeddingTestCard provider={provider} models={models} />;
-    case "image":
-      return <ImageTestCard provider={provider} models={models} />;
-    case "tts":
-      return <TtsTestCard provider={provider} models={models} />;
-    case "stt":
-      return <SttTestCard provider={provider} models={models} />;
-    case "search":
-      return <SearchTestCard provider={provider} />;
-    case "fetch":
-      return <FetchTestCard provider={provider} />;
-    default:
-      return null;
-  }
+function ModelName({ model: m }: { model: ProviderModel }) {
+  return (
+    <>
+      <p className="truncate font-medium text-fg" title={m.name || m.id}>{m.name || m.id}</p>
+      {m.name && m.name !== m.id && <p className="truncate font-mono text-[11.5px] text-fg-muted">{m.id}</p>}
+    </>
+  );
 }
 
-function EmbeddingTestCard({ provider, models }: { provider: Provider; models: { id: string }[] }) {
+// RouteCopy copies the routable model id. The copy icon fades in on hover only
+// on devices that can hover; touch screens always show it.
+function RouteCopy({ route }: { route: string }) {
+  const toast = useToast();
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(route);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1300);
+      toast.success("Model name copied", route);
+    } catch {
+      toast.error("Couldn't copy", "Your browser blocked clipboard access.");
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      aria-label={`Copy ${route}`}
+      title="Copy model name"
+      className="group inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-md font-mono text-[12px] text-fg-muted hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 md:min-h-6"
+    >
+      <span className="truncate">{route}</span>
+      {copied ? (
+        <Check className="h-3.5 w-3.5 shrink-0 text-ok" aria-hidden="true" />
+      ) : (
+        <Copy
+          className="h-3.5 w-3.5 shrink-0 transition-opacity group-focus-visible:opacity-100 [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100"
+          aria-hidden="true"
+        />
+      )}
+    </button>
+  );
+}
+
+function ModelRow({ model: m, route }: { model: ProviderModel; route: string }) {
+  return (
+    <tr className="transition-colors hover:bg-hover/60">
+      <td className="max-w-[340px] px-4 py-2">
+        <ModelName model={m} />
+      </td>
+      <td className="px-4 py-2 text-[12.5px] text-fg-muted">{m.kind || "—"}</td>
+      <td className="max-w-[320px] px-4 py-2">
+        <RouteCopy route={route} />
+      </td>
+    </tr>
+  );
+}
+
+// ── Playground ──────────────────────────────────────────────────────────────
+
+type ModelOption = { id: string };
+
+function Playground({ provider, initial, models }: { provider: Provider; initial: Capability; models: ModelOption[] }) {
+  // Offer every media capability this provider serves; the page's own kind
+  // is always included and selected first.
+  const options = useMemo(
+    () => CAPABILITIES.filter((c) => c === initial || provider.service_kinds.includes(c)),
+    [initial, provider.service_kinds],
+  );
+  const [cap, setCap] = useState<Capability>(initial);
+  useEffect(() => setCap(initial), [initial]);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {options.length > 1 ? (
+          <Segmented
+            aria-label="Capability to try"
+            value={cap}
+            onChange={setCap}
+            options={options.map((c) => ({ value: c, label: kindMeta[c].short }))}
+          />
+        ) : (
+          <span />
+        )}
+        <p className="text-[12.5px] text-fg-muted">Requests count toward usage.</p>
+      </div>
+      {cap === "embedding" && <EmbeddingPlayground key={cap} provider={provider} models={models} />}
+      {cap === "image" && <ImagePlayground key={cap} provider={provider} models={models} />}
+      {cap === "tts" && <TtsPlayground key={cap} provider={provider} models={models} />}
+      {cap === "stt" && <SttPlayground key={cap} provider={provider} models={models} />}
+      {cap === "search" && <SearchPlayground key={cap} provider={provider} />}
+      {cap === "fetch" && <FetchPlayground key={cap} provider={provider} />}
+    </div>
+  );
+}
+
+// useRunner holds the request lifecycle shared by every capability: loading,
+// error, result and how long the request took.
+type RunState<T> = { loading: boolean; error: string; result: T | null; ms: number | null };
+
+function useRunner<T>() {
+  const [state, setState] = useState<RunState<T>>({ loading: false, error: "", result: null, ms: null });
+  const run = async (fn: () => Promise<T | null>) => {
+    setState({ loading: true, error: "", result: null, ms: null });
+    const started = performance.now();
+    try {
+      const result = await fn();
+      setState({ loading: false, error: "", result, ms: performance.now() - started });
+    } catch (e) {
+      setState({ loading: false, error: (e as Error).message, result: null, ms: performance.now() - started });
+    }
+  };
+  return [state, run] as const;
+}
+
+function fmtMs(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(2)} s`;
+}
+
+function PlaygroundLayout({
+  title,
+  form,
+  action,
+  state,
+  idleHint,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  form: ReactNode;
+  action: ReactNode;
+  state: RunState<unknown>;
+  idleHint: string;
+  icon: typeof Image;
+  children: ReactNode;
+}) {
+  const done = state.ms !== null;
+  const baseId = useId();
+  return (
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+      <section aria-labelledby={`${baseId}-request`} className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        <div className="border-b border-line px-4 py-3">
+          <SectionTitle id={`${baseId}-request`} icon={Icon} title={title} />
+        </div>
+        <div className="flex-1 space-y-3.5 px-4 py-4">{form}</div>
+        <div className="flex flex-wrap items-center gap-2 border-t border-line bg-subtle px-4 py-3 [&>button:first-child]:flex-1 sm:[&>button:first-child]:flex-none">{action}</div>
+      </section>
+
+      <section
+        aria-labelledby={`${baseId}-response`}
+        aria-busy={state.loading || undefined}
+        className="flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+          <SectionTitle id={`${baseId}-response`} icon={Inbox} title="Response" />
+          <div className="flex items-center gap-2 text-[12px] text-fg-muted" role="status">
+            {state.loading && (
+              <span className="inline-flex items-center gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                Waiting for the provider
+              </span>
+            )}
+            {done && (state.error ? <Badge tone="danger">Failed</Badge> : <Badge tone="success">Success</Badge>)}
+            {done && (
+              <span className="inline-flex items-center gap-1 tabular-nums">
+                <Clock3 className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                <span className="sr-only">in</span>
+                {fmtMs(state.ms!)}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-1 flex-col p-4">
+          {state.error ? (
+            <ErrorBanner message={state.error} />
+          ) : state.loading ? (
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-1/2" />
+              <Skeleton className="h-4 w-3/4" />
+              <Skeleton className="h-4 w-2/3" />
+            </div>
+          ) : done ? (
+            children
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center">
+              <IconTile icon={Icon} size="md" />
+              <p className="max-w-xs text-[12.5px] text-fg-muted">{idleHint}</p>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function RunButton({ onClick, disabled, loading, idle, busy }: { onClick: () => void; disabled: boolean; loading: boolean; idle: string; busy: string }) {
+  return (
+    <Button onClick={onClick} disabled={disabled}>
+      {loading ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Play aria-hidden="true" />}
+      {loading ? busy : idle}
+    </Button>
+  );
+}
+
+function JsonBlock({ value, limit, title = "Response" }: { value: unknown; limit?: number; title?: string }) {
+  const text = JSON.stringify(value, null, 2);
+  const shown = limit && text.length > limit ? `${text.slice(0, limit)}\n…` : text;
+  return (
+    <CodeBlock
+      code={shown}
+      language="json"
+      title={title}
+      aria-label={`${title} JSON`}
+      copyToast="Response copied"
+      copyValue={text}
+      className="flex-1"
+      bodyClassName="max-h-[420px]"
+    />
+  );
+}
+
+function ModelField({ models, value, onChange, placeholder = "model id" }: { models: ModelOption[]; value: string; onChange: (v: string) => void; placeholder?: string }) {
+  return (
+    <FormField label="Model">
+      {models.length > 1 ? (
+        <Select value={value} onChange={(e) => onChange(e.target.value)} className="font-mono">
+          {models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+        </Select>
+      ) : (
+        <Input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="font-mono" />
+      )}
+    </FormField>
+  );
+}
+
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const toast = useToast();
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+      toast.success("Copied", label);
+    } catch {
+      toast.error("Couldn't copy", "Your browser blocked clipboard access.");
+    }
+  };
+  return (
+    <Button variant="ghost" onClick={copy} aria-label={label} title={label} className="min-w-9 px-2">
+      {copied ? <Check className="text-ok" aria-hidden="true" /> : <Copy aria-hidden="true" />}
+    </Button>
+  );
+}
+
+// ── Embeddings
+
+function EmbeddingPlayground({ provider, models }: { provider: Provider; models: ModelOption[] }) {
   const [model, setModel] = useState(models[0]?.id ?? "");
   const [input, setInput] = useState("Hello world");
-  const [result, setResult] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [state, run] = useRunner<unknown>();
 
-  const run = async () => {
-    setLoading(true);
-    setError("");
-    setResult(null);
-    try {
+  const submit = () =>
+    run(async () => {
       const resp = await fetch("/v1/embeddings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -418,67 +1022,60 @@ function EmbeddingTestCard({ provider, models }: { provider: Provider; models: {
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error?.message || JSON.stringify(data));
-      setResult(data);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return data;
+    });
 
   const curlSnippet = `curl -X POST http://localhost:20180/v1/embeddings \\
   -H "Content-Type: application/json" \\
   -d '{"model":"${provider.id}/${model}","input":"${input}"}'`;
 
+  const vectors = (state.result as { data?: { embedding?: unknown[] }[] } | null)?.data;
+  const dims = Array.isArray(vectors?.[0]?.embedding) ? vectors![0].embedding!.length : null;
+
   return (
-    <Card>
-      <SectionHeader title="Test Embeddings" description="Send text and get embedding vectors." icon={Play} />
-      <div className="space-y-3 px-6 pb-6">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Model">
-            {models.length > 1 ? (
-              <Select value={model} onChange={(e) => setModel(e.target.value)}>
-                {models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
-              </Select>
-            ) : (
-              <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="model id" />
-            )}
-          </Field>
-        </div>
-        <Field label="Input text">
-          <Input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Text to embed" />
-        </Field>
-        <div className="flex items-center gap-2">
-          <Button onClick={run} disabled={loading || !model}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-            {loading ? "Running…" : "Run"}
-          </Button>
-          <CopyButton text={curlSnippet} />
-        </div>
-        {error && <p className="text-xs text-[color:var(--color-danger)]">{error}</p>}
-        {result && (
-          <pre className="max-h-48 overflow-auto rounded-lg bg-[var(--bg-subtle)] p-3 text-xs">
-            {JSON.stringify(result, null, 2).slice(0, 2000)}
-          </pre>
+    <PlaygroundLayout
+      title="Embeddings"
+      icon={Boxes}
+      idleHint="Run a request to see the returned vectors."
+      state={state}
+      form={
+        <>
+          <ModelField models={models} value={model} onChange={setModel} />
+          <FormField label="Input text">
+            <textarea value={input} onChange={(e) => setInput(e.target.value)} placeholder="Text to embed" rows={4} className={textareaClass} />
+          </FormField>
+        </>
+      }
+      action={
+        <>
+          <RunButton onClick={submit} disabled={state.loading || !model} loading={state.loading} idle="Run" busy="Running…" />
+          <CopyButton text={curlSnippet} label="Copy as cURL" />
+        </>
+      }
+    >
+      <div className="flex flex-1 flex-col gap-3">
+        {dims !== null && (
+          <p className="text-[12.5px] text-fg-muted">
+            <span className="tabular-nums text-fg">{vectors!.length}</span> vector{vectors!.length === 1 ? "" : "s"} ·{" "}
+            <span className="tabular-nums text-fg">{dims.toLocaleString()}</span> dimensions
+          </p>
         )}
+        <JsonBlock value={state.result} limit={2000} />
       </div>
-    </Card>
+    </PlaygroundLayout>
   );
 }
 
-function ImageTestCard({ provider, models }: { provider: Provider; models: { id: string }[] }) {
+// ── Image
+
+function ImagePlayground({ provider, models }: { provider: Provider; models: ModelOption[] }) {
   const [model, setModel] = useState(models[0]?.id ?? "");
   const [prompt, setPrompt] = useState("A cute cat wearing a hat");
   const [size, setSize] = useState("1024x1024");
-  const [result, setResult] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [state, run] = useRunner<string>();
 
-  const run = async () => {
-    setLoading(true);
-    setError("");
-    setResult(null);
-    try {
+  const submit = () =>
+    run(async () => {
       const resp = await fetch("/v1/images/generations", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -487,79 +1084,68 @@ function ImageTestCard({ provider, models }: { provider: Provider; models: { id:
       const contentType = resp.headers.get("content-type") || "";
       if (contentType.includes("image")) {
         const blob = await resp.blob();
-        setResult(URL.createObjectURL(blob));
-      } else {
-        const data = await resp.json();
-        if (!resp.ok) throw new Error(data.error?.message || JSON.stringify(data));
-        if (data.data?.[0]?.b64_json) {
-          setResult(`data:image/png;base64,${data.data[0].b64_json}`);
-        } else if (data.data?.[0]?.url) {
-          setResult(data.data[0].url);
-        }
+        return URL.createObjectURL(blob);
       }
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.error?.message || JSON.stringify(data));
+      if (data.data?.[0]?.b64_json) return `data:image/png;base64,${data.data[0].b64_json}`;
+      if (data.data?.[0]?.url) return data.data[0].url as string;
+      return null;
+    });
 
   return (
-    <Card>
-      <SectionHeader title="Test Image Generation" description="Generate images from text prompts." icon={Play} />
-      <div className="space-y-3 px-6 pb-6">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Model">
-            {models.length > 1 ? (
-              <Select value={model} onChange={(e) => setModel(e.target.value)}>
-                {models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>)}
+    <PlaygroundLayout
+      title="Image generation"
+      icon={Image}
+      idleHint="Generated images appear here."
+      state={state}
+      form={
+        <>
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            <ModelField models={models} value={model} onChange={setModel} />
+            <FormField label="Size">
+              <Select value={size} onChange={(e) => setSize(e.target.value)} className="tabular-nums">
+                <option value="256x256">256×256</option>
+                <option value="512x512">512×512</option>
+                <option value="1024x1024">1024×1024</option>
+                <option value="1792x1024">1792×1024</option>
+                <option value="1024x1792">1024×1792</option>
               </Select>
-            ) : (
-              <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="model id" />
-            )}
-          </Field>
-          <Field label="Size">
-            <Select value={size} onChange={(e) => setSize(e.target.value)}>
-              <option value="256x256">256×256</option>
-              <option value="512x512">512×512</option>
-              <option value="1024x1024">1024×1024</option>
-              <option value="1792x1024">1792×1024</option>
-              <option value="1024x1792">1024×1792</option>
-            </Select>
-          </Field>
-        </div>
-        <Field label="Prompt">
-          <Input value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe the image" />
-        </Field>
-        <Button onClick={run} disabled={loading || !model}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          {loading ? "Generating…" : "Generate"}
-        </Button>
-        {error && <p className="text-xs text-[color:var(--color-danger)]">{error}</p>}
-        {result && (
-          <div className="mt-2">
-            <img src={result} alt="Generated" className="max-h-80 rounded-lg border border-[var(--border)]" />
+            </FormField>
           </div>
-        )}
-      </div>
-    </Card>
+          <FormField label="Prompt">
+            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="Describe the image" rows={4} className={textareaClass} />
+          </FormField>
+        </>
+      }
+      action={<RunButton onClick={submit} disabled={state.loading || !model} loading={state.loading} idle="Generate" busy="Generating…" />}
+    >
+      {state.result ? (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3">
+          <img src={state.result} alt="Generated image" className="max-h-[420px] max-w-full rounded-lg border border-line object-contain" />
+          <a href={state.result} download="image.png" className="inline-flex min-h-6 items-center gap-1.5 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            Download image
+          </a>
+        </div>
+      ) : (
+        <p className="text-[12.5px] text-fg-muted">The response didn't include an image.</p>
+      )}
+    </PlaygroundLayout>
   );
 }
 
-function TtsTestCard({ provider, models }: { provider: Provider; models: { id: string }[] }) {
+// ── Text-to-speech
+
+function TtsPlayground({ provider, models }: { provider: Provider; models: ModelOption[] }) {
   const [model, setModel] = useState(models[0]?.id ?? "");
   const [text, setText] = useState("Hello, this is a test of text to speech.");
   const [voice, setVoice] = useState("");
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [state, run] = useRunner<string>();
 
-  const run = async () => {
-    setLoading(true);
-    setError("");
-    setAudioUrl(null);
-    try {
-      const body: any = { model: `${provider.id}/${model || provider.id}`, input: text };
+  const submit = () =>
+    run(async () => {
+      const body: Record<string, string> = { model: `${provider.id}/${model || provider.id}`, input: text };
       if (voice) body.voice = voice;
       const resp = await fetch("/v1/audio/speech", {
         method: "POST",
@@ -571,120 +1157,134 @@ function TtsTestCard({ provider, models }: { provider: Provider; models: { id: s
         throw new Error(data.error?.message || `HTTP ${resp.status}`);
       }
       const blob = await resp.blob();
-      setAudioUrl(URL.createObjectURL(blob));
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return URL.createObjectURL(blob);
+    });
 
   return (
-    <Card>
-      <SectionHeader title="Test Text-to-Speech" description="Convert text to audio." icon={Play} />
-      <div className="space-y-3 px-6 pb-6">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Model">
-            <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={provider.id} />
-          </Field>
-          <Field label="Voice (optional)">
-            <Input value={voice} onChange={(e) => setVoice(e.target.value)} placeholder="e.g. alloy" />
-          </Field>
-        </div>
-        <Field label="Text">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            rows={3}
-            className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60"
-          />
-        </Field>
-        <Button onClick={run} disabled={loading || !text}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          {loading ? "Synthesizing…" : "Speak"}
-        </Button>
-        {error && <p className="text-xs text-[color:var(--color-danger)]">{error}</p>}
-        {audioUrl && (
-          <div className="mt-2 flex items-center gap-3">
-            <audio controls src={audioUrl} className="flex-1" />
-            <a href={audioUrl} download="speech.mp3" className="text-xs text-accent-500 hover:underline">Download</a>
+    <PlaygroundLayout
+      title="Text-to-speech"
+      icon={AudioLines}
+      idleHint="Synthesized audio plays here."
+      state={state}
+      form={
+        <>
+          <div className="grid gap-3.5 sm:grid-cols-2">
+            <FormField label="Model">
+              <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={provider.id} className="font-mono" />
+            </FormField>
+            <FormField label="Voice" optional>
+              <Input value={voice} onChange={(e) => setVoice(e.target.value)} placeholder="e.g. alloy" />
+            </FormField>
           </div>
-        )}
-      </div>
-    </Card>
+          <FormField label="Text">
+            <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} className={textareaClass} />
+          </FormField>
+        </>
+      }
+      action={<RunButton onClick={submit} disabled={state.loading || !text} loading={state.loading} idle="Speak" busy="Synthesizing…" />}
+    >
+      {state.result && (
+        <div className="flex flex-1 flex-col justify-center gap-3">
+          <audio controls src={state.result} className="w-full" aria-label="Synthesized speech" />
+          <a href={state.result} download="speech.mp3" className="inline-flex min-h-6 items-center gap-1.5 self-start rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+            <Download className="h-3.5 w-3.5" aria-hidden="true" />
+            Download audio
+          </a>
+        </div>
+      )}
+    </PlaygroundLayout>
   );
 }
 
-function SttTestCard({ provider, models }: { provider: Provider; models: { id: string }[] }) {
+// ── Speech-to-text
+
+function SttPlayground({ provider, models }: { provider: Provider; models: ModelOption[] }) {
   const [model, setModel] = useState(models[0]?.id ?? "");
   const [file, setFile] = useState<File | null>(null);
-  const [result, setResult] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  const [state, run] = useRunner<unknown>();
 
-  const run = async () => {
+  const submit = () => {
     if (!file) return;
-    setLoading(true);
-    setError("");
-    setResult(null);
-    try {
+    run(async () => {
       const form = new FormData();
       form.append("file", file);
       form.append("model", `${provider.id}/${model || provider.id}`);
       const resp = await fetch("/v1/audio/transcriptions", { method: "POST", body: form });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error?.message || JSON.stringify(data));
-      setResult(data);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
+      return data;
+    });
   };
 
+  const transcript = (state.result as { text?: unknown } | null)?.text;
+
   return (
-    <Card>
-      <SectionHeader title="Test Speech-to-Text" description="Transcribe audio files." icon={Play} />
-      <div className="space-y-3 px-6 pb-6">
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Model">
-            <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={provider.id} />
-          </Field>
-          <Field label="Audio file">
-            <input
-              type="file"
-              accept="audio/*"
-              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-              className="text-sm text-[var(--text-muted)] file:mr-2 file:rounded file:border-0 file:bg-[var(--bg-subtle)] file:px-2 file:py-1 file:text-xs"
-            />
-          </Field>
-        </div>
-        <Button onClick={run} disabled={loading || !file}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          {loading ? "Transcribing…" : "Transcribe"}
-        </Button>
-        {error && <p className="text-xs text-[color:var(--color-danger)]">{error}</p>}
-        {result && (
-          <pre className="max-h-48 overflow-auto rounded-lg bg-[var(--bg-subtle)] p-3 text-xs">
-            {JSON.stringify(result, null, 2)}
-          </pre>
+    <PlaygroundLayout
+      title="Speech-to-text"
+      icon={Mic}
+      idleHint="The transcript appears here."
+      state={state}
+      form={
+        <>
+          <FormField label="Model">
+            <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder={provider.id} className="font-mono" />
+          </FormField>
+          <div className="space-y-1.5">
+            <span id="stt-file-label" className="flex items-baseline justify-between text-[12.5px] font-medium text-fg">
+              Audio file
+              <span className="text-[12px] font-normal text-fg-faint">Required</span>
+            </span>
+            <label className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-dashed border-input bg-surface px-3 text-[13px] transition-colors hover:bg-hover focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500">
+              <FileAudio className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <span className={cn("min-w-0 flex-1 truncate", file ? "text-fg" : "text-fg-muted")} aria-hidden="true">
+                {file ? file.name : "Choose an audio file"}
+              </span>
+              {file && (
+                <span className="shrink-0 text-[12px] tabular-nums text-fg-muted" aria-hidden="true">
+                  {(file.size / 1024).toFixed(0)} KB
+                </span>
+              )}
+              <input
+                type="file"
+                accept="audio/*"
+                aria-labelledby="stt-file-label"
+                aria-describedby="stt-file-hint"
+                aria-required="true"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                className="sr-only"
+              />
+            </label>
+            <p id="stt-file-hint" className="text-[12px] leading-5 text-fg-muted">
+              mp3, wav, m4a, webm or any format the provider accepts.
+            </p>
+          </div>
+        </>
+      }
+      action={<RunButton onClick={submit} disabled={state.loading || !file} loading={state.loading} idle="Transcribe" busy="Transcribing…" />}
+    >
+      <div className="flex flex-1 flex-col gap-3">
+        {typeof transcript === "string" && (
+          <div>
+            <p className="mb-1.5 text-[12px] font-medium text-fg-muted">Transcript</p>
+            <p className="whitespace-pre-wrap rounded-lg border border-line bg-surface p-3 text-[13px] leading-6 text-fg">{transcript || "—"}</p>
+          </div>
         )}
+        <div className="flex flex-1 flex-col">
+          <JsonBlock value={state.result} title={typeof transcript === "string" ? "Raw response" : "Response"} />
+        </div>
       </div>
-    </Card>
+    </PlaygroundLayout>
   );
 }
 
-function SearchTestCard({ provider }: { provider: Provider }) {
-  const [query, setQuery] = useState("What is the weather today?");
-  const [result, setResult] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+// ── Web search
 
-  const run = async () => {
-    setLoading(true);
-    setError("");
-    setResult(null);
-    try {
+function SearchPlayground({ provider }: { provider: Provider }) {
+  const [query, setQuery] = useState("What is the weather today?");
+  const [state, run] = useRunner<unknown>();
+
+  const submit = () =>
+    run(async () => {
       const resp = await fetch("/v1/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -692,47 +1292,35 @@ function SearchTestCard({ provider }: { provider: Provider }) {
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error?.message || JSON.stringify(data));
-      setResult(data);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return data;
+    });
 
   return (
-    <Card>
-      <SectionHeader title="Test Web Search" description="Search the web." icon={Play} />
-      <div className="space-y-3 px-6 pb-6">
-        <Field label="Query">
+    <PlaygroundLayout
+      title="Web search"
+      icon={Search}
+      idleHint="Search results appear here as JSON."
+      state={state}
+      form={
+        <FormField label="Query">
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search query" />
-        </Field>
-        <Button onClick={run} disabled={loading || !query}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          {loading ? "Searching…" : "Search"}
-        </Button>
-        {error && <p className="text-xs text-[color:var(--color-danger)]">{error}</p>}
-        {result && (
-          <pre className="max-h-64 overflow-auto rounded-lg bg-[var(--bg-subtle)] p-3 text-xs">
-            {JSON.stringify(result, null, 2).slice(0, 3000)}
-          </pre>
-        )}
-      </div>
-    </Card>
+        </FormField>
+      }
+      action={<RunButton onClick={submit} disabled={state.loading || !query} loading={state.loading} idle="Search" busy="Searching…" />}
+    >
+      <JsonBlock value={state.result} limit={3000} />
+    </PlaygroundLayout>
   );
 }
 
-function FetchTestCard({ provider }: { provider: Provider }) {
-  const [url, setUrl] = useState("https://example.com");
-  const [result, setResult] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+// ── Web fetch
 
-  const run = async () => {
-    setLoading(true);
-    setError("");
-    setResult(null);
-    try {
+function FetchPlayground({ provider }: { provider: Provider }) {
+  const [url, setUrl] = useState("https://example.com");
+  const [state, run] = useRunner<unknown>();
+
+  const submit = () =>
+    run(async () => {
       const resp = await fetch("/v1/web/fetch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -740,46 +1328,23 @@ function FetchTestCard({ provider }: { provider: Provider }) {
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error?.message || JSON.stringify(data));
-      setResult(data);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+      return data;
+    });
 
   return (
-    <Card>
-      <SectionHeader title="Test Web Fetch" description="Fetch and extract web page content." icon={Play} />
-      <div className="space-y-3 px-6 pb-6">
-        <Field label="URL">
-          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com" />
-        </Field>
-        <Button onClick={run} disabled={loading || !url}>
-          {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          {loading ? "Fetching…" : "Fetch"}
-        </Button>
-        {error && <p className="text-xs text-[color:var(--color-danger)]">{error}</p>}
-        {result && (
-          <pre className="max-h-64 overflow-auto rounded-lg bg-[var(--bg-subtle)] p-3 text-xs">
-            {JSON.stringify(result, null, 2).slice(0, 3000)}
-          </pre>
-        )}
-      </div>
-    </Card>
-  );
-}
-
-function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-  return (
-    <Button variant="ghost" onClick={copy} className="px-2">
-      {copied ? <Check className="h-4 w-4 text-green-500 dark:text-green-400" /> : <Copy className="h-4 w-4" />}
-    </Button>
+    <PlaygroundLayout
+      title="Web fetch"
+      icon={Globe}
+      idleHint="Extracted page content appears here as JSON."
+      state={state}
+      form={
+        <FormField label="URL">
+          <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com" className="font-mono" />
+        </FormField>
+      }
+      action={<RunButton onClick={submit} disabled={state.loading || !url} loading={state.loading} idle="Fetch" busy="Fetching…" />}
+    >
+      <JsonBlock value={state.result} limit={3000} />
+    </PlaygroundLayout>
   );
 }

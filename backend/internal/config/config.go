@@ -35,6 +35,7 @@ type Config struct {
 	PortalSSO      PortalSSOConfig      `koanf:"portal_sso"`
 	Payment        PaymentConfig        `koanf:"payment"`
 	Turnstile      TurnstileConfig      `koanf:"turnstile"`
+	Audit          AuditConfig          `koanf:"audit"`
 }
 
 // DefaultMaxRequestBodyBytes is the default maximum size accepted for inbound
@@ -215,7 +216,10 @@ type MeterConfig struct {
 type LimitsConfig struct {
 	// Enabled turns request limiting on. When false, limiter is bypassed.
 	Enabled bool `koanf:"enabled"`
-	// Backend is "memory" for MVP. "redis" is reserved for distributed limits.
+	// Backend is "memory" (one instance) or "redis". The redis backend shares
+	// RPM/TPM windows, concurrency leases and budget spend counters across
+	// every replica, which is what an HA deployment behind a load balancer
+	// needs; memory limits are per process.
 	Backend string `koanf:"backend"`
 	// DefaultRPM/TPM/Concurrency apply to keys with no assigned plan.
 	// Zero means unlimited.
@@ -226,8 +230,92 @@ type LimitsConfig struct {
 	Window time.Duration `koanf:"window"`
 	// CleanupInterval controls stale bucket cleanup for memory backend.
 	CleanupInterval time.Duration `koanf:"cleanup_interval"`
-	// RedisURL is reserved for the future redis backend.
+	// ReconcileTokens settles each TPM reservation against the usage the
+	// upstream reported, refunding over-estimates and charging overruns.
+	ReconcileTokens bool `koanf:"reconcile_tokens"`
+	// OutputTokenFloor is the output budget reserved for a chat request that
+	// sets no max_tokens. Zero reserves nothing for output up front.
+	OutputTokenFloor int64 `koanf:"output_token_floor"`
+	// OutputReserveCap caps the output part of a TPM reservation, so clients
+	// that always send a huge max_tokens do not exhaust TPM up front. Zero
+	// means no cap.
+	OutputReserveCap int64 `koanf:"output_reserve_cap"`
+	// ConcurrencyRetryAfter is the Retry-After hint on a concurrency denial.
+	ConcurrencyRetryAfter time.Duration `koanf:"concurrency_retry_after"`
+	// AuthFailuresPerMinute refuses an IP's invalid API keys with 429 after
+	// this many per minute; valid keys and loopback clients are never refused.
+	// Applies even when per-key limits are off. Zero disables it.
+	AuthFailuresPerMinute int `koanf:"auth_failures_per_minute"`
+	// LoginAttemptsPerMinute caps dashboard login attempts per IP. Zero
+	// disables it.
+	LoginAttemptsPerMinute int `koanf:"login_attempts_per_minute"`
+	// RedisURL is the redis backend's server (redis:// or rediss://). Empty
+	// falls back to cache.redis_url.
 	RedisURL string `koanf:"redis_url"`
+	// RedisTimeout bounds each limiter round trip. A slower or failed call
+	// trips a short circuit breaker and the request is decided by FailMode.
+	RedisTimeout time.Duration `koanf:"redis_timeout"`
+	// FailMode decides requests while redis is unreachable: "local" enforces
+	// the same limits per process, "open" admits everything, "closed" rejects
+	// with a retryable rate-limit error.
+	FailMode string `koanf:"fail_mode"`
+	// LeaseTTL is how long a concurrency slot survives without a heartbeat,
+	// so slots held by a crashed replica free themselves.
+	LeaseTTL time.Duration `koanf:"lease_ttl"`
+	// BudgetCounterTTL is how long a shared budget spend counter lives before
+	// it is re-seeded from the usage table, which bounds drift from dropped
+	// increments.
+	BudgetCounterTTL time.Duration `koanf:"budget_counter_ttl"`
+}
+
+// AuditConfig controls the administrative audit trail: dashboard logins and
+// every configuration change, stored in audit_log and optionally exported as
+// OpenTelemetry log records.
+type AuditConfig struct {
+	// Enabled records audit events. Default true.
+	Enabled bool `koanf:"enabled"`
+	// RetentionDays drops audit rows older than N days. Zero keeps them.
+	RetentionDays int `koanf:"retention_days"`
+	// BufferSize bounds queued events. A full queue drops (and counts) events
+	// instead of blocking the admin request.
+	BufferSize int `koanf:"buffer_size"`
+	// OTLP exports each event as an OTLP log record.
+	OTLP AuditOTLPConfig `koanf:"otlp"`
+}
+
+// AuditOTLPConfig configures OTLP/HTTP (JSON) export of audit events. Unset
+// fields fall back to the standard OTEL_EXPORTER_OTLP_* environment variables.
+type AuditOTLPConfig struct {
+	// Endpoint is the collector base URL, e.g. http://otel-collector:4318.
+	// "/v1/logs" is appended unless the path already names it. Empty falls
+	// back to OTEL_EXPORTER_OTLP_LOGS_ENDPOINT, then OTEL_EXPORTER_OTLP_ENDPOINT;
+	// with neither set, export is off.
+	Endpoint string `koanf:"endpoint"`
+	// Headers are sent on every export, e.g. an Authorization or API key
+	// header for a hosted backend. Merged over OTEL_EXPORTER_OTLP_HEADERS.
+	Headers map[string]string `koanf:"headers"`
+	// Compression is "gzip" (default) or "none".
+	Compression string `koanf:"compression"`
+	// Timeout bounds one export request.
+	Timeout time.Duration `koanf:"timeout"`
+	// BatchSize is the maximum records per export request.
+	BatchSize int `koanf:"batch_size"`
+	// FlushInterval bounds how long a record waits before export.
+	FlushInterval time.Duration `koanf:"flush_interval"`
+	// MaxRetries retries a failed export (network error, 429, 5xx) with
+	// exponential backoff before the batch is dropped.
+	MaxRetries int `koanf:"max_retries"`
+	// ServiceName is the service.name resource attribute. Empty falls back to
+	// OTEL_SERVICE_NAME, then "keirouter".
+	ServiceName string `koanf:"service_name"`
+	// ResourceAttributes are extra resource attributes (deployment.environment,
+	// service.instance.id, ...). Merged over OTEL_RESOURCE_ATTRIBUTES.
+	ResourceAttributes map[string]string `koanf:"resource_attributes"`
+	// IncludeRequests also exports one record per gateway request (event
+	// keirouter.request): key, model, provider, tokens, cost, latency, status
+	// and guardrail outcome, never prompt or response content. Off by default
+	// because it scales with traffic.
+	IncludeRequests bool `koanf:"include_requests"`
 }
 
 // HealthConfig controls background account/model health probes.
@@ -304,8 +392,9 @@ type DataConfig struct {
 // Detectors run with their built-in native engines by default; populate the
 // sub-configs to enable an external engine on a per-detector basis.
 type GuardrailsConfig struct {
-	Toxicity ToxicityEngineConfig `koanf:"toxicity"`
-	PII      PIIEngineConfig      `koanf:"pii"`
+	Toxicity  ToxicityEngineConfig  `koanf:"toxicity"`
+	PII       PIIEngineConfig       `koanf:"pii"`
+	Injection InjectionEngineConfig `koanf:"injection"`
 	// AuditRetentionDays drops guardrail_logs older than N days via a
 	// background sweeper. Zero / negative disables retention sweeping (the
 	// table grows unbounded). 90 is a sensible operational default.
@@ -319,6 +408,20 @@ type PIIEngineConfig struct {
 	PresidioAnalyzerURL string        `koanf:"presidio_analyzer_url"`
 	PresidioTimeout     time.Duration `koanf:"presidio_timeout"`
 	PresidioLanguage    string        `koanf:"presidio_language"`
+}
+
+// InjectionEngineConfig configures the optional ML prompt-injection
+// classifier (Llama Prompt Guard 2 or a DeBERTa model) served over HTTP with
+// the Hugging Face text-classification contract — see compose.promptguard.yaml.
+// When ClassifierURL is empty, policies that enable the classifier layer
+// keep running the pattern layers only.
+type InjectionEngineConfig struct {
+	ClassifierURL     string        `koanf:"classifier_url"`
+	ClassifierTimeout time.Duration `koanf:"classifier_timeout"`
+	// ClassifierLabels lists the labels that mean "injection"; the default
+	// covers Prompt Guard 2 (LABEL_1) and the common DeBERTa models.
+	ClassifierLabels []string `koanf:"classifier_labels"`
+	ClassifierAPIKey string   `koanf:"classifier_api_key"`
 }
 
 // ToxicityEngineConfig configures the optional OpenAI Moderation engine. When
@@ -378,15 +481,40 @@ func Default() Config {
 			ShutdownFlushTimeout: 5 * time.Second,
 		},
 		Limits: LimitsConfig{
-			Enabled:         false,
-			Backend:         "memory",
-			Window:          time.Minute,
-			CleanupInterval: time.Minute,
+			Enabled:                false,
+			Backend:                "memory",
+			Window:                 time.Minute,
+			CleanupInterval:        time.Minute,
+			ReconcileTokens:        true,
+			ConcurrencyRetryAfter:  time.Second,
+			AuthFailuresPerMinute:  20,
+			LoginAttemptsPerMinute: 5,
+			RedisTimeout:           100 * time.Millisecond,
+			FailMode:               "local",
+			LeaseTTL:               time.Minute,
+			BudgetCounterTTL:       time.Minute,
+		},
+		Audit: AuditConfig{
+			Enabled:       true,
+			RetentionDays: 365,
+			BufferSize:    4096,
+			OTLP: AuditOTLPConfig{
+				Compression:   "gzip",
+				Timeout:       10 * time.Second,
+				BatchSize:     256,
+				FlushInterval: 2 * time.Second,
+				MaxRetries:    3,
+			},
 		},
 		Health: HealthConfig{
-			Enabled:              true,
-			Interval:             30 * time.Second,
-			Timeout:              5 * time.Second,
+			Enabled: true,
+			// Probes are real completions against every recently used model
+			// of every account; a two-minute cadence keeps the signal without
+			// spending a meaningful share of per-minute quotas on pings.
+			Interval: 2 * time.Minute,
+			// Reasoning models routinely need more than five seconds to answer
+			// even a one-word prompt; a short deadline flagged them unhealthy.
+			Timeout:              15 * time.Second,
 			MaxParallel:          8,
 			FailureThreshold:     2,
 			SuccessThreshold:     1,
@@ -520,11 +648,57 @@ func (c *Config) validate() error {
 	}
 	switch c.Limits.Backend {
 	case "", "memory":
-	default:
-		return fmt.Errorf("limits.backend must be memory, got %q", c.Limits.Backend)
-	}
-	if c.Limits.Backend == "" {
 		c.Limits.Backend = "memory"
+	case "redis":
+		if c.Limits.RedisURL == "" {
+			c.Limits.RedisURL = c.Cache.RedisURL
+		}
+		if c.Limits.RedisURL == "" {
+			return fmt.Errorf("limits.redis_url (or cache.redis_url) is required when limits.backend=redis")
+		}
+	default:
+		return fmt.Errorf("limits.backend must be memory or redis, got %q", c.Limits.Backend)
+	}
+	switch c.Limits.FailMode {
+	case "":
+		c.Limits.FailMode = "local"
+	case "local", "open", "closed":
+	default:
+		return fmt.Errorf("limits.fail_mode must be local, open or closed, got %q", c.Limits.FailMode)
+	}
+	if c.Limits.RedisTimeout <= 0 {
+		c.Limits.RedisTimeout = 100 * time.Millisecond
+	}
+	if c.Limits.LeaseTTL <= 0 {
+		c.Limits.LeaseTTL = time.Minute
+	}
+	if c.Limits.BudgetCounterTTL <= 0 {
+		c.Limits.BudgetCounterTTL = time.Minute
+	}
+	if c.Audit.RetentionDays < 0 {
+		return fmt.Errorf("audit.retention_days must not be negative")
+	}
+	if c.Audit.BufferSize <= 0 {
+		c.Audit.BufferSize = 4096
+	}
+	switch c.Audit.OTLP.Compression {
+	case "":
+		c.Audit.OTLP.Compression = "gzip"
+	case "gzip", "none":
+	default:
+		return fmt.Errorf("audit.otlp.compression must be gzip or none, got %q", c.Audit.OTLP.Compression)
+	}
+	if c.Audit.OTLP.Timeout <= 0 {
+		c.Audit.OTLP.Timeout = 10 * time.Second
+	}
+	if c.Audit.OTLP.BatchSize <= 0 {
+		c.Audit.OTLP.BatchSize = 256
+	}
+	if c.Audit.OTLP.FlushInterval <= 0 {
+		c.Audit.OTLP.FlushInterval = 2 * time.Second
+	}
+	if c.Audit.OTLP.MaxRetries < 0 {
+		c.Audit.OTLP.MaxRetries = 0
 	}
 	if c.Limits.DefaultRPM < 0 {
 		return fmt.Errorf("limits.default_rpm must not be negative")
@@ -540,6 +714,21 @@ func (c *Config) validate() error {
 	}
 	if c.Limits.CleanupInterval <= 0 {
 		c.Limits.CleanupInterval = time.Minute
+	}
+	if c.Limits.OutputTokenFloor < 0 {
+		return fmt.Errorf("limits.output_token_floor must not be negative")
+	}
+	if c.Limits.OutputReserveCap < 0 {
+		return fmt.Errorf("limits.output_reserve_cap must not be negative")
+	}
+	if c.Limits.ConcurrencyRetryAfter <= 0 {
+		c.Limits.ConcurrencyRetryAfter = time.Second
+	}
+	if c.Limits.AuthFailuresPerMinute < 0 {
+		return fmt.Errorf("limits.auth_failures_per_minute must not be negative")
+	}
+	if c.Limits.LoginAttemptsPerMinute < 0 {
+		return fmt.Errorf("limits.login_attempts_per_minute must not be negative")
 	}
 	if c.Health.Interval <= 0 {
 		c.Health.Interval = 30 * time.Second

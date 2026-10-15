@@ -224,10 +224,16 @@ func (r *GuardrailLogRepo) DeleteOlderThan(ctx context.Context, cutoff time.Time
 
 // ListFilter narrows audit log queries. Empty fields are ignored.
 type GuardrailLogFilter struct {
-	APIKeyID string
-	Detector string
-	Action   string
-	Limit    int
+	APIKeyID  string
+	Detector  string
+	Action    string
+	Direction string
+	Model     string
+	ChainID   string
+	RequestID string
+	// Since/Until bound created_at; zero values leave that side open.
+	Since, Until time.Time
+	Limit        int
 }
 
 // List returns recent audit log rows for a tenant matching the filter, newest
@@ -246,6 +252,30 @@ func (r *GuardrailLogRepo) List(ctx context.Context, tenantID string, f Guardrai
 	if f.Action != "" {
 		clauses = append(clauses, "action = ?")
 		args = append(args, f.Action)
+	}
+	if f.Direction != "" {
+		clauses = append(clauses, "direction = ?")
+		args = append(args, f.Direction)
+	}
+	if f.Model != "" {
+		clauses = append(clauses, "model = ?")
+		args = append(args, f.Model)
+	}
+	if f.ChainID != "" {
+		clauses = append(clauses, "chain_id = ?")
+		args = append(args, f.ChainID)
+	}
+	if f.RequestID != "" {
+		clauses = append(clauses, "request_id = ?")
+		args = append(args, f.RequestID)
+	}
+	if !f.Since.IsZero() {
+		clauses = append(clauses, "created_at >= ?")
+		args = append(args, formatTime(f.Since))
+	}
+	if !f.Until.IsZero() {
+		clauses = append(clauses, "created_at < ?")
+		args = append(args, formatTime(f.Until))
 	}
 	limit := f.Limit
 	if limit <= 0 || limit > 500 {

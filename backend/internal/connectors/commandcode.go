@@ -124,41 +124,10 @@ func (c *CommandCode) Stream(ctx context.Context, req *core.ChatRequest, creds c
 	}
 
 	out := make(chan core.StreamChunk, 16)
-	go func() {
-		defer close(out)
-		defer resp.Body.Close()
-
-		ttft := newTTFTTracker(cfg)
-
-		scanner := sseScanner(resp.Body)
-		for scanner.Scan() {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			// NDJSON: pass the raw line straight to the codec (it tolerates an
-			// optional "data:" prefix).
-			chunks, perr := c.codec.ParseStreamLine(scanner.Bytes(), req.Model)
-			if perr != nil {
-				continue
-			}
-			for _, ch := range chunks {
-				ttft.maybeReport(ch)
-				select {
-				case out <- ch:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			out <- core.StreamChunk{
-				Type: core.ChunkError,
-				Err:  &core.ProviderError{Kind: core.ErrTimeout, Provider: c.id, Model: req.Model, Message: err.Error(), Cause: err},
-			}
-		}
-	}()
+	// NDJSON: pass each raw line straight to the codec (it tolerates an
+	// optional "data:" prefix).
+	go streamSSE(ctx, c.id, req.Model, resp.Body, out, cfg, ndjsonLines, func(payload []byte) ([]core.StreamChunk, error) {
+		return c.codec.ParseStreamLine(payload, req.Model)
+	})
 	return out, nil
 }

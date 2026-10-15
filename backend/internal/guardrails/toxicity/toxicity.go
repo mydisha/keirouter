@@ -1,6 +1,6 @@
 // Package toxicity is KeiRouter's toxicity detector. It supports two engines
 // selected per-policy via ToxicityConfig.Engine: "native" (default, offline
-// keyword catalog covering id + en) and "openai" (OpenAI Moderation API).
+// weighted lexicon covering id + en) and "openai" (OpenAI Moderation API).
 // Both implement the same internal engine contract and produce findings
 // with category-named entities (TOXICITY:hate, TOXICITY:harassment, ...).
 package toxicity
@@ -40,19 +40,25 @@ func New(cfg Config) *Detector {
 // Name identifies this detector in policy config and audit logs.
 func (Detector) Name() string { return "toxicity" }
 
-// Inbound scans the prompt and returns a decision when the configured
-// threshold is exceeded for any allowed category.
+// Capabilities reports whether the OpenAI Moderation engine is wired.
+func (d *Detector) Capabilities() map[string]bool {
+	return map[string]bool{"openai": d.openai != nil}
+}
+
+// Inbound scans the user messages and returns a decision when the configured
+// threshold is exceeded for any allowed category. The operator's system
+// prompt is not scored (it may legitimately quote words it forbids).
 func (d *Detector) Inbound(ctx context.Context, in *guardrails.InboundRequest, p guardrails.Policy) (*guardrails.Decision, error) {
-	return d.scan(ctx, in.FlatText, p, guardrails.DirectionInbound)
+	return d.scan(ctx, in.UserText(), p)
 }
 
 // Outbound scans the LLM response. Same routing as inbound — toxicity reads
 // the same policy config for both directions.
 func (d *Detector) Outbound(ctx context.Context, out *guardrails.OutboundResponse, p guardrails.Policy) (*guardrails.Decision, error) {
-	return d.scan(ctx, out.Text, p, guardrails.DirectionOutbound)
+	return d.scan(ctx, out.Text, p)
 }
 
-func (d *Detector) scan(ctx context.Context, text string, p guardrails.Policy, dir guardrails.Direction) (*guardrails.Decision, error) {
+func (d *Detector) scan(ctx context.Context, text string, p guardrails.Policy) (*guardrails.Decision, error) {
 	cfg := p.Toxicity
 	if cfg == nil || !cfg.Enabled || strings.TrimSpace(text) == "" {
 		return nil, nil
@@ -62,13 +68,16 @@ func (d *Detector) scan(ctx context.Context, text string, p guardrails.Policy, d
 	allowed := allowedCategories(cfg.Categories)
 	threshold := cfg.Threshold
 	if threshold <= 0 {
-		threshold = 70 // 0–100 scale; matches the dashboard default slider value.
+		threshold = guardrails.DefaultToxicityThreshold
 	}
 
 	scores, err := eng.Score(ctx, text, allowed)
+	if err != nil && eng != engine(d.native) {
+		// A remote engine failure (OpenAI 5xx, timeout) falls back to the
+		// offline lexicon so a provider hiccup never switches the check off.
+		scores, err = d.native.Score(ctx, text, allowed)
+	}
 	if err != nil {
-		// Engine errors (e.g. OpenAI 5xx) must not fail-closed and block real
-		// traffic. Log via the engine's caller; here we just allow.
 		return nil, err
 	}
 	hits := filterByThreshold(scores, threshold)
@@ -78,16 +87,14 @@ func (d *Detector) scan(ctx context.Context, text string, p guardrails.Policy, d
 
 	action := cfg.Action
 	if action == "" {
-		action = guardrails.ActionWarn
+		action = guardrails.DefaultToxicityAction
 	}
-	dec := &guardrails.Decision{
+	return &guardrails.Decision{
 		Action:   action,
 		Severity: severityFor(hits),
 		Reason:   reasonFor(hits),
 		Findings: toFindings(hits),
-	}
-	_ = dir // direction is set by the engine wrapper; tracked here for future use.
-	return dec, nil
+	}, nil
 }
 
 func (d *Detector) pickEngine(name string) engine {
@@ -108,9 +115,25 @@ func allowedCategories(cats []string) map[string]bool {
 	}
 	out := make(map[string]bool, len(cats))
 	for _, c := range cats {
-		out[strings.ToLower(strings.TrimSpace(c))] = true
+		out[canonicalCategory(c)] = true
 	}
 	return out
+}
+
+// canonicalCategory folds the dashboard and API spellings onto the internal
+// category names.
+func canonicalCategory(c string) string {
+	c = strings.ToLower(strings.TrimSpace(c))
+	c = strings.NewReplacer("-", "_", " ", "_", "/", "_").Replace(c)
+	switch c {
+	case "hate_speech", "hateful":
+		return "hate"
+	case "selfharm", "self_harm_intent", "suicide":
+		return "self_harm"
+	case "sexual_content", "nsfw":
+		return "sexual"
+	}
+	return c
 }
 
 // filterByThreshold drops scores below threshold. The result is sorted by
@@ -151,15 +174,35 @@ func reasonFor(hits []CategoryScore) string {
 	return "toxicity: " + strings.Join(parts, ", ")
 }
 
+// maxFindings caps the findings per decision.
+const maxFindings = 20
+
+// toFindings reports one finding per matched term so the audit log shows
+// what fired and where; engines without spans report one per category.
 func toFindings(hits []CategoryScore) []guardrails.Finding {
 	out := make([]guardrails.Finding, 0, len(hits))
 	for _, h := range hits {
-		out = append(out, guardrails.Finding{
-			Entity: "TOXICITY:" + h.Category,
-			Score:  float64(h.Score) / 100.0,
-			Start:  -1,
-			End:    -1,
-		})
+		if len(h.Hits) == 0 {
+			out = append(out, guardrails.Finding{
+				Entity: "TOXICITY:" + h.Category,
+				Score:  float64(h.Score) / 100.0,
+				Start:  -1,
+				End:    -1,
+			})
+			continue
+		}
+		for _, m := range h.Hits {
+			if len(out) >= maxFindings {
+				return out
+			}
+			out = append(out, guardrails.Finding{
+				Entity:   "TOXICITY:" + h.Category,
+				Score:    float64(m.Weight) / 100.0,
+				Start:    m.Start,
+				End:      m.End,
+				Original: truncate(m.Text, 64),
+			})
+		}
 	}
 	return out
 }
@@ -170,6 +213,17 @@ func toFindings(hits []CategoryScore) []guardrails.Finding {
 type CategoryScore struct {
 	Category string
 	Score    int
+	// Hits lists the matched terms when the engine can locate them.
+	Hits []Hit
+}
+
+// Hit is one matched lexicon term.
+type Hit struct {
+	Term   string
+	Weight int
+	Start  int
+	End    int
+	Text   string
 }
 
 // engine is the common contract for both native and OpenAI scoring backends.

@@ -102,13 +102,13 @@ func TestBias_InboundIsNoop(t *testing.T) {
 	}
 }
 
-func TestBias_DefaultActionIsWarn(t *testing.T) {
+func TestBias_DefaultActionIsLogOnly(t *testing.T) {
 	det := New()
 	policy := enabledPolicy(40)
 	policy.Bias.Action = ""
 	dec, _ := det.Outbound(context.Background(), outbound("Women are naturally better at caregiving."), policy)
-	if dec == nil || dec.Action != guardrails.ActionWarn {
-		t.Errorf("expected default ActionWarn, got %+v", dec)
+	if dec == nil || dec.Action != guardrails.ActionLogOnly {
+		t.Errorf("expected default ActionLogOnly, got %+v", dec)
 	}
 }
 

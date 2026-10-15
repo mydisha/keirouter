@@ -5,7 +5,7 @@ Thanks for your interest in contributing! This document covers everything you ne
 ## Prerequisites
 
 - **Go 1.24+**
-- **Node.js 20+** and npm
+- **Node.js 20.19+** and npm
 - **Git**
 
 ## Development setup
