@@ -46,6 +46,7 @@ const PaymentsPage = lazy(routeLoaders["/payments"]);
 const PublicLanding = lazy(() => import("./pages/PublicLanding"));
 const PublicBansos = lazy(() => import("./pages/PublicBansos"));
 const PublicModels = lazy(() => import("./pages/PublicModels"));
+const PublicTerms = lazy(() => import("./pages/PublicTerms"));
 
 function PageFallback() {
   return (
@@ -63,6 +64,7 @@ export function App() {
         <Route path="/" element={<PublicLanding />} />
         <Route path="/bansos" element={<PublicBansos />} />
         <Route path="/model" element={<PublicModels />} />
+        <Route path="/ketentuan" element={<PublicTerms />} />
         <Route path="portal" element={
           <PortalBrandingProvider>
             <PortalRoot />
