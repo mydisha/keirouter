@@ -11,7 +11,7 @@ import {
 } from "../../lib/api";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, EmptyState, ErrorBanner, Field, Input, LoadingRegion, Select, Skeleton, Toggle } from "../../components/ui";
-import { QK, Panel, REFETCH_MS, SETTINGS_ANCHOR, errorText, toDateInput, todayISO } from "./shared";
+import { QK, Panel, REFETCH_MS, SETTINGS_ANCHOR, dateInputToRFC3339, errorText, toDateInput, todayISO } from "./shared";
 
 const STATUS_LABEL: Record<UpstreamAccountStatus, string> = {
   active: "Aktif",
@@ -100,7 +100,7 @@ function AccountForm({
   const changes: UpstreamAccountInput = {};
   if (status !== account.status) changes.status = status;
   if (!openingError && openingNum !== account.opening_balance_usd) changes.opening_balance_usd = openingNum;
-  if (!openingAtError && openingAt !== toDateInput(account.opening_at)) changes.opening_at = openingAt;
+  if (!openingAtError && openingAt !== toDateInput(account.opening_at)) changes.opening_at = dateInputToRFC3339(openingAt);
   if (!thresholdError && thresholdNum !== account.low_balance_usd) changes.low_balance_usd = thresholdNum;
   const sameProviders = mapped.length === account.providers.length && mapped.every((p) => account.providers.includes(p));
   if (!sameProviders) changes.providers = mapped;

@@ -57,6 +57,19 @@ export function toDateInput(value: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+/**
+ * YYYY-MM-DD from a date input to an RFC3339 instant in the browser's timezone.
+ * A bare date would be read as midnight in the server's zone, which can land in
+ * the future for operators ahead of it. Today sends the current time so it is
+ * never in the future; earlier dates send local midnight. "" stays "".
+ */
+export function dateInputToRFC3339(value: string): string {
+  if (!value) return "";
+  if (value === todayISO()) return new Date().toISOString();
+  const [y, m, d] = value.split("-").map(Number);
+  return new Date(y, m - 1, d).toISOString();
+}
+
 export function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }

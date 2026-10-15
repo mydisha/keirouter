@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { api, type FinanceReport, type UpstreamAccountBalance } from "../../lib/api";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, EmptyState, ErrorBanner, Field, Input, LoadingRegion, Modal, ModalFooter, Skeleton } from "../../components/ui";
-import { QK, Panel, SETTINGS_ANCHOR, count, errorText, todayISO, usd } from "./shared";
+import { QK, Panel, SETTINGS_ANCHOR, count, dateInputToRFC3339, errorText, todayISO, usd } from "./shared";
 
 export function UpstreamAccounts({
   report,
@@ -170,7 +170,7 @@ function TopupModal({ account, onClose }: { account: UpstreamAccountBalance; onC
   const valid = !amountError && !dateError && !noteError;
 
   const create = useMutation({
-    mutationFn: () => api.createUpstreamTopup(account.id, { amount_usd: amountNum, topup_at: date || undefined, note: note.trim() || undefined }),
+    mutationFn: () => api.createUpstreamTopup(account.id, { amount_usd: amountNum, topup_at: dateInputToRFC3339(date) || undefined, note: note.trim() || undefined }),
     onSuccess: () => {
       toast.success("Topup dicatat", `${usd(amountNum)} ditambahkan ke saldo ${account.name}.`);
       qc.invalidateQueries({ queryKey: QK.finance });
