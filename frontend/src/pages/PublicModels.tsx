@@ -14,6 +14,9 @@ export default function PublicModels() {
     queryKey: ["public-models"],
     queryFn: fetchPublicModels,
     staleTime: 60_000,
+    // Prices follow the market sync; the server caches this response for
+    // 12s, so a 15s poll picks up each change without hitting the DB per tab.
+    refetchInterval: 15_000,
     retry: false,
   });
   const modelList = models.data ?? [];

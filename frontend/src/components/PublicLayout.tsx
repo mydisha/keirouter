@@ -20,9 +20,10 @@ function storedTheme(): Theme {
     const saved = localStorage.getItem(THEME_STORAGE_KEY);
     if (saved === "dark") return "dark";
     if (saved === "light") return "light";
-    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    // Public pages open in dark mode until the visitor picks a theme.
+    return "dark";
   } catch {
-    return "light";
+    return "dark";
   }
 }
 

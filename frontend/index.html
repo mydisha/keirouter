@@ -11,7 +11,9 @@
     <script>
       try {
         var t = localStorage.getItem("keirouter-theme");
-        if (t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches))
+        // Public pages default to dark unless light was chosen (PublicLayout).
+        var pub = /^\/(bansos|model|ketentuan)?\/?$/.test(location.pathname);
+        if (t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches) || (pub && t !== "light"))
           document.documentElement.classList.add("dark");
       } catch (e) {}
     </script>

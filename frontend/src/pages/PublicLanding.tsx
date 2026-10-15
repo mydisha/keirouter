@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { fetchPublicOverview, fetchPublicModels } from "../lib/publicApi";
 import { PublicLayout, TELEGRAM_URL } from "../components/PublicLayout";
-import { ModelBrowser, fmtCount, fmtShort } from "../components/ModelCatalog";
+import { ModelCard, fmtCount } from "../components/ModelCatalog";
 
 const FOCUS = "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]";
 
@@ -65,7 +65,7 @@ function Metric({ icon: Icon, label, value, hint }: { icon: LucideIcon; label: s
         <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
         {label}
       </div>
-      <p className="mt-2 font-mono text-[28px] font-semibold leading-none tracking-[-0.5px] tabular-nums text-[var(--ink)] sm:text-[32px]">
+      <p className="mt-2 font-mono text-[26px] font-semibold leading-none tracking-[-0.5px] tabular-nums text-[var(--ink)] [overflow-wrap:anywhere] sm:text-[22px] lg:text-[30px]">
         {value}
       </p>
       <p className="mt-2 text-[12px] text-[var(--muted)]">{hint}</p>
@@ -126,7 +126,7 @@ function QuickStart({ model }: { model: string }) {
               {copied === "curl" ? "Tersalin" : "Salin"}
             </button>
           </div>
-          <pre className="mt-1.5 overflow-x-auto rounded-md bg-black/30 p-3 font-mono text-[12px] leading-relaxed text-[var(--terminal-ink)]">
+          <pre className="mt-1.5 whitespace-pre-wrap rounded-md bg-black/30 p-3 font-mono text-[12px] leading-relaxed text-[var(--terminal-ink)] [overflow-wrap:anywhere]">
             <code>{snippet}</code>
           </pre>
         </div>
@@ -136,16 +136,16 @@ function QuickStart({ model }: { model: string }) {
 }
 
 const STEPS: { icon: LucideIcon; title: string; body: string }[] = [
-  { icon: LogIn, title: "Masuk ke portal", body: "Login dengan akun Google, API key pribadimu langsung disiapkan." },
-  { icon: Wallet, title: "Isi saldo", body: "Tambah saldo dari portal. Saldo hanya terpotong sesuai token yang benar-benar dipakai." },
-  { icon: Plug, title: "Pasang di tools favorit", body: "Pakai base URL dan API key di Claude Code, Cursor, Cline, SDK OpenAI, atau aplikasi apa pun." },
+  { icon: LogIn, title: "Login dengan Google", body: "Masuk ke portal pakai akun Google. API key-mu langsung dibuatkan di sana." },
+  { icon: Wallet, title: "Isi saldo lewat QRIS", body: "Mulai dari Rp10.000. Saldo berkurang sebanyak token yang kamu pakai dan tidak hangus." },
+  { icon: Plug, title: "Pasang di tools-mu", body: "Masukkan base URL dan API key di Claude Code, Cursor, Cline, SDK OpenAI, atau aplikasi lain yang memakai format OpenAI." },
 ];
 
 const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
-  { icon: Receipt, title: "Bayar per token", body: "Tanpa langganan dan tanpa biaya bulanan. Harga per 1 juta token tertera jelas untuk tiap model." },
-  { icon: KeyRound, title: "Satu API key", body: "Format OpenAI dan Anthropic didukung, jadi satu key cukup untuk banyak model." },
-  { icon: Gauge, title: "Pantau real-time", body: "Pemakaian, sisa saldo, dan riwayat request bisa dicek kapan saja dari portal." },
-  { icon: ShieldCheck, title: "Login aman", body: "Portal memakai Google Sign-In; key kamu terikat ke akunmu sendiri." },
+  { icon: Receipt, title: "Bayar per token", body: "Tidak ada biaya bulanan. Harga tiap model per 1 juta token tertulis di katalog, jadi biaya bisa dihitung sebelum dipakai." },
+  { icon: KeyRound, title: "Satu key, banyak model", body: "Endpoint format OpenAI dan Anthropic sama-sama didukung. Mau ganti model, cukup ubah nama model di request." },
+  { icon: Gauge, title: "Pemakaian terlihat jelas", body: "Sisa saldo, token yang terpakai, dan riwayat request bisa kamu cek sendiri di portal." },
+  { icon: ShieldCheck, title: "Key terikat ke akunmu", body: "Portal memakai Google Sign-In. Kalau key bocor, buat key baru dari portal." },
 ];
 
 export default function PublicLanding() {
@@ -160,6 +160,9 @@ export default function PublicLanding() {
     queryKey: ["public-models"],
     queryFn: fetchPublicModels,
     staleTime: 60_000,
+    // Prices follow the market sync; the server caches this response for
+    // 12s, so a 15s poll picks up each change without hitting the DB per tab.
+    refetchInterval: 15_000,
     retry: false,
   });
 
@@ -168,6 +171,9 @@ export default function PublicLanding() {
   const requestsCount = useCountUp(overviewData?.total_requests ?? 0);
   const tokensCount = useCountUp(overviewData?.total_tokens ?? 0);
   const available = modelList.filter((m) => !m.sold_out).length;
+  // Rows arrive sorted by request volume; the landing previews the top three
+  // routable models and sends the rest to the full catalog.
+  const topModels = modelList.filter((m) => !m.sold_out).slice(0, 3);
   const sampleModel = modelList.find((m) => !m.sold_out)?.model_id ?? "nama-model";
 
   // The portal branding provider rewrites document.title when /portal mounts;
@@ -185,23 +191,23 @@ export default function PublicLanding() {
           <div className="text-center lg:text-left">
             <span className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--paper)] px-3 py-1 text-[12px] text-[var(--muted)]">
               <span className="landing-live-dot h-1.5 w-1.5 rounded-full bg-[var(--ok)]" aria-hidden="true" />
-              {fmtCount(available)} model aktif sekarang
+              {fmtCount(available)} model siap dipakai
             </span>
             <h1 className="mt-5 text-[38px] font-semibold leading-[1.05] tracking-[-1.4px] text-[var(--ink)] sm:text-[52px] lg:text-[58px]">
-              Akses AI frontier,
+              Satu API key,
               <br />
-              <span className="text-[var(--green)]">bayar sesuai pakai.</span>
+              <span className="text-[var(--green)]">bayar per token.</span>
             </h1>
             <p className="mx-auto mt-5 max-w-xl text-[16px] leading-relaxed text-[var(--muted)] sm:text-[17px] lg:mx-0">
-              Satu API key untuk model-model terbaik. Kompatibel dengan format OpenAI, tanpa langganan, saldo terpotong per
-              token.
+              Aplikasi yang sudah memakai format OpenAI atau Anthropic tinggal ganti base URL dan API key. Tidak ada
+              langganan bulanan; saldo hanya berkurang sesuai token yang kamu pakai.
             </p>
             <div className="mt-7 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
               <a
                 href="/portal"
                 className={`inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--action)] px-5 text-[14px] font-medium text-[var(--action-fg)] no-underline transition-opacity hover:opacity-90 sm:w-auto ${FOCUS}`}
               >
-                Mulai sekarang
+                Buat API key
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </a>
               <a
@@ -221,19 +227,19 @@ export default function PublicLanding() {
       <section aria-label="Statistik layanan" className="mt-6">
         <div className="mb-3 flex items-center gap-2 text-[12px] text-[var(--muted)]">
           <span className="landing-live-dot h-1.5 w-1.5 rounded-full bg-[var(--ok)]" aria-hidden="true" />
-          Data langsung, diperbarui tiap 5 detik
+          Angka langsung dari gateway, diperbarui otomatis
         </div>
         <div className="grid gap-px overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--line)] sm:grid-cols-3">
-          <Metric icon={Activity} label="Total request" value={fmtShort(Math.round(requestsCount))} hint="Sepanjang waktu" />
-          <Metric icon={Coins} label="Token diproses" value={fmtShort(Math.round(tokensCount))} hint={`${fmtCount(Math.round(tokensCount))} token`} />
-          <Metric icon={Boxes} label="Model tersedia" value={fmtCount(overviewData?.model_count ?? 0)} hint="Siap dipanggil lewat satu API" />
+          <Metric icon={Activity} label="Total request" value={fmtCount(Math.round(requestsCount))} hint="Sepanjang waktu" />
+          <Metric icon={Coins} label="Token diproses" value={fmtCount(Math.round(tokensCount))} hint="Sepanjang waktu" />
+          <Metric icon={Boxes} label="Model tersedia" value={fmtCount(overviewData?.model_count ?? 0)} hint="Semua bisa dipanggil dengan key yang sama" />
         </div>
       </section>
 
       {/* How it works */}
       <section className="mt-20">
-        <SectionHeading eyebrow="Cara kerja" title="Mulai dalam tiga langkah">
-          Dari daftar sampai request pertama hanya butuh beberapa menit.
+        <SectionHeading eyebrow="Cara kerja" title="Tiga langkah sampai request pertama">
+          Tidak perlu kartu kredit. Saldo diisi lewat QRIS dari aplikasi bank atau e-wallet.
         </SectionHeading>
         <ol className="mt-8 grid gap-4 md:grid-cols-3">
           {STEPS.map((step, i) => (
@@ -253,7 +259,7 @@ export default function PublicLanding() {
 
       {/* Features */}
       <section className="mt-20">
-        <SectionHeading eyebrow="Kenapa Tokenizer" title="Dibuat untuk dipakai setiap hari" />
+        <SectionHeading eyebrow="Kenapa Tokenizer" title="Tanpa langganan, tanpa tagihan kejutan" />
         <div className="mt-8 grid gap-px overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--line)] sm:grid-cols-2 lg:grid-cols-4">
           {FEATURES.map((f) => (
             <div key={f.title} className="bg-[var(--paper)] p-5">
@@ -268,15 +274,32 @@ export default function PublicLanding() {
       {/* Models */}
       <section id="models" className="mt-20 scroll-mt-20">
         <div className="flex flex-wrap items-end justify-between gap-4">
-          <SectionHeading eyebrow="Model & harga" title="Pilih model, lihat harganya">
-            Diurutkan berdasarkan popularitas. Semua harga dalam USD per 1 juta token.
+          <SectionHeading eyebrow="Model & harga" title="Model yang paling sering dipakai">
+            Harga dalam USD per 1 juta token. Daftar lengkap ada di katalog.
           </SectionHeading>
-          <a href="/model" className={`inline-flex items-center gap-1 rounded-md text-[13px] font-medium text-[var(--green)] no-underline hover:underline ${FOCUS}`}>
-            Halaman katalog lengkap
-            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+        </div>
+        {models.isLoading ? (
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Memuat model">
+            {Array.from({ length: 3 }, (_, i) => (
+              <div key={i} className="h-[232px] animate-pulse rounded-xl border border-[var(--line)] bg-[var(--paper)]" />
+            ))}
+          </div>
+        ) : topModels.length === 0 ? (
+          <p className="mt-6 rounded-xl border border-dashed border-[var(--line)] p-8 text-center text-sm text-[var(--muted)]">Belum ada model tersedia.</p>
+        ) : (
+          <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {topModels.map((m) => <ModelCard key={m.model_id} model={m} />)}
+          </div>
+        )}
+        <div className="mt-6 flex justify-center">
+          <a
+            href="/model"
+            className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--paper)] px-5 text-[14px] font-medium text-[var(--ink)] no-underline transition-colors hover:border-[var(--line-strong)] ${FOCUS}`}
+          >
+            Lihat semua {fmtCount(modelList.length)} model
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </a>
         </div>
-        <ModelBrowser models={modelList} loading={models.isLoading} />
       </section>
 
       {/* CTA */}
@@ -285,10 +308,10 @@ export default function PublicLanding() {
           <div className="landing-hero-bg pointer-events-none absolute inset-0 opacity-70" aria-hidden="true" />
           <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div className="max-w-xl">
-              <h2 className="text-[24px] font-semibold tracking-[-0.5px] text-[var(--ink)] sm:text-[28px]">Siap mencoba?</h2>
+              <h2 className="text-[24px] font-semibold tracking-[-0.5px] text-[var(--ink)] sm:text-[28px]">Coba mulai dari Rp10.000</h2>
               <p className="mt-2 text-[15px] leading-relaxed text-[var(--muted)]">
-                Isi saldo, cek sisa saldo, dan pantau pemakaian langsung dari portal. Ada pertanyaan? Tim kami siap
-                membantu di Telegram.
+                Login dengan Google, isi saldo lewat QRIS, lalu pakai API key-mu. Kalau ada kendala, tanya langsung di
+                grup Telegram.
               </p>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row">
@@ -297,7 +320,7 @@ export default function PublicLanding() {
                 className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--action)] px-5 text-[14px] font-medium text-[var(--action-fg)] no-underline transition-opacity hover:opacity-90 ${FOCUS}`}
               >
                 <Wallet className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
-                Buka portal
+                Masuk ke portal
               </a>
               <a
                 href={TELEGRAM_URL}
