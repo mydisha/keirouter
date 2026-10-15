@@ -1,167 +1,66 @@
 import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CreditCard, Check } from "lucide-react";
-import { api, type PaymentOrderAdmin } from "../lib/api";
-import { formatUSD } from "../lib/format";
+import { useQuery } from "@tanstack/react-query";
+import { api, type FinanceRange } from "../lib/api";
 import { PageHeader } from "../components/Layout";
-import { useToast } from "../components/Toast";
-import { Card, Button, Badge, Spinner, ErrorBanner, EmptyState, Modal } from "../components/ui";
+import { SegmentedControl } from "../components/ui";
+import { FinanceOverview, RANGE_LABEL } from "./payments/FinanceOverview";
+import { UpstreamAccounts } from "./payments/UpstreamAccounts";
+import { TopupHistory } from "./payments/TopupHistory";
+import { FinanceSettings } from "./payments/FinanceSettings";
+import { PortalOrders } from "./payments/PortalOrders";
+import { QK, REFETCH_MS, errorText } from "./payments/shared";
 
-function formatIDR(n: number): string {
-  return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
+const RANGES = (Object.keys(RANGE_LABEL) as FinanceRange[]).map((value) => ({ value, label: RANGE_LABEL[value] }));
+const RANGE_STORAGE_KEY = "kr.payments.range";
+
+function initialRange(): FinanceRange {
+  try {
+    const saved = localStorage.getItem(RANGE_STORAGE_KEY);
+    if (RANGES.some((r) => r.value === saved)) return saved as FinanceRange;
+  } catch {
+    // storage unavailable: use the default
+  }
+  return "30d";
 }
 
-const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> = {
-  completed: "success",
-  manual: "success",
-  pending: "warning",
-  failed: "danger",
-  expired: "neutral",
-};
-
 export function PaymentsPage() {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [approving, setApproving] = useState<PaymentOrderAdmin | null>(null);
-  const [reason, setReason] = useState("");
+  const [range, setRangeState] = useState<FinanceRange>(initialRange);
+  const setRange = (r: FinanceRange) => {
+    setRangeState(r);
+    try {
+      localStorage.setItem(RANGE_STORAGE_KEY, r);
+    } catch {
+      // ignore
+    }
+  };
 
-  const ordersQuery = useQuery({ queryKey: ["payment-orders"], queryFn: api.paymentOrders });
-  const summaryQuery = useQuery({ queryKey: ["payment-summary"], queryFn: api.paymentSummary });
-  const economicsQuery = useQuery({ queryKey: ["payment-economics"], queryFn: api.paymentEconomics });
-
-  const approve = useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason: string }) => api.approvePaymentOrder(id, reason),
-    onSuccess: () => {
-      toast.success("Payment approved", "Credit was applied to the user's key.");
-      qc.invalidateQueries({ queryKey: ["payment-orders"] });
-      qc.invalidateQueries({ queryKey: ["payment-summary"] });
-      setApproving(null);
-      setReason("");
-    },
-    onError: (e: Error) => toast.error("Approval failed", e.message),
+  const finance = useQuery({
+    queryKey: [...QK.finance, range],
+    queryFn: () => api.financeReport(range),
+    refetchInterval: REFETCH_MS,
   });
+  const accounts = useQuery({ queryKey: QK.accounts, queryFn: api.upstreamAccounts, refetchInterval: REFETCH_MS });
 
-  const orders = ordersQuery.data?.orders ?? [];
-  const summary = summaryQuery.data;
-  const econ = economicsQuery.data;
+  const financeError = finance.isError ? errorText(finance.error) : null;
+  const accountsError = accounts.isError ? errorText(accounts.error) : null;
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Payments" description="Payment-gateway top-ups: revenue, history, and manual approval." />
+      <PageHeader
+        title="Payments"
+        description="Credit masuk, modal, keuntungan, dan saldo provider upstream. Diperbarui tiap 15 detik."
+        action={<SegmentedControl value={range} onChange={setRange} options={RANGES} label="Rentang waktu" />}
+      />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <Card className="p-5">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Total received</p>
-          <p className="mt-1 text-2xl font-display font-semibold tabular-nums">{summary ? formatIDR(summary.total_idr) : "—"}</p>
-        </Card>
-        <Card className="p-5">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Credit granted</p>
-          <p className="mt-1 text-2xl font-display font-semibold tabular-nums">{summary ? formatUSD(summary.total_credit_usd) : "—"}</p>
-        </Card>
-        <Card className="p-5">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Pending</p>
-          <p className="mt-1 text-2xl font-display font-semibold tabular-nums">{summary?.count_by_status?.pending ?? 0}</p>
-        </Card>
-      </div>
+      <FinanceOverview overview={finance.data?.overview} range={range} loading={finance.isLoading} error={financeError} />
 
-      <div>
-        <h2 className="text-sm font-semibold text-[var(--text)]">Usage economics</h2>
-        <p className="mt-0.5 text-[12px] text-[var(--text-muted)]">
-          Upstream is your pre-markup cost to providers; profit is what users were charged minus that cost.
-        </p>
-        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card className="p-5">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Charged (billed)</p>
-            <p className="mt-1 text-2xl font-display font-semibold tabular-nums">{econ ? formatUSD(econ.billed_usd) : "—"}</p>
-          </Card>
-          <Card className="p-5">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Upstream cost (pre-markup)</p>
-            <p className="mt-1 text-2xl font-display font-semibold tabular-nums">{econ ? formatUSD(econ.upstream_usd) : "—"}</p>
-          </Card>
-          <Card className="p-5">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Profit</p>
-            <p className="mt-1 text-2xl font-display font-semibold tabular-nums">{econ ? formatUSD(econ.profit_usd) : "—"}</p>
-          </Card>
-          <Card className="p-5">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">Margin</p>
-            <p className="mt-1 text-2xl font-display font-semibold tabular-nums">{econ ? `${econ.margin_pct.toFixed(1)}%` : "—"}</p>
-          </Card>
-        </div>
-        {econ && econ.unpriced_usd > 0 && (
-          <p className="mt-2 text-[12px] text-[var(--text-muted)]">
-            {formatUSD(econ.unpriced_usd)} of billed usage has no known upstream cost (non-market routes) and is excluded from profit/margin.
-          </p>
-        )}
-      </div>
+      <UpstreamAccounts report={finance.data} loading={finance.isLoading} error={financeError} rangeLabel={RANGE_LABEL[range]} />
 
-      {ordersQuery.isError && <ErrorBanner message={(ordersQuery.error as Error).message} />}
+      <TopupHistory accounts={accounts.data?.accounts} accountsLoading={accounts.isLoading} accountsError={accountsError} />
 
-      <Card className="overflow-hidden">
-        {ordersQuery.isLoading ? (
-          <div className="flex items-center justify-center py-16"><Spinner /></div>
-        ) : orders.length === 0 ? (
-          <EmptyState title="No payments yet" hint="Portal top-ups appear here as soon as a user starts a payment." />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="border-b border-[var(--border)] bg-[var(--bg-subtle)]/50">
-                <tr className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-                  <th className="px-5 py-3 text-left font-semibold">User</th>
-                  <th className="px-5 py-3 text-left font-semibold">Key</th>
-                  <th className="px-5 py-3 text-right font-semibold">Amount</th>
-                  <th className="px-5 py-3 text-right font-semibold">Credit</th>
-                  <th className="px-5 py-3 text-left font-semibold">Status</th>
-                  <th className="px-5 py-3 text-right font-semibold">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[var(--border)]">
-                {orders.map((o) => (
-                  <tr key={o.order_id} className="hover:bg-[var(--bg-subtle)]/30">
-                    <td className="px-5 py-3">
-                      <p className="text-[var(--text)]">{o.user_email || o.google_sub || "—"}</p>
-                      <p className="font-mono text-[11px] text-[var(--text-muted)]">{o.provider_payment_id}</p>
-                    </td>
-                    <td className="px-5 py-3 font-mono text-[12px] text-[var(--text-muted)]">{o.key_display || o.key_id}</td>
-                    <td className="px-5 py-3 text-right tabular-nums">{formatIDR(o.amount_idr)}</td>
-                    <td className="px-5 py-3 text-right tabular-nums font-semibold">{formatUSD(o.credit_usd)}</td>
-                    <td className="px-5 py-3"><Badge tone={STATUS_TONE[o.status] ?? "neutral"}>{o.status}</Badge></td>
-                    <td className="px-5 py-3 text-right">
-                      {o.status === "pending" && (
-                        <Button variant="ghost" onClick={() => setApproving(o)} title="Approve manually">
-                          <Check size={15} /> Approve
-                        </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      <PortalOrders />
 
-      {approving && (
-        <Modal open onClose={() => setApproving(null)} title="Approve payment">
-          <div className="px-6 py-5">
-            <p className="text-sm text-[var(--text-muted)]">
-              Credit {formatUSD(approving.credit_usd)} to {approving.user_email || approving.key_id}. This cannot be undone automatically.
-            </p>
-            <textarea
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="Reason (e.g. bank transfer verified)"
-              className="mt-3 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] px-3 py-2 text-sm"
-              rows={3}
-            />
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setApproving(null)}>Cancel</Button>
-              <Button onClick={() => approve.mutate({ id: approving.order_id, reason })} disabled={approve.isPending}>
-                <CreditCard size={15} /> Approve &amp; credit
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
+      <FinanceSettings accounts={accounts.data?.accounts} accountsLoading={accounts.isLoading} accountsError={accountsError} />
     </div>
   );
 }
