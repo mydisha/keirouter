@@ -87,3 +87,23 @@ func TestOpenAIRequestAsksUsageOnlyForUpstreamBilledStreams(t *testing.T) {
 		t.Fatalf("upstream-billed stream must ask for usage: %s", body)
 	}
 }
+
+func TestOpenAIRequestSendsProviderAllowListOnlyWhenSet(t *testing.T) {
+	base := core.ChatRequest{Model: "m", Messages: []core.Message{{Role: core.RoleUser, Content: []core.ContentPart{{Type: core.PartText, Text: "hi"}}}}}
+	plain, err := renderOAIRequest(&base, reasoningNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(plain), `"provider"`) {
+		t.Fatalf("a request without an allow-list must not send provider: %s", plain)
+	}
+	trusted := base
+	trusted.UpstreamProviders = []string{"bedrock", "google"}
+	body, err := renderOAIRequest(&trusted, reasoningNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), `"provider":["bedrock","google"]`) {
+		t.Fatalf("trusted request must carry the allow-list: %s", body)
+	}
+}

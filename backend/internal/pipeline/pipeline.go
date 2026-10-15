@@ -268,7 +268,7 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 		started := time.Now()
 		p.log.Debug("attempt start", "i", i, "provider", attempt.Target.Provider,
 			"model", attempt.Target.Model, "account", attempt.Account.ID)
-		attemptReq := cloneForAttempt(attemptBaseReq, attempt.Target.Model)
+		attemptReq := cloneForTarget(attemptBaseReq, attempt.Target)
 		attempt.Creds = withTargetHeaders(attempt)
 
 		// Soft-degrade unsupported modalities. Stripping replaces input
@@ -296,7 +296,7 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 		}
 		if callErr != nil && isUnsupportedCloudflareImageError(callErr, attempt.Target.Provider, attempt.Target.Model, attemptReq) {
 			p.log.Debug("retrying Cloudflare request without images", "model", attempt.Target.Model)
-			retryReq := cloneForAttempt(attemptBaseReq, attempt.Target.Model)
+			retryReq := cloneForTarget(attemptBaseReq, attempt.Target)
 			capability.StripImages(retryReq)
 			retryCtx := core.WithProxy(ctx, attempt.Creds)
 			var retryCancel context.CancelFunc
@@ -325,7 +325,7 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 			if reqTimeout := p.resolvedRequestTimeout(); reqTimeout > 0 {
 				streamCtx, streamCancel = context.WithTimeout(streamCtx, reqTimeout)
 			}
-			streamReq := cloneForAttempt(attemptBaseReq, attempt.Target.Model)
+			streamReq := cloneForTarget(attemptBaseReq, attempt.Target)
 			stream, sErr := attempt.Conn.Stream(streamCtx, streamReq, attempt.Creds, core.StreamConfig{})
 			if sErr == nil {
 				sResp, drainErr := drainStream(stream, req.Model)
@@ -623,9 +623,8 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 	attempt, hasAttempt := planner.Current()
 	for i := 0; hasAttempt; i++ {
 		lastAttempt = attempt
-		attemptReq := cloneForAttempt(req, attempt.Target.Model)
+		attemptReq := cloneForTarget(req, attempt.Target)
 		attempt.Creds = withTargetHeaders(attempt)
-		attemptReq.UpstreamUsage = attempt.Target.BillUpstreamCost
 		started := time.Now()
 		p.log.Debug("stream attempt start", "i", i, "provider", attempt.Target.Provider,
 			"model", attempt.Target.Model, "account", attempt.Account.ID)
@@ -686,7 +685,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 				body, _, rawErr := ds.StreamRaw(callCtx, attemptReq, attempt.Creds, streamCfg)
 				if rawErr != nil && isUnsupportedCloudflareImageError(rawErr, attempt.Target.Provider, attempt.Target.Model, attemptReq) {
 					cancelUpstream()
-					retryReq := cloneForAttempt(req, attempt.Target.Model)
+					retryReq := cloneForTarget(req, attempt.Target)
 					capability.StripImages(retryReq)
 					callCtx, cancelUpstream = context.WithCancel(core.WithProxy(ctx, attempt.Creds))
 					body, _, rawErr = ds.StreamRaw(callCtx, retryReq, attempt.Creds, streamCfg)
@@ -789,7 +788,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 		upstream, callErr := attempt.Conn.Stream(callCtx, attemptReq, attempt.Creds, streamCfg)
 		if callErr != nil && isUnsupportedCloudflareImageError(callErr, attempt.Target.Provider, attempt.Target.Model, attemptReq) {
 			cancelUpstream()
-			retryReq := cloneForAttempt(req, attempt.Target.Model)
+			retryReq := cloneForTarget(req, attempt.Target)
 			capability.StripImages(retryReq)
 			callCtx, cancelUpstream = context.WithCancel(core.WithProxy(ctx, attempt.Creds))
 			upstream, callErr = attempt.Conn.Stream(callCtx, retryReq, attempt.Creds, streamCfg)
@@ -1804,6 +1803,17 @@ func (p *Pipeline) cacheStore(ctx context.Context, vec []float32, resp *core.Cha
 // cloneForAttempt produces a shallow copy of the request with the candidate's
 // model id, so each fallback attempt targets the right model without mutating
 // the shared request.
+// cloneForTarget clones req for one attempt at target, carrying the target's
+// upstream routing controls so retries of the same attempt keep them.
+func cloneForTarget(req *core.ChatRequest, target dispatch.Target) *core.ChatRequest {
+	clone := cloneForAttempt(req, target.Model)
+	clone.UpstreamUsage = target.BillUpstreamCost
+	if target.UpstreamProviders != "" {
+		clone.UpstreamProviders = strings.Split(target.UpstreamProviders, ",")
+	}
+	return clone
+}
+
 func cloneForAttempt(req *core.ChatRequest, model string) *core.ChatRequest {
 	clone := *req
 	clone.Messages = make([]core.Message, len(req.Messages))

@@ -118,6 +118,10 @@ type Target struct {
 	// MinDiscountPct, when > 0, is sent upstream as X-Min-Discount so the
 	// provider cannot fail over past the configured price depth.
 	MinDiscountPct int
+	// UpstreamProviders, when set, is a comma-separated provider allow-list
+	// sent upstream as the body field `provider`, so a surplus-trusted step is
+	// served by trusted sellers only. A string keeps Target comparable.
+	UpstreamProviders string
 }
 
 // Attempt describes a single resolved try: the connector, credentials, and the

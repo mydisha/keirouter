@@ -31,6 +31,9 @@ type Model struct {
 	// MinDiscountPct is the X-Min-Discount ceiling for surplus-trusted slugs
 	// (zero = no ceiling).
 	MinDiscountPct int `json:"-"`
+	// Providers is the surplus-trusted provider allow-list sent upstream so
+	// routing cannot leave the trusted offers this rate was quoted from.
+	Providers []string `json:"-"`
 }
 
 func ParseSnapshot(r io.Reader) ([]Model, error) {

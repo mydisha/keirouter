@@ -52,74 +52,116 @@ func (a *App) fetchMergedModels(ctx context.Context) ([]market.Model, error) {
 	return out, nil
 }
 
+// trustedBinding is one surplus-trusted model referenced by the chains, with
+// the /min{N} floor of the provider base URL serving it.
+type trustedBinding struct {
+	name     string
+	floorPct int
+}
+
 // boundTrustedSurplusModels returns the Surplus model names referenced by any
-// chain (chain-level or per-step) through a surplus-trusted: slug.
-func (a *App) boundTrustedSurplusModels(ctx context.Context) []string {
+// chain (chain-level or per-step) through a surplus-trusted: slug. Each carries
+// the lowest /min{N} floor among the step providers serving it, so a quote is
+// never stricter than the most permissive route that can reach Surplus.
+func (a *App) boundTrustedSurplusModels(ctx context.Context) []trustedBinding {
 	chains, err := a.db.Chains().ListByTenant(ctx, store.DefaultTenantID)
 	if err != nil {
 		a.log.Debug("surplus trusted: list chains failed", "err", err)
 		return nil
 	}
-	seen := map[string]bool{}
-	var names []string
-	add := func(slug string) {
+	floors := map[string]int{}
+	if providers, err := a.db.CustomProviders().ListProviders(ctx, store.DefaultTenantID); err == nil {
+		for _, p := range providers {
+			floors[p.ID] = market.MinDiscountFloor(p.BaseURL)
+		}
+	} else {
+		a.log.Debug("surplus trusted: list custom providers failed", "err", err)
+	}
+	idx := map[string]int{}
+	var out []trustedBinding
+	add := func(slug, provider string) {
 		name, ok := strings.CutPrefix(slug, market.SurplusTrustedPrefix)
-		if !ok || name == "" || seen[name] {
+		if !ok || name == "" {
 			return
 		}
-		seen[name] = true
-		names = append(names, name)
+		floor := floors[provider]
+		if i, seen := idx[name]; seen {
+			out[i].floorPct = min(out[i].floorPct, floor)
+			return
+		}
+		idx[name] = len(out)
+		out = append(out, trustedBinding{name: name, floorPct: floor})
 	}
+	var unserved []string
 	for _, c := range chains {
-		for _, slug := range c.MarketSlugs {
-			add(slug)
-		}
 		for _, st := range c.Steps {
-			add(st.MarketSlug)
+			if st.MarketSlug != "" {
+				add(st.MarketSlug, st.Provider)
+				continue
+			}
+			for _, slug := range c.MarketSlugs {
+				if strings.TrimPrefix(slug, market.SurplusTrustedPrefix) == st.Model {
+					add(slug, st.Provider)
+				}
+			}
+		}
+		unserved = append(unserved, c.MarketSlugs...)
+	}
+	// A chain-level slug no step serves is still quoted for display, without a
+	// floor, unless some step already bound it.
+	for _, slug := range unserved {
+		if _, seen := idx[strings.TrimPrefix(slug, market.SurplusTrustedPrefix)]; !seen {
+			add(slug, "")
 		}
 	}
-	return names
+	return out
 }
 
 // fetchSurplusTrusted quotes every bound surplus-trusted model from its order
-// book, using only trusted+available+healthy offers. Books are fetched
-// concurrently (bounded); a failed or empty book drops that slug from the
-// snapshot so routing never prices against stale trusted offers.
+// book, using only trusted+available+healthy offers that also clear the
+// provider's /min{N} floor. Books are fetched concurrently (bounded); a failed
+// or empty book drops that slug from the snapshot so routing never prices
+// against stale trusted offers.
 func (a *App) fetchSurplusTrusted(ctx context.Context) []market.Model {
-	names := a.boundTrustedSurplusModels(ctx)
-	if len(names) == 0 {
+	bound := a.boundTrustedSurplusModels(ctx)
+	if len(bound) == 0 {
 		return nil
 	}
-	if len(names) > maxSurplusBooksPerSync {
-		a.log.Warn("surplus trusted: order-book fetch capped", "cap", maxSurplusBooksPerSync, "bound", len(names))
-		names = names[:maxSurplusBooksPerSync]
+	if len(bound) > maxSurplusBooksPerSync {
+		a.log.Warn("surplus trusted: order-book fetch capped", "cap", maxSurplusBooksPerSync, "bound", len(bound))
+		bound = bound[:maxSurplusBooksPerSync]
 	}
 	depth := market.LoadSettings(ctx, a.db.Settings().Get).SurplusFallbackDepth
 	ceiling := depth > 0
 	if !ceiling {
 		depth = 1
 	}
-	out := make([]market.Model, len(names))
-	ok := make([]bool, len(names))
+	out := make([]market.Model, len(bound))
+	ok := make([]bool, len(bound))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 8)
-	for i, name := range names {
+	for i, b := range bound {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			q, err := market.FetchSurplusTrustedBook(ctx, a.surplusURL, name, depth)
+			q, err := market.FetchSurplusTrustedBook(ctx, a.surplusURL, b.name, depth, b.floorPct)
 			if err != nil || !q.Found {
 				if err != nil {
-					a.log.Debug("surplus trusted book fetch failed", "model", name, "err", err)
+					a.log.Debug("surplus trusted book fetch failed", "model", b.name, "err", err)
 				}
 				return
 			}
 			if !ceiling {
 				q.MinDiscountPct = 0
+				if q.FloorCapIn > 0 && q.FloorCapOut > 0 {
+					// Without a ceiling Surplus may fail over to any offer
+					// clearing the floor; bill the unreported case at that bound.
+					q.CapIn, q.CapOut = q.FloorCapIn, q.FloorCapOut
+				}
 			}
-			out[i], ok[i] = q.Model(name), true
+			out[i], ok[i] = q.Model(b.name), true
 		}()
 	}
 	wg.Wait()

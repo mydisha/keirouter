@@ -3600,14 +3600,23 @@ func validMarkup(v float64) bool {
 // background after a chain edit, so a changed slug set or markup override is
 // reflected in the displayed price without waiting for the next refresh tick.
 func (s *Server) resyncMarketPricesAsync(c store.Chain) {
-	if s.syncMarketPrices == nil || len(c.MarketSlugs) == 0 {
+	if len(c.MarketSlugs) == 0 {
+		return
+	}
+	s.resyncMarketPricesInBackground("chain " + c.Name)
+}
+
+// resyncMarketPricesInBackground runs one market sync off the request path;
+// reason only labels a failure in the log.
+func (s *Server) resyncMarketPricesInBackground(reason string) {
+	if s.syncMarketPrices == nil {
 		return
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		if _, err := s.syncMarketPrices(ctx); err != nil {
-			s.log.Debug("market resync after chain edit failed", "chain", c.Name, "err", err)
+			s.log.Debug("market resync failed", "after", reason, "err", err)
 		}
 	}()
 }

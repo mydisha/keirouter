@@ -38,7 +38,15 @@ type TrustedQuote struct {
 	// deepest allowed level's own price when no list price is known). It is the
 	// fallback bill when a response carries no buyer_cost_micro.
 	CapIn, CapOut float64
-	Eligible      int
+	// FloorCapIn/FloorCapOut is the most a /min{N} provider floor alone lets
+	// Surplus charge (list × (1-N/100)); zero when no floor applies. It bounds
+	// the fallback bill when no X-Min-Discount ceiling is sent.
+	FloorCapIn, FloorCapOut float64
+	// Providers is the sorted allow-list of provider ids behind the eligible
+	// offers. It is sent upstream as the body field `provider`, so Surplus
+	// cannot route the request to an untrusted seller.
+	Providers []string
+	Eligible  int
 }
 
 // Model converts the quote into a snapshot model keyed surplus-trusted:<name>.
@@ -50,11 +58,13 @@ func (q TrustedQuote) Model(name string) Model {
 		FailoverIn:     q.CapIn,
 		FailoverOut:    q.CapOut,
 		MinDiscountPct: q.MinDiscountPct,
+		Providers:      q.Providers,
 	}
 }
 
 type trustedBookEnvelope struct {
 	Offers []struct {
+		ProviderID        string   `json:"provider_id"`
 		Trusted           bool     `json:"trusted"`
 		Available         bool     `json:"available"`
 		Healthy           bool     `json:"healthy"`
@@ -68,7 +78,10 @@ type trustedBookEnvelope struct {
 // ParseSurplusTrustedBook reads GET /api/markets/:model and quotes only offers
 // with trusted, available and healthy all true. depth (>=1) is how many
 // distinct price levels the ceiling admits; fewer levels use the deepest.
-func ParseSurplusTrustedBook(r io.Reader, depth int) (TrustedQuote, error) {
+// floorPct > 0 is the provider's /min{N} floor: offers that cannot prove at
+// least that discount below list on both rates are dropped, as Surplus would
+// skip them.
+func ParseSurplusTrustedBook(r io.Reader, depth, floorPct int) (TrustedQuote, error) {
 	var body trustedBookEnvelope
 	if err := json.NewDecoder(r).Decode(&body); err != nil {
 		return TrustedQuote{}, err
@@ -78,8 +91,9 @@ func ParseSurplusTrustedBook(r io.Reader, depth int) (TrustedQuote, error) {
 	}
 	type ask struct{ in, out, directIn, directOut float64 }
 	var asks []ask
+	providers := map[string]bool{}
 	for _, o := range body.Offers {
-		if !o.Trusted || !o.Available || !o.Healthy {
+		if !o.Trusted || !o.Available || !o.Healthy || o.ProviderID == "" {
 			continue
 		}
 		if o.PriceInputPer1M == nil || o.PriceOutputPer1M == nil {
@@ -93,7 +107,11 @@ func ParseSurplusTrustedBook(r io.Reader, depth int) (TrustedQuote, error) {
 			a.directIn = *o.DirectInputPer1M / surplusUnitScale
 			a.directOut = *o.DirectOutputPer1M / surplusUnitScale
 		}
+		if floorPct > 0 && !meetsFloor(a.in, a.out, a.directIn, a.directOut, floorPct) {
+			continue
+		}
 		asks = append(asks, a)
+		providers[o.ProviderID] = true
 	}
 	if len(asks) == 0 {
 		return TrustedQuote{}, nil
@@ -118,6 +136,18 @@ func ParseSurplusTrustedBook(r io.Reader, depth int) (TrustedQuote, error) {
 		}
 	}
 	q := TrustedQuote{Found: true, BestIn: asks[0].in, BestOut: asks[0].out, Eligible: len(asks), CapIn: level.in, CapOut: level.out}
+	for p := range providers {
+		q.Providers = append(q.Providers, p)
+	}
+	sort.Strings(q.Providers)
+	if floorPct > 0 {
+		// Every eligible offer passed the floor, so list × (1-N) bounds them all;
+		// the max with the deepest offer only guards float rounding.
+		keep := 1 - float64(floorPct)/100
+		deepest := asks[len(asks)-1]
+		q.FloorCapIn = math.Max(deepest.in, deepest.directIn*keep)
+		q.FloorCapOut = math.Max(deepest.out, deepest.directOut*keep)
+	}
 	if level.directIn > 0 && level.directOut > 0 {
 		// The ceiling must admit this level on both rates, so take the smaller
 		// discount and floor it. The epsilon absorbs float noise on exact
@@ -134,6 +164,52 @@ func ParseSurplusTrustedBook(r io.Reader, depth int) (TrustedQuote, error) {
 	return q, nil
 }
 
+// meetsFloor reports whether an offer is at least floorPct below its list
+// price on both rates. Surplus estimates the discount on the blended request
+// cost, so checking each rate is stricter: an offer kept here always qualifies
+// upstream. Unknown list prices cannot prove a discount and fail.
+func meetsFloor(in, out, directIn, directOut float64, floorPct int) bool {
+	if directIn <= 0 || directOut <= 0 {
+		return false
+	}
+	keep := 1 - float64(floorPct)/100
+	const eps = 1e-12
+	return in <= directIn*keep+eps && out <= directOut*keep+eps
+}
+
+// MinDiscountFloor parses the /min{N} path segment of a Surplus base URL
+// (e.g. https://api.surplusintelligence.ai/min30/v1 → 30). It follows
+// Surplus's grammar: min0..min100, no leading zeros, signs or decimals.
+// Zero means no floor (min0 never tightens a trusted quote).
+func MinDiscountFloor(baseURL string) int {
+	u, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil {
+		return 0
+	}
+	for _, seg := range strings.Split(u.Path, "/") {
+		digits, ok := strings.CutPrefix(seg, "min")
+		if !ok || digits == "" || len(digits) > 3 {
+			continue
+		}
+		if len(digits) > 1 && digits[0] == '0' {
+			continue
+		}
+		n := 0
+		valid := true
+		for _, c := range digits {
+			if c < '0' || c > '9' {
+				valid = false
+				break
+			}
+			n = n*10 + int(c-'0')
+		}
+		if valid && n <= 100 {
+			return n
+		}
+	}
+	return 0
+}
+
 // SurplusBookURL returns the per-model order-book URL under marketsURL
 // (defaulting to the public feed).
 func SurplusBookURL(marketsURL, model string) string {
@@ -145,7 +221,7 @@ func SurplusBookURL(marketsURL, model string) string {
 
 // FetchSurplusTrustedBook downloads one model's order book and quotes its
 // trusted-only offers.
-func FetchSurplusTrustedBook(ctx context.Context, marketsURL, model string, depth int) (TrustedQuote, error) {
+func FetchSurplusTrustedBook(ctx context.Context, marketsURL, model string, depth, floorPct int) (TrustedQuote, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, SurplusBookURL(marketsURL, model), nil)
 	if err != nil {
 		return TrustedQuote{}, err
@@ -159,5 +235,5 @@ func FetchSurplusTrustedBook(ctx context.Context, marketsURL, model string, dept
 	if resp.StatusCode != http.StatusOK {
 		return TrustedQuote{}, fmt.Errorf("surplus book status %d", resp.StatusCode)
 	}
-	return ParseSurplusTrustedBook(resp.Body, depth)
+	return ParseSurplusTrustedBook(resp.Body, depth, floorPct)
 }

@@ -231,6 +231,7 @@ func (s *Server) adminUpdateCustomProvider(w http.ResponseWriter, r *http.Reques
 		}
 		existing.Alias = alias
 	}
+	baseURLChanged := false
 	if body.BaseURL != nil {
 		b := strings.TrimSpace(*body.BaseURL)
 		if b == "" {
@@ -242,6 +243,7 @@ func (s *Server) adminUpdateCustomProvider(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusBadRequest, "invalid base_url: URL blocked by security policy")
 			return
 		}
+		baseURLChanged = b != existing.BaseURL
 		existing.BaseURL = b
 	}
 	if err := s.db.CustomProviders().UpdateProvider(r.Context(), existing); err != nil {
@@ -252,6 +254,11 @@ func (s *Server) adminUpdateCustomProvider(w http.ResponseWriter, r *http.Reques
 	connectors.RegisterDynamicProvider(connectors.DynamicProvider{
 		ID: existing.ID, DisplayName: existing.DisplayName, Alias: existing.Alias, Dialect: dialect, BaseURL: existing.BaseURL,
 	})
+	if baseURLChanged {
+		// A /min{N} segment in the base URL changes which surplus-trusted
+		// offers qualify; re-quote now rather than on the next refresh tick.
+		s.resyncMarketPricesInBackground("custom provider " + existing.ID)
+	}
 	writeJSON(w, http.StatusOK, customProviderJSON(existing))
 }
 

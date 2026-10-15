@@ -65,6 +65,9 @@ type ChatRequest struct {
 	// billed from the upstream's reported cost; independent of what the
 	// client receives.
 	UpstreamUsage bool `json:"-"`
+	// UpstreamProviders is a per-attempt provider allow-list sent upstream as
+	// the body field `provider` (Surplus routing control). Router-internal.
+	UpstreamProviders []string `json:"-"`
 
 	// Reasoning controls extended thinking / reasoning effort where supported.
 	Reasoning *ReasoningConfig `json:"reasoning,omitempty"`

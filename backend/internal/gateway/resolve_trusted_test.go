@@ -13,6 +13,7 @@ func TestStampSurplusTrustedFlagsStepAndUsesCapAsFallbackRate(t *testing.T) {
 	cache := market.NewSnapshotCache()
 	cache.Replace([]market.Model{market.TrustedQuote{
 		Found: true, BestIn: 0.0025, BestOut: 0.015, CapIn: 0.012, CapOut: 0.072, MinDiscountPct: 94,
+		Providers: []string{"bedrock", "openai"},
 	}.Model("gpt-5.6-luna")})
 	steps := []dispatch.Target{
 		{Provider: "custom-openai-surplus", Model: "gpt-5.6-luna", MarketSlug: "surplus-trusted:gpt-5.6-luna"},
@@ -34,14 +35,17 @@ func TestStampSurplusTrustedFlagsStepAndUsesCapAsFallbackRate(t *testing.T) {
 	if s.MarketRateIn < 0.01319 || s.MarketRateIn > 0.01321 {
 		t.Fatalf("market fallback in = %v, want cap×1.1", s.MarketRateIn)
 	}
-	if out[1].BillUpstreamCost || out[1].MinDiscountPct != 0 {
+	if s.UpstreamProviders != "bedrock,openai" {
+		t.Fatalf("allow-list = %v, want [bedrock openai]", s.UpstreamProviders)
+	}
+	if out[1].BillUpstreamCost || out[1].MinDiscountPct != 0 || out[1].UpstreamProviders != "" {
 		t.Fatal("non-trusted step must be untouched")
 	}
 }
 
 func TestStampSurplusTrustedAdoptsChainSlugByModel(t *testing.T) {
 	cache := market.NewSnapshotCache()
-	cache.Replace([]market.Model{market.TrustedQuote{Found: true, BestIn: 1, BestOut: 2, CapIn: 3, CapOut: 4, MinDiscountPct: 50}.Model("glm-5.3")})
+	cache.Replace([]market.Model{market.TrustedQuote{Found: true, BestIn: 1, BestOut: 2, CapIn: 3, CapOut: 4, MinDiscountPct: 50, Providers: []string{"zai"}}.Model("glm-5.3")})
 	steps := []dispatch.Target{{Provider: "custom-openai-surplus", Model: "glm-5.3"}}
 	out := stampSurplusTrusted(steps, []string{"surplus-trusted:glm-5.3"}, cache, 0)
 	if out[0].MarketSlug != "surplus-trusted:glm-5.3" || !out[0].BillUpstreamCost || out[0].MinDiscountPct != 50 {
@@ -49,17 +53,31 @@ func TestStampSurplusTrustedAdoptsChainSlugByModel(t *testing.T) {
 	}
 }
 
-func TestStampSurplusTrustedMissingQuoteStillBillsUpstreamCost(t *testing.T) {
-	steps := []dispatch.Target{{Provider: "custom-openai-surplus", Model: "x", MarketSlug: "surplus-trusted:x"}}
+func TestStampSurplusTrustedDropsStepWithoutTrustedQuote(t *testing.T) {
+	// No quote means no trusted allow-list: sending the request anyway would let
+	// Surplus pick an untrusted seller, so the step is skipped.
+	steps := []dispatch.Target{
+		{Provider: "openai", Model: "gpt-4o"},
+		{Provider: "custom-openai-surplus", Model: "x", MarketSlug: "surplus-trusted:x"},
+		{Provider: "anthropic", Model: "claude"},
+	}
 	out := stampSurplusTrusted(steps, nil, market.NewSnapshotCache(), 10)
-	if !out[0].BillUpstreamCost || out[0].MinDiscountPct != 0 {
-		t.Fatalf("step = %+v, want upstream-cost billing without a ceiling", out[0])
+	if len(out) != 2 || out[0].Model != "gpt-4o" || out[1].Model != "claude" {
+		t.Fatalf("out = %+v, want the trusted step dropped and order kept", out)
+	}
+	if steps[1].Model != "x" {
+		t.Fatal("input slice must not be mutated")
+	}
+	empty := market.NewSnapshotCache()
+	empty.Replace([]market.Model{market.TrustedQuote{Found: true, BestIn: 1, BestOut: 2}.Model("x")})
+	if out := stampSurplusTrusted(steps[1:2], nil, empty, 10); len(out) != 0 {
+		t.Fatalf("quote without providers must drop the step, got %+v", out)
 	}
 }
 
 func TestChainResultUsesChainMarkupOverride(t *testing.T) {
 	cache := market.NewSnapshotCache()
-	cache.Replace([]market.Model{market.TrustedQuote{Found: true, BestIn: 1, BestOut: 2, CapIn: 3, CapOut: 4}.Model("m")})
+	cache.Replace([]market.Model{market.TrustedQuote{Found: true, BestIn: 1, BestOut: 2, CapIn: 3, CapOut: 4, Providers: []string{"p"}}.Model("m")})
 	override := 50.0
 	chains := &fakeChains{chains: []store.Chain{
 		{ID: "a", Name: "own", MarkupPercent: &override, Steps: []store.ChainStep{{Provider: "p", Model: "m", MarketSlug: "surplus-trusted:m"}}},

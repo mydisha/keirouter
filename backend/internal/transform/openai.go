@@ -31,6 +31,7 @@ type oaiRequest struct {
 	Stop            []string        `json:"stop,omitempty"`
 	Stream          bool            `json:"stream,omitempty"`
 	StreamOpts      *oaiStreamOpt   `json:"stream_options,omitempty"`
+	Provider        []string        `json:"provider,omitempty"`
 	ResponseFormat  json.RawMessage `json:"response_format,omitempty"`
 	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
 	Thinking        *oaiThinking    `json:"thinking,omitempty"`
@@ -496,6 +497,10 @@ func buildOAIRequest(req *core.ChatRequest, scope reasoningScope) (*oaiRequest, 
 	// Surplus emits no usage frame (and so no buyer_cost_micro) without it.
 	if req.Stream && req.UpstreamUsage {
 		out.StreamOpts = &oaiStreamOpt{IncludeUsage: true}
+	}
+	// Surplus's provider allow-list; Surplus strips it before the seller call.
+	if len(req.UpstreamProviders) > 0 {
+		out.Provider = append([]string(nil), req.UpstreamProviders...)
 	}
 
 	if req.System != "" {

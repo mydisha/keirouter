@@ -272,6 +272,9 @@ func orderStepsByMarket(steps []dispatch.Target, cache *market.SnapshotCache, ma
 // slug naming the same model. The Market*/Upstream* rates carry the X-Min-Discount
 // ceiling price (the most Surplus can charge), used only when a response
 // reports no cost, so the fallback bill can never undercut a Surplus failover.
+// Each step also carries the trusted provider allow-list; a step with no live
+// trusted quote is dropped, since without that list Surplus could route the
+// request to an untrusted seller.
 // It runs after any market reordering so the ceiling overrides cheapest-ask stamps.
 func stampSurplusTrusted(steps []dispatch.Target, chainSlugs []string, cache *market.SnapshotCache, markupPercent float64) []dispatch.Target {
 	byModel := map[string]string{}
@@ -281,35 +284,37 @@ func stampSurplusTrusted(steps []dispatch.Target, chainSlugs []string, cache *ma
 		}
 	}
 	mult := 1 + markupPercent/100
-	out := steps
+	var out []dispatch.Target
 	copied := false
-	for i := range out {
-		slug := out[i].MarketSlug
+	for i := range steps {
+		slug := steps[i].MarketSlug
 		if slug == "" {
-			slug = byModel[out[i].Model]
+			slug = byModel[steps[i].Model]
 		}
 		if !strings.HasPrefix(slug, market.SurplusTrustedPrefix) {
+			if copied {
+				out = append(out, steps[i])
+			}
 			continue
 		}
 		if !copied {
-			out = append([]dispatch.Target(nil), steps...)
+			out = append(make([]dispatch.Target, 0, len(steps)), steps[:i]...)
 			copied = true
 		}
-		t := &out[i]
+		var m market.Model
+		ok := false
+		if cache != nil {
+			m, ok = cache.Lookup(slug)
+		}
+		if !ok || len(m.Providers) == 0 {
+			continue
+		}
+		t := steps[i]
 		t.MarketSlug = slug
 		t.BillUpstreamCost = true
 		t.UpstreamCostMult = mult
-		t.MinDiscountPct = 0
-		t.MarketRateIn, t.MarketRateOut, t.MarketCacheReadRate, t.MarketCacheWriteRate = 0, 0, 0, 0
-		t.UpstreamRateIn, t.UpstreamRateOut, t.UpstreamCacheReadRate, t.UpstreamCacheWriteRate = 0, 0, 0, 0
-		if cache == nil {
-			continue
-		}
-		m, ok := cache.Lookup(slug)
-		if !ok {
-			continue
-		}
 		t.MinDiscountPct = m.MinDiscountPct
+		t.UpstreamProviders = strings.Join(m.Providers, ",")
 		capIn, capOut := m.FailoverIn, m.FailoverOut
 		if capIn <= 0 || capOut <= 0 {
 			capIn, capOut = m.MinAskIn, m.MinAskOut
@@ -320,6 +325,10 @@ func stampSurplusTrusted(steps []dispatch.Target, chainSlugs []string, cache *ma
 		t.MarketRateIn, t.MarketRateOut = capIn*mult, capOut*mult
 		t.MarketCacheReadRate = t.MarketRateIn * market.CacheReadMult
 		t.MarketCacheWriteRate = t.MarketRateIn * market.CacheWriteMult
+		out = append(out, t)
+	}
+	if !copied {
+		return steps
 	}
 	return out
 }
