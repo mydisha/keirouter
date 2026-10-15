@@ -32,6 +32,11 @@ func TestUpstreamRepo_Seeded(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "planned", crow.Status)
 	require.Equal(t, "planned", list[len(list)-1].Status)
+	for _, a := range list {
+		require.WithinDuration(t, time.Now(), a.OpeningAt, time.Minute, a.ID)
+		require.WithinDuration(t, time.Now(), a.CreatedAt, time.Minute, a.ID)
+		require.WithinDuration(t, time.Now(), a.UpdatedAt, time.Minute, a.ID)
+	}
 }
 
 func TestUpstreamRepo_RemapProvider(t *testing.T) {
@@ -77,4 +82,18 @@ func TestUpstreamRepo_AlertFiredRoundTrip(t *testing.T) {
 	a, err = r.Get(ctx, "surplus")
 	require.NoError(t, err)
 	require.True(t, a.AlertFiredAt.IsZero())
+}
+
+func TestUpstreamRepo_TopupAtOpeningIncluded(t *testing.T) {
+	db, ctx := openUpstreamDB(t)
+	r := db.Upstream()
+	a, err := r.Get(ctx, "surplus")
+	require.NoError(t, err)
+	opening := time.Date(2026, 10, 15, 7, 30, 0, 0, time.UTC)
+	a.OpeningAt = opening
+	require.NoError(t, r.Update(ctx, a))
+	require.NoError(t, r.AddTopup(ctx, UpstreamTopup{ID: "t1", AccountID: "surplus", AmountMicros: 7_000_000, TopupAt: opening}))
+	totals, err := r.TopupTotals(ctx)
+	require.NoError(t, err)
+	require.EqualValues(t, 7_000_000, totals["surplus"])
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -131,6 +132,24 @@ func TestAlertMessage(t *testing.T) {
 	b.DaysLeft = &d
 	if got := AlertMessage(b); !strings.HasSuffix(got, " Perkiraan habis dalam 3 hari.") {
 		t.Fatalf("got %q", got)
+	}
+	neg := -3.2
+	b.DaysLeft = &neg
+	if got := AlertMessage(b); !strings.HasSuffix(got, " Perkiraan habis dalam 0 hari.") {
+		t.Fatalf("negative days: got %q", got)
+	}
+}
+
+func TestAlertMessage_Exhausted(t *testing.T) {
+	for _, bal := range []float64{0, -2.345} {
+		b := lowAcct("a", true, time.Time{})
+		b.BalanceUSD = bal
+		d := -3.0
+		b.DaysLeft = &d
+		want := fmt.Sprintf("Saldo Acme sudah habis ($%.2f, batas $10.00).", bal)
+		if got := AlertMessage(b); got != want {
+			t.Fatalf("got %q want %q", got, want)
+		}
 	}
 }
 

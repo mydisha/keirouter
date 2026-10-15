@@ -956,6 +956,28 @@ func (r *UsageRepo) CostBasis(ctx context.Context, tenantID string, since time.T
 	return r.queryCostBasis(ctx, "", tenantID, formatTime(since))
 }
 
+// DistinctProviders lists the non-empty provider ids that appear in a
+// tenant's usage, sorted. It reads only the provider column so the finance
+// provider picker avoids an aggregate over every usage row.
+func (r *UsageRepo) DistinctProviders(ctx context.Context, tenantID string) ([]string, error) {
+	q := r.db.rebind(`SELECT DISTINCT provider FROM usage_records
+		WHERE tenant_id = ? AND provider IS NOT NULL AND provider <> '' ORDER BY provider`)
+	rows, err := r.db.sql.QueryContext(ctx, q, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("store: distinct providers: %w", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("store: distinct providers scan: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 // CostBasisByProviderSince is CostBasis with a per-provider cut-off. Providers
 // absent from the map are excluded. One query runs per distinct cut-off.
 func (r *UsageRepo) CostBasisByProviderSince(ctx context.Context, tenantID string, since map[string]time.Time) ([]CostBasisRow, error) {

@@ -102,17 +102,15 @@ func (l *Loader) Report(ctx context.Context, rangeName string) (Report, error) {
 	}, nil
 }
 
-// Balances returns every upstream account's balance with range "all".
+// Balances returns every upstream account's balance. SpentRangeUSD is
+// left at zero: callers (the alert loop) only need balance and burn rate.
 func (l *Loader) Balances(ctx context.Context) ([]AccountBalance, error) {
 	m, err := l.Markups(ctx)
 	if err != nil {
 		return nil, err
 	}
-	all, err := l.DB.Usage().CostBasis(ctx, store.DefaultTenantID, time.Time{})
-	if err != nil {
-		return nil, err
-	}
-	accounts, _, err := l.balances(ctx, l.now(), m, all, l.inflight())
+	// Range spend is not needed for balances; skip the all-time aggregate.
+	accounts, _, err := l.balances(ctx, l.now(), m, nil, l.inflight())
 	return accounts, err
 }
 

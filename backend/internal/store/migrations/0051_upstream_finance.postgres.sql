@@ -30,12 +30,13 @@ CREATE TABLE IF NOT EXISTS upstream_topups (
 CREATE INDEX IF NOT EXISTS idx_upstream_topups_account
     ON upstream_topups(account_id, topup_at);
 
+-- opening_at = migration time, in the store's RFC3339 UTC format.
 INSERT INTO upstream_accounts (id, name, url, status, opening_balance_micros, opening_at, low_balance_micros, alert_fired_at, created_at, updated_at)
-VALUES ('surplus', 'Surplus Intelligence', 'https://surplusintelligence.ai', 'active', 0, '2026-10-15T00:00:00Z', 0, '', '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z')
+VALUES ('surplus', 'Surplus Intelligence', 'https://surplusintelligence.ai', 'active', 0, to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 0, '', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
 ON CONFLICT DO NOTHING;
 INSERT INTO upstream_accounts (id, name, url, status, opening_balance_micros, opening_at, low_balance_micros, alert_fired_at, created_at, updated_at)
-VALUES ('inferhub', 'Inferhub', 'https://inferhub.dev', 'active', 0, '2026-10-15T00:00:00Z', 0, '', '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z')
+VALUES ('inferhub', 'Inferhub', 'https://inferhub.dev', 'active', 0, to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 0, '', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
 ON CONFLICT DO NOTHING;
 INSERT INTO upstream_accounts (id, name, url, status, opening_balance_micros, opening_at, low_balance_micros, alert_fired_at, created_at, updated_at)
-VALUES ('crowbot', 'Crowbot', 'https://crowbot.sh', 'planned', 0, '2026-10-15T00:00:00Z', 0, '', '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z')
+VALUES ('crowbot', 'Crowbot', 'https://crowbot.sh', 'planned', 0, to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), 0, '', to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'), to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
 ON CONFLICT DO NOTHING;

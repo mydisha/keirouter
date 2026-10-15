@@ -177,15 +177,13 @@ func (s *Server) adminFinanceReport(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminFinanceProviders(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	labels := map[string]string{}
-	rows, err := s.db.Usage().CostBasis(ctx, adminTenant, time.Time{})
+	seen, err := s.db.Usage().DistinctProviders(ctx, adminTenant)
 	if err != nil {
 		s.internalError(w, err)
 		return
 	}
-	for _, row := range rows {
-		if row.Provider != "" {
-			labels[row.Provider] = row.Provider
-		}
+	for _, p := range seen {
+		labels[p] = p
 	}
 	custom, err := s.db.CustomProviders().ListProviders(ctx, adminTenant)
 	if err != nil {
@@ -460,7 +458,19 @@ func (s *Server) adminCreateUpstreamTopup(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "note must be 500 characters or fewer")
 		return
 	}
-	if !s.upstreamAccountExists(w, r.Context(), id) {
+	acc, err := s.db.Upstream().Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "upstream account not found")
+			return
+		}
+		s.internalError(w, err)
+		return
+	}
+	// Top-ups before opening_at are not counted in the balance, so refuse
+	// them instead of accepting a top-up that silently has no effect.
+	if at.Before(acc.OpeningAt) {
+		writeError(w, http.StatusBadRequest, "Tanggal topup tidak boleh sebelum tanggal saldo awal akun.")
 		return
 	}
 	t := store.UpstreamTopup{
@@ -518,14 +528,19 @@ func (s *Server) adminPutFinanceAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cur.Enabled = body.Enabled
+	// Omitted URL keeps the stored one; an explicit "" removes it.
 	if body.DiscordWebhookURL != nil {
-		if u := strings.TrimSpace(*body.DiscordWebhookURL); u != "" {
+		u := strings.TrimSpace(*body.DiscordWebhookURL)
+		if u != "" {
 			if err := finance.ValidateDiscordWebhook(u); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
-			cur.DiscordWebhookURL = u
 		}
+		cur.DiscordWebhookURL = u
+	}
+	if cur.DiscordWebhookURL == "" {
+		cur.Enabled = false
 	}
 	if err := finance.SaveAlertSettings(ctx, s.settingsSet(), cur); err != nil {
 		s.internalError(w, err)

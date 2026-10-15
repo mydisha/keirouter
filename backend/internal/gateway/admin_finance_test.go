@@ -141,8 +141,8 @@ func TestAlerts_GetMasksURL(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.NotContains(t, rec.Body.String(), "SECRETTOKEN")
 
-	// Empty URL keeps the stored one.
-	rec = doJSON(t, h, http.MethodPut, "/payments/alerts", `{"enabled":false,"discord_webhook_url":""}`)
+	// Omitted URL keeps the stored one.
+	rec = doJSON(t, h, http.MethodPut, "/payments/alerts", `{"enabled":false}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	rec = doJSON(t, h, http.MethodGet, "/payments/alerts", "")
@@ -152,6 +152,43 @@ func TestAlerts_GetMasksURL(t *testing.T) {
 	require.Equal(t, false, m["enabled"])
 	require.Equal(t, true, m["configured"])
 	require.Equal(t, "https://discord.com/api/webhooks/123/****", m["discord_webhook_url_masked"])
+}
+
+func TestAlerts_EmptyURLClearsWebhook(t *testing.T) {
+	_, h := newFinanceTestServer(t)
+	rec := doJSON(t, h, http.MethodPut, "/payments/alerts", `{"enabled":true,"discord_webhook_url":"https://discord.com/api/webhooks/123/SECRETTOKEN"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	rec = doJSON(t, h, http.MethodPut, "/payments/alerts", `{"enabled":true,"discord_webhook_url":""}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	rec = doJSON(t, h, http.MethodGet, "/payments/alerts", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	m := decodeBody(t, rec)
+	require.Equal(t, false, m["enabled"])
+	require.Equal(t, false, m["configured"])
+	require.Equal(t, "", m["discord_webhook_url_masked"])
+}
+
+func TestTopup_BeforeOpeningRejected(t *testing.T) {
+	_, h := newFinanceTestServer(t)
+	id := createUpstream(t, h, `{"name":"Acc","opening_at":"2026-01-10T07:00:00Z"}`)
+	path := "/payments/upstream-accounts/" + id + "/topups"
+
+	rec := doJSON(t, h, http.MethodPost, path, `{"amount_usd":10,"topup_at":"2026-01-10T06:59:59Z"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "Tanggal topup tidak boleh sebelum tanggal saldo awal akun.")
+
+	rec = doJSON(t, h, http.MethodPost, path, `{"amount_usd":10,"topup_at":"2026-01-10T07:00:00Z"}`)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	rec = doJSON(t, h, http.MethodGet, "/payments/finance?range=all", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	for _, x := range decodeBody(t, rec)["accounts"].([]any) {
+		if a := x.(map[string]any); a["id"] == id {
+			require.InDelta(t, 10.0, a["balance_usd"].(float64), 1e-9)
+		}
+	}
 }
 
 func TestAlerts_TestSend(t *testing.T) {

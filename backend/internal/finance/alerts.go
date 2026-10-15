@@ -20,10 +20,13 @@ type AlertDeps struct {
 
 // AlertMessage renders the Discord text for a low account.
 func AlertMessage(b AccountBalance) string {
-	msg := fmt.Sprintf("Saldo %s tinggal $%.2f (batas $%.2f).",
-		b.Account.Name, b.BalanceUSD, float64(b.Account.LowBalanceMicros)/microsPerUSD)
+	threshold := float64(b.Account.LowBalanceMicros) / microsPerUSD
+	if b.BalanceUSD <= 0 {
+		return fmt.Sprintf("Saldo %s sudah habis ($%.2f, batas $%.2f).", b.Account.Name, b.BalanceUSD, threshold)
+	}
+	msg := fmt.Sprintf("Saldo %s tinggal $%.2f (batas $%.2f).", b.Account.Name, b.BalanceUSD, threshold)
 	if b.DaysLeft != nil {
-		msg += fmt.Sprintf(" Perkiraan habis dalam %d hari.", int64(math.Floor(*b.DaysLeft)))
+		msg += fmt.Sprintf(" Perkiraan habis dalam %d hari.", max(0, int64(math.Floor(*b.DaysLeft))))
 	}
 	return msg
 }

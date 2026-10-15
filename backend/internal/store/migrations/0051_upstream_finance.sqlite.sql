@@ -30,12 +30,13 @@ CREATE TABLE IF NOT EXISTS upstream_topups (
 CREATE INDEX IF NOT EXISTS idx_upstream_topups_account
     ON upstream_topups(account_id, topup_at);
 
+-- opening_at = migration time, in the store's RFC3339 UTC format.
 INSERT OR IGNORE INTO upstream_accounts (id, name, url, status, opening_balance_micros, opening_at, low_balance_micros, alert_fired_at, created_at, updated_at)
-VALUES ('surplus', 'Surplus Intelligence', 'https://surplusintelligence.ai', 'active', 0, '2026-10-15T00:00:00Z', 0, '', '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z')
+VALUES ('surplus', 'Surplus Intelligence', 'https://surplusintelligence.ai', 'active', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 0, '', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 ;
 INSERT OR IGNORE INTO upstream_accounts (id, name, url, status, opening_balance_micros, opening_at, low_balance_micros, alert_fired_at, created_at, updated_at)
-VALUES ('inferhub', 'Inferhub', 'https://inferhub.dev', 'active', 0, '2026-10-15T00:00:00Z', 0, '', '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z')
+VALUES ('inferhub', 'Inferhub', 'https://inferhub.dev', 'active', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 0, '', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 ;
 INSERT OR IGNORE INTO upstream_accounts (id, name, url, status, opening_balance_micros, opening_at, low_balance_micros, alert_fired_at, created_at, updated_at)
-VALUES ('crowbot', 'Crowbot', 'https://crowbot.sh', 'planned', 0, '2026-10-15T00:00:00Z', 0, '', '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z')
+VALUES ('crowbot', 'Crowbot', 'https://crowbot.sh', 'planned', 0, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), 0, '', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
 ;
