@@ -1,62 +1,56 @@
-import { useState, useEffect, useCallback } from "react";
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { useEffect, useId, useState } from "react";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { BarChart3, Bell, BookOpen, Key, Layers, LayoutGrid, LogOut, Menu, Wallet, X } from "lucide-react";
-import { portalLogout, type LandingNotification } from "../../lib/api";
+import {
+  BarChart3, Bell, BookOpen, Key, Layers, LayoutGrid, LogOut, Menu, Monitor, Moon, Sun, Wallet, X,
+  type LucideIcon,
+} from "lucide-react";
+import { fetchPortalStatus, portalLogout, type LandingNotification } from "../../lib/api";
 import { fetchPublicNotifications } from "../../lib/publicApi";
 import { useBranding } from "../../contexts/BrandingContext";
-import { ThemeToggle } from "../../components/ThemeToggle";
+import { useTheme, type Theme } from "../../components/ThemeProvider";
+import { BrandMark } from "../../components/BrandMark";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
+  DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "../../components/ui/dropdown-menu";
+import { Sheet, SheetClose, SheetContent, SheetTitle } from "../../components/ui/sheet";
+import { cn } from "@/lib/utils";
 import { portal } from "../../lib/portalRoutes";
 
 const MAX_NOTIFICATIONS = 5;
+const MOBILE_NAV_ID = "portal-mobile-navigation";
 
-function NotificationsPanel({ items }: { items: LandingNotification[] }) {
-  const list = items.slice(0, MAX_NOTIFICATIONS);
-  return (
-    <div className="absolute right-0 top-full z-40 mt-2 w-[min(340px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-elevated)] shadow-[var(--shadow-pop)]">
-      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-        <p className="text-[13px] font-semibold text-[var(--text)]">Notifications</p>
-        <span className="rounded-full bg-accent-500/10 px-2 py-0.5 text-[10px] font-bold text-accent-600 dark:text-accent-400">
-          {list.length}
-        </span>
-      </div>
-      <div className="max-h-[min(400px,60dvh)] overflow-y-auto p-1.5">
-        {list.length === 0 ? (
-          <p className="px-3 py-8 text-center text-xs text-[var(--text-muted)]">No notifications yet.</p>
-        ) : (
-          <ul className="space-y-0.5">
-            {list.map((item) => (
-              <li key={item.id}>
-                <div className="flex items-start gap-2.5 rounded-xl px-3 py-2.5">
-                  <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-accent-500" aria-hidden="true" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-[13px] font-semibold text-[var(--text)]">{item.title}</p>
-                      {item.tag && (
-                        <span className="shrink-0 rounded-full bg-accent-500/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-accent-600 dark:text-accent-400">
-                          {item.tag}
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-0.5 text-xs leading-relaxed text-[var(--text-muted)]">{item.body}</p>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
-}
+type Tone = "blue" | "violet" | "teal" | "orange" | "slate";
+interface NavItem { to: string; label: string; icon: LucideIcon; end?: boolean }
+interface NavGroup { heading?: string; tone: Tone; items: NavItem[] }
 
-const NAV = [
-  { to: portal("/"), label: "Dashboard", icon: LayoutGrid, end: true },
-  { to: portal("/key"), label: "API Key", icon: Key },
-  { to: portal("/usage"), label: "Usage", icon: BarChart3 },
-  { to: portal("/models"), label: "Models", icon: Layers },
-  { to: portal("/topup"), label: "Topup", icon: Wallet },
-  { to: portal("/docs"), label: "Docs", icon: BookOpen },
+const NAV_GROUPS: NavGroup[] = [
+  {
+    tone: "blue",
+    items: [
+      { to: portal("/"), label: "Dashboard", icon: LayoutGrid, end: true },
+      { to: portal("/usage"), label: "Usage", icon: BarChart3 },
+    ],
+  },
+  {
+    heading: "Access",
+    tone: "orange",
+    items: [
+      { to: portal("/key"), label: "API Key", icon: Key },
+      { to: portal("/models"), label: "Models", icon: Layers },
+    ],
+  },
+  {
+    heading: "Billing",
+    tone: "teal",
+    items: [{ to: portal("/topup"), label: "Topup", icon: Wallet }],
+  },
+  {
+    heading: "Help",
+    tone: "slate",
+    items: [{ to: portal("/docs"), label: "Docs", icon: BookOpen }],
+  },
 ];
 
 const TITLES: Record<string, string> = {
@@ -68,12 +62,172 @@ const TITLES: Record<string, string> = {
   "/portal/docs": "Docs",
 };
 
+// The nav group that owns a path lends its tone to the page, like the dashboard.
+function toneForPath(pathname: string): Tone {
+  const path = pathname.replace(/\/+$/, "") || "/portal";
+  for (const g of NAV_GROUPS) {
+    for (const item of g.items) {
+      if (item.end ? path === item.to.replace(/\/+$/, "") : path.startsWith(item.to)) return g.tone;
+    }
+  }
+  return "blue";
+}
+
+function Brand() {
+  const { branding } = useBranding();
+  const name = branding.name || "KeiRouter";
+  return branding.logo_url ? (
+    <img src={branding.logo_url} alt={name} className="h-7 max-w-[150px] object-contain object-left" />
+  ) : (
+    <>
+      <BrandMark />
+      <span className="truncate text-[14px] font-semibold tracking-[-0.01em] text-fg">{name}</span>
+    </>
+  );
+}
+
+function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+  const navId = useId();
+  return (
+    <aside className="flex h-full w-60 shrink-0 flex-col border-r border-line bg-surface">
+      <Link
+        to={portal("/")}
+        onClick={onNavigate}
+        className="flex h-14 shrink-0 items-center gap-2.5 border-b border-line px-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+      >
+        <Brand />
+        <span className="ml-auto rounded-md border border-line bg-subtle px-1.5 py-px text-[11px] font-medium text-fg-muted">Portal</span>
+      </Link>
+      <nav aria-label="Portal" className="min-h-0 flex-1 overflow-y-auto px-2.5 pb-4 pt-2">
+        {NAV_GROUPS.map((group, gi) => (
+          <div key={gi} data-tone={group.tone} className={gi > 0 ? "mt-4" : undefined}>
+            {group.heading && (
+              <h2 id={`${navId}-g${gi}`} className="px-2.5 pb-1.5 text-[11.5px] font-medium text-fg-faint">
+                {group.heading}
+              </h2>
+            )}
+            <ul className="space-y-px" aria-labelledby={group.heading ? `${navId}-g${gi}` : undefined}>
+              {group.items.map((item) => (
+                <li key={item.to}>
+                  <NavLink
+                    to={item.to}
+                    end={item.end}
+                    onClick={onNavigate}
+                    className={({ isActive }) =>
+                      cn(
+                        "group flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors [@media(pointer:coarse)]:h-10 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                        isActive ? "bg-tone-soft text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
+                      )
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <item.icon
+                          className={cn("h-4 w-4 shrink-0 transition-colors", isActive ? "text-tone" : "text-fg-faint group-hover:text-tone")}
+                          strokeWidth={1.75}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate">{item.label}</span>
+                      </>
+                    )}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </nav>
+    </aside>
+  );
+}
+
+function NotificationsPanel({ items }: { items: LandingNotification[] }) {
+  const list = items.slice(0, MAX_NOTIFICATIONS);
+  return (
+    <div className="absolute right-0 top-full z-40 mt-2 w-[min(340px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-pop)]">
+      <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+        <p className="text-[13px] font-semibold text-fg">Notifications</p>
+        <span className="rounded-md bg-subtle px-1.5 py-px text-[11.5px] font-medium tabular-nums text-fg-muted">{list.length}</span>
+      </div>
+      <div className="max-h-[min(400px,60dvh)] overflow-y-auto p-1">
+        {list.length === 0 ? (
+          <p className="px-3 py-8 text-center text-[12.5px] text-fg-muted">No notifications yet.</p>
+        ) : (
+          <ul className="divide-y divide-line">
+            {list.map((item) => (
+              <li key={item.id} className="flex items-start gap-2.5 px-3 py-2.5">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent-500" aria-hidden="true" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-[13px] font-medium text-fg">{item.title}</p>
+                    {item.tag && (
+                      <span className="shrink-0 rounded-md border border-accent-500/20 bg-accent-500/10 px-1.5 py-px text-[11px] font-medium text-link">
+                        {item.tag}
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-[12px] leading-relaxed text-fg-muted">{item.body}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const THEME_OPTIONS: { value: Theme; label: string; icon: LucideIcon }[] = [
+  { value: "light", label: "Light", icon: Sun },
+  { value: "dark", label: "Dark", icon: Moon },
+  { value: "system", label: "System", icon: Monitor },
+];
+
+function AccountMenu({ email, onLogout }: { email?: string; onLogout: () => void }) {
+  const { theme, setTheme } = useTheme();
+  const themeLabelId = useId();
+  const initial = (email || "U").slice(0, 1).toUpperCase();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        aria-label="Account and theme"
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-line bg-subtle text-[12px] font-semibold text-fg transition-colors hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9"
+      >
+        <span aria-hidden="true">{initial}</span>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-60">
+        <DropdownMenuLabel>
+          <span className="block text-[13px] font-medium text-fg">Signed in</span>
+          <span className="block truncate">{email || "Portal session"}</span>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuLabel className="pb-1 pt-1" id={themeLabelId}>Theme</DropdownMenuLabel>
+        <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as Theme)} aria-labelledby={themeLabelId}>
+          {THEME_OPTIONS.map((opt) => (
+            <DropdownMenuRadioItem key={opt.value} value={opt.value}>
+              <opt.icon aria-hidden="true" />
+              {opt.label}
+            </DropdownMenuRadioItem>
+          ))}
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem tone="danger" onSelect={onLogout}>
+          <LogOut aria-hidden="true" />
+          Sign out
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function PortalLayoutPage() {
   const location = useLocation();
-  const { branding, logoSrc } = useBranding();
+  const { branding } = useBranding();
   const [open, setOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const close = useCallback(() => setOpen(false), []);
+
+  // Same cached query PortalRoot already resolved; read here for the email.
+  const status = useQuery({ queryKey: ["portal-status"], queryFn: fetchPortalStatus, retry: false });
 
   const notif = useQuery({
     queryKey: ["public-notifications"],
@@ -81,6 +235,8 @@ export function PortalLayoutPage() {
     staleTime: 5 * 60 * 1000,
   });
   const notifCount = notif.data?.length ?? 0;
+  const title = TITLES[location.pathname.replace(/\/+$/, "") || "/portal"] ?? "Portal";
+  const tone = toneForPath(location.pathname);
 
   useEffect(() => {
     if (!notifOpen) return;
@@ -97,68 +253,58 @@ export function PortalLayoutPage() {
   }, [notifOpen]);
 
   useEffect(() => {
-    document.title = `${branding.name || "KeiRouter"} - ${TITLES[location.pathname] ?? "Portal"}`;
-  }, [location.pathname, branding.name]);
-
-  useEffect(() => {
-    document.body.style.overflow = open ? "hidden" : "";
-    return () => { document.body.style.overflow = ""; };
-  }, [open]);
+    document.title = `${branding.name || "KeiRouter"} - ${title}`;
+  }, [title, branding.name]);
 
   const handleLogout = async () => {
     await portalLogout();
     window.location.href = "/portal";
   };
 
-  const linkClass = ({ isActive }: { isActive: boolean }) =>
-    `flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-colors ${
-      isActive
-        ? "bg-accent-500/10 text-accent-600 dark:text-accent-400"
-        : "text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)]"
-    }`;
-
   return (
-    <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-[var(--border)] bg-[var(--bg-elevated)] p-4 md:flex">
-        <div className="mb-6 flex items-center gap-3 px-2">
-          <img src={logoSrc} alt={branding.name || "KeiRouter"} className="h-7 object-contain" />
-        </div>
-        <nav className="flex flex-1 flex-col gap-1">
-          {NAV.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.end} className={linkClass}>
-              <n.icon size={17} /> {n.label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="mt-4 flex items-center justify-between border-t border-[var(--border)] pt-4">
-          <ThemeToggle />
-          <button onClick={handleLogout} className="flex items-center gap-2 text-sm text-[var(--text-muted)] hover:text-[var(--text)]">
-            <LogOut size={16} /> Sign out
+    <div className="flex h-dvh overflow-hidden bg-canvas text-fg">
+      <div className="hidden lg:flex">
+        <Sidebar />
+      </div>
+
+      <Sheet open={open} onOpenChange={setOpen}>
+        <SheetContent id={MOBILE_NAV_ID} side="left" className="w-60 lg:hidden" aria-describedby={undefined}>
+          <SheetTitle className="sr-only">Navigation</SheetTitle>
+          <SheetClose
+            aria-label="Close navigation"
+            className="absolute right-2 top-3 z-10 flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </SheetClose>
+          <Sidebar onNavigate={() => setOpen(false)} />
+        </SheetContent>
+      </Sheet>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-line bg-surface px-4 pt-[env(safe-area-inset-top)] sm:gap-3 sm:px-6 lg:px-8">
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            aria-label="Open navigation"
+            aria-expanded={open}
+            aria-controls={MOBILE_NAV_ID}
+            className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 lg:hidden"
+          >
+            <Menu className="h-[18px] w-[18px]" aria-hidden="true" />
           </button>
-        </div>
-      </aside>
+          <Link to={portal("/")} className="flex min-w-0 items-center gap-2 rounded-lg sm:hidden">
+            <Brand />
+          </Link>
+          <nav aria-label="Breadcrumb" className="hidden min-w-0 items-center gap-1.5 text-[13px] sm:flex">
+            <span className="text-fg-muted">Portal</span>
+            <span className="text-fg-faint" aria-hidden="true">/</span>
+            <span className="truncate font-medium text-fg" aria-current="page">{title}</span>
+          </nav>
 
-      {open && (
-        <div className="fixed inset-0 z-40 md:hidden" role="dialog">
-          <div className="absolute inset-0 bg-black/40" onClick={close} />
-          <aside className="absolute inset-y-0 left-0 w-64 bg-[var(--bg-elevated)] p-4">
-            <button className="mb-4 text-[var(--text-muted)]" onClick={close} aria-label="Close menu"><X size={18} /></button>
-            <nav className="flex flex-col gap-1">
-              {NAV.map((n) => (
-                <NavLink key={n.to} to={n.to} end={n.end} className={linkClass} onClick={close}>
-                  <n.icon size={17} /> {n.label}
-                </NavLink>
-              ))}
-            </nav>
-          </aside>
-        </div>
-      )}
-
-      <div className="md:pl-64">
-        <header className="sticky top-0 z-30 flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg)]/90 px-4 py-3 backdrop-blur md:px-8">
-          <button className="md:hidden text-[var(--text-muted)]" onClick={() => setOpen(true)} aria-label="Open menu"><Menu size={20} /></button>
-          <h1 className="text-lg font-display font-semibold">{TITLES[location.pathname] ?? "Portal"}</h1>
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            {status.data?.email && (
+              <span className="mr-1 hidden max-w-[220px] truncate text-[12.5px] text-fg-muted md:inline">{status.data.email}</span>
+            )}
             <div className="relative" data-portal-notif>
               <button
                 type="button"
@@ -167,22 +313,25 @@ export function PortalLayoutPage() {
                 aria-expanded={notifOpen}
                 aria-label="Notifications"
                 title="Notifications"
-                className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--bg-subtle)] text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
+                className="relative flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
               >
-                <Bell size={17} />
+                <Bell className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
                 {notifCount > 0 && (
-                  <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#c43d2e] px-1 text-[9px] font-bold text-white">
+                  <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-bad px-1 text-[9.5px] font-semibold text-white">
                     {notifCount > 9 ? "9+" : notifCount}
                   </span>
                 )}
               </button>
               {notifOpen && <NotificationsPanel items={notif.data ?? []} />}
             </div>
-            <div className="md:hidden"><ThemeToggle /></div>
+            <AccountMenu email={status.data?.email} onLogout={handleLogout} />
           </div>
         </header>
-        <main className="mx-auto max-w-[1040px] p-4 md:p-8">
-          <Outlet />
+
+        <main data-tone={tone} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div className="mx-auto w-full max-w-[1200px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+            <Outlet />
+          </div>
         </main>
       </div>
     </div>

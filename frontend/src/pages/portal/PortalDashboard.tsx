@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   fetchPortalStatus, fetchPortalUsage, createPortalKey,
 } from "../../lib/api";
+import { LayoutGrid } from "lucide-react";
 import { ErrorCard, Spinner } from "../../components/ui";
 import {
   DateFilter, OverviewSection, PageHeader, RevealPanel, SetupCard,
@@ -47,8 +48,8 @@ export function PortalDashboardPage() {
   if (createdKey) return <RevealPanel value={createdKey} onDone={handleContinue} doneLabel="Continue" />;
 
   const setup = (
-    <div className="space-y-8">
-      <PageHeader title="Welcome" subtitle={status.email ? `Signed in as ${status.email}` : undefined} />
+    <div className="space-y-6">
+      <PageHeader icon={LayoutGrid} title="Welcome" subtitle={status.email ? `Signed in as ${status.email}` : undefined} />
       <SetupCard
         email={status.email}
         provisioning={!!status.provisioning_enabled}
@@ -73,7 +74,7 @@ export function PortalDashboardPage() {
     const msg = usage.error instanceof Error ? usage.error.message : "Failed to load usage";
     return (
       <div className="space-y-6">
-        <PageHeader title="Usage" />
+        <PageHeader icon={LayoutGrid} title="Dashboard" />
         <ErrorCard message={msg} />
       </div>
     );
@@ -83,9 +84,13 @@ export function PortalDashboardPage() {
   if (!data) return <Spinner />;
 
   return (
-    <div className="space-y-8">
-      <DateFilter days={days} onChange={setDays} />
-
+    <div className="space-y-6">
+      <PageHeader
+        icon={LayoutGrid}
+        title="Dashboard"
+        subtitle={status.email ? `Signed in as ${status.email}` : "Your key's spend, tokens and limits at a glance."}
+        action={<DateFilter days={days} onChange={setDays} />}
+      />
       <OverviewSection d={data} />
     </div>
   );

@@ -1,10 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { CheckCircle2, Key } from "lucide-react";
+import { CheckCircle2, Key, Layers } from "lucide-react";
 import { fetchPortalStatus, fetchPortalUsage } from "../../lib/api";
-import { Card, EmptyState, ErrorCard, Spinner } from "../../components/ui";
+import { EmptyState, ErrorCard, Spinner } from "../../components/ui";
 import { portal } from "../../lib/portalRoutes";
-import { ModelSection, SectionTitle } from "./components";
+import { ModelSection, PageHeader, PanelCard } from "./components";
 
 export function PortalModelsPage() {
   const { data: status, isLoading: statusLoading } = useQuery({
@@ -25,18 +25,14 @@ export function PortalModelsPage() {
   if (status.has_key === false) {
     return (
       <div className="space-y-6">
+        <PageHeader icon={Layers} title="Models" />
         <EmptyState
+          variant="card"
+          icon={Layers}
           title="No API key yet"
           hint="Create an API key to see your models and authorized routes."
+          action={<Link to={portal("/key")} className="text-[13px] font-medium text-link hover:underline">Create an API key</Link>}
         />
-        <div className="flex justify-center">
-          <Link
-            to={portal("/key")}
-            className="text-sm font-semibold text-accent-600 hover:underline dark:text-accent-400"
-          >
-            Create an API key
-          </Link>
-        </div>
       </div>
     );
   }
@@ -54,24 +50,25 @@ export function PortalModelsPage() {
   const allowed = data.allowed_models ?? [];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
+      <PageHeader icon={Layers} title="Models" subtitle="Models this key may call, and what it used in the last 30 days." />
       {allowed.length > 0 && (
-        <section className="space-y-4">
-          <SectionTitle title="Authorized Routes" icon={<Key size={17} />} count={allowed.length} />
-          <Card className="p-6 md:p-7">
-            <div className="flex flex-wrap gap-2.5">
-              {allowed.map((m) => (
-                <div key={m} className="flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--bg-subtle)]/60 px-3.5 py-1.5 text-sm text-[var(--text)] transition-colors hover:bg-[var(--bg-subtle)]">
-                  <CheckCircle2 size={15} className="text-accent-500" />
-                  <span className="font-mono text-[13px] tracking-tight">{m}</span>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </section>
+        <PanelCard icon={Key} title="Authorized routes" count={allowed.length}>
+          <ul className="flex flex-wrap gap-2 p-4 sm:p-5">
+            {allowed.map((m) => (
+              <li key={m} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-subtle px-2.5 py-1.5">
+                <CheckCircle2 className="h-3.5 w-3.5 text-ok" strokeWidth={2} aria-hidden="true" />
+                <span className="font-mono text-[12.5px] text-fg">{m}</span>
+              </li>
+            ))}
+          </ul>
+        </PanelCard>
       )}
 
       {models.length > 0 && <ModelSection models={models} />}
+      {allowed.length === 0 && models.length === 0 && (
+        <EmptyState variant="card" icon={Layers} title="No model usage yet" hint="Requests made with your key will show up here." />
+      )}
     </div>
   );
 }

@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
 import { BookOpen, Terminal } from "lucide-react";
-import { Card } from "../../components/ui";
-import { CopyButton, PageHeader, SectionTitle } from "./components";
+import { Link } from "react-router-dom";
+import { SegmentedControl } from "../../components/ui";
+import { portal } from "../../lib/portalRoutes";
+import { CopyButton, IdField, PageHeader, PanelCard } from "./components";
 
 type Tool = "opencode" | "claude" | "codex" | "hermes";
 
@@ -99,62 +101,53 @@ export function PortalDocsPage() {
   const guide = guides.find((g) => g.id === active) ?? guides[0];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <PageHeader
+        icon={BookOpen}
         title="Docs"
         subtitle="Connect your coding agents and CLI tools to this endpoint."
       />
 
-      <Card className="p-6 md:p-7">
-        <SectionTitle title="Endpoint" icon={<Terminal size={17} />} />
-        <div className="mt-4 flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)]/60 p-3">
-          <code className="min-w-0 flex-1 break-all font-mono text-[13px] text-[var(--text)]">{baseURL}</code>
-          <CopyButton value={baseURL} />
+      <PanelCard icon={Terminal} title="Endpoint">
+        <div className="space-y-3 p-4 sm:p-5">
+          <IdField value={baseURL} />
+          <p className="text-[13px] text-fg-muted">
+            Use your API key (from the{" "}
+            <Link to={portal("/key")} className="font-medium text-link hover:underline">API Key</Link>{" "}
+            page) as the bearer token. Replace <code className="font-mono text-[12.5px] text-fg">provider/model-id</code> with a model from the{" "}
+            <Link to={portal("/models")} className="font-medium text-link hover:underline">Models</Link> page.
+          </p>
         </div>
-        <p className="mt-3 text-sm text-[var(--text-muted)]">
-          Use your API key (from the{" "}
-          <a href="/portal/key" className="font-medium text-accent-600 hover:underline dark:text-accent-400">API Key</a>{" "}
-          page) as the bearer token. Replace <code className="font-mono">provider/model-id</code> with a model from the{" "}
-          <a href="/portal/models" className="font-medium text-accent-600 hover:underline dark:text-accent-400">Models</a> page.
-        </p>
-      </Card>
+      </PanelCard>
 
-      <div className="flex flex-wrap gap-2">
-        {guides.map((g) => (
-          <button
-            key={g.id}
-            type="button"
-            onClick={() => setActive(g.id)}
-            className={`rounded-xl border px-4 py-2 text-sm font-medium transition-colors ${
-              active === g.id
-                ? "border-accent-500/40 bg-accent-500/10 text-accent-600 dark:text-accent-400"
-                : "border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text)]"
-            }`}
-          >
-            {g.name}
-          </button>
-        ))}
-      </div>
-
-      <Card className="p-6 md:p-7">
-        <SectionTitle title={guide.name} icon={<BookOpen size={17} />} />
-        <p className="mt-3 text-sm text-[var(--text-muted)]">{guide.blurb}</p>
-
-        <div className="mt-5 space-y-2">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold uppercase tracking-widest text-[var(--text-muted)]">Config file</span>
-            <code className="font-mono text-[12px] text-[var(--text)]">{guide.configPath}</code>
+      <PanelCard
+        icon={BookOpen}
+        title={guide.name}
+        subtitle={guide.blurb}
+        action={
+          <SegmentedControl<Tool>
+            label="Tool"
+            value={active}
+            onChange={setActive}
+            options={guides.map((g) => ({ value: g.id, label: g.name }))}
+          />
+        }
+      >
+        <div className="space-y-2 p-4 sm:p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-[12.5px]">
+            <span className="text-fg-muted">Config file</span>
+            <code className="font-mono text-[12.5px] text-fg">{guide.configPath}</code>
           </div>
-          <div className="relative rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)]/60">
-            <div className="absolute right-2 top-2">
-              <CopyButton value={guide.snippet} />
+          <div className="relative rounded-lg border border-line bg-subtle">
+            <div className="absolute right-1.5 top-1.5">
+              <CopyButton value={guide.snippet} label="Copy snippet" />
             </div>
-            <pre className="max-h-[420px] overflow-auto p-4 pr-12 font-mono text-[12.5px] leading-relaxed text-[var(--text)]">
+            <pre className="max-h-[420px] overflow-auto p-4 pr-12 font-mono text-[12.5px] leading-relaxed text-fg">
               <code>{guide.snippet}</code>
             </pre>
           </div>
         </div>
-      </Card>
+      </PanelCard>
     </div>
   );
 }

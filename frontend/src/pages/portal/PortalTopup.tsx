@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { CreditCard, Wallet } from "lucide-react";
+import { CheckCircle2, CreditCard, History, Receipt, Wallet, XCircle } from "lucide-react";
 import {
   createTopupOrder,
   fetchPortalPaymentConfig,
@@ -10,12 +10,12 @@ import {
   fetchPortalTopups,
   type PaymentOrder,
 } from "../../lib/api";
-import { Badge, Button, Card, EmptyState, ErrorCard, Input, Spinner } from "../../components/ui";
+import { Badge, Button, EmptyState, ErrorCard, Input, Kpi, KpiGrid, Spinner } from "../../components/ui";
 import { TurnstileWidget, useTurnstileSiteKey } from "../../components/TurnstileWidget";
 import { useToast } from "../../components/Toast";
 import { formatSpendUSD, formatUSD } from "../../lib/format";
 import { portal } from "../../lib/portalRoutes";
-import { SectionTitle, formatDateTime } from "./components";
+import { PageHeader, PanelCard, TD, TH, THEAD, formatDateTime } from "./components";
 
 function formatIDR(n: number): string {
   return new Intl.NumberFormat("id-ID", {
@@ -117,18 +117,14 @@ export function PortalTopupPage() {
   if (status.has_key === false) {
     return (
       <div className="space-y-6">
+        <PageHeader icon={Wallet} title="Topup" />
         <EmptyState
+          variant="card"
+          icon={Wallet}
           title="No API key yet"
           hint="Create an API key to see your top-up history."
+          action={<Link to={portal("/key")} className="text-[13px] font-medium text-link hover:underline">Create an API key</Link>}
         />
-        <div className="flex justify-center">
-          <Link
-            to={portal("/key")}
-            className="text-sm font-semibold text-accent-600 hover:underline dark:text-accent-400"
-          >
-            Create an API key
-          </Link>
-        </div>
       </div>
     );
   }
@@ -166,212 +162,153 @@ export function PortalTopupPage() {
   const orderList = orders.data?.orders ?? [];
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
+      <PageHeader icon={Wallet} title="Topup" subtitle="Your balance, credit purchases and top-up history." />
+
       {returnStatus === "success" && (
-        <Card className="flex items-start gap-3 border-emerald-300 bg-emerald-50 px-5 py-4 dark:border-emerald-800/60 dark:bg-emerald-950">
-          <CreditCard size={18} className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
-          <p className="text-sm text-emerald-800 dark:text-emerald-200">
+        <div role="status" className="flex items-start gap-3 rounded-2xl border border-ok/30 bg-ok/10 px-4 py-3">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" strokeWidth={1.75} aria-hidden="true" />
+          <p className="text-[13px] text-fg">
             Payment received. Your credit will appear here as soon as it is confirmed.
           </p>
-        </Card>
+        </div>
       )}
       {returnStatus === "cancel" && (
-        <Card className="flex items-start gap-3 border-[var(--border)] bg-[var(--bg-subtle)]/50 px-5 py-4">
-          <CreditCard size={18} className="mt-0.5 shrink-0 text-[var(--text-muted)]" />
-          <p className="text-sm text-[var(--text-muted)]">Payment cancelled — no charge was made.</p>
-        </Card>
+        <div role="status" className="flex items-start gap-3 rounded-2xl border border-line bg-subtle px-4 py-3">
+          <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-fg-muted" strokeWidth={1.75} aria-hidden="true" />
+          <p className="text-[13px] text-fg-muted">Payment cancelled — no charge was made.</p>
+        </div>
       )}
 
-      <section className="space-y-4">
-        <SectionTitle title="Balance" icon={<Wallet size={17} />} />
-        <Card className="p-6 md:p-7">
-          {balance ? (
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
-              <BalanceStat label="Budget Limit" value={formatSpendUSD(balance.limit_usd)} />
-              <BalanceStat label="Spent" value={formatSpendUSD(balance.spent_usd)} />
-              <BalanceStat label="Remaining" value={formatSpendUSD(balance.usd_remaining)} accent />
-            </div>
-          ) : (
-            <p className="py-2 text-sm text-[var(--text-muted)]">No budget limit configured.</p>
-          )}
-        </Card>
-      </section>
+      {balance ? (
+        <KpiGrid cols={3} label="Balance">
+          <Kpi icon={Wallet} tone="slate" label="Budget limit" value={formatSpendUSD(balance.limit_usd)} />
+          <Kpi icon={Receipt} tone="orange" label="Spent" value={formatSpendUSD(balance.spent_usd)} />
+          <Kpi icon={CreditCard} tone="teal" label="Remaining" value={formatSpendUSD(balance.usd_remaining)} />
+        </KpiGrid>
+      ) : (
+        <PanelCard icon={Wallet} title="Balance">
+          <p className="px-4 py-3 text-[13px] text-fg-muted sm:px-5">No budget limit configured.</p>
+        </PanelCard>
+      )}
 
       {showBuy && (
-        <section className="space-y-4">
-          <SectionTitle title="Buy Credit" icon={<CreditCard size={17} />} />
-          <Card className="p-6 md:p-7">
-            <div className="grid grid-cols-1 gap-7 lg:grid-cols-2">
-              <div className="space-y-5">
-                {packages.length > 0 && (
-                  <div className="space-y-2">
-                    <p className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
-                      Packages
-                    </p>
-                    <div className="flex flex-wrap gap-2">
-                      {packages.map((p) => {
-                        const selected = packageId === p.id;
-                        return (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onClick={() => {
-                              setPackageId(p.id);
-                              setAmount("");
-                            }}
-                            className={`flex flex-col items-start rounded-xl border px-4 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-400/60 ${
-                              selected
-                                ? "border-accent-500 bg-accent-50 dark:bg-accent-900/30"
-                                : "border-[var(--border)] bg-[var(--bg-elevated)] hover:border-[var(--border-strong)] hover:bg-[var(--bg-subtle)]"
-                            }`}
-                          >
-                            <span className="text-sm font-semibold text-[var(--text)]">{p.label}</span>
-                            <span className="text-xs tabular-nums text-[var(--text-muted)]">{formatIDR(p.amount_idr)}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
+        <PanelCard icon={CreditCard} title="Buy credit">
+          <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px]">
+            <div className="space-y-5 p-4 sm:p-5">
+              {packages.length > 0 && (
+                <fieldset className="space-y-2">
+                  <legend className="mb-2 text-[12.5px] font-medium text-fg">Packages</legend>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {packages.map((p) => {
+                      const selected = packageId === p.id;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => {
+                            setPackageId(p.id);
+                            setAmount("");
+                          }}
+                          className={`flex flex-col items-start rounded-lg border px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 ${
+                            selected
+                              ? "border-accent-500 bg-accent-500/10 ring-1 ring-inset ring-accent-500"
+                              : "border-line bg-surface hover:border-line-strong hover:bg-hover"
+                          }`}
+                        >
+                          <span className="text-[13px] font-semibold text-fg">{p.label}</span>
+                          <span className="text-[12px] tabular-nums text-fg-muted">{formatIDR(p.amount_idr)}</span>
+                        </button>
+                      );
+                    })}
                   </div>
-                )}
+                </fieldset>
+              )}
 
-                <label className="block space-y-2">
-                  <span className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
-                    Custom amount (IDR)
-                  </span>
-                  <Input
-                    type="number"
-                    inputMode="numeric"
-                    min={minIdr || undefined}
-                    max={maxIdr || undefined}
-                    placeholder={minIdr ? `Min ${minIdr.toLocaleString("id-ID")}` : "Amount in IDR"}
-                    value={amount}
-                    onChange={(e) => {
-                      setPackageId(null);
-                      setAmount(e.target.value);
-                    }}
-                  />
-                  {(minIdr > 0 || maxIdr > 0) && (
-                    <span className="text-xs text-[var(--text-muted)]">
-                      {minIdr > 0 && `Min ${formatIDR(minIdr)}`}
-                      {minIdr > 0 && maxIdr > 0 && " · "}
-                      {maxIdr > 0 && `Max ${formatIDR(maxIdr)}`}
-                    </span>
-                  )}
-                </label>
-              </div>
-
-              <div className="flex flex-col justify-between rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)]/40 p-5">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
-                    You pay
-                  </p>
-                  <p className="mt-1 text-2xl font-display font-semibold tabular-nums tracking-tight text-[var(--text)]">
-                    {amountIdr > 0 ? formatIDR(amountIdr) : "—"}
-                  </p>
-                  <p className="mt-4 text-xs font-semibold uppercase tracking-widest text-[var(--text-muted)]">
-                    Estimated credit
-                  </p>
-                  <p className="mt-1 text-2xl font-display font-semibold tabular-nums tracking-tight text-accent-600 dark:text-accent-400">
-                    {fxRate > 0 && amountIdr > 0 ? formatUSD(creditUsd) : "—"}
-                  </p>
-                  {config?.currency_source && (
-                    <p className="mt-2 text-xs text-[var(--text-muted)]">
-                      Rate source: {config.currency_source}
-                    </p>
-                  )}
-                </div>
-                <TurnstileWidget
-                  siteKey={siteKey}
-                  onToken={setTurnstileToken}
-                  resetSignal={resetSignal}
-                  className="mt-5 flex justify-center"
+              <label className="block space-y-1.5">
+                <span className="block text-[12.5px] font-medium text-fg">Custom amount (IDR)</span>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  min={minIdr || undefined}
+                  max={maxIdr || undefined}
+                  placeholder={minIdr ? `Min ${minIdr.toLocaleString("id-ID")}` : "Amount in IDR"}
+                  value={amount}
+                  onChange={(e) => {
+                    setPackageId(null);
+                    setAmount(e.target.value);
+                  }}
+                  className="tabular-nums"
                 />
-                <Button
-                  className="mt-5 w-full"
-                  onClick={submit}
-                  disabled={!amountValid || !fxRate || buyMutation.isPending || (!!siteKey && !turnstileToken)}
-                >
-                  <CreditCard size={16} />
-                  {buyMutation.isPending ? "Starting payment…" : "Buy credit"}
-                </Button>
-              </div>
+                {(minIdr > 0 || maxIdr > 0) && (
+                  <span className="block text-[12px] text-fg-muted">
+                    {minIdr > 0 && `Min ${formatIDR(minIdr)}`}
+                    {minIdr > 0 && maxIdr > 0 && " · "}
+                    {maxIdr > 0 && `Max ${formatIDR(maxIdr)}`}
+                  </span>
+                )}
+              </label>
             </div>
-          </Card>
-        </section>
+
+            <div className="flex flex-col border-t border-line bg-subtle p-4 sm:p-5 lg:border-l lg:border-t-0">
+              <dl className="space-y-3">
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-[13px] text-fg-muted">You pay</dt>
+                  <dd className="text-[18px] font-semibold tabular-nums text-fg">{amountIdr > 0 ? formatIDR(amountIdr) : "—"}</dd>
+                </div>
+                <div className="flex items-baseline justify-between gap-3">
+                  <dt className="text-[13px] text-fg-muted">Estimated credit</dt>
+                  <dd className="text-[18px] font-semibold tabular-nums text-link">{fxRate > 0 && amountIdr > 0 ? formatUSD(creditUsd) : "—"}</dd>
+                </div>
+                {config?.currency_source && (
+                  <p className="text-[12px] text-fg-faint">Rate source: {config.currency_source}</p>
+                )}
+              </dl>
+              <TurnstileWidget
+                siteKey={siteKey}
+                onToken={setTurnstileToken}
+                resetSignal={resetSignal}
+                className="mt-4 flex justify-center"
+              />
+              <Button
+                className="mt-4 w-full"
+                onClick={submit}
+                disabled={!amountValid || !fxRate || buyMutation.isPending || (!!siteKey && !turnstileToken)}
+              >
+                <CreditCard aria-hidden="true" />
+                {buyMutation.isPending ? "Starting payment…" : "Buy credit"}
+              </Button>
+            </div>
+          </div>
+        </PanelCard>
       )}
 
       {showBuy && (
-        <section className="space-y-4">
-          <SectionTitle title="Payment Orders" icon={<CreditCard size={17} />} count={orderList.length} />
-          <Card>
-            {orders.isError ? (
-              <EmptyState title="Could not load payment orders" />
-            ) : orderList.length === 0 ? (
-              <EmptyState title="No payment orders yet" />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="border-b border-[var(--border)] bg-[var(--bg-subtle)]/50">
-                    <tr className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-                      <th className="px-6 py-4 text-left font-semibold">Date</th>
-                      <th className="px-6 py-4 text-right font-semibold">Amount</th>
-                      <th className="px-6 py-4 text-right font-semibold">Credit</th>
-                      <th className="px-6 py-4 text-left font-semibold">Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--border)]">
-                    {orderList.map((o) => (
-                      <tr key={o.order_id} className="transition-colors hover:bg-[var(--bg-subtle)]/30">
-                        <td className="px-6 py-4 whitespace-nowrap tabular-nums text-[var(--text-muted)]">
-                          {formatDateTime(o.created_at)}
-                        </td>
-                        <td className="px-6 py-4 text-right tabular-nums text-[var(--text)]">
-                          {formatIDR(o.amount_idr)}
-                        </td>
-                        <td className="px-6 py-4 text-right font-semibold tabular-nums text-[var(--text)]">
-                          {formatUSD(o.credit_usd)}
-                        </td>
-                        <td className="px-6 py-4">
-                          <Badge tone={ORDER_STATUS_TONE[o.status] ?? "neutral"}>{o.status}</Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </section>
-      )}
-
-      <section className="space-y-4">
-        <SectionTitle title="Top-up History" icon={<Wallet size={17} />} count={topups.length} />
-        <Card>
-          {topups.length === 0 ? (
-            <EmptyState title="No top-ups yet" />
+        <PanelCard icon={Receipt} title="Payment orders" count={orderList.length}>
+          {orders.isError ? (
+            <EmptyState title="Could not load payment orders" />
+          ) : orderList.length === 0 ? (
+            <EmptyState title="No payment orders yet" />
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b border-[var(--border)] bg-[var(--bg-subtle)]/50">
-                  <tr className="text-[11px] uppercase tracking-wide text-[var(--text-muted)]">
-                    <th className="px-6 py-4 text-left font-semibold">Date</th>
-                    <th className="px-6 py-4 text-left font-semibold">Reason</th>
-                    <th className="px-6 py-4 text-left font-semibold">Status</th>
-                    <th className="px-6 py-4 text-right font-semibold">Amount</th>
+              <table className="w-full min-w-[520px] text-[13px]">
+                <thead className={THEAD}>
+                  <tr>
+                    <th scope="col" className={`${TH} text-left`}>Date</th>
+                    <th scope="col" className={`${TH} text-right`}>Amount</th>
+                    <th scope="col" className={`${TH} text-right`}>Credit</th>
+                    <th scope="col" className={`${TH} text-left`}>Status</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[var(--border)]">
-                  {topups.map((t) => (
-                    <tr key={t.id} className="transition-colors hover:bg-[var(--bg-subtle)]/30">
-                      <td className="px-6 py-4 whitespace-nowrap tabular-nums text-[var(--text-muted)]">
-                        {formatDateTime(t.created_at)}
-                      </td>
-                      <td className="px-6 py-4 text-[var(--text)]">{t.reason || "—"}</td>
-                      <td className="px-6 py-4">
-                        <Badge tone="success">credited</Badge>
-                      </td>
-                      <td className="px-6 py-4 text-right font-semibold tabular-nums text-[var(--text)]">
-                        {formatUSD(t.amount_usd)}
+                <tbody className="divide-y divide-line">
+                  {orderList.map((o) => (
+                    <tr key={o.order_id} className="transition-colors hover:bg-hover">
+                      <td className={`${TD} whitespace-nowrap tabular-nums text-fg-muted`}>{formatDateTime(o.created_at)}</td>
+                      <td className={`${TD} text-right tabular-nums text-fg`}>{formatIDR(o.amount_idr)}</td>
+                      <td className={`${TD} text-right font-semibold tabular-nums text-fg`}>{formatUSD(o.credit_usd)}</td>
+                      <td className={TD}>
+                        <Badge tone={ORDER_STATUS_TONE[o.status] ?? "neutral"}>{o.status}</Badge>
                       </td>
                     </tr>
                   ))}
@@ -379,23 +316,48 @@ export function PortalTopupPage() {
               </table>
             </div>
           )}
-        </Card>
-      </section>
+        </PanelCard>
+      )}
 
-      <p className="text-xs text-[var(--text-muted)]">
-        Top-ups are applied by an administrator or automatically upon confirmed payment.
-      </p>
-    </div>
-  );
-}
-
-function BalanceStat({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
-  return (
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)]/40 px-4 py-3">
-      <p className="text-[11px] font-semibold uppercase tracking-widest text-[var(--text-muted)]">{label}</p>
-      <p className={`mt-1 text-2xl font-display font-semibold tabular-nums tracking-tight ${accent ? "text-accent-600 dark:text-accent-400" : "text-[var(--text)]"}`}>
-        {value}
-      </p>
+      <PanelCard
+        icon={History}
+        title="Top-up history"
+        count={topups.length}
+        footer={
+          <p className="border-t border-line bg-subtle px-4 py-2.5 text-[12px] text-fg-muted sm:px-5">
+            Top-ups are applied by an administrator or automatically upon confirmed payment.
+          </p>
+        }
+      >
+        {topups.length === 0 ? (
+          <EmptyState title="No top-ups yet" />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[520px] text-[13px]">
+              <thead className={THEAD}>
+                <tr>
+                  <th scope="col" className={`${TH} text-left`}>Date</th>
+                  <th scope="col" className={`${TH} text-left`}>Reason</th>
+                  <th scope="col" className={`${TH} text-left`}>Status</th>
+                  <th scope="col" className={`${TH} text-right`}>Amount</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {topups.map((t) => (
+                  <tr key={t.id} className="transition-colors hover:bg-hover">
+                    <td className={`${TD} whitespace-nowrap tabular-nums text-fg-muted`}>{formatDateTime(t.created_at)}</td>
+                    <td className={`${TD} text-fg`}>{t.reason || "—"}</td>
+                    <td className={TD}>
+                      <Badge tone="success">credited</Badge>
+                    </td>
+                    <td className={`${TD} text-right font-semibold tabular-nums text-fg`}>{formatUSD(t.amount_usd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </PanelCard>
     </div>
   );
 }
