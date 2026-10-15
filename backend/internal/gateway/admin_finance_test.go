@@ -13,9 +13,11 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/finance"
 	"github.com/mydisha/keirouter/backend/internal/inflight"
 	"github.com/mydisha/keirouter/backend/internal/store"
+	"github.com/mydisha/keirouter/backend/internal/vault"
 )
 
 func newFinanceTestServer(t *testing.T) (*Server, http.Handler) {
@@ -24,6 +26,11 @@ func newFinanceTestServer(t *testing.T) (*Server, http.Handler) {
 	s.settings = s.db.Settings()
 	s.chains = s.db.Chains()
 	s.inflight = inflight.New()
+	mk, err := crypto.GenerateMasterKey()
+	require.NoError(t, err)
+	sealer, err := crypto.NewSealer(mk)
+	require.NoError(t, err)
+	s.vault = vault.New(sealer)
 	r := chi.NewRouter()
 	s.mountFinance(r)
 	return s, r
@@ -207,7 +214,7 @@ func TestAlerts_TestSend(t *testing.T) {
 	}))
 	defer srv.Close()
 	// Bypass URL validation to point the stored webhook at the fake server.
-	require.NoError(t, finance.SaveAlertSettings(t.Context(), s.db.Settings().Set,
+	require.NoError(t, finance.SaveAlertSettings(t.Context(), s.db.Settings().Set, s.financeBox(),
 		finance.AlertSettings{Enabled: true, DiscordWebhookURL: srv.URL}))
 
 	rec = doJSON(t, h, http.MethodPost, "/payments/alerts/test", "")

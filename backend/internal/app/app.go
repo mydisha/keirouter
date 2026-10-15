@@ -30,6 +30,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/crypto"
 
 	"github.com/mydisha/keirouter/backend/internal/dispatch"
+	"github.com/mydisha/keirouter/backend/internal/finance"
 	"github.com/mydisha/keirouter/backend/internal/gateway"
 	"github.com/mydisha/keirouter/backend/internal/guardrails"
 	"github.com/mydisha/keirouter/backend/internal/guardrails/bias"
@@ -60,7 +61,9 @@ import (
 
 // App is the assembled application, ready to serve.
 type App struct {
-	cfg                config.Config
+	cfg config.Config
+	// financeBox seals the finance alert webhook (the master-key sealer).
+	financeBox         finance.SecretBox
 	log                *slog.Logger
 	db                 *store.DB
 	accounts           *store.AccountRepo
@@ -526,7 +529,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	// usable without a manual "connect" step in the dashboard.
 	seedFreeAccounts(ctx, db.Accounts(), log)
 
-	app = &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), server: srv, keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, reloadPricing: reloadPricing, marketURL: "", surplusURL: "", marketCache: marketCache, inflight: inflightTracker, audit: auditRec, auditSweeper: auditSweeper, sharedState: sharedState}
+	app = &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), server: srv, keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, reloadPricing: reloadPricing, marketURL: "", surplusURL: "", marketCache: marketCache, inflight: inflightTracker, financeBox: sealer, audit: auditRec, auditSweeper: auditSweeper, sharedState: sharedState}
 
 	return app, nil
 }

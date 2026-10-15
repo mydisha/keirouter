@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mydisha/keirouter/backend/internal/crypto"
+	"github.com/mydisha/keirouter/backend/internal/finance"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
@@ -123,4 +124,29 @@ func TestFullBackupRequiresStrongPassphrase(t *testing.T) {
 	s := newPortalTestServer(t)
 	require.Equal(t, http.StatusBadRequest, doBackup(t, s, "").Code)
 	require.Equal(t, http.StatusBadRequest, doBackup(t, s, "short").Code)
+}
+
+// The finance alert webhook carries its token, so it must leave the backup
+// only re-sealed under the passphrase and come back under the target key.
+func TestFullBackupKeepsFinanceWebhookSealed(t *testing.T) {
+	src := newPortalTestServer(t)
+	ctx := context.Background()
+	const hook = "https://discord.com/api/webhooks/42/WEBHOOKSECRETTOKEN"
+	require.NoError(t, finance.SaveAlertSettings(ctx, src.settings.Set, src.financeBox(),
+		finance.AlertSettings{Enabled: true, DiscordWebhookURL: hook}))
+
+	rec := doBackup(t, src, backupPass)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	file := rec.Body.Bytes()
+	require.NotContains(t, string(file), "WEBHOOKSECRETTOKEN", "webhook token leaked into the backup")
+	require.NotContains(t, string(file), "discord.com/api/webhooks", "webhook URL leaked into the backup")
+
+	dst := newPortalTestServer(t) // fresh master key
+	rec = doRestore(t, dst, file, backupPass)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	got, err := finance.LoadAlertSettings(ctx, dst.settings.Get, dst.financeBox())
+	require.NoError(t, err, "webhook must be re-sealed under the target master key")
+	require.Equal(t, hook, got.DiscordWebhookURL)
+	require.True(t, got.Enabled)
 }

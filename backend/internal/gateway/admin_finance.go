@@ -44,6 +44,15 @@ func (s *Server) settingsGet() func(context.Context, string) (string, error) {
 	return s.db.Settings().Get
 }
 
+// financeBox seals the Discord webhook with the master key. It returns a nil
+// interface (not a typed nil) when no vault is configured.
+func (s *Server) financeBox() finance.SecretBox {
+	if s.vault == nil {
+		return nil
+	}
+	return s.vault.Sealer()
+}
+
 func (s *Server) settingsSet() func(context.Context, string, string) error {
 	if s.settings != nil {
 		return s.settings.Set
@@ -505,7 +514,7 @@ func alertSettingsView(a finance.AlertSettings) map[string]any {
 }
 
 func (s *Server) adminGetFinanceAlerts(w http.ResponseWriter, r *http.Request) {
-	a, err := finance.LoadAlertSettings(r.Context(), s.settingsGet())
+	a, err := finance.LoadAlertSettings(r.Context(), s.settingsGet(), s.financeBox())
 	if err != nil {
 		s.internalError(w, err)
 		return
@@ -522,7 +531,7 @@ func (s *Server) adminPutFinanceAlerts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	cur, err := finance.LoadAlertSettings(ctx, s.settingsGet())
+	cur, err := finance.LoadAlertSettings(ctx, s.settingsGet(), s.financeBox())
 	if err != nil {
 		s.internalError(w, err)
 		return
@@ -542,7 +551,7 @@ func (s *Server) adminPutFinanceAlerts(w http.ResponseWriter, r *http.Request) {
 	if cur.DiscordWebhookURL == "" {
 		cur.Enabled = false
 	}
-	if err := finance.SaveAlertSettings(ctx, s.settingsSet(), cur); err != nil {
+	if err := finance.SaveAlertSettings(ctx, s.settingsSet(), s.financeBox(), cur); err != nil {
 		s.internalError(w, err)
 		return
 	}
@@ -550,7 +559,7 @@ func (s *Server) adminPutFinanceAlerts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminTestFinanceAlerts(w http.ResponseWriter, r *http.Request) {
-	a, err := finance.LoadAlertSettings(r.Context(), s.settingsGet())
+	a, err := finance.LoadAlertSettings(r.Context(), s.settingsGet(), s.financeBox())
 	if err != nil {
 		s.internalError(w, err)
 		return

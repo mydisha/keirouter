@@ -83,12 +83,13 @@ func TestLoader_MarkupsGlobalFromSettings(t *testing.T) {
 func TestAlertSettings_RoundTrip(t *testing.T) {
 	db := newLoaderDB(t)
 	ctx := context.Background()
-	got, err := LoadAlertSettings(ctx, db.Settings().Get)
+	box := testSealer(t)
+	got, err := LoadAlertSettings(ctx, db.Settings().Get, box)
 	require.NoError(t, err)
 	require.Equal(t, AlertSettings{}, got)
 	in := AlertSettings{Enabled: true, DiscordWebhookURL: "https://discord.com/api/webhooks/1/tok"}
-	require.NoError(t, SaveAlertSettings(ctx, db.Settings().Set, in))
-	got, err = LoadAlertSettings(ctx, db.Settings().Get)
+	require.NoError(t, SaveAlertSettings(ctx, db.Settings().Set, box, in))
+	got, err = LoadAlertSettings(ctx, db.Settings().Get, box)
 	require.NoError(t, err)
 	require.Equal(t, in, got)
 }

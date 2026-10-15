@@ -16,7 +16,7 @@ func (a *App) runFinanceAlerts(ctx context.Context) {
 	}
 	deps := finance.AlertDeps{
 		Load: func(ctx context.Context) (finance.AlertSettings, error) {
-			return finance.LoadAlertSettings(ctx, a.db.Settings().Get)
+			return finance.LoadAlertSettings(ctx, a.db.Settings().Get, a.financeBox)
 		},
 		Balances: l.Balances,
 		SetFired: a.db.Upstream().SetAlertFiredAt,
