@@ -44,6 +44,7 @@ func (s *Server) mountAdmin(r chi.Router) {
 	r.Delete("/keys/{id}", s.adminDeleteKey)
 	r.Post("/keys/{id}/topup", s.adminTopupKey)
 	r.Get("/keys/{id}/usage", s.adminKeyUsage)
+	r.Get("/keys/{id}/models", s.adminKeyModelUsage)
 	r.Get("/keys/{id}/topups", s.adminListKeyTopups)
 	r.Post("/keys/{id}/limit", s.adminAdjustKeyLimit)
 	r.Get("/keys/{id}/limit-adjustments", s.adminListKeyLimitAdjustments)

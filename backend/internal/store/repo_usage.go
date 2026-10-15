@@ -1089,3 +1089,56 @@ func (r *UsageRepo) UsageByKeySince(ctx context.Context, tenantID string, since 
 	}
 	return out, rows.Err()
 }
+
+// KeyModelUsage is one model's usage by a single API key over a window.
+type KeyModelUsage struct {
+	Provider, Model  string
+	Requests         int64
+	SuccessCount     int64
+	FailureCount     int64
+	BlockedCount     int64
+	PromptTokens     int64
+	CompletionTokens int64
+	CachedTokens     int64
+	ReasoningTokens  int64
+	CostNanos        int64
+	AvgLatencyMS     int64
+	LastUsedAt       time.Time
+}
+
+// ModelUsageByKeySince groups one key's usage since the cut-off by provider
+// and model, busiest first.
+func (r *UsageRepo) ModelUsageByKeySince(ctx context.Context, tenantID, keyID string, since time.Time) ([]KeyModelUsage, error) {
+	q := r.db.rebind(`SELECT provider, model, COUNT(*),
+			COALESCE(SUM(CASE WHEN ` + sqlUsageSucceeded + ` THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN ` + sqlUsageFailed + ` THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN ` + sqlUsageBlocked + ` THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0),
+			COALESCE(SUM(cached_tokens), 0), COALESCE(SUM(reasoning_tokens), 0),
+			COALESCE(SUM(cost_nanos), 0),
+			COALESCE(CAST(AVG(CASE WHEN end_to_end_latency_ms > 0 THEN end_to_end_latency_ms END) AS INTEGER), 0),
+			MAX(created_at)
+		FROM usage_records
+		WHERE tenant_id = ? AND api_key_id = ? AND created_at >= ?
+		GROUP BY provider, model
+		ORDER BY COUNT(*) DESC, provider, model`)
+	rows, err := r.db.sql.QueryContext(ctx, q, tenantID, keyID, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("store: key model usage: %w", err)
+	}
+	defer rows.Close()
+	out := []KeyModelUsage{}
+	for rows.Next() {
+		var (
+			m    KeyModelUsage
+			last string
+		)
+		if err := rows.Scan(&m.Provider, &m.Model, &m.Requests, &m.SuccessCount, &m.FailureCount, &m.BlockedCount,
+			&m.PromptTokens, &m.CompletionTokens, &m.CachedTokens, &m.ReasoningTokens, &m.CostNanos, &m.AvgLatencyMS, &last); err != nil {
+			return nil, fmt.Errorf("store: key model usage scan: %w", err)
+		}
+		m.LastUsedAt = parseTime(last)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}

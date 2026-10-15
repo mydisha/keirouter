@@ -811,6 +811,25 @@ export interface UsageInsights {
   busiest: string;
 }
 
+export interface KeyModelUsage {
+  provider: string;
+  provider_name: string;
+  provider_icon: string;
+  model: string;
+  requests: number;
+  success_requests: number;
+  failed_requests: number;
+  blocked_requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cached_tokens: number;
+  reasoning_tokens: number;
+  total_tokens: number;
+  cost_usd: number;
+  avg_latency_ms: number;
+  last_used_at: string;
+}
+
 export interface LeaderboardEntry {
   key_id: string;
   key_name: string;
@@ -2293,6 +2312,8 @@ export const api = {
     request<{ period: string; since: string; chains: ChainUsage[] }>("GET", `/usage/chains?period=${period}&tz=${browserTZ()}`),
   modelUsage: (period: string) =>
     request<ModelUsageResponse>("GET", `/usage/models?period=${period}&tz=${browserTZ()}`),
+  keyModelUsage: (keyId: string, period: string) =>
+    request<{ period: string; since: string; models: KeyModelUsage[] }>("GET", `/keys/${keyId}/models?period=${period}&tz=${browserTZ()}`),
   usageLeaderboard: (period: string) =>
     request<UsageLeaderboard>("GET", `/usage/leaderboard?period=${period}&tz=${browserTZ()}`),
 

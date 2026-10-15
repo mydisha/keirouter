@@ -23,6 +23,7 @@ import {
   fetchKeyUsageById,
   type APIKey,
   type GuardrailPolicyConfig,
+  type KeyModelUsage,
   type KeyUsageData,
   type Plan,
 } from "../lib/api";
@@ -37,12 +38,13 @@ import { useModelCatalog, type ModelCatalogOption } from "../components/ModelSel
 import { ProviderLogo } from "../components/ProviderLogo";
 import { Badge, Button, Field, IconTile, Input, Kpi, KpiGrid, Modal, ModalFooter, SectionTitle, Select, Skeleton, TablePagination, Toggle, useClientPagination, EmptyState } from "../components/ui";
 import { ICONS } from "../lib/icons";
+import { REPORT_PERIODS } from "../lib/periods";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 
-type Tab = "general" | "models" | "budget" | "guardrails";
-const TAB_VALUES: Tab[] = ["general", "models", "budget", "guardrails"];
-const TAB_LABELS: Record<Tab, string> = { general: "Overview", models: "Models", budget: "Budget", guardrails: "Guardrails" };
+type Tab = "general" | "usage" | "models" | "budget" | "guardrails";
+const TAB_VALUES: Tab[] = ["general", "usage", "models", "budget", "guardrails"];
+const TAB_LABELS: Record<Tab, string> = { general: "Overview", usage: "Model usage", models: "Models", budget: "Budget", guardrails: "Guardrails" };
 
 const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
 const USAGE_DAYS = 30;
@@ -372,6 +374,7 @@ export function KeyDetailPage() {
         {tab === "general" && (
           <GeneralTab apiKey={key} plan={plan} portalUrl={portalUrl} onToggle={() => toggle.mutate(key)} togglePending={toggle.isPending} />
         )}
+        {tab === "usage" && <ModelUsageTab apiKey={key} />}
         {tab === "models" && <ModelsTab apiKey={key} plan={plan} plansLoading={plans.isLoading} />}
         {tab === "budget" && <BudgetTab apiKey={key} />}
         {tab === "guardrails" && <GuardrailsTab apiKey={key} />}
@@ -569,6 +572,178 @@ function GeneralTab({
 // ── Models ───────────────────────────────────────────────────────────────────
 
 type ModelRowData = { id: string; option?: ModelCatalogOption };
+
+// ── Model usage tab ──────────────────────────────────────────────────────────
+
+function fmtLatency(ms: number): string {
+  if (!ms || ms <= 0) return "—";
+  return ms < 1_000 ? `${Math.round(ms)} ms` : `${(ms / 1_000).toFixed(2)} s`;
+}
+
+function ModelUsageTab({ apiKey }: { apiKey: APIKey }) {
+  const headingId = useId();
+  const [period, setPeriod] = useState<string>("30d");
+  const usage = useQuery({
+    queryKey: ["key-model-usage", apiKey.id, period],
+    queryFn: () => api.keyModelUsage(apiKey.id, period),
+    refetchInterval: 60_000,
+    placeholderData: (previous) => previous,
+  });
+  const models: KeyModelUsage[] = usage.data?.models ?? [];
+  const totals = useMemo(
+    () =>
+      models.reduce(
+        (acc, m) => ({ requests: acc.requests + m.requests, tokens: acc.tokens + m.total_tokens, cost: acc.cost + m.cost_usd }),
+        { requests: 0, tokens: 0, cost: 0 },
+      ),
+    [models],
+  );
+  const { page, pages, paged, setPage, total } = useClientPagination(models, 20);
+  useEffect(() => setPage(1), [period, setPage]);
+  const share = (n: number) => (totals.requests > 0 ? `${((n / totals.requests) * 100).toFixed(1)}%` : "—");
+  const dash = usage.isLoading ? "…" : usage.isError ? "—" : null;
+
+  return (
+    <section aria-labelledby={headingId} className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 id={headingId} className="text-[14px] font-semibold text-fg">Model usage</h2>
+          <p className="text-[12.5px] text-fg-muted">Every model this key called in the period, busiest first.</p>
+        </div>
+        <div className="inline-flex h-9 items-center rounded-xl border border-line bg-subtle p-0.5 sm:h-8" role="radiogroup" aria-label="Period">
+          {REPORT_PERIODS.map((p) => (
+            <button
+              key={p.value}
+              type="button"
+              role="radio"
+              aria-checked={period === p.value}
+              onClick={() => setPeriod(p.value)}
+              className={cn(
+                "h-full min-w-8 rounded-lg px-2.5 text-[12px] font-medium transition-colors",
+                FOCUS_RING,
+                period === p.value ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
+              )}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <KpiGrid>
+        <Kpi label="Models used" icon={ICONS.model} value={dash ?? models.length.toLocaleString()} />
+        <Kpi label="Requests" icon={ICONS.requests} value={dash ?? totals.requests.toLocaleString()} />
+        <Kpi label="Tokens" icon={ICONS.tokens} value={dash ?? formatTokens(totals.tokens)} />
+        <Kpi label="Spend" icon={ICONS.spend} value={dash ?? fmtUSD(totals.cost)} />
+      </KpiGrid>
+
+      <div className="min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        {usage.isLoading ? (
+          <div className="space-y-2 p-4" aria-busy="true">
+            <span className="sr-only" role="status">Loading model usage</span>
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-8 w-full" />
+          </div>
+        ) : usage.isError ? (
+          <EmptyState icon={ICONS.model} title="Couldn't load model usage" hint="Check that the gateway is running, then try again." size="sm" />
+        ) : models.length === 0 ? (
+          <EmptyState icon={ICONS.model} title="No model calls in this period" hint="Pick a longer period, or wait for this key to send a request." size="sm" />
+        ) : (
+          <>
+            {/* Phones: one card per model. */}
+            <ul className="divide-y divide-line md:hidden" aria-label="Model usage">
+              {paged.map((m) => (
+                <li key={`${m.provider}:${m.model}`} className="px-4 py-3">
+                  <span className="flex items-center gap-2.5">
+                    <ProviderLogo icon={m.provider_icon} name={m.provider_name || m.provider} size={20} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-mono text-[12.5px] text-fg" title={`${m.provider}/${m.model}`}>{m.model || "—"}</span>
+                      <span className="block truncate text-[11.5px] text-fg-muted">{m.provider_name || m.provider}</span>
+                    </span>
+                    <span className="shrink-0 text-right text-[13px] font-medium tabular-nums text-fg">{fmtUSD(m.cost_usd)}</span>
+                  </span>
+                  <span className="mt-1.5 flex flex-wrap gap-x-1.5 text-[12px] tabular-nums text-fg-muted">
+                    <span>{m.requests.toLocaleString()} requests ({share(m.requests)})</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{formatTokens(m.prompt_tokens)} → {formatTokens(m.completion_tokens)}</span>
+                    {m.failed_requests > 0 && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="text-warn">{m.failed_requests.toLocaleString()} failed</span>
+                      </>
+                    )}
+                    <span aria-hidden="true">·</span>
+                    <span title={formatDateTime(m.last_used_at)}>{relativeTime(m.last_used_at)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <div className="hidden overflow-x-auto md:block">
+              <table className="w-full min-w-[860px] text-[13px]">
+                <thead>
+                  <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
+                    <th scope="col" className="px-4 py-2 font-medium sm:pl-5">Model</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium">Requests</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium">Tokens in → out</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium">Spend</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium">Avg latency</th>
+                    <th scope="col" className="px-4 py-2 text-right font-medium sm:pr-5">Last used</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-line">
+                  {paged.map((m) => {
+                    const notes = [
+                      m.cached_tokens ? `${formatTokens(m.cached_tokens)} cached` : "",
+                      m.reasoning_tokens ? `${formatTokens(m.reasoning_tokens)} reasoning` : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" · ");
+                    const problems = [
+                      m.failed_requests ? `${m.failed_requests.toLocaleString()} failed` : "",
+                      m.blocked_requests ? `${m.blocked_requests.toLocaleString()} blocked` : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" · ");
+                    return (
+                      <tr key={`${m.provider}:${m.model}`} className="transition-colors hover:bg-hover">
+                        <td className="max-w-[340px] px-4 py-2.5 sm:pl-5">
+                          <div className="flex items-center gap-2.5">
+                            <ProviderLogo icon={m.provider_icon} name={m.provider_name || m.provider} size={20} />
+                            <div className="min-w-0">
+                              <div className="truncate font-mono text-[12.5px] text-fg" title={`${m.provider}/${m.model}`}>{m.model || "—"}</div>
+                              <div className="truncate text-[11.5px] text-fg-muted">{m.provider_name || m.provider}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums">
+                          <div className="text-fg">{m.requests.toLocaleString()}</div>
+                          <div className={cn("text-[11.5px]", problems ? "text-warn" : "text-fg-muted")}>{problems || `${share(m.requests)} of requests`}</div>
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums">
+                          <div className="text-fg">
+                            {m.prompt_tokens.toLocaleString()} → {m.completion_tokens.toLocaleString()}
+                          </div>
+                          {notes && <div className="text-[11.5px] text-fg-muted">{notes}</div>}
+                        </td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-fg">{fmtUSD(m.cost_usd)}</td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-fg-muted">{fmtLatency(m.avg_latency_ms)}</td>
+                        <td className="whitespace-nowrap px-4 py-2.5 text-right text-fg-muted sm:pr-5" title={formatDateTime(m.last_used_at)}>
+                          {relativeTime(m.last_used_at)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {pages > 1 && <TablePagination page={page} pages={pages} total={total} onPage={setPage} />}
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
 
 function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan; plansLoading: boolean }) {
   const qc = useQueryClient();

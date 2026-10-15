@@ -56,3 +56,32 @@ func TestPaidTotalsByKeySince(t *testing.T) {
 		{KeyID: "kc", PaidOrderTotals: PaidOrderTotals{Count: 1, AmountIDR: 50000, CreditMicros: 3_100_000}},
 	}, got)
 }
+
+func TestModelUsageByKeySince(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+	rec := func(id, key, model, status string, cost int64, at time.Time) UsageRecord {
+		r := finRec(id, "p", "c", cost, 0, false, at)
+		r.APIKeyID, r.Model, r.Status, r.PromptTokens, r.CompletionTokens = key, model, status, 10, 5
+		return r
+	}
+	require.NoError(t, db.Usage().RecordBatch(ctx, []UsageRecord{
+		rec("a", "ka", "m1", "success", 2e9, now.Add(-time.Minute)),
+		rec("b", "ka", "m1", "error", 0, now),
+		rec("c", "ka", "m2", "success", 1e9, now),
+		rec("d", "kb", "m1", "success", 9e9, now),
+		rec("e", "ka", "m3", "success", 9e9, now.Add(-2*time.Hour)),
+	}))
+	got, err := db.Usage().ModelUsageByKeySince(ctx, DefaultTenantID, "ka", now.Add(-time.Hour))
+	require.NoError(t, err)
+	require.Len(t, got, 2)
+	require.Equal(t, "m1", got[0].Model)
+	require.Equal(t, int64(2), got[0].Requests)
+	require.Equal(t, int64(1), got[0].SuccessCount)
+	require.Equal(t, int64(1), got[0].FailureCount)
+	require.Equal(t, int64(20), got[0].PromptTokens)
+	require.Equal(t, int64(2e9), got[0].CostNanos)
+	require.True(t, got[0].LastUsedAt.Equal(now), got[0].LastUsedAt)
+	require.Equal(t, "m2", got[1].Model)
+}

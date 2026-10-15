@@ -1,12 +1,14 @@
 package gateway
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mydisha/keirouter/backend/internal/store"
@@ -54,4 +56,43 @@ func TestAdminUsageLeaderboardRanksKeys(t *testing.T) {
 	require.Equal(t, int64(1000), body.Tokens[0].Tokens)
 	require.Equal(t, "kb", body.Requests[0].KeyID)
 	require.Equal(t, int64(2), body.Requests[0].Requests)
+}
+
+func TestAdminKeyModelUsage(t *testing.T) {
+	s := newPortalTestServer(t)
+	ctx := t.Context()
+	now := time.Now().UTC()
+	require.NoError(t, s.db.APIKeys().Create(ctx, store.APIKey{ID: "ka", TenantID: store.DefaultTenantID, Name: "key-ka",
+		KeyHash: "hka", LookupHash: "lka", Display: "d", CreatedAt: now}))
+	rec := func(id, key, model string) store.UsageRecord {
+		return store.UsageRecord{ID: id, TenantID: store.DefaultTenantID, APIKeyID: key, Provider: "p", Model: model,
+			Status: "success", PromptTokens: 10, CostNanos: 1e9, PricingStatus: "priced", PricingSource: "official", CreatedAt: now}
+	}
+	require.NoError(t, s.usage.RecordBatch(ctx, []store.UsageRecord{rec("u1", "ka", "m1"), rec("u2", "ka", "m1"), rec("u3", "kb", "m2")}))
+
+	call := func(id string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/keys/"+id+"/models?period=today", nil)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", id)
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		w := httptest.NewRecorder()
+		s.adminKeyModelUsage(w, req)
+		return w
+	}
+	w := call("ka")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var body struct {
+		Models []struct {
+			Model    string  `json:"model"`
+			Requests int64   `json:"requests"`
+			CostUSD  float64 `json:"cost_usd"`
+		} `json:"models"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Models, 1)
+	require.Equal(t, "m1", body.Models[0].Model)
+	require.Equal(t, int64(2), body.Models[0].Requests)
+	require.InDelta(t, 2.0, body.Models[0].CostUSD, 1e-9)
+
+	require.Equal(t, http.StatusNotFound, call("missing").Code)
 }
