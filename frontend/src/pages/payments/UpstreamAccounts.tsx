@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { api, type FinanceReport, type UpstreamAccountBalance } from "../../lib/api";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, EmptyState, ErrorBanner, Field, Input, LoadingRegion, Modal, ModalFooter, Skeleton } from "../../components/ui";
-import { QK, Panel, SETTINGS_ANCHOR, count, dateInputToRFC3339, errorText, todayISO, usd } from "./shared";
+import { QK, Panel, SETTINGS_ANCHOR, count, dateID, dateInputToRFC3339, errorText, toDateInput, todayISO, usd } from "./shared";
 
 export function UpstreamAccounts({
   report,
@@ -165,12 +165,18 @@ function TopupModal({ account, onClose }: { account: UpstreamAccountBalance; onC
       : amountNum > 1_000_000
         ? "Jumlah maksimal $1,000,000."
         : null;
-  const dateError = date && date > todayISO() ? "Tanggal tidak boleh di masa depan." : null;
+  const openingDate = toDateInput(account.opening_at);
+  const dateError =
+    date && date > todayISO()
+      ? "Tanggal tidak boleh di masa depan."
+      : date && openingDate && date < openingDate
+        ? `Tanggal tidak boleh sebelum tanggal saldo awal (${dateID(account.opening_at)}).`
+        : null;
   const noteError = note.length > 500 ? "Catatan maksimal 500 karakter." : null;
   const valid = !amountError && !dateError && !noteError;
 
   const create = useMutation({
-    mutationFn: () => api.createUpstreamTopup(account.id, { amount_usd: amountNum, topup_at: dateInputToRFC3339(date) || undefined, note: note.trim() || undefined }),
+    mutationFn: () => api.createUpstreamTopup(account.id, { amount_usd: amountNum, topup_at: dateInputToRFC3339(date, account.opening_at) || undefined, note: note.trim() || undefined }),
     onSuccess: () => {
       toast.success("Topup dicatat", `${usd(amountNum)} ditambahkan ke saldo ${account.name}.`);
       qc.invalidateQueries({ queryKey: QK.finance });
@@ -204,7 +210,7 @@ function TopupModal({ account, onClose }: { account: UpstreamAccountBalance; onC
             />
           </Field>
           <Field label="Tanggal" hint="Tanggal saldo masuk di provider." error={dateError ?? undefined}>
-            <Input type="date" max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} />
+            <Input type="date" min={openingDate || undefined} max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} />
           </Field>
           <Field label="Catatan" optional error={noteError ?? undefined}>
             <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Misal: transfer via kartu kredit" maxLength={500} />

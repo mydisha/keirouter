@@ -61,13 +61,20 @@ export function toDateInput(value: string): string {
  * YYYY-MM-DD from a date input to an RFC3339 instant in the browser's timezone.
  * A bare date would be read as midnight in the server's zone, which can land in
  * the future for operators ahead of it. Today sends the current time so it is
- * never in the future; earlier dates send local midnight. "" stays "".
+ * never in the future; earlier dates send local midnight. When `floor` (an
+ * RFC3339 instant) falls on the chosen local day, the result is never earlier
+ * than it, so a top-up on an account's opening day is not dated before
+ * opening_at. "" stays "".
  */
-export function dateInputToRFC3339(value: string): string {
+export function dateInputToRFC3339(value: string, floor?: string): string {
   if (!value) return "";
-  if (value === todayISO()) return new Date().toISOString();
   const [y, m, d] = value.split("-").map(Number);
-  return new Date(y, m - 1, d).toISOString();
+  const at = value === todayISO() ? new Date() : new Date(y, m - 1, d);
+  if (floor && value === toDateInput(floor)) {
+    const f = new Date(floor);
+    if (f.getTime() > at.getTime()) return f.toISOString();
+  }
+  return at.toISOString();
 }
 
 export function errorText(e: unknown): string {

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bell, Check, Loader2, Send, Settings2 } from "lucide-react";
+import { Bell, Check, Loader2, Send, Settings2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   api,
@@ -10,6 +10,7 @@ import {
   type UpstreamAccountStatus,
 } from "../../lib/api";
 import { useToast } from "../../components/Toast";
+import { useConfirm } from "../../components/ui/confirm-dialog";
 import { Badge, Button, EmptyState, ErrorBanner, Field, Input, LoadingRegion, Select, Skeleton, Toggle } from "../../components/ui";
 import { QK, Panel, REFETCH_MS, SETTINGS_ANCHOR, dateInputToRFC3339, errorText, toDateInput, todayISO } from "./shared";
 
@@ -214,11 +215,17 @@ function AccountForm({
 function AlertSettings() {
   const qc = useQueryClient();
   const toast = useToast();
+  const confirm = useConfirm();
   const alerts = useQuery({ queryKey: QK.alerts, queryFn: api.financeAlerts, refetchInterval: REFETCH_MS });
   const [url, setUrl] = useState("");
   // null means "follow the stored value" until the operator flips the switch.
   const [enabledDraft, setEnabledDraft] = useState<boolean | null>(null);
   const enabled = enabledDraft ?? alerts.data?.enabled ?? false;
+
+  const configured = alerts.data?.configured ?? false;
+  const hasWebhook = configured || url.trim() !== "";
+  // The server turns alerts off without a webhook; block that save up front.
+  const needsWebhook = enabled && !hasWebhook;
 
   const save = useMutation({
     mutationFn: () => api.updateFinanceAlerts({ enabled, ...(url.trim() ? { discord_webhook_url: url.trim() } : {}) }),
@@ -230,6 +237,31 @@ function AlertSettings() {
     },
   });
 
+  const remove = useMutation({
+    mutationFn: () => api.updateFinanceAlerts({ enabled: false, discord_webhook_url: "" }),
+    onSuccess: (data) => {
+      qc.setQueryData(QK.alerts, data);
+      setUrl("");
+      setEnabledDraft(null);
+      toast.success("Webhook dihapus", "Peringatan saldo rendah dimatikan.");
+    },
+  });
+
+  const onRemove = async () => {
+    if (remove.isPending) return;
+    const ok = await confirm({
+      title: "Hapus webhook Discord?",
+      description: "Peringatan saldo rendah akan dimatikan sampai webhook baru disimpan.",
+      confirmLabel: "Hapus webhook",
+      cancelLabel: "Batal",
+      tone: "danger",
+    });
+    if (!ok) return;
+    save.reset();
+    test.reset();
+    remove.mutate();
+  };
+
   const test = useMutation({
     mutationFn: api.testFinanceAlerts,
     onSuccess: () => toast.success("Pesan tes terkirim", "Cek channel Discord yang terhubung."),
@@ -239,8 +271,9 @@ function AlertSettings() {
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!dirty || save.isPending) return;
+    if (!dirty || needsWebhook || save.isPending) return;
     test.reset();
+    remove.reset();
     save.mutate();
   };
 
@@ -290,14 +323,27 @@ function AlertSettings() {
                 className="font-mono"
               />
             </Field>
+            {needsWebhook && (
+              <p className="text-[12px] text-fg-muted" role="status">
+                Isi webhook Discord dulu. Peringatan hanya bisa diaktifkan setelah webhook tersimpan.
+              </p>
+            )}
             {save.isError && <ErrorBanner message={`Pengaturan notifikasi gagal disimpan. ${errorText(save.error)}`} />}
+            {remove.isError && <ErrorBanner message={`Webhook gagal dihapus. ${errorText(remove.error)}`} />}
             {test.isError && <ErrorBanner message={`Pesan tes gagal dikirim. ${errorText(test.error)}`} />}
           </div>
           <div className="flex flex-col gap-2 border-t border-line bg-subtle px-4 py-2.5 sm:flex-row sm:items-center sm:justify-end">
+            {configured && (
+              <Button type="button" variant="ghost" className="sm:mr-auto" onClick={onRemove} disabled={remove.isPending || save.isPending}>
+                {remove.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+                Hapus webhook
+              </Button>
+            )}
             <Button
               type="button"
               variant="ghost"
               onClick={() => {
+                remove.reset();
                 save.reset();
                 test.mutate();
               }}
@@ -307,7 +353,7 @@ function AlertSettings() {
               {test.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Send aria-hidden="true" />}
               Kirim tes
             </Button>
-            <Button type="submit" disabled={!dirty || save.isPending}>
+            <Button type="submit" disabled={!dirty || needsWebhook || save.isPending || remove.isPending}>
               {save.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
               Simpan
             </Button>
