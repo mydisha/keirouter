@@ -1,27 +1,27 @@
-# Auto-updated by release.yml on tag v0.1.29. Do not edit manually.
+# Auto-updated by release.yml on tag v0.2.0. Do not edit manually.
 class Keirouter < Formula
   desc "Self-hosted AI gateway — one endpoint for 130+ LLM providers with fallback, caching, and a dashboard"
   homepage "https://github.com/mydisha/keirouter"
-  version "0.1.29"
+  version "0.2.0"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/mydisha/keirouter/releases/download/v0.1.29/keirouter_v0.1.29_darwin_arm64.tar.gz"
-      sha256 "665be65c765bd6169a9700c4e8344c312e0d887a575dbd25267cbacc408c8031"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.2.0/keirouter_v0.2.0_darwin_arm64.tar.gz"
+      sha256 "acbefdd81f4ef2cea6dc7c05ae50da446aa2ed5fcaa1d68295b72615fac8b74d"
     else
-      url "https://github.com/mydisha/keirouter/releases/download/v0.1.29/keirouter_v0.1.29_darwin_amd64.tar.gz"
-      sha256 "ec3896d03a6171fe787e07d5690dc3f848d352845ea188c01c2735e592c71769"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.2.0/keirouter_v0.2.0_darwin_amd64.tar.gz"
+      sha256 "1ecaa11f44b884d74804372ad68ff11a155c5c2dbb213a27be8244d8fcdb41b3"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/mydisha/keirouter/releases/download/v0.1.29/keirouter_v0.1.29_linux_arm64.tar.gz"
-      sha256 "7778165521c55cf3e597a761bcdd0a5ed66478ed5d60751e25b88db98bde6756"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.2.0/keirouter_v0.2.0_linux_arm64.tar.gz"
+      sha256 "bca598eae365af50b06b5f2c6a67103e8db40be6480c2973b4081133aebd7c04"
     else
-      url "https://github.com/mydisha/keirouter/releases/download/v0.1.29/keirouter_v0.1.29_linux_amd64.tar.gz"
-      sha256 "04301baad786a8883874895b79b82362f5b8523e237af9f41f12d1031f62b7c8"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.2.0/keirouter_v0.2.0_linux_amd64.tar.gz"
+      sha256 "4e682c4c5dc85c5ee4b75180292174fb3ad08beeed5aa9d01264e87a97a70202"
     end
   end
 
