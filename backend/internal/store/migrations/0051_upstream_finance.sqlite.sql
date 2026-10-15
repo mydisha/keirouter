@@ -1,0 +1,41 @@
+-- Upstream provider accounts: prepaid balances, provider mapping and top-ups
+-- for the admin finance dashboard. All amounts are USD micros.
+CREATE TABLE IF NOT EXISTS upstream_accounts (
+    id                     TEXT PRIMARY KEY,
+    name                   TEXT NOT NULL,
+    url                    TEXT NOT NULL DEFAULT '',
+    status                 TEXT NOT NULL DEFAULT 'active',
+    opening_balance_micros BIGINT NOT NULL DEFAULT 0,
+    opening_at             TEXT NOT NULL,
+    low_balance_micros     BIGINT NOT NULL DEFAULT 0,
+    alert_fired_at         TEXT NOT NULL DEFAULT '',
+    created_at             TEXT NOT NULL,
+    updated_at             TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS upstream_account_providers (
+    provider_id TEXT PRIMARY KEY,
+    account_id  TEXT NOT NULL REFERENCES upstream_accounts(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS upstream_topups (
+    id            TEXT PRIMARY KEY,
+    account_id    TEXT NOT NULL REFERENCES upstream_accounts(id) ON DELETE CASCADE,
+    amount_micros BIGINT NOT NULL,
+    topup_at      TEXT NOT NULL,
+    note          TEXT NOT NULL DEFAULT '',
+    actor         TEXT NOT NULL DEFAULT '',
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_upstream_topups_account
+    ON upstream_topups(account_id, topup_at);
+
+INSERT OR IGNORE INTO upstream_accounts (id, name, url, status, opening_balance_micros, opening_at, low_balance_micros, alert_fired_at, created_at, updated_at)
+VALUES ('surplus', 'Surplus Intelligence', 'https://surplusintelligence.ai', 'active', 0, '2026-10-15T00:00:00Z', 0, '', '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z')
+;
+INSERT OR IGNORE INTO upstream_accounts (id, name, url, status, opening_balance_micros, opening_at, low_balance_micros, alert_fired_at, created_at, updated_at)
+VALUES ('inferhub', 'Inferhub', 'https://inferhub.dev', 'active', 0, '2026-10-15T00:00:00Z', 0, '', '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z')
+;
+INSERT OR IGNORE INTO upstream_accounts (id, name, url, status, opening_balance_micros, opening_at, low_balance_micros, alert_fired_at, created_at, updated_at)
+VALUES ('crowbot', 'Crowbot', 'https://crowbot.sh', 'planned', 0, '2026-10-15T00:00:00Z', 0, '', '2026-10-15T00:00:00Z', '2026-10-15T00:00:00Z')
+;

@@ -657,3 +657,28 @@ type ProviderProbeResult struct {
 	TriggeredBy         string    `json:"triggered_by"` // scheduled | manual | after_failure | startup
 	CreatedAt           time.Time `json:"created_at"`
 }
+
+// UpstreamAccount is a prepaid account with an upstream model provider.
+// Amounts are USD micros.
+type UpstreamAccount struct {
+	ID, Name, URL string
+	// Status is "active", "planned" or "archived".
+	Status               string
+	OpeningBalanceMicros int64
+	OpeningAt            time.Time
+	LowBalanceMicros     int64
+	// AlertFiredAt is zero while the low-balance alert is armed.
+	AlertFiredAt time.Time
+	// Providers lists the provider ids mapped to this account; filled by List/Get.
+	Providers            []string
+	CreatedAt, UpdatedAt time.Time
+}
+
+// UpstreamTopup is a recorded top-up of an upstream account.
+type UpstreamTopup struct {
+	ID, AccountID string
+	AmountMicros  int64
+	TopupAt       time.Time
+	Note, Actor   string
+	CreatedAt     time.Time
+}
