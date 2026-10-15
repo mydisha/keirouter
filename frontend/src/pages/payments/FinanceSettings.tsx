@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useId, useState, type FormEvent, type KeyboardEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, Check, Loader2, Send, Settings2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -13,6 +13,8 @@ import { useToast } from "../../components/Toast";
 import { useConfirm } from "../../components/ui/confirm-dialog";
 import { Badge, Button, EmptyState, ErrorBanner, Field, Input, LoadingRegion, Select, Skeleton, Toggle } from "../../components/ui";
 import { QK, Panel, REFETCH_MS, SETTINGS_ANCHOR, dateInputToRFC3339, errorText, toDateInput, todayISO } from "./shared";
+
+const ALERTS_TAB = "__alerts";
 
 const STATUS_LABEL: Record<UpstreamAccountStatus, string> = {
   active: "Aktif",
@@ -31,6 +33,21 @@ export function FinanceSettings({
 }) {
   const providersQuery = useQuery({ queryKey: QK.providers, queryFn: api.financeProviders, refetchInterval: REFETCH_MS });
   const providers = providersQuery.data?.providers ?? [];
+  // One tab per account plus the Discord tab; only the selected one renders.
+  const tabsId = useId();
+  const [picked, setPicked] = useState<string | null>(null);
+  const tabs = [...(accounts ?? []).map((a) => ({ id: a.id, label: a.name, muted: a.status !== "active" })), { id: ALERTS_TAB, label: "Notifikasi Discord", muted: false }];
+  const current = tabs.some((t) => t.id === picked) ? picked! : tabs[0].id;
+  const currentAccount = accounts?.find((a) => a.id === current);
+  const onTabKeys = (e: KeyboardEvent<HTMLDivElement>) => {
+    const i = tabs.findIndex((t) => t.id === current);
+    const next =
+      e.key === "ArrowRight" ? (i + 1) % tabs.length : e.key === "ArrowLeft" ? (i - 1 + tabs.length) % tabs.length : e.key === "Home" ? 0 : e.key === "End" ? tabs.length - 1 : -1;
+    if (next < 0) return;
+    e.preventDefault();
+    setPicked(tabs[next].id);
+    document.getElementById(`${tabsId}-tab-${tabs[next].id}`)?.focus();
+  };
 
   return (
     <Panel id={SETTINGS_ANCHOR} icon={Settings2} title="Pengaturan keuangan" subtitle="Saldo awal, batas peringatan, dan provider untuk tiap akun upstream.">
@@ -47,24 +64,59 @@ export function FinanceSettings({
           <EmptyState icon={Settings2} size="sm" title="Belum ada akun upstream" hint="Akun Surplus Intelligence, Inferhub, dan Crowbot dibuat oleh migrasi database." />
         ) : (
           <>
-            {providersQuery.isError && (
-              <ErrorBanner message={`Daftar provider gagal dimuat, pemetaan provider belum bisa diubah. ${errorText(providersQuery.error)}`} />
-            )}
-            <ul className="space-y-3">
-              {accounts.map((a) => (
-                // Re-key on updated_at so a successful save resets the form to the stored values.
-                <AccountForm
-                  key={`${a.id}:${a.updated_at}:${a.providers.join(",")}`}
-                  account={a}
-                  accounts={accounts}
-                  providers={providers}
-                  providersReady={providersQuery.isSuccess}
-                />
-              ))}
-            </ul>
+            <div
+              className="-mx-4 flex gap-1 overflow-x-auto border-b border-line px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+              role="tablist"
+              aria-label="Akun upstream"
+              onKeyDown={onTabKeys}
+            >
+              {tabs.map((t) => {
+                const active = t.id === current;
+                return (
+                  <button
+                    key={t.id}
+                    id={`${tabsId}-tab-${t.id}`}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    aria-controls={`${tabsId}-panel`}
+                    tabIndex={active ? 0 : -1}
+                    onClick={() => setPicked(t.id)}
+                    className={cn(
+                      "relative -mb-px inline-flex shrink-0 items-center whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                      active ? "text-fg" : t.muted ? "text-fg-faint hover:text-fg" : "text-fg-muted hover:text-fg",
+                    )}
+                  >
+                    {t.label}
+                    {active && <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
+                  </button>
+                );
+              })}
+            </div>
+            <div id={`${tabsId}-panel`} role="tabpanel" aria-labelledby={`${tabsId}-tab-${current}`}>
+              {currentAccount ? (
+                <div className="space-y-3">
+                  {providersQuery.isError && (
+                    <ErrorBanner message={`Daftar provider gagal dimuat, pemetaan provider belum bisa diubah. ${errorText(providersQuery.error)}`} />
+                  )}
+                  <ul className="space-y-3">
+                    {/* Re-key on updated_at so a successful save resets the form to the stored values. */}
+                    <AccountForm
+                      key={`${currentAccount.id}:${currentAccount.updated_at}:${currentAccount.providers.join(",")}`}
+                      account={currentAccount}
+                      accounts={accounts}
+                      providers={providers}
+                      providersReady={providersQuery.isSuccess}
+                    />
+                  </ul>
+                </div>
+              ) : (
+                <AlertSettings />
+              )}
+            </div>
           </>
         )}
-        <AlertSettings />
+        {(!accounts || accounts.length === 0) && !(accountsLoading && !accounts) && <AlertSettings />}
       </div>
     </Panel>
   );
