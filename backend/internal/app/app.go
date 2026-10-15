@@ -76,6 +76,7 @@ type App struct {
 	marketURL          string
 	surplusURL         string
 	marketCache        *market.SnapshotCache
+	inflight           *inflight.Tracker
 	audit              *audit.Recorder
 	auditSweeper       *audit.Sweeper
 	// sharedState releases the redis limiter/budget resources; nil with the
@@ -525,7 +526,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	// usable without a manual "connect" step in the dashboard.
 	seedFreeAccounts(ctx, db.Accounts(), log)
 
-	app = &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), server: srv, keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, reloadPricing: reloadPricing, marketURL: "", surplusURL: "", marketCache: marketCache, audit: auditRec, auditSweeper: auditSweeper, sharedState: sharedState}
+	app = &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), server: srv, keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, reloadPricing: reloadPricing, marketURL: "", surplusURL: "", marketCache: marketCache, inflight: inflightTracker, audit: auditRec, auditSweeper: auditSweeper, sharedState: sharedState}
 
 	return app, nil
 }
@@ -735,6 +736,11 @@ func (a *App) Run(ctx context.Context) error {
 		go func() {
 			defer a.bg.Done()
 			a.runMarketSync(ctx)
+		}()
+		a.bg.Add(1)
+		go func() {
+			defer a.bg.Done()
+			a.runFinanceAlerts(ctx)
 		}()
 	}
 
