@@ -4,17 +4,21 @@
 // degrades to a zeroed/empty state when a query is loading, errored, or returns
 // nothing: no error cards, no blank screen.
 //
-// Styling is scoped through `.landing-root` tokens only; this module never
-// imports lib/api.ts or the dashboard Layout.
+// Styling is scoped through `.landing-root` tokens only (they mirror the
+// dashboard design system); this module never imports lib/api.ts or the
+// dashboard Layout.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, Boxes, Coins, Cpu } from "lucide-react";
-import { fetchPublicOverview, fetchPublicModels } from "../lib/publicApi";
-import { PublicLayout } from "../components/PublicLayout";
 import {
-  ModelCard, ProviderFilterButton, MODEL_PAGE, fmtCount, fmtShort, buildProviders, resolveProvider,
-} from "../components/ModelCatalog";
+  Activity, ArrowRight, Boxes, Check, Coins, Copy, Gauge, KeyRound, LogIn, Plug, Receipt, Send, ShieldCheck, Wallet,
+  type LucideIcon,
+} from "lucide-react";
+import { fetchPublicOverview, fetchPublicModels } from "../lib/publicApi";
+import { PublicLayout, TELEGRAM_URL } from "../components/PublicLayout";
+import { ModelBrowser, fmtCount, fmtShort } from "../components/ModelCatalog";
+
+const FOCUS = "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]";
 
 // Smoothly counts a displayed metric toward its latest value. Formatting stays
 // with the callers' fmt helpers; this only animates the raw number.
@@ -40,40 +44,109 @@ function useCountUp(target: number, duration = 900): number {
   return display;
 }
 
-function Metric({
-  icon,
-  label,
-  value,
-  sub,
-  hero = false,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  sub?: React.ReactNode;
-  hero?: boolean;
-}) {
+function useCopy(): [string | null, (key: string, text: string) => void] {
+  const [copied, setCopied] = useState<string | null>(null);
+  const copy = async (key: string, text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(key);
+      setTimeout(() => setCopied((c) => (c === key ? null : c)), 1400);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+  return [copied, copy];
+}
+
+function Metric({ icon: Icon, label, value, hint }: { icon: LucideIcon; label: string; value: string; hint: string }) {
   return (
-    <div
-      className="rounded-2xl border border-[var(--line)] p-5"
-      style={hero ? { background: "linear-gradient(110deg, var(--soft), var(--paper))" } : undefined}
-    >
-      <div className="flex items-center gap-2 text-[var(--muted)]">
-        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[var(--soft)] text-[var(--green)]" aria-hidden="true">
-          {icon}
-        </span>
-        <span className="text-[11px] uppercase tracking-[0.7px]">{label}</span>
+    <div className="bg-[var(--paper)] p-5">
+      <div className="flex items-center gap-2 text-[12px] text-[var(--muted)]">
+        <Icon className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        {label}
       </div>
-      <p
-        className="mt-3 font-[650] tabular-nums text-[var(--ink)]"
-        style={{ fontSize: "clamp(23px,2.5vw,38px)", lineHeight: 1.1 }}
-      >
+      <p className="mt-2 font-mono text-[28px] font-semibold leading-none tracking-[-0.5px] tabular-nums text-[var(--ink)] sm:text-[32px]">
         {value}
       </p>
-      {sub && <div className="mt-2 text-xs text-[var(--muted)]">{sub}</div>}
+      <p className="mt-2 text-[12px] text-[var(--muted)]">{hint}</p>
     </div>
   );
 }
+
+function SectionHeading({ eyebrow, title, children }: { eyebrow: string; title: string; children?: ReactNode }) {
+  return (
+    <div className="max-w-2xl">
+      <p className="font-mono text-[11px] uppercase tracking-[1.2px] text-[var(--green)]">{eyebrow}</p>
+      <h2 className="mt-2 text-[24px] font-semibold tracking-[-0.5px] text-[var(--ink)] sm:text-[28px]">{title}</h2>
+      {children && <p className="mt-2 text-[15px] leading-relaxed text-[var(--muted)]">{children}</p>}
+    </div>
+  );
+}
+
+function QuickStart({ model }: { model: string }) {
+  const [copied, copy] = useCopy();
+  const baseURL = `${window.location.origin}/v1`;
+  const snippet = `curl ${baseURL}/chat/completions \\
+  -H "Authorization: Bearer $TOKENIZER_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Halo!"}]}'`;
+  return (
+    <div className="overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--terminal)] text-left shadow-[0_24px_60px_-28px_rgba(0,0,0,0.45)]">
+      <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
+        <div className="flex items-center gap-1.5" aria-hidden="true">
+          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+          <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+        </div>
+        <span className="font-mono text-[11px] text-[var(--terminal-muted)]">OpenAI-compatible</span>
+      </div>
+      <div className="space-y-3 p-4">
+        <div>
+          <p className="font-mono text-[11px] uppercase tracking-[1px] text-[var(--terminal-muted)]">Base URL</p>
+          <button
+            type="button"
+            onClick={() => copy("base", baseURL)}
+            className="mt-1.5 flex w-full items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 py-2 text-left transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-400)]"
+            aria-label="Salin base URL"
+          >
+            <span className="min-w-0 flex-1 truncate font-mono text-[13px] text-[var(--terminal-ink)]">{baseURL}</span>
+            {copied === "base" ? <Check className="h-4 w-4 text-emerald-400" aria-hidden="true" /> : <Copy className="h-4 w-4 text-[var(--terminal-muted)]" aria-hidden="true" />}
+          </button>
+        </div>
+        <div>
+          <div className="flex items-center justify-between gap-2">
+            <p className="font-mono text-[11px] uppercase tracking-[1px] text-[var(--terminal-muted)]">Contoh request</p>
+            <button
+              type="button"
+              onClick={() => copy("curl", snippet)}
+              className="inline-flex h-7 items-center gap-1 rounded-md border border-white/10 bg-white/10 px-2 font-mono text-[11px] text-[var(--terminal-ink)] transition-colors hover:bg-white/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent-400)]"
+              aria-label="Salin contoh curl"
+            >
+              {copied === "curl" ? <Check className="h-3.5 w-3.5 text-emerald-400" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+              {copied === "curl" ? "Tersalin" : "Salin"}
+            </button>
+          </div>
+          <pre className="mt-1.5 overflow-x-auto rounded-md bg-black/30 p-3 font-mono text-[12px] leading-relaxed text-[var(--terminal-ink)]">
+            <code>{snippet}</code>
+          </pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const STEPS: { icon: LucideIcon; title: string; body: string }[] = [
+  { icon: LogIn, title: "Masuk ke portal", body: "Login dengan akun Google, API key pribadimu langsung disiapkan." },
+  { icon: Wallet, title: "Isi saldo", body: "Tambah saldo dari portal. Saldo hanya terpotong sesuai token yang benar-benar dipakai." },
+  { icon: Plug, title: "Pasang di tools favorit", body: "Pakai base URL dan API key di Claude Code, Cursor, Cline, SDK OpenAI, atau aplikasi apa pun." },
+];
+
+const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
+  { icon: Receipt, title: "Bayar per token", body: "Tanpa langganan dan tanpa biaya bulanan. Harga per 1 juta token tertera jelas untuk tiap model." },
+  { icon: KeyRound, title: "Satu API key", body: "Format OpenAI dan Anthropic didukung, jadi satu key cukup untuk banyak model." },
+  { icon: Gauge, title: "Pantau real-time", body: "Pemakaian, sisa saldo, dan riwayat request bisa dicek kapan saja dari portal." },
+  { icon: ShieldCheck, title: "Login aman", body: "Portal memakai Google Sign-In; key kamu terikat ke akunmu sendiri." },
+];
 
 export default function PublicLanding() {
   const overview = useQuery({
@@ -90,28 +163,12 @@ export default function PublicLanding() {
     retry: false,
   });
 
-  const modelList = models.data ?? [];
+  const modelList = useMemo(() => models.data ?? [], [models.data]);
   const overviewData = overview.data;
   const requestsCount = useCountUp(overviewData?.total_requests ?? 0);
   const tokensCount = useCountUp(overviewData?.total_tokens ?? 0);
-  const [modelVisible, setModelVisible] = useState(MODEL_PAGE);
-  const [providerFilter, setProviderFilter] = useState<string | null>(null);
-
-  // Providers in the order models arrive (already sorted by popularity), so the
-  // busiest provider leads. Keyed by provider_id; label falls back to the id.
-  const providers = useMemo(() => buildProviders(modelList), [modelList]);
-
-  const filteredModels = useMemo(
-    () => (providerFilter ? modelList.filter((m) => resolveProvider(m).id === providerFilter) : modelList),
-    [modelList, providerFilter],
-  );
-
-  // Changing the filter re-collapses pagination so a short result list can't
-  // strand the user past the end of the new set.
-  const selectProvider = (id: string | null) => {
-    setProviderFilter(id);
-    setModelVisible(MODEL_PAGE);
-  };
+  const available = modelList.filter((m) => !m.sold_out).length;
+  const sampleModel = modelList.find((m) => !m.sold_out)?.model_id ?? "nama-model";
 
   // The portal branding provider rewrites document.title when /portal mounts;
   // re-assert the landing title on mount so it survives that navigation.
@@ -121,126 +178,140 @@ export default function PublicLanding() {
 
   return (
     <PublicLayout>
-      <div id="overview" className="scroll-mt-28">
-        <div className="text-center">
-          <h1
-            className="font-[750] tracking-[-1.5px] text-[var(--ink)]"
-            style={{ fontSize: "clamp(38px,7vw,76px)", lineHeight: 1.02 }}
-          >
-            TOKENIZER
-          </h1>
-          <p className="mt-3 text-base text-[var(--muted)] sm:text-lg">Layanan PAYG AI Frontier</p>
-        </div>
-
-        <div className="mt-8 grid gap-4 md:grid-cols-3">
-          <Metric
-            icon={<Activity className="h-5 w-5" />}
-            label="Total Request"
-            value={fmtShort(requestsCount)}
-            sub={<>Total request sepanjang waktu</>}
-          />
-          <Metric
-            icon={<Coins className="h-5 w-5" />}
-            label="Token"
-            value={fmtCount(tokensCount)}
-            hero
-            sub={<>total sepanjang waktu</>}
-          />
-          <Metric
-            icon={<Boxes className="h-5 w-5" />}
-            label="Model List"
-            value={fmtCount(overviewData?.model_count ?? 0)}
-            sub={<>model tersedia</>}
-          />
-        </div>
-      </div>
-
-      <section id="models" className="mt-14 scroll-mt-28">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <Cpu className="h-5 w-5 text-[var(--green)]" />
-            <h2 className="text-[22px] font-[650] tracking-[-0.5px] text-[var(--ink)]">
-              Model &amp; harga
-            </h2>
-          </div>
-          <p className="text-xs text-[var(--muted)]">{fmtCount(modelList.length)} model tersedia</p>
-        </div>
-        <p className="mt-2 max-w-2xl text-sm text-[var(--muted)]">
-          Model yang tersedia di gateway, diurutkan berdasarkan popularitas. Harga per 1 juta token.
-        </p>
-        {modelList.length === 0 ? (
-          <p className="mt-6 text-sm text-[var(--muted)]">Belum ada model tersedia.</p>
-        ) : (
-          <>
-            <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Filter model berdasarkan provider">
-              <ProviderFilterButton active={providerFilter === null} onClick={() => selectProvider(null)}>
-                Semua
-              </ProviderFilterButton>
-              {providers.map((p) => (
-                <ProviderFilterButton
-                  key={p.id}
-                  active={providerFilter === p.id}
-                  onClick={() => selectProvider(p.id)}
-                >
-                  {p.label}
-                </ProviderFilterButton>
-              ))}
+      {/* Hero */}
+      <section id="overview" className="relative scroll-mt-20">
+        <div className="landing-hero-bg pointer-events-none absolute inset-x-[-50vw] -top-12 h-[560px]" aria-hidden="true" />
+        <div className="relative grid items-center gap-10 py-6 lg:grid-cols-[1.05fr_1fr] lg:py-12">
+          <div className="text-center lg:text-left">
+            <span className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--paper)] px-3 py-1 text-[12px] text-[var(--muted)]">
+              <span className="landing-live-dot h-1.5 w-1.5 rounded-full bg-[var(--ok)]" aria-hidden="true" />
+              {fmtCount(available)} model aktif sekarang
+            </span>
+            <h1 className="mt-5 text-[38px] font-semibold leading-[1.05] tracking-[-1.4px] text-[var(--ink)] sm:text-[52px] lg:text-[58px]">
+              Akses AI frontier,
+              <br />
+              <span className="text-[var(--green)]">bayar sesuai pakai.</span>
+            </h1>
+            <p className="mx-auto mt-5 max-w-xl text-[16px] leading-relaxed text-[var(--muted)] sm:text-[17px] lg:mx-0">
+              Satu API key untuk model-model terbaik. Kompatibel dengan format OpenAI, tanpa langganan, saldo terpotong per
+              token.
+            </p>
+            <div className="mt-7 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
+              <a
+                href="/portal"
+                className={`inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--action)] px-5 text-[14px] font-medium text-[var(--action-fg)] no-underline transition-opacity hover:opacity-90 sm:w-auto ${FOCUS}`}
+              >
+                Mulai sekarang
+                <ArrowRight className="h-4 w-4" aria-hidden="true" />
+              </a>
+              <a
+                href="/model"
+                className={`inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--paper)] px-5 text-[14px] font-medium text-[var(--ink)] no-underline transition-colors hover:border-[var(--line-strong)] sm:w-auto ${FOCUS}`}
+              >
+                <Boxes className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                Lihat model &amp; harga
+              </a>
             </div>
-            {filteredModels.length === 0 ? (
-              <p className="mt-6 text-sm text-[var(--muted)]">Belum ada model untuk provider ini.</p>
-            ) : (
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                {filteredModels.slice(0, modelVisible).map((m) => (
-                  <ModelCard key={m.model_id} model={m} />
-                ))}
-              </div>
-            )}
-            {modelVisible < filteredModels.length && (
-              <div className="mt-6 flex justify-center">
-                <button
-                  type="button"
-                  onClick={() => setModelVisible((n) => n + MODEL_PAGE)}
-                  className="rounded-xl border border-[var(--line)] px-5 py-3 text-sm font-[650] text-[var(--green)] transition-colors hover:bg-[var(--soft)]"
-                >
-                  Tampilkan lebih banyak ({fmtCount(filteredModels.length - modelVisible)} lagi)
-                </button>
-              </div>
-            )}
-          </>
-        )}
+          </div>
+          <QuickStart model={sampleModel} />
+        </div>
       </section>
 
-      <div className="mt-14 grid gap-4 md:grid-cols-2">
-        <section id="purchase" className="scroll-mt-28 rounded-[22px] border border-[var(--line)] bg-[var(--paper)] p-5 sm:p-6">
-          <p className="text-[11px] uppercase tracking-[0.7px] text-[var(--muted)]">Beli / top up</p>
-          <h2 className="mt-1 text-[22px] font-[650] tracking-[-0.5px] text-[var(--ink)]">Tambah saldo</h2>
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            Pengisian saldo dilakukan secara manual. Hubungi kami melalui WhatsApp untuk nominal dan metode
-            pembayaran. Setelah pembayaran dikonfirmasi, saldo langsung aktif.
-          </p>
-          <a
-            href="/portal"
-            className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-[var(--green)] px-4 py-3 text-sm font-[650] text-[var(--on-accent)] no-underline hover:opacity-90"
-          >
-            Buka portal ↗
-          </a>
-        </section>
+      {/* Live metrics */}
+      <section aria-label="Statistik layanan" className="mt-6">
+        <div className="mb-3 flex items-center gap-2 text-[12px] text-[var(--muted)]">
+          <span className="landing-live-dot h-1.5 w-1.5 rounded-full bg-[var(--ok)]" aria-hidden="true" />
+          Data langsung, diperbarui tiap 5 detik
+        </div>
+        <div className="grid gap-px overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--line)] sm:grid-cols-3">
+          <Metric icon={Activity} label="Total request" value={fmtShort(Math.round(requestsCount))} hint="Sepanjang waktu" />
+          <Metric icon={Coins} label="Token diproses" value={fmtShort(Math.round(tokensCount))} hint={`${fmtCount(Math.round(tokensCount))} token`} />
+          <Metric icon={Boxes} label="Model tersedia" value={fmtCount(overviewData?.model_count ?? 0)} hint="Siap dipanggil lewat satu API" />
+        </div>
+      </section>
 
-        <section id="balance" className="scroll-mt-28 rounded-[22px] border border-[var(--line)] bg-[var(--paper)] p-5 sm:p-6">
-          <p className="text-[11px] uppercase tracking-[0.7px] text-[var(--muted)]">Saldo / akun</p>
-          <h2 className="mt-1 text-[22px] font-[650] tracking-[-0.5px] text-[var(--ink)]">Cek saldo</h2>
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            Saldo dan limit terpakai terlihat dari portal API key masing-masing pengguna. Hubungi kami bila
-            saldo tidak sesuai setelah top up.
-          </p>
-          <a
-            href="/portal"
-            className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-[var(--line)] px-4 py-3 text-sm font-[650] text-[var(--green)] no-underline hover:bg-[var(--soft)]"
-          >
-            Cek saldo di portal ↗
+      {/* How it works */}
+      <section className="mt-20">
+        <SectionHeading eyebrow="Cara kerja" title="Mulai dalam tiga langkah">
+          Dari daftar sampai request pertama hanya butuh beberapa menit.
+        </SectionHeading>
+        <ol className="mt-8 grid gap-4 md:grid-cols-3">
+          {STEPS.map((step, i) => (
+            <li key={step.title} className="relative rounded-xl border border-[var(--line)] bg-[var(--paper)] p-5">
+              <div className="flex items-center justify-between">
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--accent-bg)] text-[var(--green)]">
+                  <step.icon className="h-4.5 w-4.5" strokeWidth={1.75} aria-hidden="true" />
+                </span>
+                <span className="font-mono text-[12px] text-[var(--muted)]">0{i + 1}</span>
+              </div>
+              <h3 className="mt-4 text-[15px] font-semibold text-[var(--ink)]">{step.title}</h3>
+              <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--muted)]">{step.body}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      {/* Features */}
+      <section className="mt-20">
+        <SectionHeading eyebrow="Kenapa Tokenizer" title="Dibuat untuk dipakai setiap hari" />
+        <div className="mt-8 grid gap-px overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--line)] sm:grid-cols-2 lg:grid-cols-4">
+          {FEATURES.map((f) => (
+            <div key={f.title} className="bg-[var(--paper)] p-5">
+              <f.icon className="h-5 w-5 text-[var(--green)]" strokeWidth={1.75} aria-hidden="true" />
+              <h3 className="mt-3 text-[15px] font-semibold text-[var(--ink)]">{f.title}</h3>
+              <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--muted)]">{f.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Models */}
+      <section id="models" className="mt-20 scroll-mt-20">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+          <SectionHeading eyebrow="Model & harga" title="Pilih model, lihat harganya">
+            Diurutkan berdasarkan popularitas. Semua harga dalam USD per 1 juta token.
+          </SectionHeading>
+          <a href="/model" className={`inline-flex items-center gap-1 rounded-md text-[13px] font-medium text-[var(--green)] no-underline hover:underline ${FOCUS}`}>
+            Halaman katalog lengkap
+            <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
           </a>
-        </section>
-      </div>
+        </div>
+        <ModelBrowser models={modelList} loading={models.isLoading} />
+      </section>
+
+      {/* CTA */}
+      <section id="purchase" className="mt-20 scroll-mt-20">
+        <div className="relative overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--paper)] p-6 sm:p-10">
+          <div className="landing-hero-bg pointer-events-none absolute inset-0 opacity-70" aria-hidden="true" />
+          <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
+            <div className="max-w-xl">
+              <h2 className="text-[24px] font-semibold tracking-[-0.5px] text-[var(--ink)] sm:text-[28px]">Siap mencoba?</h2>
+              <p className="mt-2 text-[15px] leading-relaxed text-[var(--muted)]">
+                Isi saldo, cek sisa saldo, dan pantau pemakaian langsung dari portal. Ada pertanyaan? Tim kami siap
+                membantu di Telegram.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              <a
+                href="/portal"
+                className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-[var(--action)] px-5 text-[14px] font-medium text-[var(--action-fg)] no-underline transition-opacity hover:opacity-90 ${FOCUS}`}
+              >
+                <Wallet className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                Buka portal
+              </a>
+              <a
+                href={TELEGRAM_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--paper)] px-5 text-[14px] font-medium text-[var(--ink)] no-underline transition-colors hover:border-[var(--line-strong)] ${FOCUS}`}
+              >
+                <Send className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                Gabung Telegram
+              </a>
+            </div>
+          </div>
+        </div>
+      </section>
     </PublicLayout>
   );
 }

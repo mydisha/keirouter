@@ -1,63 +1,49 @@
-// Public landing shell — floating pill nav + mobile top bar / bottom dock,
-// announcement dialog and footer (design.md §5, §8). Standalone: it does not
-// import the dashboard Layout or ThemeProvider, and scopes every token through
-// `.landing-root` (index.css). The theme toggle flips `data-theme` on this
-// element only, so it never touches the dashboard's `.dark` class.
+// Public landing shell — sticky glass nav, mobile top bar + bottom dock,
+// announcement popover and footer. Standalone: it does not import the
+// dashboard Layout or ThemeProvider, and scopes every token through
+// `.landing-root` (index.css), which mirrors the dashboard design system. The
+// theme toggle flips `data-theme` on this element only, so it never touches
+// the dashboard's `.dark` class.
 
 import { useState, type ReactNode } from "react";
+import { Bell, Boxes, Gift, Home, Moon, Send, Sun, UserRound, type LucideIcon } from "lucide-react";
 import { NotificationPopup } from "./NotificationPopup";
 
 type Theme = "light" | "dark";
 
 // Shared with the dashboard ThemeProvider, so a saved choice carries over.
 const THEME_STORAGE_KEY = "keirouter-theme";
+export const TELEGRAM_URL = "https://t.me/+F2C4PaeMgv1hYjE1";
 
 function storedTheme(): Theme {
-  return localStorage.getItem(THEME_STORAGE_KEY) === "dark" ? "dark" : "light";
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved === "dark") return "dark";
+    if (saved === "light") return "light";
+    return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  } catch {
+    return "light";
+  }
 }
 
-const TABS = [
-  { id: "overview", label: "Home", href: "/", d: "M3 11l9-8 9 8M5 10v10h14V10" },
-  { id: "models", label: "Model", href: "/model", d: "M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm11 0h7v7h-7v-7" },
-  { id: "bansos", label: "Bansos", href: "/bansos", d: "M4 8h16a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1zM12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7M7.5 8a2.5 2.5 0 0 1 0-5A4.8 8 0 0 1 12 8a4.8 8 0 0 1 4.5-5 2.5 2.5 0 0 1 0 5" },
-  { id: "telegram", label: "Telegram", href: "https://t.me/+F2C4PaeMgv1hYjE1", d: "M21.5 3.5 2.8 10.8c-1 .4-1 1 0 1.3l4.6 1.4 1.8 5.4c.2.6.5.7 1 .3l2.6-2.1 4.7 3.5c.7.4 1.2.2 1.4-.7l2.6-13.5c.2-.9-.3-1.3-1-.9ZM8.5 13.4l9.5-5.9-7.6 7-.3 3.2-1.6-4.3Z" },
-] as const;
+const TABS: { id: string; label: string; href: string; icon: LucideIcon }[] = [
+  { id: "overview", label: "Home", href: "/", icon: Home },
+  { id: "models", label: "Model", href: "/model", icon: Boxes },
+  { id: "bansos", label: "Bansos", href: "/bansos", icon: Gift },
+  { id: "telegram", label: "Telegram", href: TELEGRAM_URL, icon: Send },
+];
 
-const BELL_D = "M6 17h12l-1.5-3V9a4.5 4.5 0 0 0-9 0v5L6 17Zm4 3h4";
-const THEME_D = "M20 13A8 8 0 0 1 11 4a7 7 0 1 0 9 9Z";
-const USER_D = "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 8a8 8 0 0 1 16 0";
+const FOCUS = "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green)] focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--bg)]";
 
-function UiIcon({ d, size = 20 }: { d: string; size?: number }) {
+export function BrandMark({ className = "h-8 w-8" }: { className?: string }) {
   return (
-    <svg
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.65}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+    <span
+      className={`inline-flex shrink-0 items-center justify-center rounded-lg bg-[var(--action)] text-[var(--action-fg)] ${className}`}
       aria-hidden="true"
     >
-      <path d={d} />
-    </svg>
-  );
-}
-
-function BrandMark({ className = "h-[31px] w-[31px] md:h-[38px] md:w-[38px]" }: { className?: string }) {
-  return (
-    <span className={`inline-flex shrink-0 ${className}`} aria-hidden="true">
-      <svg viewBox="0 0 40 40" className="h-full w-full">
-        <rect width="40" height="40" rx="11" fill="#252820" />
-        <path
-          fill="none"
-          stroke="#dbe5cb"
-          strokeWidth="3.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          d="M11 12.5H29M20 12.5V29.5"
-        />
+      <svg viewBox="0 0 24 24" className="h-[58%] w-[58%]">
+        <path fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" d="M5 6.5h14M12 6.5V19" />
+        <circle cx="18.5" cy="18" r="2" fill="var(--color-secondary-500)" />
       </svg>
     </span>
   );
@@ -65,89 +51,65 @@ function BrandMark({ className = "h-[31px] w-[31px] md:h-[38px] md:w-[38px]" }: 
 
 function Brand() {
   return (
-    <a href="/" className="flex items-center gap-2.5 no-underline">
+    <a href="/" className={`flex items-center gap-2.5 rounded-lg no-underline ${FOCUS}`}>
       <BrandMark />
       <span className="leading-none">
-        <strong className="block text-[17px] font-[650] tracking-[-0.7px] text-[var(--ink)]">Tokenizer</strong>
-        <small className="mt-0.5 hidden text-[10px] uppercase tracking-[1.5px] text-[var(--muted)] sm:block">
-          AI PAYG
+        <strong className="block text-[16px] font-semibold tracking-[-0.3px] text-[var(--ink)]">Tokenizer</strong>
+        <small className="mt-1 hidden font-mono text-[10px] uppercase tracking-[1.2px] text-[var(--muted)] sm:block">
+          AI pay-as-you-go
         </small>
       </span>
     </a>
   );
 }
 
-function AnnouncementButton({ onClick }: { onClick: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title="Pengumuman"
-      aria-label="Pengumuman"
-      className="relative flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--line)] text-[var(--green)] transition-colors hover:bg-[var(--soft)]"
-    >
-      <UiIcon d={BELL_D} />
-      <span className="animate-pulse absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#c43d2e] px-1 text-[9px] font-bold text-white">
-        1
-      </span>
-    </button>
-  );
-}
-
-function ThemeButton({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      aria-pressed={theme === "dark"}
-      title="Mode"
-      aria-label="Mode"
-      className="flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--line)] text-[var(--green)] transition-colors hover:bg-[var(--soft)]"
-    >
-      <UiIcon d={THEME_D} />
-    </button>
-  );
-}
-
-function AccountButton() {
-  return (
-    <a
-      href="/portal"
-      title="Masuk / Akun"
-      aria-label="Masuk portal"
-      className="flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--line)] text-[var(--green)] no-underline transition-colors hover:bg-[var(--soft)]"
-    >
-      <UiIcon d={USER_D} />
-    </a>
-  );
-}
-
-function TabLink({
-  tab,
-  active,
-  onSelect,
-  stacked = false,
+function IconButton({
+  label,
+  onClick,
+  href,
+  children,
+  pressed,
 }: {
-  tab: (typeof TABS)[number];
-  active: string;
-  onSelect: (id: string) => void;
-  stacked?: boolean;
+  label: string;
+  onClick?: () => void;
+  href?: string;
+  children: ReactNode;
+  pressed?: boolean;
 }) {
+  const cls = `relative inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--line)] bg-[var(--paper)] text-[var(--muted)] no-underline transition-colors hover:border-[var(--line-strong)] hover:text-[var(--ink)] ${FOCUS}`;
+  if (href) {
+    return (
+      <a href={href} title={label} aria-label={label} className={cls}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <button type="button" onClick={onClick} title={label} aria-label={label} aria-pressed={pressed} className={cls}>
+      {children}
+    </button>
+  );
+}
+
+function TabLink({ tab, active, stacked = false }: { tab: (typeof TABS)[number]; active: string; stacked?: boolean }) {
   const isActive = active === tab.id;
   const external = tab.href.startsWith("http");
+  const Icon = tab.icon;
   return (
     <a
       href={tab.href}
-      role="tab"
-      aria-selected={isActive}
+      aria-current={isActive ? "page" : undefined}
       target={external ? "_blank" : undefined}
       rel={external ? "noopener noreferrer" : undefined}
-      onClick={() => onSelect(tab.id)}
-      className={`flex items-center justify-center gap-2 rounded-xl no-underline transition-colors ${
-        stacked ? "flex-col gap-1 px-1 py-1.5 text-[10px]" : "px-3 py-2 text-[13px]"
-      } ${isActive ? "bg-[var(--accent-bg)] font-[650] text-[var(--green)]" : "text-[var(--muted)] hover:bg-[var(--soft)]"}`}
+      className={`flex items-center justify-center no-underline transition-colors ${FOCUS} ${
+        stacked
+          ? `flex-col gap-1 rounded-lg px-1 py-2 text-[10.5px] ${isActive ? "font-semibold text-[var(--ink)]" : "text-[var(--muted)]"}`
+          : `gap-1.5 rounded-lg px-3 py-1.5 text-[13px] ${
+              isActive ? "bg-[var(--soft)] font-medium text-[var(--ink)]" : "text-[var(--muted)] hover:text-[var(--ink)]"
+            }`
+      }`}
     >
-      <UiIcon d={tab.d} size={stacked ? 20 : 17} />
+      <Icon className={stacked ? "h-5 w-5" : "h-4 w-4"} strokeWidth={1.75} aria-hidden="true" />
       <span>{tab.label}</span>
     </a>
   );
@@ -155,7 +117,7 @@ function TabLink({
 
 export function PublicLayout({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(storedTheme);
-  const [active, setActive] = useState(() => {
+  const [active] = useState(() => {
     const p = window.location.pathname;
     if (p.startsWith("/bansos")) return "bansos";
     if (p.startsWith("/model")) return "models";
@@ -165,60 +127,105 @@ export function PublicLayout({ children }: { children: ReactNode }) {
 
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
-    localStorage.setItem(THEME_STORAGE_KEY, next);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      /* storage unavailable: the choice lasts for this page only */
+    }
     setTheme(next);
   };
 
-  return (
-    <div className="landing-root min-h-dvh" data-theme={theme}>
-      {/* Desktop: floating centered pill nav. */}
-      <nav
-        className="fixed left-1/2 top-[18px] z-30 hidden w-[min(1096px,calc(100%-40px))] -translate-x-1/2 items-center gap-2 rounded-[18px] border border-[var(--line)] bg-[var(--nav-surface)] px-4 py-2 shadow-[0_5px_22px_#1528180c] md:flex"
-        role="tablist"
-        aria-label="Navigasi utama"
+  const actions = (
+    <div className="flex items-center gap-1.5">
+      <IconButton label="Pengumuman" onClick={() => setAnnouncementOpen((v) => !v)} pressed={announcementOpen}>
+        <Bell className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        <span className="landing-live-dot absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--color-danger)]" aria-hidden="true" />
+      </IconButton>
+      <IconButton label={theme === "dark" ? "Mode terang" : "Mode gelap"} onClick={toggleTheme} pressed={theme === "dark"}>
+        {theme === "dark" ? (
+          <Sun className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        ) : (
+          <Moon className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        )}
+      </IconButton>
+      <a
+        href="/portal"
+        className={`ml-1 hidden h-9 items-center gap-1.5 rounded-lg bg-[var(--action)] px-3.5 text-[13px] font-medium text-[var(--action-fg)] no-underline transition-opacity hover:opacity-90 sm:inline-flex ${FOCUS}`}
       >
-        <Brand />
-        <div className="mx-auto flex items-center gap-1">
-          {TABS.map((tab) => (
-            <TabLink key={tab.id} tab={tab} active={active} onSelect={setActive} />
-          ))}
-        </div>
-        <AnnouncementButton onClick={() => setAnnouncementOpen((v) => !v)} />
-        <ThemeButton theme={theme} onToggle={toggleTheme} />
-        <AccountButton />
-      </nav>
+        <UserRound className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        Masuk portal
+      </a>
+      <span className="sm:hidden">
+        <IconButton label="Masuk portal" href="/portal">
+          <UserRound className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        </IconButton>
+      </span>
+    </div>
+  );
 
-      {/* Mobile: top bar + fixed bottom dock. */}
-      <header className="fixed inset-x-3 top-[10px] z-30 flex items-center justify-between rounded-2xl border border-[var(--line)] bg-[var(--nav-surface)] px-3 py-2 shadow-[0_5px_22px_#1528180c] md:hidden">
-        <Brand />
-        <div className="flex items-center gap-2">
-          <AnnouncementButton onClick={() => setAnnouncementOpen((v) => !v)} />
-          <ThemeButton theme={theme} onToggle={toggleTheme} />
-          <AccountButton />
+  return (
+    <div className="landing-root relative min-h-dvh overflow-x-clip" data-theme={theme}>
+      <header className="sticky top-0 z-30 border-b border-[var(--line)] bg-[var(--nav-surface)] backdrop-blur-xl">
+        <div className="mx-auto flex h-14 w-full max-w-[1152px] items-center gap-3 px-4 sm:px-6">
+          <Brand />
+          <nav className="mx-auto hidden items-center gap-0.5 md:flex" aria-label="Navigasi utama">
+            {TABS.map((tab) => (
+              <TabLink key={tab.id} tab={tab} active={active} />
+            ))}
+          </nav>
+          <div className="ml-auto md:ml-0">{actions}</div>
         </div>
       </header>
+
+      {/* Mobile: fixed bottom dock. */}
       <nav
-        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-[var(--line)] bg-[var(--nav-surface)] px-1 pb-[env(safe-area-inset-bottom)] md:hidden"
-        role="tablist"
+        className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-4 border-t border-[var(--line)] bg-[var(--nav-surface)] px-1 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
         aria-label="Navigasi utama"
       >
         {TABS.map((tab) => (
-          <TabLink key={tab.id} tab={tab} active={active} onSelect={setActive} stacked />
+          <TabLink key={tab.id} tab={tab} active={active} stacked />
         ))}
       </nav>
 
-      <main className="relative z-10 mx-auto w-full max-w-[1152px] px-4 pb-[calc(80px+env(safe-area-inset-bottom))] pt-[84px] sm:px-7 md:pb-24 md:pt-[112px]">
+      <main className="relative z-10 mx-auto w-full max-w-[1152px] px-4 pb-[calc(88px+env(safe-area-inset-bottom))] pt-8 sm:px-6 md:pb-24 md:pt-12">
         {children}
       </main>
 
-      <footer className="relative z-10 mx-auto w-full max-w-[1152px] border-t border-[var(--line)] px-4 pb-[calc(96px+env(safe-area-inset-bottom))] pt-8 text-xs text-[var(--muted)] sm:px-7 md:pb-12">
-        <div className="flex flex-wrap items-center justify-center gap-2">
-          <strong className="text-[var(--ink)]">Tokenizer</strong>
-          <span className="uppercase tracking-[1.5px]">PAYG AI Frontier</span>
+      <footer className="relative z-10 border-t border-[var(--line)] bg-[var(--paper)]">
+        <div className="mx-auto grid w-full max-w-[1152px] gap-8 px-4 pb-[calc(104px+env(safe-area-inset-bottom))] pt-10 text-[13px] sm:grid-cols-[1.4fr_1fr_1fr] sm:px-6 md:pb-12">
+          <div>
+            <div className="flex items-center gap-2.5">
+              <BrandMark className="h-7 w-7" />
+              <strong className="text-[15px] font-semibold text-[var(--ink)]">Tokenizer</strong>
+            </div>
+            <p className="mt-3 max-w-xs text-[var(--muted)]">
+              Gateway AI pay-as-you-go. Satu API key untuk model frontier, bayar sesuai token yang dipakai.
+            </p>
+          </div>
+          <div>
+            <p className="font-mono text-[11px] uppercase tracking-[1px] text-[var(--muted)]">Layanan</p>
+            <ul className="mt-3 space-y-2">
+              <li><a href="/model" className="text-[var(--ink)] no-underline hover:underline">Model &amp; harga</a></li>
+              <li><a href="/bansos" className="text-[var(--ink)] no-underline hover:underline">Bansos</a></li>
+              <li><a href="/portal" className="text-[var(--ink)] no-underline hover:underline">Portal pengguna</a></li>
+            </ul>
+          </div>
+          <div>
+            <p className="font-mono text-[11px] uppercase tracking-[1px] text-[var(--muted)]">Bantuan</p>
+            <ul className="mt-3 space-y-2">
+              <li>
+                <a href={TELEGRAM_URL} target="_blank" rel="noopener noreferrer" className="text-[var(--ink)] no-underline hover:underline">
+                  Komunitas Telegram
+                </a>
+              </li>
+              <li><a href="/ketentuan" className="text-[var(--ink)] no-underline hover:underline">Ketentuan Layanan</a></li>
+            </ul>
+          </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
-          <a href="/model" className="no-underline hover:underline hover:underline-offset-2">Model &amp; harga</a>
-          <a href="/ketentuan" className="no-underline hover:underline hover:underline-offset-2">Ketentuan Layanan</a>
+        <div className="border-t border-[var(--line)]">
+          <p className="mx-auto w-full max-w-[1152px] px-4 py-4 font-mono text-[11px] text-[var(--muted)] sm:px-6">
+            © {new Date().getFullYear()} Tokenizer · PAYG AI Frontier
+          </p>
         </div>
       </footer>
 

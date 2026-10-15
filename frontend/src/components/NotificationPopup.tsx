@@ -17,7 +17,7 @@ function NotificationItem({ item }: { item: LandingNotification }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p
-            className="truncate text-[13px] font-[650] text-[var(--ink)] [&_a]:underline"
+            className="truncate text-[13px] font-semibold text-[var(--ink)] [&_a]:underline"
             dangerouslySetInnerHTML={{ __html: sanitizeHtml(item.title) }}
           />
           {item.tag && (
@@ -79,10 +79,10 @@ export function NotificationPopup({ open, onClose }: { open: boolean; onClose: (
       ref={ref}
       role="dialog"
       aria-label="Notifikasi"
-      className="fixed right-4 top-[76px] z-40 w-[min(360px,calc(100vw-32px))] overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--paper)] text-[var(--ink)] shadow-[0_12px_32px_#1528181f] md:right-[max(1rem,calc(50%-548px))] md:top-[74px]"
+      className="fixed right-4 top-[64px] z-40 w-[min(360px,calc(100vw-32px))] overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--paper)] text-[var(--ink)] shadow-[0_16px_40px_-12px_rgba(0,0,0,0.25)] md:right-[max(1.5rem,calc(50%-552px))]"
     >
       <div className="flex items-center justify-between border-b border-[var(--line)] px-4 py-3">
-        <p className="text-[13px] font-[650]">Notifikasi</p>
+        <p className="text-[13px] font-semibold">Notifikasi</p>
         <span className="rounded-full bg-[var(--accent-bg)] px-2 py-0.5 text-[10px] font-bold text-[var(--green)]">
           {list.length}
         </span>

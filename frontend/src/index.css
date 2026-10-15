@@ -495,134 +495,83 @@ select:disabled,
 }
 
 /* ── Public landing ─────────────────────────────────────────────────
-   Self-hosted DM Sans (variable, weights 100–1000) and the cream / forest
-   palette from design.md §2. Scoped under `.landing-root` with a
+   The landing shares the dashboard design system: IBM Plex, neutral zinc
+   surfaces, the accent palette for data/links/active state and monochrome
+   primary actions. Tokens stay scoped under `.landing-root`, with a
    `[data-theme="dark"]` variant so it never collides with the dashboard's
-   `.dark` theme. See docs/superpowers/specs/2026-09-26-public-landing-page-design.md. */
-@font-face {
-  font-family: "DM Sans";
-  font-style: normal;
-  src: url("/assets/fonts/dm-sans-latin-variable.woff2") format("woff2");
-  font-weight: 100 1000;
-  font-display: swap;
-}
-
+   `.dark` class. */
 .landing-root {
-  font-family: "DM Sans", system-ui, sans-serif;
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "tnum" 0;
   background: var(--bg);
   color: var(--ink);
 
-  --bg: #f5f5ee;
-  --paper: #fffef9;
-  --soft: #edf1e7;
-  --ink: #29392d;
-  --muted: #606d60;
-  --line: #dce2d4;
-  --green: #315e43;
-  --accent-bg: #e3ecd9;
-  --on-accent: #fff;
-  --tag-bg: #e3ecd9;
-  --tag-ink: #315e43;
-  --nav-surface: #fffef9;
-  --terminal: #17201a;
-  --terminal-bar: #253229;
-  --terminal-ink: #e8efde;
-  --terminal-muted: #b9c8b5;
-  --gold: #edd386;
-  --silver: #dce3df;
-  --bronze: #e6b797;
+  --bg: var(--color-ink-50);
+  --paper: #ffffff;
+  --soft: var(--color-ink-100);
+  --ink: var(--color-ink-900);
+  --muted: var(--color-ink-500);
+  --line: var(--color-ink-200);
+  --line-strong: var(--color-ink-300);
+  /* "green" is the historical name of the landing accent token. */
+  --green: var(--color-accent-600);
+  --accent-bg: var(--color-accent-50);
+  --action: var(--color-ink-900);
+  --action-fg: #ffffff;
+  --on-accent: #ffffff;
+  --tag-bg: var(--color-accent-50);
+  --tag-ink: var(--color-accent-700);
+  --nav-surface: color-mix(in srgb, #ffffff 82%, transparent);
+  --glow: color-mix(in srgb, var(--color-accent-400) 22%, transparent);
+  --grid-line: color-mix(in srgb, var(--color-ink-900) 5%, transparent);
+  --ok: var(--color-success);
+  --terminal: var(--color-ink-950);
+  --terminal-bar: var(--color-ink-800);
+  --terminal-ink: var(--color-ink-100);
+  --terminal-muted: var(--color-ink-400);
 }
 
-/* Dark palette mirrors the dashboard: deep warm charcoal neutrals with the
-   olive accent, instead of the earlier saturated green. Values are the
-   dashboard's `.dark` tokens (see :root / .dark above). */
 .landing-root[data-theme="dark"] {
-  background: var(--bg);
-  color: var(--ink);
-
-  --bg: #161514;
-  --paper: #1e1d1b;
-  --paper-2: #252422;
-  --soft: #252422;
-  --ink: #e8e6e1;
-  --muted: #8a867e;
-  --line: #302e2b;
-  --line-strong: #3d3b37;
-  --green: #a3ab87;
-  --accent-bg: #2c3224;
-  --on-accent: #161514;
-  --tag-bg: #2c3224;
-  --tag-ink: #c5cab2;
-  --nav-surface: #1e1d1b;
-  --terminal: #111010;
-  --gold: #c9a96a;
-  --silver: #9a9791;
-  --bronze: #c08b62;
+  --bg: var(--color-ink-950);
+  --paper: var(--color-ink-900);
+  --soft: var(--color-ink-800);
+  --ink: var(--color-ink-50);
+  --muted: var(--color-ink-400);
+  --line: var(--color-ink-800);
+  --line-strong: var(--color-ink-700);
+  --green: var(--color-accent-300);
+  --accent-bg: color-mix(in srgb, var(--color-accent-500) 16%, transparent);
+  --action: var(--color-ink-50);
+  --action-fg: var(--color-ink-950);
+  --on-accent: var(--color-ink-950);
+  --tag-bg: color-mix(in srgb, var(--color-accent-500) 16%, transparent);
+  --tag-ink: var(--color-accent-200);
+  --nav-surface: color-mix(in srgb, var(--color-ink-900) 80%, transparent);
+  --glow: color-mix(in srgb, var(--color-accent-500) 26%, transparent);
+  --grid-line: color-mix(in srgb, #ffffff 5%, transparent);
+  --ok: #4ade80;
+  --terminal: #09090b;
+  color-scheme: dark;
 }
 
-/* Rank medals (design.md §7.3) — three distinct silhouettes, colours per rank. */
-.landing-root .rank-crown .crown-face {
-  fill: #edd386;
-  stroke: #886728;
-  stroke-width: 1.2;
-  stroke-linejoin: round;
-}
-.landing-root .rank-crown .crown-depth {
-  fill: #ad813c;
-  stroke: #886728;
-  stroke-width: 0.5;
-}
-.landing-root .rank-crown .crown-base {
-  fill: none;
-  stroke: #886728;
-  stroke-width: 2;
-  stroke-linecap: round;
-}
-.landing-root .rank-crown[data-rank="2"] .crown-face {
-  fill: #dce3df;
-  stroke: #63766e;
-}
-.landing-root .rank-crown[data-rank="2"] .crown-depth {
-  fill: #8da497;
-}
-.landing-root .rank-crown[data-rank="3"] .crown-face {
-  fill: #e6b797;
-  stroke: #926746;
-}
-.landing-root .rank-crown[data-rank="3"] .crown-depth {
-  fill: #b4825b;
+/* Hero backdrop: a faint measurement grid fading out from the top, with a
+   soft accent glow behind the headline. Purely decorative. */
+.landing-root .landing-hero-bg {
+  background-image:
+    radial-gradient(60% 55% at 50% 0%, var(--glow), transparent 70%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 35%, transparent);
+  mask-image: linear-gradient(to bottom, #000 35%, transparent);
 }
 
-/* Dark: the crown picks up the forest-theme metals (--gold/--silver/--bronze). */
-.landing-root[data-theme="dark"] .rank-crown[data-rank="1"] .crown-face {
-  fill: var(--gold);
+@keyframes landing-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
 }
-.landing-root[data-theme="dark"] .rank-crown[data-rank="1"] .crown-depth {
-  fill: var(--gold);
-  opacity: 0.55;
-}
-.landing-root[data-theme="dark"] .rank-crown[data-rank="1"] .crown-base {
-  stroke: var(--gold);
-}
-.landing-root[data-theme="dark"] .rank-crown[data-rank="2"] .crown-face {
-  fill: var(--silver);
-}
-.landing-root[data-theme="dark"] .rank-crown[data-rank="2"] .crown-depth {
-  fill: var(--silver);
-  opacity: 0.55;
-}
-.landing-root[data-theme="dark"] .rank-crown[data-rank="2"] .crown-base {
-  stroke: var(--silver);
-}
-.landing-root[data-theme="dark"] .rank-crown[data-rank="3"] .crown-face {
-  fill: var(--bronze);
-}
-.landing-root[data-theme="dark"] .rank-crown[data-rank="3"] .crown-depth {
-  fill: var(--bronze);
-  opacity: 0.55;
-}
-.landing-root[data-theme="dark"] .rank-crown[data-rank="3"] .crown-base {
-  stroke: var(--bronze);
+.landing-root .landing-live-dot {
+  animation: landing-pulse 1.8s ease-in-out infinite;
 }
 
 /* WCAG 2.3.3 / 2.2.2 — honour reduced-motion: no pulsing, sliding or smooth scrolling. */

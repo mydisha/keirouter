@@ -3,7 +3,7 @@
 // render identical cards and provider filters. No new dependency.
 
 import { useMemo, useState } from "react";
-import { Cpu } from "lucide-react";
+import { Check, Copy, Cpu, Search } from "lucide-react";
 import { ModelCapabilityIcons } from "./ModelCapabilityIcons";
 import type { PublicModel } from "../lib/publicApi";
 import { familySlug, resolveProvider } from "../lib/providerResolve";
@@ -32,7 +32,7 @@ export function ProviderLogo({ providerId, modelId }: { providerId: string; mode
   }, [providerId, modelId]);
   const [idx, setIdx] = useState(0);
   return (
-    <span className="flex h-9 w-9 shrink-0 items-center justify-center text-[var(--green)]">
+    <span className="flex h-full w-full items-center justify-center text-[var(--muted)]">
       {idx < candidates.length ? (
         <img
           src={candidates[idx]}
@@ -57,43 +57,90 @@ export const fmtShort = (n: number) => (n > 0 ? fmtCompact.format(n) : "0");
 
 export const MODEL_PAGE = 24;
 
+function CopyId({ id }: { id: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(id);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      /* clipboard unavailable */
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={copy}
+      title="Salin ID model"
+      aria-label={`Salin ID model ${id}`}
+      className="group flex w-full min-w-0 items-center gap-2 rounded-md border border-[var(--line)] bg-[var(--bg)] px-2 py-1.5 text-left transition-colors hover:border-[var(--line-strong)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green)]"
+    >
+      <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-[var(--ink)]">{id}</span>
+      {copied ? (
+        <Check className="h-3.5 w-3.5 shrink-0 text-[var(--ok)]" aria-hidden="true" />
+      ) : (
+        <Copy className="h-3.5 w-3.5 shrink-0 text-[var(--muted)] group-hover:text-[var(--ink)]" aria-hidden="true" />
+      )}
+      <span className="sr-only" aria-live="polite">{copied ? "Tersalin" : ""}</span>
+    </button>
+  );
+}
+
+function Price({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[11px] text-[var(--muted)]">{label}</p>
+      <p className={`truncate font-mono tabular-nums ${strong ? "text-[15px] font-semibold text-[var(--ink)]" : "text-[12.5px] text-[var(--ink)]"}`}>
+        {fmtRate(value)}
+      </p>
+    </div>
+  );
+}
+
 export function ModelCard({ model }: { model: PublicModel }) {
   return (
-    <div className="flex flex-col rounded-2xl border border-[var(--line)] bg-[var(--paper)] p-4">
+    <article className="group flex flex-col rounded-xl border border-[var(--line)] bg-[var(--paper)] p-4 transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-[var(--line-strong)] hover:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.18)]">
       <div className="flex items-start gap-3">
-        <ProviderLogo providerId={model.provider_id} modelId={model.model_id} />
-        <div className="min-w-0">
-          <p className="truncate text-[15px] font-[650] text-[var(--ink)]">{model.name}</p>
-          <p className="text-[11px] text-[var(--muted)]">{resolveProvider(model).label}</p>
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[var(--line)] bg-[var(--bg)] p-1.5">
+          <ProviderLogo providerId={model.provider_id} modelId={model.model_id} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h3 className="truncate text-[15px] font-semibold tracking-[-0.2px] text-[var(--ink)]" title={model.name}>{model.name}</h3>
+          <p className="text-[12px] text-[var(--muted)]">{resolveProvider(model).label}</p>
         </div>
+        {model.sold_out ? (
+          <span className="shrink-0 rounded-md border border-[var(--line)] bg-[var(--soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]">
+            Sold out
+          </span>
+        ) : (
+          <span className="inline-flex shrink-0 items-center gap-1.5 rounded-md bg-[var(--tag-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--tag-ink)]">
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--ok)]" aria-hidden="true" />
+            Tersedia
+          </span>
+        )}
       </div>
-      <ModelCapabilityIcons capabilities={model.capabilities} className="my-2" bare />
-      <p className="break-all font-mono text-[10px] text-[var(--muted)]">{model.model_id}</p>
+      <ModelCapabilityIcons capabilities={model.capabilities} className="mt-3 min-h-[18px]" bare />
+      <div className="mt-3">
+        <CopyId id={model.model_id} />
+      </div>
       {model.sold_out ? (
-        <div className="mt-3 inline-flex items-center gap-1 rounded-full border border-[var(--muted)] px-2.5 py-1 text-xs font-medium text-[var(--muted)]">
-          Sold out
-        </div>
+        <p className="mt-4 border-t border-[var(--line)] pt-3 text-[12.5px] text-[var(--muted)]">
+          Belum ada penawaran yang memenuhi harga. Coba lagi beberapa saat lagi.
+        </p>
       ) : (
-        <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[var(--line)] pt-3 text-xs">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.5px] text-[var(--muted)]">Input / 1M</p>
-            <p className="tabular-nums font-[650] text-[var(--ink)]">{fmtRate(model.input_per_m)}</p>
+        <div className="mt-4 border-t border-[var(--line)] pt-3">
+          <div className="grid grid-cols-2 gap-3">
+            <Price label="Input / 1M token" value={model.input_per_m} strong />
+            <Price label="Output / 1M token" value={model.output_per_m} strong />
           </div>
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.5px] text-[var(--muted)]">Output / 1M</p>
-            <p className="tabular-nums font-[650] text-[var(--ink)]">{fmtRate(model.output_per_m)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.5px] text-[var(--muted)]">Cache Read / 1M</p>
-            <p className="tabular-nums font-[650] text-[var(--ink)]">{fmtRate(model.cached_per_m)}</p>
-          </div>
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.5px] text-[var(--muted)]">Cache Write / 1M</p>
-            <p className="tabular-nums font-[650] text-[var(--ink)]">{fmtRate(model.cache_write_per_m)}</p>
+          <div className="mt-3 grid grid-cols-2 gap-3 rounded-lg bg-[var(--bg)] px-2.5 py-2">
+            <Price label="Cache read / 1M" value={model.cached_per_m} />
+            <Price label="Cache write / 1M" value={model.cache_write_per_m} />
           </div>
         </div>
       )}
-    </div>
+    </article>
   );
 }
 
@@ -111,13 +158,104 @@ export function ProviderFilterButton({
       type="button"
       aria-pressed={active}
       onClick={onClick}
-      className={`rounded-xl border px-4 py-2 text-sm font-[650] transition-colors ${
+      className={`h-8 shrink-0 rounded-lg border px-3 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green)] ${
         active
-          ? "border-[var(--green)] bg-[var(--green)] text-[var(--on-accent)]"
-          : "border-[var(--line)] text-[var(--green)] hover:bg-[var(--soft)]"
+          ? "border-[var(--action)] bg-[var(--action)] text-[var(--action-fg)]"
+          : "border-[var(--line)] bg-[var(--paper)] text-[var(--muted)] hover:border-[var(--line-strong)] hover:text-[var(--ink)]"
       }`}
     >
       {children}
     </button>
+  );
+}
+
+// ModelBrowser is the searchable, provider-filtered model grid shared by the
+// landing page and /model. Search matches name, model id and provider label.
+export function ModelBrowser({ models, loading = false }: { models: PublicModel[]; loading?: boolean }) {
+  const [visible, setVisible] = useState(MODEL_PAGE);
+  const [provider, setProvider] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const providers = useMemo(() => buildProviders(models), [models]);
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return models.filter((m) => {
+      const p = resolveProvider(m);
+      if (provider && p.id !== provider) return false;
+      if (!q) return true;
+      return m.name.toLowerCase().includes(q) || m.model_id.toLowerCase().includes(q) || p.label.toLowerCase().includes(q);
+    });
+  }, [models, provider, query]);
+
+  // Changing a filter re-collapses pagination so a short result list can't
+  // strand the user past the end of the new set.
+  const reset = () => setVisible(MODEL_PAGE);
+
+  if (loading) {
+    return (
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Memuat model">
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} className="h-[232px] animate-pulse rounded-xl border border-[var(--line)] bg-[var(--paper)]" />
+        ))}
+      </div>
+    );
+  }
+  if (models.length === 0) {
+    return <p className="mt-6 rounded-xl border border-dashed border-[var(--line)] p-8 text-center text-sm text-[var(--muted)]">Belum ada model tersedia.</p>;
+  }
+
+  return (
+    <>
+      <div className="mt-6 flex flex-col gap-3 lg:flex-row lg:items-center">
+        <label className="relative block lg:w-72">
+          <span className="sr-only">Cari model</span>
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--muted)]" aria-hidden="true" />
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              reset();
+            }}
+            placeholder="Cari model atau provider…"
+            className="h-9 w-full rounded-lg border border-[var(--line)] bg-[var(--paper)] pl-9 pr-3 text-[14px] text-[var(--ink)] placeholder:text-[var(--muted)] focus:border-[var(--green)] focus:outline-none focus:ring-2 focus:ring-[var(--accent-bg)]"
+          />
+        </label>
+        <div className="-mx-4 flex gap-2 overflow-x-auto px-4 pb-1 lg:mx-0 lg:flex-wrap lg:overflow-visible lg:px-0 lg:pb-0" role="group" aria-label="Filter model berdasarkan provider">
+          <ProviderFilterButton active={provider === null} onClick={() => { setProvider(null); reset(); }}>
+            Semua
+          </ProviderFilterButton>
+          {providers.map((p) => (
+            <ProviderFilterButton key={p.id} active={provider === p.id} onClick={() => { setProvider(p.id); reset(); }}>
+              {p.label}
+            </ProviderFilterButton>
+          ))}
+        </div>
+      </div>
+      <p className="mt-3 text-[12px] text-[var(--muted)]" aria-live="polite">
+        Menampilkan {fmtCount(Math.min(visible, filtered.length))} dari {fmtCount(filtered.length)} model
+      </p>
+      {filtered.length === 0 ? (
+        <p className="mt-4 rounded-xl border border-dashed border-[var(--line)] p-8 text-center text-sm text-[var(--muted)]">
+          Tidak ada model yang cocok dengan pencarian ini.
+        </p>
+      ) : (
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filtered.slice(0, visible).map((m) => (
+            <ModelCard key={m.model_id} model={m} />
+          ))}
+        </div>
+      )}
+      {visible < filtered.length && (
+        <div className="mt-6 flex justify-center">
+          <button
+            type="button"
+            onClick={() => setVisible((n) => n + MODEL_PAGE)}
+            className="h-9 rounded-lg border border-[var(--line)] bg-[var(--paper)] px-4 text-[13px] font-medium text-[var(--ink)] transition-colors hover:border-[var(--line-strong)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green)]"
+          >
+            Tampilkan lebih banyak ({fmtCount(filtered.length - visible)} lagi)
+          </button>
+        </div>
+      )}
+    </>
   );
 }
