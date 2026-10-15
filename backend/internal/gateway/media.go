@@ -71,7 +71,7 @@ func (s *Server) writeMediaError(w http.ResponseWriter, err error) {
 	}
 	var bad badModelError
 	if asBadModel(err, &bad) {
-		writeError(w, http.StatusBadRequest, bad.Error())
+		writeError(w, bad.HTTPStatus(), bad.Error())
 		return
 	}
 	s.writeProviderError(w, err)

@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"math"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -97,6 +98,11 @@ func resolveTargetsWith(ctx context.Context, chains ChainSource, aliases AliasSo
 	if err == nil {
 		return res, nil
 	}
+	// The chain exists but is sold out: say so rather than falling through to
+	// "unknown model".
+	if bad, ok := err.(badModelError); ok && bad.status == http.StatusServiceUnavailable {
+		return resolveResult{}, err
+	}
 
 	// bare name -> try an alias
 	if aliases != nil {
@@ -138,6 +144,9 @@ func chainResultWith(ctx context.Context, chains ChainSource, latency LatencyRea
 				steps = orderStepsByMarket(steps, cache, markupPercent)
 			}
 			steps = stampSurplusTrusted(steps, c.MarketSlugs, cache, markupPercent)
+			if len(steps) == 0 && (c.FallbackProvider == "" || c.FallbackModel == "") {
+				return resolveResult{}, errSoldOut(name)
+			}
 			// Ordering strategies reorder the chain steps before the optional
 			// fallback model is appended, so the explicit last-resort target
 			// always stays last. round-robin rotates at dispatch time; the
@@ -333,12 +342,35 @@ func stampSurplusTrusted(steps []dispatch.Target, chainSlugs []string, cache *ma
 	return out
 }
 
-// badModelError signals an unresolvable model string (a client error).
-type badModelError struct{ msg string }
+// badModelError signals a model string that cannot be routed. status is the
+// HTTP status to answer with; zero means 400 (an unknown model is a client
+// error).
+type badModelError struct {
+	msg    string
+	status int
+}
 
 func (e badModelError) Error() string { return e.msg }
 
+// HTTPStatus is the response status for this error.
+func (e badModelError) HTTPStatus() int {
+	if e.status == 0 {
+		return http.StatusBadRequest
+	}
+	return e.status
+}
+
 func errBadModel(msg string) error { return badModelError{msg: msg} }
+
+// errSoldOut reports a chain whose every market-bound step has no live quote
+// (e.g. no trusted Surplus offer clears the price floor). It is temporary, so
+// it answers 503 rather than blaming the client.
+func errSoldOut(name string) error {
+	return badModelError{
+		msg:    "model " + name + " is sold out: no offer currently meets its price floor, try again later",
+		status: http.StatusServiceUnavailable,
+	}
+}
 
 // healthLatencyReader adapts the account-health store into a LatencyReader by
 // averaging background probe latency across a tenant's accounts for each

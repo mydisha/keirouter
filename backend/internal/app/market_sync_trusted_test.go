@@ -76,8 +76,8 @@ func TestSyncFetchesTrustedBooksForBoundSlugsOnly(t *testing.T) {
 	if m.MinAskIn != 0.002495 || m.MinAskOut != 0.014969 {
 		t.Fatalf("best = (%v,%v), want the cheapest available trusted offer", m.MinAskIn, m.MinAskOut)
 	}
-	if m.MinDiscountPct != 94 {
-		t.Fatalf("min discount = %d, want 94 (third level)", m.MinDiscountPct)
+	if m.MinDiscountPct != 92 {
+		t.Fatalf("min discount = %d, want 92 (third level 94 minus margin)", m.MinDiscountPct)
 	}
 	if strings.Join(m.Providers, ",") != "bedrock,openai" {
 		t.Fatalf("providers = %v, want the available trusted ones", m.Providers)
@@ -189,5 +189,42 @@ func TestSyncTrustedQuoteHonoursProviderMinDiscountFloor(t *testing.T) {
 				t.Fatalf("min30 ceiling = %d cap=(%v,%v), want 30 and ≤ (0.7,2.8)", m.MinDiscountPct, m.FailoverIn, m.FailoverOut)
 			}
 		}
+	}
+}
+
+func TestSyncDropsTrustedSlugWhenNoOfferClearsFloor(t *testing.T) {
+	// Every trusted offer is under 30% off list: with a min30 provider the slug
+	// must leave the snapshot, which is what marks the chain sold out.
+	const shallow = `{"offers":[
+	 {"provider_id":"google","price_input_per_1m":800000,"price_output_per_1m":3200000,"direct_input_per_1m":1000000,"direct_output_per_1m":4000000,"available":true,"healthy":true,"trusted":true},
+	 {"provider_id":"inferhub","price_input_per_1m":100000,"price_output_per_1m":400000,"direct_input_per_1m":1000000,"direct_output_per_1m":4000000,"available":true,"healthy":true,"trusted":false}
+	]}`
+	db := newSyncTestDB(t)
+	ctx := context.Background()
+	var hits []string
+	srv := trustedSurplusServer(t, map[string]string{"gemini-3.8-flash": shallow}, &hits)
+	if err := db.CustomProviders().CreateProvider(ctx, store.CustomProvider{
+		ID: "custom-openai-surplus", TenantID: store.DefaultTenantID, DisplayName: "Surplus",
+		Alias: "surplus", Dialect: "openai", BaseURL: "https://api.surplusintelligence.ai/min30/v1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Chains().Create(ctx, store.Chain{
+		ID: "g", TenantID: store.DefaultTenantID, Name: "gemini-trusted", Strategy: "priority",
+		Steps: []store.ChainStep{{ID: "g-s", ChainID: "g", Provider: "custom-openai-surplus",
+			Model: "gemini-3.8-flash", MarketSlug: "surplus-trusted:gemini-3.8-flash"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := market.SaveSettings(ctx, db.Settings().Set, market.Settings{RefreshIntervalSeconds: 2, MarkupPercent: 10, SurplusFallbackDepth: 3}); err != nil {
+		t.Fatal(err)
+	}
+	a := newSyncTestApp(t, db)
+	a.surplusURL = srv.URL
+	if _, err := a.syncChainMarketPrices(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a.MarketCache().Lookup("surplus-trusted:gemini-3.8-flash"); ok {
+		t.Fatal("a slug with no trusted offer clearing min30 must be absent (sold out)")
 	}
 }

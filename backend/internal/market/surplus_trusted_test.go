@@ -44,24 +44,25 @@ func TestParseSurplusTrustedBookDepthCapsAtThirdDistinctLevel(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Distinct levels: 2495, 9000, 12000 (the unhealthy 9500 is excluded).
-	// Level 3 = 12000/72000 => discount 94% => floor 94 => cap 6% of list.
-	if q.MinDiscountPct != 94 {
-		t.Fatalf("min discount = %d, want 94", q.MinDiscountPct)
+	// Level 3 = 12000/72000 => discount 94% => ceiling 94-2 = 92 (margin for
+	// Surplus's estimated discount) => cap 8% of list.
+	if q.MinDiscountPct != 92 {
+		t.Fatalf("min discount = %d, want 92", q.MinDiscountPct)
 	}
-	if !approx(q.CapIn, 0.012) || !approx(q.CapOut, 0.072) {
-		t.Fatalf("cap = (%v,%v), want (0.012,0.072)", q.CapIn, q.CapOut)
+	if !approx(q.CapIn, 0.016) || !approx(q.CapOut, 0.096) {
+		t.Fatalf("cap = (%v,%v), want (0.016,0.096)", q.CapIn, q.CapOut)
 	}
 }
 
 func TestParseSurplusTrustedBookCapNeverBelowLevel(t *testing.T) {
-	// Level 1 discount is 98.7525% → floor 98 → cap 2% of list, which must be
+	// Level 1 discount is 98.7525% → ceiling 98-2 = 96 → cap 4% of list, which must be
 	// at least the level price itself so the fallback bill can never undercut.
 	q, err := ParseSurplusTrustedBook(strings.NewReader(trustedBookFixture), 1, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if q.MinDiscountPct != 98 {
-		t.Fatalf("min discount = %d, want 98", q.MinDiscountPct)
+	if q.MinDiscountPct != 96 {
+		t.Fatalf("min discount = %d, want 96", q.MinDiscountPct)
 	}
 	if q.CapIn < q.BestIn || q.CapOut < q.BestOut {
 		t.Fatalf("cap (%v,%v) below best (%v,%v)", q.CapIn, q.CapOut, q.BestIn, q.BestOut)
@@ -74,8 +75,8 @@ func TestParseSurplusTrustedBookDepthBeyondLevelsUsesDeepest(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Deepest eligible level = 20000/120000 => 90% discount.
-	if q.MinDiscountPct != 90 {
-		t.Fatalf("min discount = %d, want 90", q.MinDiscountPct)
+	if q.MinDiscountPct != 88 {
+		t.Fatalf("min discount = %d, want 88 (90 minus margin)", q.MinDiscountPct)
 	}
 }
 

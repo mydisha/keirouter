@@ -379,6 +379,8 @@ export interface Chain {
   reorder_by_market?: boolean;
   /** Per-chain markup override; null/undefined follows the global market markup. */
   markup_percent?: number | null;
+  /** No live market quote for any bound slug: stored rates are stale and requests are refused. */
+  sold_out?: boolean;
   steps: ChainStep[];
 }
 

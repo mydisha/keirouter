@@ -33,6 +33,9 @@ function ChainHealth({ health }: { health?: HealthChainRow }) {
 }
 
 function ChainPricing({ chain }: { chain: Chain }) {
+  if (chain.sold_out) {
+    return <div className="flex flex-col items-start gap-1"><Badge tone="danger" title="No market offer currently meets this chain's price floor; requests are refused with 503 until one does.">Sold out</Badge><span className="text-[11px] text-[var(--text-muted)]">Last price {fmtRate(chain.input_per_m)} / {fmtRate(chain.output_per_m)}</span></div>;
+  }
   const hasPricing = chain.input_per_m > 0 || chain.output_per_m > 0 || chain.cache_write_per_m > 0 || chain.cache_read_per_m > 0;
   if (!hasPricing) return <span className="text-xs text-[var(--text-muted)]">—</span>;
   return <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] tabular-nums text-[var(--text-muted)]">

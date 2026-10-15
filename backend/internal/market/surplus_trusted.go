@@ -22,6 +22,12 @@ const (
 	// DefaultSurplusFallbackDepth is how many distinct price levels Surplus may
 	// fail over across before the X-Min-Discount ceiling refuses the request.
 	DefaultSurplusFallbackDepth = 3
+	// ceilingMarginPct is how many points the X-Min-Discount ceiling sits
+	// below the deepest allowed level's own discount. Surplus gates on an
+	// estimated cost (rounded to whole microdollars, plus buffers), which reads
+	// lower than the book discount on small requests; a ceiling set exactly at
+	// the book discount would refuse offers it is meant to admit.
+	ceilingMarginPct = 2
 )
 
 // TrustedQuote is the trusted-only view of one Surplus order book, in USD/M.
@@ -153,7 +159,10 @@ func ParseSurplusTrustedBook(r io.Reader, depth, floorPct int) (TrustedQuote, er
 		// discount and floor it. The epsilon absorbs float noise on exact
 		// percentages (1-0.06)*100 = 93.999...
 		disc := math.Min(1-level.in/level.directIn, 1-level.out/level.directOut) * 100
-		n := int(math.Floor(disc + 1e-9))
+		n := int(math.Floor(disc+1e-9)) - ceilingMarginPct
+		// The provider's /min{N} floor applies regardless (Surplus takes the
+		// stricter of URL and header), so the ceiling never needs to go lower.
+		n = max(n, floorPct)
 		if n > 0 && n <= 100 {
 			q.MinDiscountPct = n
 			keep := 1 - float64(n)/100

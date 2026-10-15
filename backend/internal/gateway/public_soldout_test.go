@@ -131,3 +131,22 @@ func TestPublicModelsNilMarketCacheNoSlugs(t *testing.T) {
 	require.Len(t, models, 1)
 	require.False(t, models[0].SoldOut)
 }
+
+// A chain bound only through a per-step slug (no chain-level slug) is still
+// sold out when that slug has no live quote.
+func TestPublicModelsSoldOutFromStepSlug(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	require.NoError(t, db.Chains().Create(context.Background(), store.Chain{
+		ID: "c-step", TenantID: store.DefaultTenantID, Name: "gemini-trusted",
+		Strategy: "priority", InputPerM: 0.0105, OutputPerM: 0.0525,
+		Steps: []store.ChainStep{{Provider: "custom-openai-surplus", Model: "gemini-3.8-flash",
+			MarketSlug: "surplus-trusted:gemini-3.8-flash", Position: 0}},
+		CreatedAt: time.Now(), UpdatedAt: time.Now(),
+	}))
+	gw.marketCache = market.NewSnapshotCache()
+
+	models := getPublicModels(t, gw)
+	require.Len(t, models, 1)
+	require.True(t, models[0].SoldOut, "step slug without quote => sold out")
+	require.Zero(t, models[0].InputPerM, "stale stored rate must not be shown")
+}

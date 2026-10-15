@@ -69,7 +69,7 @@ func (s *Server) handleGeminiGenerate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var bad badModelError
 		if errors.As(err, &bad) {
-			writeError(w, http.StatusBadRequest, bad.Error())
+			writeError(w, bad.HTTPStatus(), bad.Error())
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to resolve model")

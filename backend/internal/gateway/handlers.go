@@ -202,7 +202,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 		var bad badModelError
 		if errors.As(err, &bad) {
 			s.consoleLog.Log("WARN", fmt.Sprintf("Unknown model %q", req.Model), bad.Error())
-			writeError(w, http.StatusBadRequest, bad.Error())
+			writeError(w, bad.HTTPStatus(), bad.Error())
 			return
 		}
 		s.consoleLog.Log("ERROR", fmt.Sprintf("Failed to resolve model %q", req.Model), err.Error())

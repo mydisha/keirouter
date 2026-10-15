@@ -1865,6 +1865,9 @@ func (s *Server) adminListChains(w http.ResponseWriter, r *http.Request) {
 			"capability_overrides": c.CapabilityOverrides,
 			// null = follows the global market markup.
 			"markup_percent": c.MarkupPercent,
+			// No live quote for any bound slug: the stored rates are stale and
+			// requests are refused until the market offers it again.
+			"sold_out": s.chainSoldOut(c),
 		}
 		if c.FallbackProvider != "" && c.FallbackModel != "" {
 			entry["fallback_provider"] = c.FallbackProvider

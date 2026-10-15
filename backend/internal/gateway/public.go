@@ -10,6 +10,7 @@ import (
 
 	"github.com/mydisha/keirouter/backend/internal/connectors"
 	"github.com/mydisha/keirouter/backend/internal/core"
+	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
 // applyCapabilityOverrides forces the operator-configured vision/reasoning/tools
@@ -84,6 +85,19 @@ type publicModelRow struct {
 	Users        int
 }
 
+// chainSoldOut reports whether a market-bound chain has no live quote for any
+// of its slugs (chain-level or per-step), so it cannot be priced or routed.
+// Chains with no market slug are never sold out.
+func (s *Server) chainSoldOut(c store.Chain) bool {
+	slugs := append([]string(nil), c.MarketSlugs...)
+	for _, st := range c.Steps {
+		if st.MarketSlug != "" {
+			slugs = append(slugs, st.MarketSlug)
+		}
+	}
+	return len(slugs) > 0 && !s.anyMarketSlugResolves(slugs)
+}
+
 // anyMarketSlugResolves reports whether at least one of the chain's bound
 // market slugs currently resolves in the live snapshot. A nil cache (tests
 // that do not wire one) resolves nothing.
@@ -131,7 +145,7 @@ func (s *Server) publicModelRows(ctx context.Context) ([]publicModelRow, error) 
 		// Chain-configured rates take precedence; all-zero means unset.
 		inputPerM, outputPerM, cachedPerM, cacheWritePerM := c.InputPerM, c.OutputPerM, c.CacheReadPerM, c.CacheWritePerM
 		soldOut := false
-		if len(c.MarketSlugs) > 0 && !s.anyMarketSlugResolves(c.MarketSlugs) {
+		if s.chainSoldOut(c) {
 			// Every bound market slug is missing: the model is sold out.
 			// Do not surface a catalog price the market cannot honour.
 			soldOut = true

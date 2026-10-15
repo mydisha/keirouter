@@ -2,6 +2,9 @@ package gateway
 
 import (
 	"context"
+	"errors"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/mydisha/keirouter/backend/internal/dispatch"
@@ -91,5 +94,28 @@ func TestChainResultUsesChainMarkupOverride(t *testing.T) {
 		if got := res.Targets[0].UpstreamCostMult; got < want-1e-9 || got > want+1e-9 {
 			t.Fatalf("%s mult = %v, want %v", name, got, want)
 		}
+	}
+}
+
+func TestChainResultSoldOutWhenNoTrustedQuote(t *testing.T) {
+	chains := &fakeChains{chains: []store.Chain{
+		{ID: "a", Name: "gemini-trusted", Steps: []store.ChainStep{{Provider: "p", Model: "gemini-3.8-flash", MarketSlug: "surplus-trusted:gemini-3.8-flash"}}},
+		{ID: "b", Name: "with-fallback", FallbackProvider: "openai", FallbackModel: "gpt-4o",
+			Steps: []store.ChainStep{{Provider: "p", Model: "gemini-3.8-flash", MarketSlug: "surplus-trusted:gemini-3.8-flash"}}},
+	}}
+	_, err := chainResultWith(context.Background(), chains, nil, market.NewSnapshotCache(), 10, store.DefaultTenantID, "gemini-trusted")
+	var bad badModelError
+	if !errors.As(err, &bad) || bad.HTTPStatus() != http.StatusServiceUnavailable || !strings.Contains(bad.Error(), "sold out") {
+		t.Fatalf("err = %v, want 503 sold out", err)
+	}
+	// A bare chain name (no chain: prefix) reports sold out too, not "unknown model".
+	_, err = resolveTargetsWith(context.Background(), chains, nil, nil, market.NewSnapshotCache(), 10, store.DefaultTenantID, "gemini-trusted")
+	if !errors.As(err, &bad) || bad.HTTPStatus() != http.StatusServiceUnavailable {
+		t.Fatalf("bare name err = %v, want 503 sold out", err)
+	}
+	// An explicit fallback model still serves the request.
+	res, err := chainResultWith(context.Background(), chains, nil, market.NewSnapshotCache(), 10, store.DefaultTenantID, "with-fallback")
+	if err != nil || len(res.Targets) != 1 || res.Targets[0].Model != "gpt-4o" {
+		t.Fatalf("fallback chain = %+v, %v", res.Targets, err)
 	}
 }
