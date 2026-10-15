@@ -122,3 +122,70 @@ func TestPipelineFallsBackWhenFirstStreamErrorsBeforeOutput(t *testing.T) {
 	}
 	require.Equal(t, "from fallback", text)
 }
+
+func TestAdmitStreamAdmitsOutputlessStreamTheUpstreamCharged(t *testing.T) {
+	// Surplus sends the usage frame (with buyer_cost_micro) after the finish
+	// frame. A reasoning model that spent max_tokens thinking has no visible
+	// output, but the upstream still charged: the stream must be admitted (and
+	// so billed) like the non-stream path, not rejected into a free fallback.
+	charged := core.Usage{PromptTokens: 25, CompletionTokens: 600, UpstreamCostMicro: 9, UpstreamCostReported: true}
+	in := streamOf(
+		core.StreamChunk{Type: core.ChunkFinish, FinishReason: core.FinishLength},
+		core.StreamChunk{Type: core.ChunkUsage, Usage: &charged},
+	)
+	out, err := admitStream(context.Background(), in, time.Second, "custom-openai-surplus", "gpt-5.6-luna")
+	require.NoError(t, err)
+	var got []core.StreamChunk
+	for chunk := range out {
+		got = append(got, chunk)
+	}
+	require.Len(t, got, 2)
+	require.Equal(t, core.ChunkFinish, got[0].Type)
+	require.Equal(t, core.ChunkUsage, got[1].Type)
+	require.Equal(t, 9.0, got[1].Usage.UpstreamCostMicro)
+}
+
+func TestAdmitStreamAdmitsChargedUsageSeenBeforeFinish(t *testing.T) {
+	charged := core.Usage{CompletionTokens: 10, UpstreamCostMicro: 1, UpstreamCostReported: true}
+	in := streamOf(
+		core.StreamChunk{Type: core.ChunkUsage, Usage: &charged},
+		core.StreamChunk{Type: core.ChunkFinish, FinishReason: core.FinishLength},
+	)
+	out, err := admitStream(context.Background(), in, time.Second, "custom-openai-surplus", "m")
+	require.NoError(t, err)
+	n := 0
+	for range out {
+		n++
+	}
+	require.Equal(t, 2, n)
+}
+
+func TestAdmitStreamRejectsOutputlessStreamWithoutCharge(t *testing.T) {
+	for name, usage := range map[string]*core.Usage{
+		"no usage":        nil,
+		"tokens, no cost": {CompletionTokens: 50},
+		"zero cost":       {CompletionTokens: 1, UpstreamCostMicro: 0, UpstreamCostReported: true},
+	} {
+		chunks := []core.StreamChunk{{Type: core.ChunkFinish, FinishReason: core.FinishLength}}
+		if usage != nil {
+			chunks = append(chunks, core.StreamChunk{Type: core.ChunkUsage, Usage: usage})
+		}
+		out, err := admitStream(context.Background(), streamOf(chunks...), time.Second, "openai", "m")
+		require.Nil(t, out, name)
+		var pe *core.ProviderError
+		require.ErrorAs(t, err, &pe, name)
+		require.Equal(t, core.ErrUpstream, pe.Kind, name)
+	}
+}
+
+func TestAdmitStreamTrailingUsageWaitIsBounded(t *testing.T) {
+	// An upstream that sends finish and then hangs must not hold the request
+	// for the whole admission timeout before falling back.
+	in := make(chan core.StreamChunk, 1)
+	in <- core.StreamChunk{Type: core.ChunkFinish, FinishReason: core.FinishStop}
+	started := time.Now()
+	out, err := admitStream(context.Background(), in, time.Minute, "openai", "m")
+	require.Nil(t, out)
+	require.Error(t, err)
+	require.Less(t, time.Since(started), trailingUsageGrace+time.Second)
+}
