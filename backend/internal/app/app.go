@@ -41,6 +41,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/healthcheck"
 	"github.com/mydisha/keirouter/backend/internal/httputil"
 	"github.com/mydisha/keirouter/backend/internal/identity"
+	"github.com/mydisha/keirouter/backend/internal/inflight"
 	"github.com/mydisha/keirouter/backend/internal/limits"
 	"github.com/mydisha/keirouter/backend/internal/market"
 	"github.com/mydisha/keirouter/backend/internal/meter"
@@ -389,6 +390,9 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		cfg.ProviderHealth.LatencyThresholds, cfg.ProviderHealth.ProbeTimeout)
 	probeRunner.SetCredentialPreparer(disp)
 
+	// One tracker shared by the pipeline (writer) and the gateway (reader).
+	inflightTracker := inflight.New()
+
 	pipe := pipeline.New(pipeline.Deps{
 		Dispatcher:         disp,
 		Meter:              mtr,
@@ -404,6 +408,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		StreamStallTimeout: cfg.Server.StreamStallTimeout,
 		TimeoutReader:      timeoutNotifier,
 		Telemetry:          healthSvc,
+		Inflight:           inflightTracker,
 	})
 
 	// Resolve frontend dist directory. Check common install locations, then cwd.
@@ -496,6 +501,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		HealthChecker:          healthChecker,
 		ProviderHealth:         healthSvc,
 		ProbeRunner:            probeRunner,
+		Inflight:               inflightTracker,
 	})
 
 	srv := &http.Server{

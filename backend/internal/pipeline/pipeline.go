@@ -31,6 +31,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/guardrails"
 	"github.com/mydisha/keirouter/backend/internal/headroom"
 	"github.com/mydisha/keirouter/backend/internal/health"
+	"github.com/mydisha/keirouter/backend/internal/inflight"
 	"github.com/mydisha/keirouter/backend/internal/limits"
 	"github.com/mydisha/keirouter/backend/internal/meter"
 	"github.com/mydisha/keirouter/backend/internal/normalizer"
@@ -68,6 +69,7 @@ type Pipeline struct {
 	limiter    limits.Limiter
 	log        *slog.Logger
 	telemetry  *health.Service
+	inflight   *inflight.Tracker
 
 	requestTimeout     time.Duration // upper bound on non-streaming upstream calls
 	streamStallTimeout time.Duration // aborts a stream with no bytes for this long
@@ -97,6 +99,9 @@ type Deps struct {
 	TimeoutReader TimeoutReader
 	// Telemetry records provider health events. Best-effort, never blocks.
 	Telemetry *health.Service
+	// Inflight counts upstream attempts currently running per provider.
+	// Optional; nil disables tracking.
+	Inflight *inflight.Tracker
 }
 
 // New builds a Pipeline.
@@ -118,6 +123,7 @@ func New(d Deps) *Pipeline {
 		limiter:    d.Limiter,
 		log:        log,
 		telemetry:  d.Telemetry,
+		inflight:   d.Inflight,
 
 		requestTimeout:     d.RequestTimeout,
 		streamStallTimeout: d.StreamStallTimeout,
@@ -158,6 +164,24 @@ func (p *Pipeline) resolvedHeaderTimeout() time.Duration {
 // owned by whichever party finishes the stream.
 func (p *Pipeline) streamCallContext(ctx context.Context, creds core.Credentials) (context.Context, context.CancelFunc) {
 	return context.WithCancel(core.WithResponseHeaderTimeout(core.WithProxy(ctx, creds), p.resolvedHeaderTimeout()))
+}
+
+// trackedStreamCallContext is streamCallContext plus an in-flight count for
+// provider. Every stream exit already calls the returned cancel (failure
+// paths directly, pumpStream via defer, the direct body on Read error or
+// Close), so the count is released exactly when the upstream call ends.
+func (p *Pipeline) trackedStreamCallContext(ctx context.Context, creds core.Credentials, provider string) (context.Context, context.CancelFunc) {
+	callCtx, cancel := p.streamCallContext(ctx, creds)
+	return callCtx, wrapDone(cancel, p.inflight.Inc(provider))
+}
+
+// wrapDone returns a cancel func that also runs done. done must be idempotent
+// because cancel funcs are called more than once on some exits.
+func wrapDone(c context.CancelFunc, d func()) context.CancelFunc {
+	return func() {
+		c()
+		d()
+	}
 }
 
 // resolvedStallTimeout returns the effective stream stall timeout, preferring
@@ -382,6 +406,7 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 				"provider", attempt.Target.Provider, "model", attempt.Target.Model)
 		}
 
+		attemptDone := p.inflight.Inc(attempt.Target.Provider)
 		// Inject proxy config from credentials into context so the connector's
 		// HTTP client uses the right proxy/relay for this account.
 		callCtx, cancelTimeout := withRequestDeadline(core.WithProxy(ctx, attempt.Creds))
@@ -425,6 +450,7 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 				callErr = sErr
 			}
 		}
+		attemptDone()
 		// Include the full transparent stream retry/drain in the upstream attempt
 		// duration, including terminal stream-open and drain failures.
 		latency = time.Since(started)
@@ -771,7 +797,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 		// The successful stream owns this cancellation function. pumpStream or
 		// the direct response body cancels it on completion, client disconnect,
 		// policy block, or stall so connector goroutines cannot leak.
-		callCtx, cancelUpstream := p.streamCallContext(ctx, attempt.Creds)
+		callCtx, cancelUpstream := p.trackedStreamCallContext(ctx, attempt.Creds, attempt.Target.Provider)
 
 		// Zero-copy fast path: when the client dialect matches the upstream
 		// dialect, no tools are present (so no argument sanitization needed),
@@ -807,7 +833,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 					cancelUpstream()
 					retryReq := cloneForTarget(req, attempt.Target)
 					capability.StripImages(retryReq)
-					callCtx, cancelUpstream = p.streamCallContext(ctx, attempt.Creds)
+					callCtx, cancelUpstream = p.trackedStreamCallContext(ctx, attempt.Creds, attempt.Target.Provider)
 					body, _, rawErr = ds.StreamRaw(callCtx, retryReq, attempt.Creds, streamCfg)
 				}
 				if rawErr != nil {
@@ -918,7 +944,7 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 			cancelUpstream()
 			retryReq := cloneForTarget(req, attempt.Target)
 			capability.StripImages(retryReq)
-			callCtx, cancelUpstream = p.streamCallContext(ctx, attempt.Creds)
+			callCtx, cancelUpstream = p.trackedStreamCallContext(ctx, attempt.Creds, attempt.Target.Provider)
 			upstream, callErr = attempt.Conn.Stream(callCtx, retryReq, attempt.Creds, streamCfg)
 		}
 		if callErr != nil {

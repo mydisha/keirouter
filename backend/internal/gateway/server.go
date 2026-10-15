@@ -34,6 +34,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/health"
 	"github.com/mydisha/keirouter/backend/internal/healthcheck"
 	"github.com/mydisha/keirouter/backend/internal/identity"
+	"github.com/mydisha/keirouter/backend/internal/inflight"
 	"github.com/mydisha/keirouter/backend/internal/market"
 	"github.com/mydisha/keirouter/backend/internal/oauth"
 	"github.com/mydisha/keirouter/backend/internal/observ"
@@ -116,6 +117,7 @@ type Server struct {
 	probeRunner         *health.ProbeRunner
 	portalSSO           *portalauth.Service
 	paymentClient       *payment.Client
+	inflight            *inflight.Tracker // shared with the pipeline; nil-safe
 	turnstile           turnstileVerifier
 	router              chi.Router
 	// skillsMu serializes custom-skill writes (load-modify-save on one
@@ -180,6 +182,9 @@ type Deps struct {
 	ProviderHealth         *health.Service
 	ProbeRunner            *health.ProbeRunner
 	Payment                *payment.Client
+	// Inflight is the shared per-provider in-flight upstream counter, also
+	// fed by the pipeline. Optional; nil reports nothing running.
+	Inflight *inflight.Tracker
 }
 
 // New builds a gateway Server and wires its routes.
@@ -255,6 +260,7 @@ func New(d Deps) *Server {
 		providerHealth:      d.ProviderHealth,
 		probeRunner:         d.ProbeRunner,
 		paymentClient:       d.Payment,
+		inflight:            d.Inflight,
 	}
 	if d.Config.PortalSSO.Enabled {
 		s.portalSSO = portalauth.New(portalauth.Config{
