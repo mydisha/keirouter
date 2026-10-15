@@ -158,6 +158,10 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 	}
 
 	keyNames, accountLabels := s.usageNameLookups(ctx, recent)
+	keyEmails := map[string]string{}
+	if len(recent) > 0 {
+		keyEmails = s.portalEmailsByKey(ctx)
+	}
 	recentRows := make([]map[string]any, 0, len(recent))
 	for _, record := range recent {
 		display, color, icon := usageProviderMetadata(record.Provider)
@@ -166,6 +170,7 @@ func (s *Server) adminUsageInsights(w http.ResponseWriter, r *http.Request) {
 			"request_id":             record.RequestID,
 			"api_key_id":             record.APIKeyID,
 			"api_key_name":           keyNames[record.APIKeyID],
+			"user_email":             keyEmails[record.APIKeyID],
 			"account_id":             record.AccountID,
 			"account_label":          accountLabels[record.AccountID],
 			"client":                 record.Client,

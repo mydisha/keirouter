@@ -1056,3 +1056,36 @@ func (r *UsageRepo) ProfitSince(ctx context.Context, tenantID string, since time
 	}
 	return s, nil
 }
+
+// KeyUsageTotals is one API key's usage over a window.
+type KeyUsageTotals struct {
+	KeyID            string
+	Requests         int64
+	PromptTokens     int64
+	CompletionTokens int64
+	CostNanos        int64
+}
+
+// UsageByKeySince totals requests, tokens and billed cost per API key since
+// the cut-off. Rows without a key are skipped.
+func (r *UsageRepo) UsageByKeySince(ctx context.Context, tenantID string, since time.Time) ([]KeyUsageTotals, error) {
+	q := r.db.rebind(`SELECT api_key_id, COUNT(*),
+			COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0), COALESCE(SUM(cost_nanos), 0)
+		FROM usage_records
+		WHERE tenant_id = ? AND created_at >= ? AND api_key_id IS NOT NULL AND api_key_id <> ''
+		GROUP BY api_key_id`)
+	rows, err := r.db.sql.QueryContext(ctx, q, tenantID, formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("store: usage by key: %w", err)
+	}
+	defer rows.Close()
+	var out []KeyUsageTotals
+	for rows.Next() {
+		var k KeyUsageTotals
+		if err := rows.Scan(&k.KeyID, &k.Requests, &k.PromptTokens, &k.CompletionTokens, &k.CostNanos); err != nil {
+			return nil, fmt.Errorf("store: usage by key scan: %w", err)
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}

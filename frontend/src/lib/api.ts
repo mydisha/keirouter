@@ -553,6 +553,8 @@ export interface RecentActivity {
   api_key_id: string;
   /** Resolved key name; empty when the key was deleted or the request was unauthenticated. */
   api_key_name: string;
+  /** Portal user's email for the key; empty for operator or Bansos keys. */
+  user_email?: string;
   account_id: string;
   account_label: string;
   /** Calling client detected from the request (e.g. "claude-code"). */
@@ -807,6 +809,29 @@ export interface UsageInsights {
   recent: RecentActivity[];
   series: SeriesPoint[];
   busiest: string;
+}
+
+export interface LeaderboardEntry {
+  key_id: string;
+  key_name: string;
+  /** Portal user's email; empty for operator or Bansos keys. */
+  email: string;
+  requests: number;
+  tokens: number;
+  spend_usd: number;
+  topup_count: number;
+  topup_idr: number;
+  topup_usd: number;
+}
+
+export interface UsageLeaderboard {
+  period: string;
+  since: string;
+  generated_at: string;
+  topups: LeaderboardEntry[];
+  spend: LeaderboardEntry[];
+  tokens: LeaderboardEntry[];
+  requests: LeaderboardEntry[];
 }
 
 export interface ModelUsageResponse {
@@ -2268,6 +2293,8 @@ export const api = {
     request<{ period: string; since: string; chains: ChainUsage[] }>("GET", `/usage/chains?period=${period}&tz=${browserTZ()}`),
   modelUsage: (period: string) =>
     request<ModelUsageResponse>("GET", `/usage/models?period=${period}&tz=${browserTZ()}`),
+  usageLeaderboard: (period: string) =>
+    request<UsageLeaderboard>("GET", `/usage/leaderboard?period=${period}&tz=${browserTZ()}`),
 
   quota: (period: string) =>
     request<{ accounts: QuotaAccount[]; since: string }>("GET", `/quota?period=${period}&tz=${browserTZ()}`),

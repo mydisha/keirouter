@@ -170,3 +170,31 @@ func (r *PaymentOrderRepo) PaidTotalsSince(ctx context.Context, since time.Time)
 	}
 	return t, nil
 }
+
+// KeyPaidTotals is one API key's settled top-ups.
+type KeyPaidTotals struct {
+	KeyID string
+	PaidOrderTotals
+}
+
+// PaidTotalsByKeySince is PaidTotalsSince grouped by the credited key.
+func (r *PaymentOrderRepo) PaidTotalsByKeySince(ctx context.Context, since time.Time) ([]KeyPaidTotals, error) {
+	q := r.db.rebind(`SELECT key_id, COUNT(*), COALESCE(SUM(amount_idr), 0), COALESCE(SUM(credit_micros), 0)
+		FROM payment_orders
+		WHERE status IN (?, ?) AND COALESCE(NULLIF(paid_at, ''), created_at) >= ?
+		GROUP BY key_id`)
+	rows, err := r.db.sql.QueryContext(ctx, q, string(PaymentCompleted), string(PaymentManual), formatTime(since))
+	if err != nil {
+		return nil, fmt.Errorf("store: paid totals by key: %w", err)
+	}
+	defer rows.Close()
+	var out []KeyPaidTotals
+	for rows.Next() {
+		var k KeyPaidTotals
+		if err := rows.Scan(&k.KeyID, &k.Count, &k.AmountIDR, &k.CreditMicros); err != nil {
+			return nil, fmt.Errorf("store: paid totals by key scan: %w", err)
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}

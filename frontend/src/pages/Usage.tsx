@@ -7,11 +7,13 @@ import {
   connectUsageStream,
   type HealthOverview,
   type HealthProviderRow,
+  type LeaderboardEntry,
   type ModelUsage,
   type PricingStatus,
   type ProviderUsage,
   type RecentActivity,
   type UsageInsights,
+  type UsageLeaderboard,
   type UsageSource,
   type UsageTerminalStatus,
 } from "../lib/api";
@@ -39,12 +41,13 @@ const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-a
 const SEARCH_INPUT =
   "h-9 w-full rounded-lg border border-input bg-surface pl-8 sm:h-8 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
 
-type Tab = "overview" | "providers" | "models" | "requests";
+type Tab = "overview" | "providers" | "models" | "requests" | "leaderboard";
 const TABS: { value: Tab; label: string }[] = [
   { value: "overview", label: "Overview" },
   { value: "providers", label: "Providers" },
   { value: "models", label: "Models" },
   { value: "requests", label: "Requests" },
+  { value: "leaderboard", label: "Leaderboard" },
 ];
 
 // Arrow / Home / End move between the radios or tabs of a group and select
@@ -93,6 +96,14 @@ export function UsagePage() {
     refetchInterval: 60_000,
     placeholderData: (previous) => previous,
   });
+  const leaderboard = useQuery({
+    queryKey: ["usage-leaderboard", period],
+    queryFn: () => api.usageLeaderboard(period),
+    enabled: tab === "leaderboard",
+    staleTime: 12_000,
+    refetchInterval: 60_000,
+    placeholderData: (previous) => previous,
+  });
   const health = useQuery({
     queryKey: ["health-overview", healthRange],
     queryFn: () => api.healthOverview(healthRange),
@@ -108,6 +119,7 @@ export function UsagePage() {
         refreshTimer.current = null;
         queryClient.invalidateQueries({ queryKey: ["usage-insights", period] });
         queryClient.invalidateQueries({ queryKey: ["usage-models", period] });
+        queryClient.invalidateQueries({ queryKey: ["usage-leaderboard", period] });
       }, USAGE_REFRESH_DEBOUNCE_MS);
     };
     return connectUsageStream(scheduleRefresh);
@@ -124,9 +136,10 @@ export function UsagePage() {
     queryClient.invalidateQueries({ queryKey: ["usage-insights", period] });
     queryClient.invalidateQueries({ queryKey: ["usage-models", period] });
     queryClient.invalidateQueries({ queryKey: ["health-overview", healthRange] });
+    queryClient.invalidateQueries({ queryKey: ["usage-leaderboard", period] });
     toast.success("Refreshing usage");
   };
-  const refreshing = insights.isFetching || modelUsage.isFetching || health.isFetching;
+  const refreshing = insights.isFetching || modelUsage.isFetching || health.isFetching || leaderboard.isFetching;
   const data = insights.data;
   const setTab = (t: Tab) => setParam("tab", t, "overview");
 
@@ -265,6 +278,7 @@ export function UsagePage() {
                 onOpenChange={(id) => setParam("request", id ?? "", "")}
               />
             )}
+            {tab === "leaderboard" && <Leaderboard data={leaderboard.data} loading={leaderboard.isLoading} error={leaderboard.isError} />}
           </div>
         </div>
       )}
@@ -804,7 +818,7 @@ function RecentRequests({
     return records.filter((r) => {
       if (status !== "all" && r.status !== status) return false;
       if (!q) return true;
-      return `${r.model} ${r.provider} ${r.api_key_name} ${r.client} ${r.request_id}`.toLowerCase().includes(q);
+      return `${r.model} ${r.provider} ${r.user_email ?? ""} ${r.api_key_name} ${r.client} ${r.request_id}`.toLowerCase().includes(q);
     });
   }, [records, status, query]);
   const { page, pages, paged, setPage, total: filteredTotal } = useClientPagination(filtered, 20);
@@ -826,10 +840,10 @@ function RecentRequests({
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
               <input
                 type="search"
-                aria-label="Filter requests by model, key, client or request ID"
+                aria-label="Filter requests by user, model, key, client or request ID"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Model, key, client or ID"
+                placeholder="User, model, key or ID"
                 className={cn(SEARCH_INPUT, "pr-8 [&::-webkit-search-cancel-button]:hidden")}
               />
               {query && (
@@ -874,7 +888,7 @@ function RecentRequests({
           <Empty
             icon={records.length === 0 ? ICONS.requests : Search}
             title={records.length === 0 ? "No requests in this period" : "No requests match"}
-            hint={records.length === 0 ? "Requests appear here a few seconds after they finish." : "Try another status, or search by model, key, client or request ID."}
+            hint={records.length === 0 ? "Requests appear here a few seconds after they finish." : "Try another status, or search by user, model, key, client or request ID."}
             action={records.length > 0 ? <Button variant="secondary" onClick={clearFilters}>Clear filters</Button> : undefined}
           />
         ) : (
@@ -894,6 +908,11 @@ function RecentRequests({
                         <span className="block truncate font-mono text-[12.5px] text-fg" title={`${r.provider}/${r.model}`}>
                           {r.model || "—"}
                         </span>
+                        {r.user_email && (
+                          <span className="block truncate text-[11.5px] text-fg" title={r.user_email}>
+                            {r.user_email}
+                          </span>
+                        )}
                         {(r.api_key_name || r.client) && (
                           <span className="block truncate text-[11.5px] text-fg-muted">
                             {r.api_key_name && <span className="font-mono">{r.api_key_name}</span>}
@@ -930,11 +949,12 @@ function RecentRequests({
               ))}
             </ul>
             <div className="hidden overflow-x-auto md:block">
-              <table className="w-full min-w-[820px] text-[13px]">
+              <table className="w-full min-w-[980px] text-[13px]">
                 <thead>
                   <tr className={THEAD}>
                     <th scope="col" className={TH}>Time</th>
                     <th scope="col" className={TH}>Status</th>
+                    <th scope="col" className={TH}>User</th>
                     <th scope="col" className={TH}>Model</th>
                     <th scope="col" className={cn(TH, "text-right")}>Tokens in → out</th>
                     <th scope="col" className={cn(TH, "text-right")}>Cost</th>
@@ -971,6 +991,9 @@ function RecentRequests({
                             <StatusBadge status={r.status} />
                             {r.usage_source !== "provider" && <UsageSourceBadge source={r.usage_source} />}
                           </div>
+                        </td>
+                        <td className="max-w-[220px] px-4 py-2.5">
+                          <RequestUser record={r} />
                         </td>
                         <td className="max-w-[300px] px-4 py-2.5">
                           <div className="flex items-center gap-2.5">
@@ -1026,8 +1049,141 @@ function RecentRequests({
   );
 }
 
+// Who made the request: the portal user's email, else the key name for
+// operator and Bansos keys.
+function RequestUser({ record: r }: { record: RecentActivity }) {
+  if (r.user_email) {
+    return (
+      <div className="truncate text-[12.5px] text-fg" title={r.user_email}>
+        {r.user_email}
+      </div>
+    );
+  }
+  if (r.api_key_name) {
+    return (
+      <div className="truncate text-[12.5px] text-fg-muted" title={`API key ${r.api_key_name}, no portal user`}>
+        <span className="font-mono">{r.api_key_name}</span>
+      </div>
+    );
+  }
+  return <span className="text-fg-faint">—</span>;
+}
+
 function requestCharged(r: RecentActivity): string {
   return r.pricing_status === "missing" ? "Unpriced" : r.cache_hit ? "$0.00" : fmtUSD(r.cost_usd);
+}
+
+// ── Leaderboard ──────────────────────────────────────────────────────────────
+
+type LeaderboardCategory = {
+  key: "topups" | "spend" | "tokens" | "requests";
+  title: string;
+  icon: LucideIcon;
+  empty: string;
+  value: (e: LeaderboardEntry) => string;
+  detail: (e: LeaderboardEntry) => string;
+};
+
+const LEADERBOARD_CATEGORIES: LeaderboardCategory[] = [
+  {
+    key: "topups",
+    title: "Top-ups",
+    icon: ICONS.budget,
+    empty: "No paid top-ups in this period.",
+    value: (e) => fmtIDR(e.topup_idr),
+    detail: (e) => `${fmtInteger(e.topup_count)} ${e.topup_count === 1 ? "top-up" : "top-ups"} · ${fmtUSD(e.topup_usd)} credit`,
+  },
+  {
+    key: "spend",
+    title: "Spend",
+    icon: ICONS.spend,
+    empty: "No billed spend in this period.",
+    value: (e) => fmtUSD(e.spend_usd),
+    detail: (e) => `${fmtInteger(e.requests)} requests · ${fmtCompact(e.tokens)} tokens`,
+  },
+  {
+    key: "tokens",
+    title: "Tokens",
+    icon: ICONS.tokens,
+    empty: "No tokens used in this period.",
+    value: (e) => fmtInteger(e.tokens),
+    detail: (e) => `${fmtInteger(e.requests)} requests · ${fmtUSD(e.spend_usd)}`,
+  },
+  {
+    key: "requests",
+    title: "Requests",
+    icon: ICONS.requests,
+    empty: "No requests in this period.",
+    value: (e) => fmtInteger(e.requests),
+    detail: (e) => `${fmtCompact(e.tokens)} tokens · ${fmtUSD(e.spend_usd)}`,
+  },
+];
+
+function Leaderboard({ data, loading, error }: { data?: UsageLeaderboard; loading: boolean; error: boolean }) {
+  if (loading && !data) {
+    return (
+      <div className="grid gap-4 lg:grid-cols-2" aria-busy="true">
+        <span className="sr-only" role="status">Loading leaderboard</span>
+        {LEADERBOARD_CATEGORIES.map((c) => (
+          <Skeleton key={c.key} className="h-[280px] w-full rounded-2xl" />
+        ))}
+      </div>
+    );
+  }
+  if (error || !data) return <ErrorCard message="Couldn't load the leaderboard. Check that the gateway is running, then refresh." />;
+  return (
+    <div className="space-y-3">
+      <p className="text-[12.5px] text-fg-muted">
+        Top 10 users per category for the selected period. Users are shown by portal email; keys without a portal user show the key name.
+        Top-ups count paid QRIS and manually approved orders.
+      </p>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {LEADERBOARD_CATEGORIES.map((c) => (
+          <LeaderboardPanel key={c.key} category={c} entries={data[c.key] ?? []} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LeaderboardPanel({ category: c, entries }: { category: LeaderboardCategory; entries: LeaderboardEntry[] }) {
+  return (
+    <Panel icon={c.icon} title={c.title}>
+      {entries.length === 0 ? (
+        <Empty title={c.empty} />
+      ) : (
+        <ol className="divide-y divide-line" aria-label={`${c.title} leaderboard`}>
+          {entries.map((e, i) => (
+            <li key={e.key_id} className="flex items-center gap-3 px-4 py-2.5">
+              <span
+                className={cn(
+                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[12px] font-medium tabular-nums",
+                  i === 0 ? "bg-accent-500/15 text-link" : "bg-subtle text-fg-muted",
+                )}
+                aria-label={`Rank ${i + 1}`}
+              >
+                {i + 1}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className={cn("block truncate text-[13px]", e.email ? "text-fg" : "font-mono text-fg-muted")} title={e.email || e.key_name || e.key_id}>
+                  {e.email || e.key_name || e.key_id}
+                </span>
+                <span className="block truncate text-[11.5px] text-fg-muted">
+                  {e.email && e.key_name && (
+                    <>
+                      <span className="font-mono">{e.key_name}</span> ·{" "}
+                    </>
+                  )}
+                  {c.detail(e)}
+                </span>
+              </span>
+              <span className="shrink-0 text-right text-[13px] font-medium tabular-nums text-fg">{c.value(e)}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </Panel>
+  );
 }
 
 // ── Request detail drawer ────────────────────────────────────────────────────
@@ -1159,6 +1315,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
                       "—"
                     ),
                   ],
+                  ["User", record.user_email || "—"],
                   ["API key", mono(record.api_key_name || record.api_key_id || "—", "k")],
                   ["Client", record.client ? prettyClient(record.client) : "—"],
                   ["Account", record.account_label || mono(record.account_id || "—", "a")],
@@ -1537,6 +1694,11 @@ function fmtCompact(value: number) {
 function fmtUSD(value: number) {
   if (!Number.isFinite(value)) return "—";
   return `$${value.toFixed(6)}`;
+}
+
+function fmtIDR(value: number) {
+  if (!Number.isFinite(value)) return "—";
+  return `Rp${Math.round(value).toLocaleString("id-ID")}`;
 }
 
 function fmtRate(value: number) {
