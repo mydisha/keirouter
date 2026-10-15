@@ -140,4 +140,50 @@ func TestBackupCoversEveryTable(t *testing.T) {
 	}
 	require.False(t, got["schema_migrations"])
 	require.True(t, got["api_keys"] && got["chains"] && got["usage_records"] && got["portal_users"] && got["key_topups"])
+	require.True(t, got["upstream_accounts"] && got["upstream_account_providers"] && got["upstream_topups"], "finance tables must be in the backup")
+}
+
+// The Payments finance data (upstream accounts, provider mapping, top-ups,
+// alert settings) must survive a full backup and restore.
+func TestBackupRestoreKeepsFinanceData(t *testing.T) {
+	ctx := context.Background()
+	src := newTestDB(t)
+	opening := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	acc, err := src.Upstream().Get(ctx, "surplus")
+	require.NoError(t, err)
+	acc.OpeningBalanceMicros = 50_000_000
+	acc.OpeningAt = opening
+	acc.LowBalanceMicros = 5_000_000
+	require.NoError(t, src.Upstream().Update(ctx, acc))
+	require.NoError(t, src.Upstream().SetProviders(ctx, "surplus", []string{"custom-openai-surplus"}))
+	require.NoError(t, src.Upstream().AddTopup(ctx, UpstreamTopup{
+		ID: "t1", AccountID: "surplus", AmountMicros: 20_000_000, TopupAt: opening.Add(48 * time.Hour),
+		Note: "topup", Actor: "dashboard", CreatedAt: opening.Add(48 * time.Hour),
+	}))
+	require.NoError(t, src.Settings().Set(ctx, "finance_alerts", `{"enabled":true,"discord_webhook_url":"https://discord.com/api/webhooks/1/x"}`))
+
+	b, err := src.ExportBackup(ctx)
+	require.NoError(t, err)
+	b = roundTripJSON(t, b)
+
+	dst := newTestDB(t)
+	_, err = dst.RestoreBackup(ctx, b)
+	require.NoError(t, err)
+
+	got, err := dst.Upstream().Get(ctx, "surplus")
+	require.NoError(t, err)
+	require.Equal(t, int64(50_000_000), got.OpeningBalanceMicros)
+	require.True(t, got.OpeningAt.Equal(opening))
+	require.Equal(t, int64(5_000_000), got.LowBalanceMicros)
+	require.Equal(t, []string{"custom-openai-surplus"}, got.Providers)
+	topups, err := dst.Upstream().ListTopups(ctx, "surplus")
+	require.NoError(t, err)
+	require.Len(t, topups, 1)
+	require.Equal(t, int64(20_000_000), topups[0].AmountMicros)
+	totals, err := dst.Upstream().TopupTotals(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(20_000_000), totals["surplus"])
+	v, err := dst.Settings().Get(ctx, "finance_alerts")
+	require.NoError(t, err)
+	require.Contains(t, v, `"enabled":true`)
 }
