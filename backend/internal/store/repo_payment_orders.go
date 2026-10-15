@@ -153,3 +153,20 @@ func scanPaymentOrder(scan func(dest ...any) error) (PaymentOrder, error) {
 	o.UpdatedAt = parseTime(updated)
 	return o, nil
 }
+
+// PaidOrderTotals aggregates settled orders.
+type PaidOrderTotals struct{ Count, AmountIDR, CreditMicros int64 }
+
+// PaidTotalsSince totals completed and manual orders paid at or after since.
+// Orders with an empty paid_at fall back to created_at.
+func (r *PaymentOrderRepo) PaidTotalsSince(ctx context.Context, since time.Time) (PaidOrderTotals, error) {
+	q := r.db.rebind(`SELECT COUNT(*), COALESCE(SUM(amount_idr), 0), COALESCE(SUM(credit_micros), 0)
+		FROM payment_orders
+		WHERE status IN (?, ?) AND COALESCE(NULLIF(paid_at, ''), created_at) >= ?`)
+	var t PaidOrderTotals
+	if err := r.db.sql.QueryRowContext(ctx, q, string(PaymentCompleted), string(PaymentManual), formatTime(since)).
+		Scan(&t.Count, &t.AmountIDR, &t.CreditMicros); err != nil {
+		return PaidOrderTotals{}, fmt.Errorf("store: paid totals: %w", err)
+	}
+	return t, nil
+}
