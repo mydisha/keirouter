@@ -30,6 +30,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/currency"
 	"github.com/mydisha/keirouter/backend/internal/dispatch"
 	"github.com/mydisha/keirouter/backend/internal/fastjson"
+	"github.com/mydisha/keirouter/backend/internal/finance"
 	"github.com/mydisha/keirouter/backend/internal/guardrails"
 	"github.com/mydisha/keirouter/backend/internal/health"
 	"github.com/mydisha/keirouter/backend/internal/healthcheck"
@@ -118,6 +119,7 @@ type Server struct {
 	portalSSO           *portalauth.Service
 	paymentClient       *payment.Client
 	inflight            *inflight.Tracker // shared with the pipeline; nil-safe
+	fin                 *finance.Loader   // admin finance dashboard data
 	turnstile           turnstileVerifier
 	router              chi.Router
 	// skillsMu serializes custom-skill writes (load-modify-save on one
@@ -269,6 +271,9 @@ func New(d Deps) *Server {
 			RedirectURL:    d.Config.PortalSSO.RedirectURL,
 			AllowedDomains: d.Config.PortalSSO.AllowedDomains,
 		})
+	}
+	if d.DB != nil {
+		s.fin = &finance.Loader{DB: d.DB, Settings: s.settingsGet(), InFlight: s.inflight.Snapshot}
 	}
 	s.currencySvc = currency.New(d.Settings)
 	if d.Settings != nil {
