@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from "react-router-dom";
 import { AuthGate } from "./components/AuthGate";
 import { Layout } from "./components/Layout";
 import { AdminBrandingProvider, PortalBrandingProvider } from "./contexts/BrandingContext";
+import { PORTAL_THEME_KEY, ThemeProvider } from "./components/ThemeProvider";
 import { routeLoaders } from "./routePreload";
 import { DASHBOARD_PREFIX, dashboard } from "./lib/dashboardRoutes";
 
@@ -66,9 +67,11 @@ export function App() {
         <Route path="/model" element={<PublicModels />} />
         <Route path="/ketentuan" element={<PublicTerms />} />
         <Route path="portal" element={
-          <PortalBrandingProvider>
-            <PortalRoot />
-          </PortalBrandingProvider>
+          <ThemeProvider storageKey={PORTAL_THEME_KEY} defaultTheme="dark" scoped>
+            <PortalBrandingProvider>
+              <PortalRoot />
+            </PortalBrandingProvider>
+          </ThemeProvider>
         }>
           <Route element={<PortalLayout />}>
             <Route index element={<PortalDashboard />} />

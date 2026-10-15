@@ -10,12 +10,16 @@
          white while the app bundle downloads. Mirrors ThemeProvider. -->
     <script>
       try {
-        var t = localStorage.getItem("keirouter-theme");
-        // Public pages keep their own theme (PublicLayout) and default to dark.
-        var pub = /^\/(bansos|model|ketentuan)?\/?$/.test(location.pathname);
-        if (pub ? localStorage.getItem("keirouter-public-theme") !== "light"
-                : t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches))
-          document.documentElement.classList.add("dark");
+        var path = location.pathname;
+        var dark = function (t) { return t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches); };
+        // Public pages (PublicLayout) and the portal keep their own theme and
+        // default to dark; the dashboard defaults to light.
+        var on = /^\/(bansos|model|ketentuan)?\/?$/.test(path)
+          ? localStorage.getItem("keirouter-public-theme") !== "light"
+          : /^\/portal(\/|$)/.test(path)
+            ? (function (t) { return t ? dark(t) : true; })(localStorage.getItem("keirouter-portal-theme"))
+            : dark(localStorage.getItem("keirouter-theme"));
+        if (on) document.documentElement.classList.add("dark");
       } catch (e) {}
     </script>
   </head>

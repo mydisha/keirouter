@@ -14,6 +14,12 @@ const STORAGE_KEY = "keirouter-theme";
 // Public pages (landing, /model, /bansos, /ketentuan) run their own theme in
 // PublicLayout; keep in sync with the pre-paint script in index.html.
 export const PUBLIC_PATH = /^\/(bansos|model|ketentuan)?\/?$/;
+// Paths whose root class is owned by something other than the dashboard
+// theme: the public pages and the customer portal (its own ThemeProvider).
+const SEPARATE_THEME_PATH = /^\/((bansos|model|ketentuan)?\/?$|portal(\/|$))/;
+
+/** Storage key for the customer portal theme; read by index.html too. */
+export const PORTAL_THEME_KEY = "keirouter-portal-theme";
 
 /** The dashboard theme the visitor saved, resolved against the OS setting. */
 export function storedDashboardTheme(): "light" | "dark" {
@@ -43,12 +49,32 @@ function apply(resolved: "light" | "dark") {
   }
 }
 
-export function ThemeProvider({ children }: { children: ReactNode }) {
+/**
+ * The dashboard theme by default. The portal mounts a scoped instance with its
+ * own storage key and a dark default; it owns the root class while mounted and
+ * hands it back to the dashboard theme when it unmounts.
+ */
+export function ThemeProvider({
+  children,
+  storageKey = STORAGE_KEY,
+  defaultTheme = "light",
+  scoped = false,
+}: {
+  children: ReactNode;
+  storageKey?: string;
+  defaultTheme?: Theme;
+  scoped?: boolean;
+}) {
   const [theme, setThemeState] = useState<Theme>(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === "light" || stored === "dark" || stored === "system") return stored;
-    return "light";
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored === "light" || stored === "dark" || stored === "system") return stored;
+    } catch {
+      /* storage unavailable */
+    }
+    return defaultTheme;
   });
+  const ownsRoot = () => scoped || !SEPARATE_THEME_PATH.test(window.location.pathname);
 
   const [resolved, setResolved] = useState<"light" | "dark">(() => resolve(theme));
 
@@ -57,8 +83,13 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const r = resolve(theme);
     setResolved(r);
-    if (!PUBLIC_PATH.test(window.location.pathname)) apply(r);
+    if (ownsRoot()) apply(r);
   }, [theme]);
+
+  useEffect(() => {
+    if (!scoped) return;
+    return () => apply(storedDashboardTheme());
+  }, [scoped]);
 
   // Listen for system theme changes when in "system" mode.
   useEffect(() => {
@@ -67,7 +98,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     const handler = () => {
       const r = getSystemTheme();
       setResolved(r);
-      if (!PUBLIC_PATH.test(window.location.pathname)) apply(r);
+      if (ownsRoot()) apply(r);
     };
     mq.addEventListener("change", handler);
     return () => mq.removeEventListener("change", handler);
@@ -77,7 +108,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // every visitor look like they had picked it.
   const setTheme = (t: Theme) => {
     try {
-      localStorage.setItem(STORAGE_KEY, t);
+      localStorage.setItem(storageKey, t);
     } catch {
       /* storage unavailable: the choice lasts for this page only */
     }
