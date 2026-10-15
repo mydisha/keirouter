@@ -56,3 +56,7 @@ data/
 *.swp
 .kiro/*
 node_modules/
+
+# Local design notes
+DESIGN.md
+anti-slop/
