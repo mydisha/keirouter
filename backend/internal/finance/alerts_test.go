@@ -2,7 +2,10 @@ package finance
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -128,5 +131,22 @@ func TestAlertMessage(t *testing.T) {
 	b.DaysLeft = &d
 	if got := AlertMessage(b); !strings.HasSuffix(got, " Perkiraan habis dalam 3 hari.") {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestPostDiscord(t *testing.T) {
+	var method, ctype string
+	var body map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		method, ctype = r.Method, r.Header.Get("Content-Type")
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	if err := PostDiscord(context.Background(), srv.URL, "halo"); err != nil {
+		t.Fatal(err)
+	}
+	if method != http.MethodPost || ctype != "application/json" || body["content"] != "halo" || len(body) != 1 {
+		t.Fatalf("method=%q ctype=%q body=%v", method, ctype, body)
 	}
 }
