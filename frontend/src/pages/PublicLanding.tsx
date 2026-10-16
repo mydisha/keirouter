@@ -186,7 +186,6 @@ export default function PublicLanding() {
     <PublicLayout>
       {/* Hero */}
       <section id="overview" className="relative scroll-mt-20">
-        <div className="landing-hero-bg pointer-events-none absolute inset-x-[-50vw] -top-12 h-[560px]" aria-hidden="true" />
         <div className="relative grid items-center gap-10 py-6 lg:grid-cols-[1.05fr_1fr] lg:py-12">
           <div className="text-center lg:text-left">
             <span className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--paper)] px-3 py-1 text-[12px] text-[var(--muted)]">
@@ -305,7 +304,6 @@ export default function PublicLanding() {
       {/* CTA */}
       <section id="purchase" className="mt-20 scroll-mt-20">
         <div className="relative overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--paper)] p-6 sm:p-10">
-          <div className="landing-hero-bg pointer-events-none absolute inset-0 opacity-70" aria-hidden="true" />
           <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div className="max-w-xl">
               <h2 className="text-[24px] font-semibold tracking-[-0.5px] text-[var(--ink)] sm:text-[28px]">Coba mulai dari Rp10.000</h2>

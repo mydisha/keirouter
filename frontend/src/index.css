@@ -522,8 +522,6 @@ select:disabled,
   --tag-bg: var(--color-accent-50);
   --tag-ink: var(--color-accent-700);
   --nav-surface: color-mix(in srgb, #ffffff 82%, transparent);
-  --glow: color-mix(in srgb, var(--color-accent-400) 22%, transparent);
-  --grid-line: color-mix(in srgb, var(--color-ink-900) 5%, transparent);
   --ok: var(--color-success);
   --terminal: var(--color-ink-950);
   --terminal-bar: var(--color-ink-800);
@@ -547,23 +545,9 @@ select:disabled,
   --tag-bg: color-mix(in srgb, var(--color-accent-500) 16%, transparent);
   --tag-ink: var(--color-accent-200);
   --nav-surface: color-mix(in srgb, var(--color-ink-900) 80%, transparent);
-  --glow: color-mix(in srgb, var(--color-accent-500) 26%, transparent);
-  --grid-line: color-mix(in srgb, #ffffff 5%, transparent);
   --ok: #4ade80;
   --terminal: #09090b;
   color-scheme: dark;
-}
-
-/* Hero backdrop: a faint measurement grid fading out from the top, with a
-   soft accent glow behind the headline. Purely decorative. */
-.landing-root .landing-hero-bg {
-  background-image:
-    radial-gradient(60% 55% at 50% 0%, var(--glow), transparent 70%),
-    linear-gradient(var(--grid-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
-  background-size: 100% 100%, 32px 32px, 32px 32px;
-  -webkit-mask-image: linear-gradient(to bottom, #000 35%, transparent);
-  mask-image: linear-gradient(to bottom, #000 35%, transparent);
 }
 
 @keyframes landing-pulse {
