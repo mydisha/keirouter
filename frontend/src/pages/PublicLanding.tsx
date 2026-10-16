@@ -198,8 +198,8 @@ export default function PublicLanding() {
               <span className="text-[var(--green)]">bayar per token.</span>
             </h1>
             <p className="mx-auto mt-5 max-w-xl text-[16px] leading-relaxed text-[var(--muted)] sm:text-[17px] lg:mx-0">
-              Aplikasi yang sudah memakai format OpenAI atau Anthropic tinggal ganti base URL dan API key. Tidak ada
-              langganan bulanan; saldo hanya berkurang sesuai token yang kamu pakai.
+              Kompatibel dengan API OpenAI dan Anthropic, cukup ganti base URL dan API key. Tanpa langganan bulanan,
+              kamu hanya bayar sesuai token yang dipakai.
             </p>
             <div className="mt-7 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
               <a

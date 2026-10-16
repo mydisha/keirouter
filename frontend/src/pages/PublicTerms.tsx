@@ -31,13 +31,14 @@ const SECTIONS: Section[] = [
     body: (
       <>
         <p>
-          Tokenizer adalah gateway AI pay-as-you-go. Satu API key yang kompatibel dengan format OpenAI dipakai untuk
-          mengakses model dari berbagai penyedia pihak ketiga. Biaya dihitung dari jumlah token yang diproses.
+          Tokenizer adalah gateway AI pay-as-you-go. Satu API key yang kompatibel dengan format OpenAI dan Anthropic
+          dipakai untuk mengakses model dari berbagai penyedia pihak ketiga. Biaya dihitung dari jumlah token yang diproses.
         </p>
         <p>
           Daftar model dan harganya ada di halaman{" "}
-          <a href="/model" className={LINK}>Model &amp; harga</a>. Ketersediaan, harga, dan batas pemakaian dapat berubah
-          sewaktu-waktu. Model bisa berstatus habis jika tidak ada penyedia yang dapat melayaninya.
+          <a href="/model" className={LINK}>Model &amp; harga</a>. Harga model dapat berubah sewaktu-waktu mengikuti
+          ketersediaan dan biaya dari penyedia. Batas pemakaian juga dapat berubah, dan model bisa berstatus habis jika
+          tidak ada penyedia yang dapat melayaninya.
         </p>
       </>
     ),
