@@ -9,9 +9,10 @@ type Rate struct {
 	CacheWritePerM  float64
 }
 
-// ComputeChainRate derives a chain's rates from its bound slugs, taking the
-// cheapest input and the cheapest output independently. It returns false when
-// none of the slugs are present so the caller keeps the existing price.
+// ComputeChainRate derives a chain's rates from the single cheapest of its bound
+// slugs (by input + output), so the rate is always one a real slug sells at. It
+// returns false when none of the slugs are present so the caller keeps the
+// existing price.
 // Cache multipliers applied to a market input rate to derive cached-input and
 // cache-write rates. Shared by chain-rate computation and per-step routing so
 // the billed cache rates stay identical on both paths.
@@ -35,7 +36,7 @@ func ComputeChainRateWithSafety(slugs []string, models []Model, markupPercent, c
 		bySlug[m.Slug] = m
 	}
 	mult := 1 + markupPercent/100
-	minIn, minOut := math.Inf(1), math.Inf(1)
+	var best Model
 	failIn, failOut := math.Inf(1), math.Inf(1)
 	found := false
 	for _, slug := range slugs {
@@ -46,9 +47,10 @@ func ComputeChainRateWithSafety(slugs []string, models []Model, markupPercent, c
 		if m.MinAskIn <= 0 || m.MinAskOut <= 0 {
 			continue
 		}
+		if !found || m.MinAskIn+m.MinAskOut < best.MinAskIn+best.MinAskOut {
+			best = m
+		}
 		found = true
-		minIn = math.Min(minIn, m.MinAskIn)
-		minOut = math.Min(minOut, m.MinAskOut)
 		if m.FailoverIn > 0 {
 			failIn = math.Min(failIn, m.FailoverIn)
 		}
@@ -59,8 +61,8 @@ func ComputeChainRateWithSafety(slugs []string, models []Model, markupPercent, c
 	if !found {
 		return Rate{}, false
 	}
-	effectiveInput := minIn * mult
-	effectiveOutput := minOut * mult
+	effectiveInput := best.MinAskIn * mult
+	effectiveOutput := best.MinAskOut * mult
 	if safetyEnabled {
 		safetyMult := 1 + safetyPercent/100
 		if !math.IsInf(failIn, 1) {
@@ -76,22 +78,7 @@ func ComputeChainRateWithSafety(slugs []string, models []Model, markupPercent, c
 	if !validRate(effectiveInput) || !validRate(effectiveOutput) {
 		return Rate{}, false
 	}
-	cacheReadBase, cacheWriteBase := 0.0, 0.0
-	for _, slug := range slugs {
-		m, ok := bySlug[slug]
-		if !ok || m.MinAskIn <= 0 || m.MinAskOut <= 0 {
-			continue
-		}
-		if m.MinAskIn == minIn {
-			if m.CacheRead > 0 {
-				cacheReadBase = m.CacheRead
-			}
-			if m.CacheWrite > 0 {
-				cacheWriteBase = m.CacheWrite
-			}
-			break
-		}
-	}
+	cacheReadBase, cacheWriteBase := best.CacheRead, best.CacheWrite
 	cachedInput := effectiveInput * cacheReadMult
 	if cacheReadBase > 0 {
 		cachedInput = cacheReadBase * mult

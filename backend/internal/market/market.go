@@ -11,6 +11,10 @@ import (
 
 const APIURL = "https://inferhub.dev/api/market"
 
+// InferhubMinChargeMicro is inferhub's minimum charge per billed request
+// ($0.00001), in USD micros.
+const InferhubMinChargeMicro = 10.0
+
 type Model struct {
 	Slug      string  `json:"slug"`
 	Family    string  `json:"family"`

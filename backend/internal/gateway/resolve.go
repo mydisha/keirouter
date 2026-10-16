@@ -90,7 +90,7 @@ func resolveTargetsWith(ctx context.Context, chains ChainSource, aliases AliasSo
 		if spec, ok := connectors.SpecByAlias(provider); ok {
 			provider = spec.ID
 		}
-		return resolveResult{Targets: []dispatch.Target{{Provider: provider, Model: rest}}}, nil
+		return resolveResult{Targets: []dispatch.Target{directMarketTarget(provider, rest, cache, markupPercent)}}, nil
 	}
 
 	// bare name -> try a chain first
@@ -143,6 +143,9 @@ func chainResultWith(ctx context.Context, chains ChainSource, latency LatencyRea
 			if c.ReorderByMarket {
 				steps = orderStepsByMarket(steps, cache, markupPercent)
 			}
+			// Every slugged step is billed for itself, whatever the ordering; a
+			// step whose slug has no live quote is dropped.
+			steps = priceMarketSteps(steps, cache, markupPercent)
 			steps = stampSurplusTrusted(steps, c.MarketSlugs, cache, markupPercent)
 			if len(steps) == 0 && (c.FallbackProvider == "" || c.FallbackModel == "") {
 				return resolveResult{}, errSoldOut(name)
@@ -253,18 +256,9 @@ func orderStepsByMarket(steps []dispatch.Target, cache *market.SnapshotCache, ma
 		if out[i].MarketSlug == "" {
 			continue
 		}
-		r, ok := cache.Rate(out[i].MarketSlug)
-		if !ok {
-			continue
+		if r, ok := cache.Rate(out[i].MarketSlug); ok {
+			stampMarketRate(&out[i], r, mult)
 		}
-		out[i].MarketRateIn = r.InputPerM * mult
-		out[i].MarketRateOut = r.OutputPerM * mult
-		out[i].MarketCacheReadRate = out[i].MarketRateIn * market.CacheReadMult
-		out[i].MarketCacheWriteRate = out[i].MarketRateIn * market.CacheWriteMult
-		out[i].UpstreamRateIn = r.InputPerM
-		out[i].UpstreamRateOut = r.OutputPerM
-		out[i].UpstreamCacheReadRate = r.InputPerM * market.CacheReadMult
-		out[i].UpstreamCacheWriteRate = r.InputPerM * market.CacheWriteMult
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		ki, kj := keyFor(out[i]), keyFor(out[j])
@@ -277,6 +271,90 @@ func orderStepsByMarket(steps []dispatch.Target, cache *market.SnapshotCache, ma
 		return ki.sum < kj.sum
 	})
 	return out
+}
+
+// priceMarketSteps prices each slugged step for itself, so the meter bills the
+// step that actually served the request rather than the chain's cheapest
+// aggregate. A step whose slug has no live quote is dropped: it cannot be
+// priced, and billing it at the chain aggregate could undercut what the
+// upstream charges. Slugless steps keep the chain price. surplus-trusted steps
+// are left to stampSurplusTrusted. A nil cache means no market data is wired,
+// and the steps are returned unchanged.
+//
+// An inferhub slug's minAsk is only the cheapest posted ask; those sellers are
+// often busy, and inferhub then fills from a dearer one (plus a per-request
+// minimum charge). Such steps are therefore billed from inferhub's reported
+// usage.cost × markup, and bid up to the slug's maxAsk so inferhub picks any
+// available seller instead of refusing. The rate stamps carry that cap as the
+// fallback for a response that reports no cost.
+func priceMarketSteps(steps []dispatch.Target, cache *market.SnapshotCache, markupPercent float64) []dispatch.Target {
+	if cache == nil {
+		return steps
+	}
+	mult := 1 + markupPercent/100
+	out := make([]dispatch.Target, 0, len(steps))
+	for _, t := range steps {
+		if t.MarketSlug == "" || strings.HasPrefix(t.MarketSlug, market.SurplusTrustedPrefix) {
+			out = append(out, t)
+			continue
+		}
+		r, ok := cache.Rate(t.MarketSlug)
+		if !ok {
+			continue
+		}
+		if !strings.HasPrefix(t.MarketSlug, market.SurplusPrefix) {
+			t.BillUpstreamCost = true
+			t.UpstreamCostMult = mult
+			t.MinChargeMicro = market.InferhubMinChargeMicro
+			if m, ok := cache.Lookup(t.MarketSlug); ok && validBidCap(m.MaxAskIn, r.InputPerM) && validBidCap(m.MaxAskOut, r.OutputPerM) {
+				t.BidCapIn, t.BidCapOut = m.MaxAskIn, m.MaxAskOut
+				r = market.Rate{InputPerM: m.MaxAskIn, OutputPerM: m.MaxAskOut}
+			}
+		}
+		stampMarketRate(&t, r, mult)
+		out = append(out, t)
+	}
+	return out
+}
+
+// directMarketTarget builds the target for a direct provider/model call. When
+// the model is a live inferhub market slug, it is priced exactly like a chain
+// step bound to that slug (reported cost × markup, bid cap), so a direct call
+// cannot bypass the markup or the cost accounting a chain applies. Anything
+// else, including a slug without a live quote, routes unpriced as before.
+func directMarketTarget(provider, model string, cache *market.SnapshotCache, markupPercent float64) dispatch.Target {
+	t := dispatch.Target{Provider: provider, Model: model}
+	if cache == nil || strings.HasPrefix(model, market.SurplusPrefix) || strings.HasPrefix(model, market.SurplusTrustedPrefix) {
+		return t
+	}
+	if _, ok := cache.Lookup(model); !ok {
+		return t
+	}
+	slugged := t
+	slugged.MarketSlug = model
+	if priced := priceMarketSteps([]dispatch.Target{slugged}, cache, markupPercent); len(priced) == 1 {
+		return priced[0]
+	}
+	return t
+}
+
+// validBidCap reports whether a slug's maxAsk can serve as its bid cap: finite
+// and no lower than its minAsk.
+func validBidCap(maxAsk, minAsk float64) bool {
+	return maxAsk >= minAsk && !math.IsInf(maxAsk, 0) && !math.IsNaN(maxAsk)
+}
+
+// stampMarketRate writes a slug's raw market rate onto t as the upstream cost
+// basis and, with markup applied, as the billable rate.
+func stampMarketRate(t *dispatch.Target, r market.Rate, mult float64) {
+	t.MarketRateIn = r.InputPerM * mult
+	t.MarketRateOut = r.OutputPerM * mult
+	t.MarketCacheReadRate = t.MarketRateIn * market.CacheReadMult
+	t.MarketCacheWriteRate = t.MarketRateIn * market.CacheWriteMult
+	t.UpstreamRateIn = r.InputPerM
+	t.UpstreamRateOut = r.OutputPerM
+	t.UpstreamCacheReadRate = r.InputPerM * market.CacheReadMult
+	t.UpstreamCacheWriteRate = r.InputPerM * market.CacheWriteMult
 }
 
 // stampSurplusTrusted marks every surplus-trusted step for upstream-cost

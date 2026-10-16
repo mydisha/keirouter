@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"strconv"
 	"strings"
 	"sync"
@@ -294,6 +295,7 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 		usage.Source = core.UsageSourceCache
 		// A replayed response cost the upstream nothing this time.
 		usage.UpstreamCostMicro, usage.UpstreamCostReported = 0, false
+		usage.ProviderCostNanos = 0
 		cost := p.recordOutcomeWithTTFT(ctx, req.Metadata, attempt, usage, "cache_hit", "", true,
 			0, time.Since(requestStarted), 0, nil)
 		return &Result{
@@ -1997,6 +1999,7 @@ func (p *Pipeline) recordOutcomeWithTTFT(ctx context.Context, meta core.RequestM
 		CheapestRateIn:         attempt.Target.InputPerM,
 		BillUpstreamCost:       attempt.Target.BillUpstreamCost,
 		UpstreamCostMult:       attempt.Target.UpstreamCostMult,
+		MinChargeMicro:         attempt.Target.MinChargeMicro,
 		FallbackCount:          meta.FallbackCount,
 		ServiceTier:            meta.ServiceTier,
 		Guardrail:              meta.Guardrail.Summary(),
@@ -2479,7 +2482,9 @@ type sseUsageEnvelope struct {
 		OutputTokens             int `json:"output_tokens"`
 		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
 		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-		PromptTokensDetails      *struct {
+		// Cost is the USD charge the upstream reports (inferhub, OpenRouter).
+		Cost                float64 `json:"cost"`
+		PromptTokensDetails *struct {
 			CachedTokens int `json:"cached_tokens"`
 		} `json:"prompt_tokens_details"`
 		CompletionTokensDetails *struct {
@@ -2543,6 +2548,9 @@ func extractUsageFromSSEData(data []byte) *core.Usage {
 		}
 		if env.Usage.CompletionTokensDetails != nil {
 			u.ReasoningTokens = env.Usage.CompletionTokensDetails.ReasoningTokens
+		}
+		if c := env.Usage.Cost; c > 0 && !math.IsInf(c, 0) {
+			u.ProviderCostNanos = int64(c*1e9 + 0.5)
 		}
 	}
 	// Anthropic message_start wraps usage under "message".
@@ -2729,14 +2737,25 @@ func streamJSONPayload(line string) (string, bool) {
 // shared across attempts on the same account.
 func withTargetHeaders(attempt dispatch.Attempt) core.Credentials {
 	creds := attempt.Creds
-	if attempt.Target.MinDiscountPct <= 0 {
+	t := attempt.Target
+	capPrice := t.MarketSlug != "" && t.BidCapIn > 0 && t.BidCapOut > 0
+	if t.MinDiscountPct <= 0 && !capPrice {
 		return creds
 	}
-	headers := make(map[string]string, len(creds.Headers)+1)
+	headers := make(map[string]string, len(creds.Headers)+2)
 	for k, v := range creds.Headers {
 		headers[k] = v
 	}
-	headers["X-Min-Discount"] = strconv.Itoa(attempt.Target.MinDiscountPct)
+	if t.MinDiscountPct > 0 {
+		headers["X-Min-Discount"] = strconv.Itoa(t.MinDiscountPct)
+	}
+	if capPrice {
+		// inferhub bidding: no seller asking more than the cap may serve the
+		// request; if none is available it answers 402 no_provider_under_bid
+		// and the chain advances.
+		headers["x-max-input-price"] = strconv.FormatFloat(t.BidCapIn, 'f', -1, 64)
+		headers["x-max-output-price"] = strconv.FormatFloat(t.BidCapOut, 'f', -1, 64)
+	}
 	creds.Headers = headers
 	return creds
 }

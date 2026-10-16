@@ -312,3 +312,18 @@ func TestHTTPStatusError_403InsufficientBalance(t *testing.T) {
 	require.Equal(t, core.ErrQuotaExhausted, pe.Kind)
 	require.True(t, pe.CreditsExhausted)
 }
+
+// inferhub answers a bid nobody meets with 402 no_provider_under_bid. That is a
+// price miss for this request, not a depleted balance: the chain must advance
+// without parking the account or cooling the model.
+func TestHTTPStatusError_402NoProviderUnderBid(t *testing.T) {
+	resp := &http.Response{StatusCode: http.StatusPaymentRequired, Header: http.Header{}}
+	body := []byte(`{"error":{"code":"no_provider_under_bid","min_input_per_mtok":0.0024,"min_output_per_mtok":0.0096}}`)
+
+	pe := core.AsProviderError(httpStatusError("inferhub", "ali/deepseek-v4.1-flash", resp, body))
+
+	require.Equal(t, core.ErrModelUnavailable, pe.Kind)
+	require.Equal(t, core.FailureScopeRequest, pe.Scope)
+	require.False(t, pe.CreditsExhausted)
+	require.True(t, pe.Fallbackable())
+}

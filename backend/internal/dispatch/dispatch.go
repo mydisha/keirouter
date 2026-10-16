@@ -122,6 +122,14 @@ type Target struct {
 	// response carries no reported cost.
 	BillUpstreamCost bool
 	UpstreamCostMult float64
+	// BidCapIn/Out, when both > 0, are the pre-markup per-million prices sent to
+	// inferhub as x-max-input-price / x-max-output-price: no seller asking
+	// more may serve the step.
+	BidCapIn  float64
+	BidCapOut float64
+	// MinChargeMicro is the upstream's per-request minimum charge (USD
+	// micros), floored onto the fallback bill when no cost is reported.
+	MinChargeMicro float64
 	// MinDiscountPct, when > 0, is sent upstream as X-Min-Discount so the
 	// provider cannot fail over past the configured price depth.
 	MinDiscountPct int

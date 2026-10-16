@@ -5,23 +5,20 @@ import (
 	"testing"
 )
 
-func TestComputeChainRateMinIndependent(t *testing.T) {
+func TestComputeChainRateUsesCheapestSlugPair(t *testing.T) {
 	models := []Model{
-		{Slug: "a", MinAskIn: 1, MinAskOut: 5},
-		{Slug: "b", MinAskIn: 2, MinAskOut: 3},
+		{Slug: "a", MinAskIn: 1, MinAskOut: 5}, // sum 6
+		{Slug: "b", MinAskIn: 2, MinAskOut: 3}, // sum 5 cheapest
 	}
 	rate, ok := ComputeChainRate([]string{"a", "b"}, models, 0, 0.1, 1.25)
 	if !ok {
 		t.Fatal("expected match")
 	}
-	if rate.InputPerM != 1 {
-		t.Fatalf("input = %v, want 1 (slug a)", rate.InputPerM)
+	if rate.InputPerM != 2 || rate.OutputPerM != 3 {
+		t.Fatalf("rate = (%v,%v), want slug b's (2,3)", rate.InputPerM, rate.OutputPerM)
 	}
-	if rate.OutputPerM != 3 {
-		t.Fatalf("output = %v, want 3 (slug b)", rate.OutputPerM)
-	}
-	if rate.CachedInputPerM != 0.1 || rate.CacheWritePerM != 1.25 {
-		t.Fatalf("cache = (%v,%v), want (0.1,1.25)", rate.CachedInputPerM, rate.CacheWritePerM)
+	if rate.CachedInputPerM != 0.2 || rate.CacheWritePerM != 2.5 {
+		t.Fatalf("cache = (%v,%v), want (0.2,2.5)", rate.CachedInputPerM, rate.CacheWritePerM)
 	}
 }
 
@@ -170,5 +167,21 @@ func TestComputeChainRateSafetyInertWhenFailoverUnknown(t *testing.T) {
 	}
 	if rate.InputPerM != 0.10 || rate.OutputPerM != 0.40 {
 		t.Fatalf("rates = (%v,%v), want best-ask (0.10,0.40)", rate.InputPerM, rate.OutputPerM)
+	}
+}
+
+// The chain rate comes from one real slug (the cheapest by input+output), never
+// a mix of the cheapest input of one slug and the cheapest output of another.
+func TestComputeChainRatePricesFromSingleCheapestSlug(t *testing.T) {
+	models := []Model{
+		{Slug: "p", MinAskIn: 0.001, MinAskOut: 0.010}, // sum 0.011
+		{Slug: "q", MinAskIn: 0.005, MinAskOut: 0.002}, // sum 0.007 cheapest
+	}
+	r, ok := ComputeChainRate([]string{"p", "q"}, models, 0, CacheReadMult, CacheWriteMult)
+	if !ok {
+		t.Fatal("expected a rate")
+	}
+	if r.InputPerM != 0.005 || r.OutputPerM != 0.002 {
+		t.Fatalf("rate = %v/%v, want q's 0.005/0.002", r.InputPerM, r.OutputPerM)
 	}
 }

@@ -165,6 +165,10 @@ type Event struct {
 	// the rates above are then only the fallback for unreported responses.
 	BillUpstreamCost bool
 	UpstreamCostMult float64
+	// MinChargeMicro is the upstream's per-request minimum charge (USD
+	// micros). When the upstream reports no cost, the operator cost is floored
+	// at it and the user bill at it × UpstreamCostMult.
+	MinChargeMicro float64
 
 	Provider  string
 	Model     string
@@ -342,15 +346,16 @@ func (m *Meter) costForEvent(ev Event) CostBreakdown {
 	if u.PromptTokens+u.CompletionTokens == 0 && !ev.CacheHit {
 		return CostBreakdown{Pricing: PricingMatch{Status: "none", MatchKind: "none"}}
 	}
-	if reportedUpstreamCost(ev) {
-		mult := ev.UpstreamCostMult
-		if mult < 1 {
-			mult = 1 // never bill below what the upstream charged
-		}
-		return upstreamBilledCost(ev, ev.Usage.UpstreamCostMicro*mult, savedTokens)
+	mult := ev.UpstreamCostMult
+	if mult < 1 {
+		mult = 1 // never bill below what the upstream charged
+	}
+	if micro, ok := upstreamReportedMicro(ev); ok {
+		return upstreamBilledCost(ev, micro*mult, savedTokens)
 	}
 	if price, ok := marketPrice(ev); ok {
 		out := calculateCostFromPrice(pricingMatch(ev.MarketSlug, price, "market_slug", false), u, ev.CacheHit, savedTokens)
+		out = floorMinCharge(out, u, ev.MinChargeMicro*mult)
 		if ev.CheapestRateIn > 0 && price.InputPerM > ev.CheapestRateIn {
 			out.FallbackRatePerM = ev.CheapestRateIn
 		}

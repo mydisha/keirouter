@@ -143,10 +143,14 @@ func collectTrailing(ctx context.Context, in <-chan core.StreamChunk, grace time
 }
 
 // upstreamCharged reports whether any usage frame carries a positive cost the
-// upstream reported charging for this attempt.
+// upstream reported charging for this attempt (Surplus buyer_cost_micro, or
+// usage.cost from inferhub/OpenRouter).
 func upstreamCharged(chunks []core.StreamChunk) bool {
 	for _, c := range chunks {
-		if c.Type == core.ChunkUsage && c.Usage != nil && c.Usage.UpstreamCostReported && c.Usage.UpstreamCostMicro > 0 {
+		if c.Type != core.ChunkUsage || c.Usage == nil {
+			continue
+		}
+		if (c.Usage.UpstreamCostReported && c.Usage.UpstreamCostMicro > 0) || c.Usage.ProviderCostNanos > 0 {
 			return true
 		}
 	}

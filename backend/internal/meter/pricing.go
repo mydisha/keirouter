@@ -428,8 +428,8 @@ func providerPrice(ev Event) (Price, bool) {
 // It returns zero when no market slug is bound because the true upstream cost is
 // then unknown; charging zero is the safe default for a profit view.
 func upstreamCostForEvent(ev Event) CostBreakdown {
-	if reportedUpstreamCost(ev) {
-		return upstreamBilledCost(ev, ev.Usage.UpstreamCostMicro, 0)
+	if micro, ok := upstreamReportedMicro(ev); ok {
+		return upstreamBilledCost(ev, micro, 0)
 	}
 	price, ok := providerPrice(ev)
 	if !ok {
@@ -443,7 +443,8 @@ func upstreamCostForEvent(ev Event) CostBreakdown {
 	if ev.HeadroomStats != nil {
 		savedTokens += ev.HeadroomStats.TokensSaved
 	}
-	return calculateCostFromPrice(pricingMatch(ev.MarketSlug, price, "market_slug", false), u, ev.CacheHit, savedTokens)
+	out := calculateCostFromPrice(pricingMatch(ev.MarketSlug, price, "market_slug", false), u, ev.CacheHit, savedTokens)
+	return floorMinCharge(out, u, ev.MinChargeMicro)
 }
 
 // calculateCostFromPrice runs the same token math as CalculateCost but with an
@@ -655,8 +656,45 @@ func (m *Meter) BackfillUnpriced(ctx context.Context) (int, error) {
 // reportedUpstreamCost reports whether ev is billed from the upstream's own
 // reported cost rather than from rates.
 func reportedUpstreamCost(ev Event) bool {
-	return ev.BillUpstreamCost && ev.Usage.UpstreamCostReported && ev.Usage.UpstreamCostMicro >= 0 &&
-		!math.IsInf(ev.Usage.UpstreamCostMicro, 0) && !math.IsNaN(ev.Usage.UpstreamCostMicro)
+	_, ok := upstreamReportedMicro(ev)
+	return ok
+}
+
+// upstreamReportedMicro returns the cost the upstream reported charging for a
+// BillUpstreamCost event, in USD micros: Surplus's usage.buyer_cost_micro, else
+// inferhub's usage.cost (parsed as ProviderCostNanos).
+func upstreamReportedMicro(ev Event) (float64, bool) {
+	// A cache replay cost the upstream nothing this time.
+	if !ev.BillUpstreamCost || ev.CacheHit {
+		return 0, false
+	}
+	u := ev.Usage
+	if u.UpstreamCostReported && u.UpstreamCostMicro >= 0 &&
+		!math.IsInf(u.UpstreamCostMicro, 0) && !math.IsNaN(u.UpstreamCostMicro) {
+		return u.UpstreamCostMicro, true
+	}
+	if u.ProviderCostNanos > 0 {
+		return float64(u.ProviderCostNanos) / 1000, true
+	}
+	return 0, false
+}
+
+// floorMinCharge raises a rate-based bill to the upstream's per-request
+// minimum (USD micros). The upstream charges nothing for a request without
+// output, so neither is the floor applied then. Output absorbs the difference
+// so the breakdown still sums to the total.
+func floorMinCharge(out CostBreakdown, u core.Usage, minMicro float64) CostBreakdown {
+	if minMicro <= 0 || u.CompletionTokens <= 0 {
+		return out
+	}
+	minNanos := int64(math.Ceil(minMicro*1000 - 1e-6))
+	if out.CostNanos >= minNanos {
+		return out
+	}
+	out.OutputCostNanos += minNanos - out.CostNanos
+	out.CostNanos = minNanos
+	out.CostMicros = int64(math.Round(float64(minNanos) / 1000))
+	return out
 }
 
 // upstreamBilledCost prices ev at a fixed total (USD micros). The per-class

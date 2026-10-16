@@ -138,11 +138,12 @@ func TestSyncChainMarketPricesWritesCheapest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.InputPerM != 1 || got.OutputPerM != 3 {
-		t.Fatalf("price = (%v,%v), want (1,3)", got.InputPerM, got.OutputPerM)
+	// b/y is the cheapest slug by input+output (5 vs 6); its pair is used whole.
+	if got.InputPerM != 2 || got.OutputPerM != 3 {
+		t.Fatalf("price = (%v,%v), want (2,3)", got.InputPerM, got.OutputPerM)
 	}
-	if got.CacheReadPerM != 0.1 || got.CacheWritePerM != 1.25 {
-		t.Fatalf("cache = (%v,%v), want (0.1,1.25)", got.CacheReadPerM, got.CacheWritePerM)
+	if got.CacheReadPerM != 0.2 || got.CacheWritePerM != 2.5 {
+		t.Fatalf("cache = (%v,%v), want (0.2,2.5)", got.CacheReadPerM, got.CacheWritePerM)
 	}
 }
 

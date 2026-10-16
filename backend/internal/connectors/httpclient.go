@@ -890,7 +890,14 @@ func httpStatusError(provider, model string, resp *http.Response, body []byte) e
 	kind := core.ErrUpstream
 	var retryAfter time.Duration
 	var creditsExhausted bool
+	var scope core.FailureScope
 	switch {
+	// inferhub: no seller asks at or below the request's bid cap. The price
+	// miss is specific to this request and its bid; the account still has
+	// balance and the model may be back under the cap on the next request, so
+	// the chain advances with nothing parked or cooled.
+	case resp.StatusCode == http.StatusPaymentRequired && strings.Contains(string(body), "no_provider_under_bid"):
+		kind, scope = core.ErrModelUnavailable, core.FailureScopeRequest
 	case resp.StatusCode == http.StatusTooManyRequests:
 		// Classify 429 into transient rate-limit vs hard quota exhaustion vs
 		// depleted paid balance. Quota exhaustion gets a much longer cooldown
@@ -957,14 +964,16 @@ func httpStatusError(provider, model string, resp *http.Response, body []byte) e
 		}
 	}
 
-	scope := core.FailureScopeProvider
-	switch kind {
-	case core.ErrBadRequest, core.ErrContentFilter:
-		scope = core.FailureScopeRequest
-	case core.ErrModelUnavailable, core.ErrContextWindow:
-		scope = core.FailureScopeModel
-	case core.ErrAuth, core.ErrRateLimit, core.ErrQuotaExhausted:
-		scope = core.FailureScopeAccount
+	if scope == "" {
+		scope = core.FailureScopeProvider
+		switch kind {
+		case core.ErrBadRequest, core.ErrContentFilter:
+			scope = core.FailureScopeRequest
+		case core.ErrModelUnavailable, core.ErrContextWindow:
+			scope = core.FailureScopeModel
+		case core.ErrAuth, core.ErrRateLimit, core.ErrQuotaExhausted:
+			scope = core.FailureScopeAccount
+		}
 	}
 
 	pe := &core.ProviderError{

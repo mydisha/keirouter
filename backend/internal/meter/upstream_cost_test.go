@@ -78,3 +78,65 @@ func TestUpstreamCostIgnoredWhenNotBilledFromUpstream(t *testing.T) {
 		t.Fatalf("user = %d micros, want rate pricing 13200", user.CostMicros)
 	}
 }
+
+// inferhubEvent mimics an inferhub-slugged step: inferhub reports its exact
+// charge as usage.cost (ProviderCostNanos); the cap-rate fallback and the
+// per-request minimum charge only apply when that is missing.
+func inferhubEvent(u core.Usage) Event {
+	return Event{
+		MarketSlug: "cb/deepseek-v4.1-flash",
+		// Cap (maxAsk) $0.075/M in, $0.3/M out; ×1.1 markup for the user.
+		MarketRateIn: 0.0825, MarketRateOut: 0.33,
+		UpstreamRateIn: 0.075, UpstreamRateOut: 0.3,
+		BillUpstreamCost: true, UpstreamCostMult: 1.1,
+		MinChargeMicro: 10,
+		Provider:       "custom-openai-inferhub", Model: "cb/deepseek-v4.1-flash",
+		Usage: u,
+	}
+}
+
+func TestInferhubReportedCostDrivesUserAndOperatorCost(t *testing.T) {
+	ev := inferhubEvent(core.Usage{PromptTokens: 27, CompletionTokens: 21, TotalTokens: 48, ProviderCostNanos: 10_000})
+	m := &Meter{}
+	user := m.costForEvent(ev)
+	up := upstreamCostForEvent(ev)
+	if up.CostNanos != 10_000 {
+		t.Fatalf("upstream = %d nanos, want the reported 10000", up.CostNanos)
+	}
+	if user.CostNanos != 11_000 {
+		t.Fatalf("user = %d nanos, want 10000×1.1 = 11000", user.CostNanos)
+	}
+	if user.Pricing.Source != "upstream_cost" {
+		t.Fatalf("pricing source = %q, want upstream_cost", user.Pricing.Source)
+	}
+}
+
+// Without a reported cost the bill falls back to the cap rate, but never below
+// inferhub's per-request minimum charge (× markup for the user).
+func TestInferhubUnreportedCostFloorsAtMinimumCharge(t *testing.T) {
+	ev := inferhubEvent(core.Usage{PromptTokens: 27, CompletionTokens: 21, TotalTokens: 48})
+	m := &Meter{}
+	user := m.costForEvent(ev)
+	up := upstreamCostForEvent(ev)
+	if up.CostNanos != 10_000 {
+		t.Fatalf("upstream = %d nanos, want the 10000 minimum charge", up.CostNanos)
+	}
+	if user.CostNanos != 11_000 {
+		t.Fatalf("user = %d nanos, want 11000 (minimum × 1.1)", user.CostNanos)
+	}
+	parts := user.InputCostNanos + user.CachedCostNanos + user.CacheWriteCostNanos + user.OutputCostNanos + user.ReasoningCostNanos
+	if parts != user.CostNanos {
+		t.Fatalf("breakdown sums to %d, want %d", parts, user.CostNanos)
+	}
+}
+
+// ProviderCostNanos only bills on BillUpstreamCost steps; a slug without it
+// keeps rate pricing.
+func TestProviderCostIgnoredWithoutBillUpstreamCost(t *testing.T) {
+	ev := inferhubEvent(core.Usage{PromptTokens: 1_000_000, CompletionTokens: 0, TotalTokens: 1_000_000, ProviderCostNanos: 10_000})
+	ev.BillUpstreamCost, ev.MinChargeMicro = false, 0
+	user := (&Meter{}).costForEvent(ev)
+	if user.Pricing.Source != "market_slug" || user.CostNanos != 82_500_000 {
+		t.Fatalf("user = %d nanos via %q, want 82500000 via market_slug", user.CostNanos, user.Pricing.Source)
+	}
+}
