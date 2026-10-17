@@ -4,8 +4,8 @@ import { Check, CreditCard, Loader2, ShoppingCart } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type PaymentOrderAdmin } from "../../lib/api";
 import { useToast } from "../../components/Toast";
-import { Badge, Button, EmptyState, ErrorBanner, LoadingRegion, Modal, ModalFooter, Skeleton, Textarea } from "../../components/ui";
-import { Panel, REFETCH_MS, TH, THEAD, errorText, idr, usd } from "./shared";
+import { Badge, Button, EmptyState, ErrorBanner, LoadingRegion, Modal, ModalFooter, Skeleton, TablePagination, Textarea, useClientPagination } from "../../components/ui";
+import { Panel, REFETCH_MS, TH, THEAD, dateID, errorText, idr, usd } from "./shared";
 
 const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> = {
   completed: "success",
@@ -46,6 +46,7 @@ export function PortalOrders() {
 
   const orders = ordersQuery.data?.orders ?? [];
   const pending = summaryQuery.data?.count_by_status?.pending ?? 0;
+  const { paged, page, pages, setPage, total } = useClientPagination(orders, 10);
 
   const close = () => {
     setApproving(null);
@@ -72,45 +73,52 @@ export function PortalOrders() {
       ) : orders.length === 0 ? (
         <EmptyState icon={ShoppingCart} size="sm" title="Belum ada pembayaran" hint="Topup dari portal muncul di sini begitu user memulai pembayaran." />
       ) : (
-        <div className="overflow-x-auto" role="region" aria-label="Tabel order portal" tabIndex={0}>
-          <table className="w-full min-w-[760px] text-[13px]">
-            <thead>
-              <tr className={THEAD}>
-                <th scope="col" className={TH}>User</th>
-                <th scope="col" className={TH}>Key</th>
-                <th scope="col" className={cn(TH, "text-right")}>Jumlah</th>
-                <th scope="col" className={cn(TH, "text-right")}>Credit</th>
-                <th scope="col" className={TH}>Status</th>
-                <th scope="col" className={cn(TH, "text-right")}>
-                  <span className="sr-only">Aksi</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {orders.map((o) => (
-                <tr key={o.order_id} className="transition-colors hover:bg-hover">
-                  <td className="px-4 py-2.5">
-                    <p className="text-fg">{o.user_email || o.google_sub || "-"}</p>
-                    <p className="font-mono text-[11px] text-fg-muted">{o.provider_payment_id}</p>
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-[12px] text-fg-muted">{o.key_display || o.key_id}</td>
-                  <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums">{idr(o.amount_idr)}</td>
-                  <td className="whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular-nums">{usd(o.credit_usd)}</td>
-                  <td className="px-4 py-2.5">
-                    <Badge tone={STATUS_TONE[o.status] ?? "neutral"}>{STATUS_LABEL[o.status] ?? o.status}</Badge>
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    {o.status === "pending" && (
-                      <Button variant="ghost" onClick={() => setApproving(o)} title="Setujui manual">
-                        <Check aria-hidden="true" /> Setujui
-                      </Button>
-                    )}
-                  </td>
+        <>
+          <div className="overflow-x-auto" role="region" aria-label="Tabel order portal" tabIndex={0}>
+            <table className="w-full min-w-[960px] text-[13px]">
+              <thead>
+                <tr className={THEAD}>
+                  <th scope="col" className={TH}>User</th>
+                  <th scope="col" className={TH}>Key</th>
+                  <th scope="col" className={cn(TH, "text-right")}>Jumlah</th>
+                  <th scope="col" className={cn(TH, "text-right")}>Credit</th>
+                  <th scope="col" className={TH}>Status</th>
+                  <th scope="col" className={TH}>Invoice dibuat</th>
+                  <th scope="col" className={TH}>Dibayar</th>
+                  <th scope="col" className={cn(TH, "text-right")}>
+                    <span className="sr-only">Aksi</span>
+                  </th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {paged.map((o) => (
+                  <tr key={o.order_id} className="transition-colors hover:bg-hover">
+                    <td className="px-4 py-2.5">
+                      <p className="text-fg">{o.user_email || o.google_sub || "-"}</p>
+                      <p className="font-mono text-[11px] text-fg-muted">{o.provider_payment_id}</p>
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-[12px] text-fg-muted">{o.key_display || o.key_id}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums">{idr(o.amount_idr)}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular-nums">{usd(o.credit_usd)}</td>
+                    <td className="px-4 py-2.5">
+                      <Badge tone={STATUS_TONE[o.status] ?? "neutral"}>{STATUS_LABEL[o.status] ?? o.status}</Badge>
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-2.5 tabular-nums text-fg-muted">{dateID(o.created_at, true)}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 tabular-nums">{o.paid_at ? dateID(o.paid_at, true) : "-"}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      {o.status === "pending" && (
+                        <Button variant="ghost" onClick={() => setApproving(o)} title="Setujui manual">
+                          <Check aria-hidden="true" /> Setujui
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <TablePagination page={page} pages={pages} total={total} onPage={setPage} label="Halaman order portal" />
+        </>
       )}
 
       {approving && (
