@@ -41,7 +41,14 @@ func CostNanos(row store.CostBasisRow, m Markups) (exact, estimated int64) {
 
 func usd(nanos int64) float64 { return float64(nanos) / nanosPerUSD }
 
+// Overview is the operator's money picture for a range. BilledUSD is what
+// users were charged (upstream cost plus markup). RevenueUSD and ProfitUSD
+// are both the markup earned on top of the upstream cost (billed - cost), and
+// MarginPct is that markup as a percent of cost, so a request that costs $1
+// upstream and is sold at a 50% margin shows revenue $0.50, cost $1, profit
+// $0.50 and margin 50%.
 type Overview struct {
+	BilledUSD                                                        float64
 	RevenueUSD, CostExactUSD, CostEstimatedUSD, ProfitUSD, MarginPct float64
 	Requests                                                         int64
 	CreditInIDR                                                      int64
@@ -60,19 +67,21 @@ func BuildOverview(rows []store.CostBasisRow, m Markups, paid store.PaidOrderTot
 		est += s
 		reqs += r.Requests
 	}
+	markup := billed - exact - est
 	o := Overview{
-		RevenueUSD:           usd(billed),
+		BilledUSD:            usd(billed),
+		RevenueUSD:           usd(markup),
 		CostExactUSD:         usd(exact),
 		CostEstimatedUSD:     usd(est),
-		ProfitUSD:            usd(billed - exact - est),
+		ProfitUSD:            usd(markup),
 		Requests:             reqs,
 		CreditInIDR:          paid.AmountIDR,
 		CreditInUSD:          float64(paid.CreditMicros) / microsPerUSD,
 		PaidOrders:           paid.Count,
 		OutstandingCreditUSD: float64(outstandingMicros) / microsPerUSD,
 	}
-	if billed > 0 {
-		o.MarginPct = o.ProfitUSD / o.RevenueUSD * 100
+	if cost := exact + est; cost > 0 {
+		o.MarginPct = float64(markup) / float64(cost) * 100
 	}
 	for _, n := range inflight {
 		o.InFlight += n

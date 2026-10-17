@@ -123,6 +123,7 @@ func accountBalanceView(b finance.AccountBalance) map[string]any {
 
 func overviewView(o finance.Overview) map[string]any {
 	return map[string]any{
+		"billed_usd":             o.BilledUSD,
 		"revenue_usd":            o.RevenueUSD,
 		"cost_exact_usd":         o.CostExactUSD,
 		"cost_estimated_usd":     o.CostEstimatedUSD,

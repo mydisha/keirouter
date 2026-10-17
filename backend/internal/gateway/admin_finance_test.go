@@ -90,7 +90,10 @@ func TestFinance_OverviewProfit(t *testing.T) {
 	m := decodeBody(t, rec)
 	ov := m["overview"].(map[string]any)
 	require.InDelta(t, 5.0, ov["profit_usd"].(float64), 1e-9)
-	require.InDelta(t, 15.0, ov["revenue_usd"].(float64), 1e-9)
+	// Revenue is the markup over upstream cost; billed is what users paid.
+	require.InDelta(t, 5.0, ov["revenue_usd"].(float64), 1e-9)
+	require.InDelta(t, 15.0, ov["billed_usd"].(float64), 1e-9)
+	require.InDelta(t, 50.0, ov["margin_pct"].(float64), 1e-9)
 	var a map[string]any
 	for _, x := range m["accounts"].([]any) {
 		if x.(map[string]any)["id"] == id {

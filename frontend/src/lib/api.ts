@@ -1922,6 +1922,9 @@ export interface PaymentSummary {
 export type FinanceRange = "today" | "7d" | "30d" | "all";
 
 export interface FinanceOverview {
+  /** What users were charged: upstream cost plus markup. */
+  billed_usd: number;
+  /** Markup earned over upstream cost (billed - cost). */
   revenue_usd: number;
   cost_exact_usd: number;
   cost_estimated_usd: number;

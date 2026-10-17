@@ -47,12 +47,17 @@ export function FinanceOverview({
           hint={`${usd(o.credit_in_usd)} dari ${count(o.paid_orders)} order`}
         />
         <Kpi icon={Coins} label="Credit user tersisa" value={usd(o.outstanding_credit_usd)} hint="Saldo semua user saat ini" />
-        <Kpi icon={Receipt} label="Pendapatan" value={usd(o.revenue_usd)} hint={`${count(o.requests)} request`} />
+        <Kpi
+          icon={Receipt}
+          label="Pendapatan"
+          value={usd(o.revenue_usd)}
+          hint={`Markup dari tagihan ${usd(o.billed_usd)} · ${count(o.requests)} request`}
+        />
         <Kpi
           icon={Wrench}
           label="Modal"
           value={usd(cost)}
-          hint={o.cost_estimated_usd > 0 ? `termasuk estimasi ${usd(o.cost_estimated_usd)}` : "Harga upstream"}
+          hint={o.cost_estimated_usd > 0 ? `Harga upstream, termasuk estimasi ${usd(o.cost_estimated_usd)}` : "Harga upstream sebelum markup"}
         />
       </KpiGrid>
       <KpiGrid cols={3} label={`Keuntungan dan request, ${rangeText}`}>
@@ -62,14 +67,20 @@ export function FinanceOverview({
           value={usd(o.profit_usd)}
           tone={o.profit_usd < 0 ? "bad" : "section"}
           valueClassName={o.profit_usd < 0 ? "text-bad" : ""}
+          hint="Tagihan user dikurangi modal"
         />
-        <Kpi icon={Percent} label="Margin" value={`${o.margin_pct.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`} />
+        <Kpi
+          icon={Percent}
+          label="Margin"
+          value={`${o.margin_pct.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`}
+          hint="Keuntungan dibagi modal"
+        />
         <Kpi icon={Activity} label="Request aktif" value={count(o.in_flight)} hint="Sedang berjalan saat ini" />
       </KpiGrid>
       {o.cost_estimated_usd > 0 && (
         <p className="text-[12px] text-fg-muted">
-          Sebagian modal ({usd(o.cost_estimated_usd)}) dihitung dari tarif jual dikurangi markup karena harga upstream tidak tercatat. Keuntungan dan margin
-          memakai angka ini.
+          Sebagian modal ({usd(o.cost_estimated_usd)}) dihitung dari tarif jual dikurangi markup karena harga upstream tidak tercatat. Pendapatan, keuntungan,
+          dan margin memakai angka ini.
         </p>
       )}
     </div>

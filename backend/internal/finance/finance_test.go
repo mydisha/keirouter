@@ -31,7 +31,10 @@ func TestCostNanos_ChainOverride(t *testing.T) {
 func TestBuildOverview_ProfitExample(t *testing.T) {
 	rows := []store.CostBasisRow{{Provider: "p", Requests: 2, BilledNanos: 15e9, UpstreamNanos: 10e9}}
 	o := BuildOverview(rows, Markups{}, store.PaidOrderTotals{Count: 1, AmountIDR: 16000, CreditMicros: 1e6}, 2e6, map[string]int64{"p": 2, "q": 1})
-	if !near(o.ProfitUSD, 5, 1e-9) || !near(o.MarginPct, 33.33, 0.01) || o.Requests != 2 || o.InFlight != 3 {
+	// Charged $15 on a $10 upstream cost: revenue and profit are the $5
+	// markup, and margin is 5/10 = 50%.
+	if !near(o.BilledUSD, 15, 1e-9) || !near(o.RevenueUSD, 5, 1e-9) || !near(o.ProfitUSD, 5, 1e-9) ||
+		!near(o.MarginPct, 50, 1e-9) || o.Requests != 2 || o.InFlight != 3 {
 		t.Fatalf("%+v", o)
 	}
 	if o.CreditInIDR != 16000 || o.CreditInUSD != 1 || o.PaidOrders != 1 || o.OutstandingCreditUSD != 2 {
@@ -105,5 +108,21 @@ func TestRangeStart(t *testing.T) {
 	}
 	if _, err := RangeStart("bad", now); err == nil {
 		t.Fatal("want error")
+	}
+}
+
+func TestBuildOverview_MarkupExample(t *testing.T) {
+	// The user's example: $1 upstream, 50% margin, user pays $1.50.
+	rows := []store.CostBasisRow{{Provider: "p", Requests: 1, BilledNanos: 1.5e9, UpstreamNanos: 1e9}}
+	o := BuildOverview(rows, Markups{Global: 50}, store.PaidOrderTotals{}, 0, nil)
+	if !near(o.RevenueUSD, 0.5, 1e-9) || !near(o.ProfitUSD, 0.5, 1e-9) || !near(o.CostExactUSD, 1, 1e-9) ||
+		!near(o.MarginPct, 50, 1e-9) || !near(o.BilledUSD, 1.5, 1e-9) {
+		t.Fatalf("%+v", o)
+	}
+	// Unknown upstream cost is estimated by removing the markup: same result.
+	est := []store.CostBasisRow{{Provider: "p", Requests: 1, BilledNanos: 1.5e9, UnknownBilledNanos: 1.5e9}}
+	o = BuildOverview(est, Markups{Global: 50}, store.PaidOrderTotals{}, 0, nil)
+	if !near(o.RevenueUSD, 0.5, 1e-9) || !near(o.CostEstimatedUSD, 1, 1e-9) || !near(o.MarginPct, 50, 1e-9) {
+		t.Fatalf("%+v", o)
 	}
 }
