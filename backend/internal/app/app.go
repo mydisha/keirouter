@@ -79,6 +79,7 @@ type App struct {
 	marketURL          string
 	surplusURL         string
 	marketCache        *market.SnapshotCache
+	references         *market.ReferenceCache
 	inflight           *inflight.Tracker
 	audit              *audit.Recorder
 	auditSweeper       *audit.Sweeper
@@ -456,8 +457,9 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	}
 
 	marketCache := market.NewSnapshotCache()
+	references := market.NewReferenceCache()
 
-	app := &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, reloadPricing: reloadPricing, marketURL: "", surplusURL: "", marketCache: marketCache}
+	app := &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, reloadPricing: reloadPricing, marketURL: "", surplusURL: "", marketCache: marketCache, references: references}
 
 	gw := gateway.New(gateway.Deps{
 		Config:                 cfg,
@@ -495,6 +497,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		ReloadPricing:          reloadPricing,
 		SyncMarketPrices:       app.syncChainMarketPrices,
 		MarketCache:            app.MarketCache(),
+		References:             references,
 		Guardrails:             guardrailEngine,
 		GuardrailRepo:          db.Guardrails(),
 		GuardrailLogs:          db.GuardrailLogs(),
@@ -529,7 +532,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	// usable without a manual "connect" step in the dashboard.
 	seedFreeAccounts(ctx, db.Accounts(), log)
 
-	app = &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), server: srv, keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, reloadPricing: reloadPricing, marketURL: "", surplusURL: "", marketCache: marketCache, inflight: inflightTracker, financeBox: sealer, audit: auditRec, auditSweeper: auditSweeper, sharedState: sharedState}
+	app = &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), server: srv, keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, reloadPricing: reloadPricing, marketURL: "", surplusURL: "", marketCache: marketCache, references: references, inflight: inflightTracker, financeBox: sealer, audit: auditRec, auditSweeper: auditSweeper, sharedState: sharedState}
 
 	return app, nil
 }
@@ -739,6 +742,11 @@ func (a *App) Run(ctx context.Context) error {
 		go func() {
 			defer a.bg.Done()
 			a.runMarketSync(ctx)
+		}()
+		a.bg.Add(1)
+		go func() {
+			defer a.bg.Done()
+			a.runReferenceSync(ctx)
 		}()
 		a.bg.Add(1)
 		go func() {

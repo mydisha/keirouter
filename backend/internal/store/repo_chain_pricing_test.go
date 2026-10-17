@@ -74,3 +74,28 @@ func TestChainMarkupOverrideRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, got.MarkupPercent)
 }
+
+func TestChainOfficialPriceRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	now := time.Now().UTC()
+	in, out := 0.36, 6.84
+	c := Chain{
+		ID: "c-off", TenantID: DefaultTenantID, Name: "official", Strategy: "priority",
+		OfficialInputPerM: &in, OfficialOutputPerM: &out, CreatedAt: now, UpdatedAt: now,
+		Steps: []ChainStep{{ID: "s1", ChainID: "c-off", Provider: "openai", Model: "gpt-4o", CreatedAt: now}},
+	}
+	require.NoError(t, db.Chains().Create(ctx, c))
+	got, err := db.Chains().Get(ctx, "c-off")
+	require.NoError(t, err)
+	require.Equal(t, 0.36, *got.OfficialInputPerM)
+	require.Equal(t, 6.84, *got.OfficialOutputPerM)
+
+	c.OfficialInputPerM, c.OfficialOutputPerM = nil, nil
+	require.NoError(t, db.Chains().Update(ctx, c))
+	list, err := db.Chains().ListByTenant(ctx, DefaultTenantID)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	require.Nil(t, list[0].OfficialInputPerM)
+	require.Nil(t, list[0].OfficialOutputPerM)
+}

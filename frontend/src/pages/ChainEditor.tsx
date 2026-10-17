@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, BadgeCheck, ChevronDown, Copy, DollarSign, Eye, Loader2, Plus, Shield, Store, Tag, X, type LucideIcon } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowLeft, ArrowUp, BadgeCheck, BadgePercent, ChevronDown, Copy, DollarSign, Eye, Loader2, Plus, Shield, Store, Tag, X, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type Chain, type ChainStep } from "../lib/api";
 import { dashboard } from "../lib/dashboardRoutes";
@@ -59,6 +59,8 @@ const ZERO_PRICE = { inputPerM: 0, outputPerM: 0, cacheWritePerM: 0, cacheReadPe
 const chainPriceOf = (chain?: Chain) => chain
   ? { inputPerM: chain.input_per_m ?? 0, outputPerM: chain.output_per_m ?? 0, cacheWritePerM: chain.cache_write_per_m ?? 0, cacheReadPerM: chain.cache_read_per_m ?? 0 }
   : ZERO_PRICE;
+const OFFICIAL_SOURCE_LABEL = { surplus: "Surplus", openrouter: "OpenRouter", catalog: "the built-in catalog" } as const;
+const invalidOfficialRate = (raw: string) => raw.trim() === "" || !Number.isFinite(Number(raw)) || Number(raw) <= 0 || Number(raw) > 100000;
 const hasAnyPrice = (p: typeof ZERO_PRICE) => p.inputPerM > 0 || p.outputPerM > 0 || p.cacheWritePerM > 0 || p.cacheReadPerM > 0;
 
 const strategyOptions: { value: ChainStrategy; label: string }[] = [
@@ -190,6 +192,9 @@ export function ChainEditorPage() {
   const [reorderByMarket, setReorderByMarket] = useState(false);
   const [markupEnabled, setMarkupEnabled] = useState(false);
   const [markupValue, setMarkupValue] = useState("");
+  const [officialManual, setOfficialManual] = useState(false);
+  const [officialInput, setOfficialInput] = useState("");
+  const [officialOutput, setOfficialOutput] = useState("");
   const [priceOpen, setPriceOpen] = useState(false);
   const [priceDrafts, setPriceDrafts] = useState<Map<string, string>>(() => new Map());
   const [error, setError] = useState("");
@@ -209,6 +214,9 @@ export function ChainEditorPage() {
     setReorderByMarket(chain?.reorder_by_market ?? false);
     setMarkupEnabled(chain?.markup_percent != null);
     setMarkupValue(chain?.markup_percent != null ? String(chain.markup_percent) : "");
+    setOfficialManual(chain?.official_input_per_m != null && chain?.official_output_per_m != null);
+    setOfficialInput(chain?.official_input_per_m != null ? String(chain.official_input_per_m) : "");
+    setOfficialOutput(chain?.official_output_per_m != null ? String(chain.official_output_per_m) : "");
     setPriceOpen(hasAnyPrice(chainPriceOf(chain)));
   };
 
@@ -263,7 +271,16 @@ export function ChainEditorPage() {
   const needsPricing = priced && (chainPrice.inputPerM <= 0 || chainPrice.outputPerM <= 0);
   const markupNumber = Number(markupValue);
   const markupInvalid = markupEnabled && (markupValue.trim() === "" || !Number.isFinite(markupNumber) || markupNumber < 0 || markupNumber > 1000);
-  const validationMessage = markupInvalid ? "Chain markup must be between 0 and 1000%." : !name.trim() ? "Add a chain name to continue." : !isValidChainName(name.trim()) ? "Use up to 128 letters, numbers, hyphens, underscores, or dots; begin with a letter or number." : completeSteps.length === 0 ? "Add at least one model to the route." : incompleteSteps ? "Complete or remove every model row before saving." : duplicate ? "Each route step must be a different provider/model target." : fallbackEnabled && (!fallback.provider || !fallback.model) ? "Choose the final fallback model or turn it off." : needsPricing ? "Set both input and output price, or clear all price fields." : "";
+  const officialInputNumber = Number(officialInput);
+  const officialOutputNumber = Number(officialOutput);
+  const officialAuto = existing?.official_auto ?? null;
+  const officialRef = officialManual
+    ? (invalidOfficialRate(officialInput) || invalidOfficialRate(officialOutput) ? null : { input: Number(officialInput), output: Number(officialOutput) })
+    : officialAuto ? { input: officialAuto.input_per_m, output: officialAuto.output_per_m } : null;
+  const offered = hasMarketSlugs ? (existing?.input_per_m ?? 0) + (existing?.output_per_m ?? 0) : chainPrice.inputPerM + chainPrice.outputPerM;
+  const officialPreview = officialRef && offered > 0 && offered < officialRef.input + officialRef.output ? Math.floor((1 - offered / (officialRef.input + officialRef.output)) * 100) : 0;
+  const officialInvalid = officialManual && (invalidOfficialRate(officialInput) || invalidOfficialRate(officialOutput));
+  const validationMessage = markupInvalid ? "Chain markup must be between 0 and 1000%." : officialInvalid ? "Set both official input and output prices above 0, or turn the manual official price off." : !name.trim() ? "Add a chain name to continue." : !isValidChainName(name.trim()) ? "Use up to 128 letters, numbers, hyphens, underscores, or dots; begin with a letter or number." : completeSteps.length === 0 ? "Add at least one model to the route." : incompleteSteps ? "Complete or remove every model row before saving." : duplicate ? "Each route step must be a different provider/model target." : fallbackEnabled && (!fallback.provider || !fallback.model) ? "Choose the final fallback model or turn it off." : needsPricing ? "Set both input and output price, or clear all price fields." : "";
   const valid = !validationMessage;
   const routeChain = useMemo(() => ({ id: existing?.id ?? "draft", name, strategy, steps: completeSteps.map((step, position) => ({ provider: step.provider, model: step.model, position } as ChainStep)), fallback_provider: fallbackEnabled ? fallback.provider : "", fallback_model: fallbackEnabled ? fallback.model : "" } as Chain), [completeSteps, existing?.id, fallback.model, fallback.provider, fallbackEnabled, name, strategy]);
 
@@ -286,7 +303,7 @@ export function ChainEditorPage() {
 
   const saveMutation = useMutation({
     mutationFn: () => {
-      const payload = { name: name.trim(), strategy, input_per_m: chainPrice.inputPerM, output_per_m: chainPrice.outputPerM, cache_write_per_m: chainPrice.cacheWritePerM, cache_read_per_m: chainPrice.cacheReadPerM, market_slugs: parseMarketSlugs(marketSlugs), reorder_by_market: reorderByMarket, markup_percent: markupEnabled ? markupNumber : null, steps: completeSteps.map((step) => ({ provider: step.provider, model: step.model, market_slug: step.marketSlug ?? "" })), fallback_provider: fallbackEnabled ? fallback.provider : "", fallback_model: fallbackEnabled ? fallback.model : "", display_provider: displayProvider, capability_overrides: serializeCapOverrides(capOverrides) };
+      const payload = { name: name.trim(), strategy, input_per_m: chainPrice.inputPerM, output_per_m: chainPrice.outputPerM, cache_write_per_m: chainPrice.cacheWritePerM, cache_read_per_m: chainPrice.cacheReadPerM, market_slugs: parseMarketSlugs(marketSlugs), reorder_by_market: reorderByMarket, markup_percent: markupEnabled ? markupNumber : null, official_input_per_m: officialManual ? officialInputNumber : null, official_output_per_m: officialManual ? officialOutputNumber : null, steps: completeSteps.map((step) => ({ provider: step.provider, model: step.model, market_slug: step.marketSlug ?? "" })), fallback_provider: fallbackEnabled ? fallback.provider : "", fallback_model: fallbackEnabled ? fallback.model : "", display_provider: displayProvider, capability_overrides: serializeCapOverrides(capOverrides) };
       return isEdit ? api.updateChain(id!, payload) : api.createChain(payload);
     },
     onSuccess: () => {
@@ -530,6 +547,44 @@ export function ChainEditorPage() {
                 <Field label="Output $/M"><Input type="number" min={0} step="0.01" disabled={hasMarketSlugs} value={rateDraft("outputPerM")} onChange={(event) => updateChainRate("outputPerM", event.target.value)} placeholder="0" /></Field>
                 <Field label={`Cache write $/M${chainPrice.cacheWritePerM === +(chainPrice.inputPerM * CACHE_WRITE_FACTOR).toFixed(8) ? " (auto)" : ""}`}><Input type="number" min={0} step="0.01" disabled={hasMarketSlugs} value={rateDraft("cacheWritePerM")} onChange={(event) => updateChainRate("cacheWritePerM", event.target.value)} placeholder="auto" /></Field>
                 <Field label={`Cache read $/M${chainPrice.cacheReadPerM === +(chainPrice.inputPerM * CACHE_READ_FACTOR).toFixed(8) ? " (auto)" : ""}`}><Input type="number" min={0} step="0.01" disabled={hasMarketSlugs} value={rateDraft("cacheReadPerM")} onChange={(event) => updateChainRate("cacheReadPerM", event.target.value)} placeholder="auto" /></Field>
+              </div>
+            )}
+          </Panel>
+
+          <Panel title="Official price" titleId="chain-official-heading" icon={BadgePercent} subtitle="Reference price for the discount shown on the public model page.">
+            <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <span className="min-w-0 flex-1">
+                <label htmlFor="chain-official-toggle" id="chain-official-label" className="block cursor-pointer text-[13px] font-medium text-fg">Set official price manually</label>
+                <span id="chain-official-hint" className="mt-0.5 block text-[12px] leading-5 text-fg-muted">
+                  {officialManual
+                    ? "The discount is measured against these prices instead of the detected ones."
+                    : officialAuto
+                      ? <>Off: detected from {OFFICIAL_SOURCE_LABEL[officialAuto.source]}: <span className="font-mono text-fg">${officialAuto.input_per_m}</span> input, <span className="font-mono text-fg">${officialAuto.output_per_m}</span> output per 1M.</>
+                      : isEdit
+                        ? "Off: no official price found for this model, so no discount is shown."
+                        : "Off: detected from Surplus, OpenRouter or the built-in catalog after saving."}
+                </span>
+                {officialPreview > 0 && <span className="mt-1 block text-[12px] leading-5 text-fg-muted">Public page shows <span className="font-medium text-tone">-{officialPreview}%</span> at the current chain price.</span>}
+              </span>
+              <Toggle
+                id="chain-official-toggle"
+                aria-labelledby="chain-official-label"
+                aria-describedby="chain-official-hint"
+                checked={officialManual}
+                onChange={(next) => {
+                  setOfficialManual(next);
+                  if (next && officialInput === "" && officialOutput === "" && officialAuto) {
+                    setOfficialInput(String(officialAuto.input_per_m));
+                    setOfficialOutput(String(officialAuto.output_per_m));
+                  }
+                  setDirty(true);
+                }}
+              />
+            </div>
+            {officialManual && (
+              <div className="grid gap-3 border-t border-line p-4 sm:grid-cols-2">
+                <Field label="Official input $/M"><Input type="number" min={0} step="any" value={officialInput} onChange={(event) => { setOfficialInput(event.target.value); setDirty(true); }} placeholder="e.g. 0.36" /></Field>
+                <Field label="Official output $/M"><Input type="number" min={0} step="any" value={officialOutput} onChange={(event) => { setOfficialOutput(event.target.value); setDirty(true); }} placeholder="e.g. 6.84" /></Field>
               </div>
             )}
           </Panel>

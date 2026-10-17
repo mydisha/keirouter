@@ -87,18 +87,25 @@ function CopyId({ id }: { id: string }) {
   );
 }
 
-function Price({ label, value, strong = false }: { label: string; value: number; strong?: boolean }) {
+function Price({ label, value, strong = false, official }: { label: string; value: number; strong?: boolean; official?: number | null }) {
   return (
     <div className="min-w-0">
       <p className="text-[11px] text-[var(--muted)]">{label}</p>
       <p className={`truncate font-mono tabular-nums ${strong ? "text-[15px] font-semibold text-[var(--ink)]" : "text-[12.5px] text-[var(--ink)]"}`}>
         {fmtRate(value)}
       </p>
+      {official != null && official > value && (
+        <p className="truncate font-mono text-[11px] tabular-nums text-[var(--muted)]">
+          <span className="sr-only">Harga resmi </span>
+          <s>{fmtRate(official)}</s>
+        </p>
+      )}
     </div>
   );
 }
 
 export function ModelCard({ model }: { model: PublicModel }) {
+  const discount = model.discount_pct ?? 0;
   return (
     <article className="group flex flex-col rounded-xl border border-[var(--line)] bg-[var(--paper)] p-4 transition-[border-color,box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:border-[var(--line-strong)] hover:shadow-[0_8px_24px_-12px_rgba(0,0,0,0.18)]">
       <div className="flex items-start gap-3">
@@ -129,16 +136,27 @@ export function ModelCard({ model }: { model: PublicModel }) {
           Belum ada penawaran yang memenuhi harga. Coba lagi beberapa saat lagi.
         </p>
       ) : (
-        <div className="mt-4 border-t border-[var(--line)] pt-3">
-          <div className="grid grid-cols-2 gap-3">
-            <Price label="Input / 1M token" value={model.input_per_m} strong />
-            <Price label="Output / 1M token" value={model.output_per_m} strong />
+        <>
+          {discount > 0 && (
+            <p
+              className="-mx-4 mt-4 border-y border-[var(--line)] bg-[var(--tag-bg)] py-2 text-center font-mono text-[14px] font-bold uppercase tracking-[1.5px] tabular-nums text-[var(--tag-ink)]"
+              title="Dibanding harga resmi model"
+            >
+              {discount}% OFF
+              <span className="sr-only"> dari harga resmi</span>
+            </p>
+          )}
+          <div className={discount > 0 ? "pt-3" : "mt-4 border-t border-[var(--line)] pt-3"}>
+            <div className="grid grid-cols-2 gap-3">
+              <Price label="Input / 1M token" value={model.input_per_m} strong official={discount > 0 ? model.official_input_per_m : null} />
+              <Price label="Output / 1M token" value={model.output_per_m} strong official={discount > 0 ? model.official_output_per_m : null} />
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-3 rounded-lg bg-[var(--bg)] px-2.5 py-2">
+              <Price label="Cache read / 1M" value={model.cached_per_m} />
+              <Price label="Cache write / 1M" value={model.cache_write_per_m} />
+            </div>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-3 rounded-lg bg-[var(--bg)] px-2.5 py-2">
-            <Price label="Cache read / 1M" value={model.cached_per_m} />
-            <Price label="Cache write / 1M" value={model.cache_write_per_m} />
-          </div>
-        </div>
+        </>
       )}
     </article>
   );

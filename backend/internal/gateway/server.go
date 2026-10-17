@@ -101,6 +101,7 @@ type Server struct {
 	reloadPricing       func(context.Context) error
 	syncMarketPrices    func(context.Context) (int, error)
 	marketCache         *market.SnapshotCache
+	references          *market.ReferenceCache
 	version             string
 	updates             *update.Checker
 	insightsCache       *ttlCache
@@ -171,6 +172,7 @@ type Deps struct {
 	ReloadPricing        func(context.Context) error
 	SyncMarketPrices     func(context.Context) (int, error)
 	MarketCache          *market.SnapshotCache
+	References           *market.ReferenceCache // official list prices for public discounts
 	Guardrails           *guardrails.Engine
 	GuardrailRepo        *store.GuardrailRepo
 	GuardrailLogs        *store.GuardrailLogRepo
@@ -246,6 +248,7 @@ func New(d Deps) *Server {
 		reloadPricing:       d.ReloadPricing,
 		syncMarketPrices:    d.SyncMarketPrices,
 		marketCache:         d.MarketCache,
+		references:          d.References,
 		version:             d.Version,
 		updates:             d.Updates,
 		insightsCache:       newTTLCache(insightsCacheTTL),

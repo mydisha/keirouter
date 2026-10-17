@@ -1986,9 +1986,16 @@ func (s *Server) adminListChains(w http.ResponseWriter, r *http.Request) {
 			"capability_overrides": c.CapabilityOverrides,
 			// null = follows the global market markup.
 			"markup_percent": c.MarkupPercent,
+			// null = official price is detected automatically (official_auto).
+			"official_input_per_m":  c.OfficialInputPerM,
+			"official_output_per_m": c.OfficialOutputPerM,
+			"official_auto":         nil,
 			// No live quote for any bound slug: the stored rates are stale and
 			// requests are refused until the market offers it again.
 			"sold_out": s.chainSoldOut(c),
+		}
+		if ref, ok := s.autoOfficialPrice(c); ok {
+			entry["official_auto"] = map[string]any{"input_per_m": ref.InputPerM, "output_per_m": ref.OutputPerM, "source": ref.Source}
 		}
 		if c.FallbackProvider != "" && c.FallbackModel != "" {
 			entry["fallback_provider"] = c.FallbackProvider
@@ -2014,6 +2021,8 @@ func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 		MarketSlugs         []string `json:"market_slugs"`
 		ReorderByMarket     bool     `json:"reorder_by_market"`
 		MarkupPercent       *float64 `json:"markup_percent"`
+		OfficialInputPerM   *float64 `json:"official_input_per_m"`
+		OfficialOutputPerM  *float64 `json:"official_output_per_m"`
 		Steps               []struct {
 			Provider   string `json:"provider"`
 			Model      string `json:"model"`
@@ -2076,11 +2085,17 @@ func (s *Server) adminCreateChain(w http.ResponseWriter, r *http.Request) {
 		MarketSlugs:         body.MarketSlugs,
 		ReorderByMarket:     body.ReorderByMarket,
 		MarkupPercent:       body.MarkupPercent,
+		OfficialInputPerM:   body.OfficialInputPerM,
+		OfficialOutputPerM:  body.OfficialOutputPerM,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
 	if body.MarkupPercent != nil && !validMarkup(*body.MarkupPercent) {
 		writeError(w, http.StatusBadRequest, "markup_percent must be between 0 and 1000")
+		return
+	}
+	if msg := validateOfficialPrice(chain.OfficialInputPerM, chain.OfficialOutputPerM); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
 	for i, st := range body.Steps {
@@ -2133,7 +2148,10 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 		ReorderByMarket     *bool     `json:"reorder_by_market"`
 		// markup_percent: absent = unchanged, null = follow global, number = override.
 		MarkupPercent json.RawMessage `json:"markup_percent"`
-		Steps         *[]struct {
+		// official_*_per_m: absent = unchanged, null = automatic, number = manual.
+		OfficialInputPerM  json.RawMessage `json:"official_input_per_m"`
+		OfficialOutputPerM json.RawMessage `json:"official_output_per_m"`
+		Steps              *[]struct {
 			Provider   string `json:"provider"`
 			Model      string `json:"model"`
 			MarketSlug string `json:"market_slug"`
@@ -2186,6 +2204,28 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 			}
 			existing.MarkupPercent = &v
 		}
+	}
+	for _, f := range []struct {
+		raw json.RawMessage
+		dst **float64
+	}{{body.OfficialInputPerM, &existing.OfficialInputPerM}, {body.OfficialOutputPerM, &existing.OfficialOutputPerM}} {
+		if len(f.raw) == 0 {
+			continue
+		}
+		if string(f.raw) == "null" {
+			*f.dst = nil
+			continue
+		}
+		var v float64
+		if err := json.Unmarshal(f.raw, &v); err != nil {
+			writeError(w, http.StatusBadRequest, "official price must be null or a number")
+			return
+		}
+		*f.dst = &v
+	}
+	if msg := validateOfficialPrice(existing.OfficialInputPerM, existing.OfficialOutputPerM); msg != "" {
+		writeError(w, http.StatusBadRequest, msg)
+		return
 	}
 	if body.InputPerM != nil || body.OutputPerM != nil || body.CacheWritePerM != nil || body.CacheReadPerM != nil {
 		rates := []*float64{body.InputPerM, body.OutputPerM, body.CacheWritePerM, body.CacheReadPerM}
@@ -3833,6 +3873,23 @@ func validateCapabilityOverrides(raw string) error {
 // validMarkup bounds a markup percentage the same way the global setting is.
 func validMarkup(v float64) bool {
 	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0 && v <= 1000
+}
+
+// validateOfficialPrice requires a manual official price to set both sides
+// as positive per-1M rates, or neither (automatic). It returns "" when valid.
+func validateOfficialPrice(in, out *float64) string {
+	if in == nil && out == nil {
+		return ""
+	}
+	if in == nil || out == nil {
+		return "official_input_per_m and official_output_per_m must be set together"
+	}
+	for _, v := range []float64{*in, *out} {
+		if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 || v > 100000 {
+			return "official price must be greater than 0 and at most 100000 per 1M tokens"
+		}
+	}
+	return ""
 }
 
 // resyncMarketPricesAsync re-derives market-bound chain prices in the

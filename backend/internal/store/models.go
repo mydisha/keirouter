@@ -148,9 +148,14 @@ type Chain struct {
 	// MarkupPercent overrides the global market markup for this chain. Nil
 	// follows the global setting; 0 is an explicit no-markup override.
 	MarkupPercent *float64
-	Steps         []ChainStep
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
+	// OfficialInputPerM/OfficialOutputPerM are the operator-set official list
+	// price (USD per 1M tokens) the public discount is measured against. Nil
+	// means auto: taken from market and catalog references.
+	OfficialInputPerM  *float64
+	OfficialOutputPerM *float64
+	Steps              []ChainStep
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // ChainStep is one candidate target within a chain.

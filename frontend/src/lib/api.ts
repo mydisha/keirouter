@@ -424,6 +424,11 @@ export interface Chain {
   markup_percent?: number | null;
   /** No live market quote for any bound slug: stored rates are stale and requests are refused. */
   sold_out?: boolean;
+  /** Manual official price per 1M tokens; null/undefined = detected automatically. */
+  official_input_per_m?: number | null;
+  official_output_per_m?: number | null;
+  /** Automatically detected official price; null when none is found. */
+  official_auto?: { input_per_m: number; output_per_m: number; source: "surplus" | "openrouter" | "catalog" } | null;
   steps: ChainStep[];
 }
 
@@ -2278,9 +2283,9 @@ export const api = {
     request<CodexUsageDetails>("GET", `/accounts/${id}/codex-usage-details`),
 
   listChains: () => request<{ chains: Chain[] }>("GET", "/chains"),
-  createChain: (input: { name: string; strategy?: string; display_provider?: string; fallback_provider?: string; fallback_model?: string; input_per_m?: number; output_per_m?: number; cache_write_per_m?: number; cache_read_per_m?: number; market_slugs?: string[]; reorder_by_market?: boolean; markup_percent?: number | null; steps: { provider: string; model: string; market_slug?: string }[] }) =>
+  createChain: (input: { name: string; strategy?: string; display_provider?: string; fallback_provider?: string; fallback_model?: string; input_per_m?: number; output_per_m?: number; cache_write_per_m?: number; cache_read_per_m?: number; market_slugs?: string[]; reorder_by_market?: boolean; markup_percent?: number | null; official_input_per_m?: number | null; official_output_per_m?: number | null; steps: { provider: string; model: string; market_slug?: string }[] }) =>
     request<{ id: string }>("POST", "/chains", input),
-  updateChain: (id: string, patch: { name?: string; strategy?: string; display_provider?: string; fallback_provider?: string; fallback_model?: string; input_per_m?: number; output_per_m?: number; cache_write_per_m?: number; cache_read_per_m?: number; market_slugs?: string[]; reorder_by_market?: boolean; markup_percent?: number | null; steps?: { provider: string; model: string; market_slug?: string }[] }) =>
+  updateChain: (id: string, patch: { name?: string; strategy?: string; display_provider?: string; fallback_provider?: string; fallback_model?: string; input_per_m?: number; output_per_m?: number; cache_write_per_m?: number; cache_read_per_m?: number; market_slugs?: string[]; reorder_by_market?: boolean; markup_percent?: number | null; official_input_per_m?: number | null; official_output_per_m?: number | null; steps?: { provider: string; model: string; market_slug?: string }[] }) =>
     request<{ id: string }>("PATCH", `/chains/${id}`, patch),
   deleteChain: (id: string) => request<void>("DELETE", `/chains/${id}`),
 

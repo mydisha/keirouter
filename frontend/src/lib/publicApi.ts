@@ -34,6 +34,11 @@ export interface PublicModel {
   cached_per_m: number;
   cache_write_per_m: number;
   sold_out: boolean;
+  /** Official list price per 1M tokens; null when no reference is known. */
+  official_input_per_m?: number | null;
+  official_output_per_m?: number | null;
+  /** Whole-percent discount from the official price; null when none. */
+  discount_pct?: number | null;
   capabilities: PublicCapabilities;
   usage: PublicUsage;
 }

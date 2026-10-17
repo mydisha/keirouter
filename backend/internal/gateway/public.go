@@ -80,9 +80,13 @@ type publicModelRow struct {
 	CachedPerM   float64
 	CacheWrite   float64
 	SoldOut      bool
-	Requests     int64
-	Tokens       int64
-	Users        int
+	// Official is the list price the discount is measured against; nil when
+	// no reference is known. DiscountPct is 0 when there is nothing to show.
+	Official    *officialPrice
+	DiscountPct int
+	Requests    int64
+	Tokens      int64
+	Users       int
 }
 
 // chainSoldOut reports whether a market-bound chain has no live quote for any
@@ -161,6 +165,14 @@ func (s *Server) publicModelRows(ctx context.Context) ([]publicModelRow, error) 
 				provider = label
 			}
 		}
+		var official *officialPrice
+		discount := 0
+		if !soldOut {
+			if ref, ok := s.chainOfficialPrice(c); ok {
+				official = &ref
+				discount = discountPercent(inputPerM, outputPerM, ref)
+			}
+		}
 		u := usage[c.ID]
 		rows = append(rows, publicModelRow{
 			Name:         c.Name,
@@ -175,6 +187,8 @@ func (s *Server) publicModelRows(ctx context.Context) ([]publicModelRow, error) 
 			CachedPerM:   cachedPerM,
 			CacheWrite:   cacheWritePerM,
 			SoldOut:      soldOut,
+			Official:     official,
+			DiscountPct:  discount,
 			Requests:     u.TotalRequests,
 			Tokens:       u.PromptTokens + u.CompletionTokens,
 			Users:        u.DistinctKeys,
@@ -206,6 +220,13 @@ func (s *Server) publicModels(w http.ResponseWriter, r *http.Request) {
 	for _, m := range rows {
 		caps, _ := capabilityPayload(m.CapProvider, m.CapModel, core.ServiceLLM)
 		applyCapabilityOverrides(&caps, m.CapOverrides)
+		var officialIn, officialOut, discount any
+		if m.Official != nil {
+			officialIn, officialOut = m.Official.InputPerM, m.Official.OutputPerM
+		}
+		if m.DiscountPct > 0 {
+			discount = m.DiscountPct
+		}
 		out = append(out, map[string]any{
 			"name":              m.Name,
 			"model_id":          m.ModelID,
@@ -216,7 +237,12 @@ func (s *Server) publicModels(w http.ResponseWriter, r *http.Request) {
 			"cached_per_m":      m.CachedPerM,
 			"cache_write_per_m": m.CacheWrite,
 			"sold_out":          m.SoldOut,
-			"capabilities":      caps,
+			// Official list price and the whole-percent discount from it;
+			// null when no official reference is known.
+			"official_input_per_m":  officialIn,
+			"official_output_per_m": officialOut,
+			"discount_pct":          discount,
+			"capabilities":          caps,
 			"usage": map[string]any{
 				"users":    m.Users,
 				"requests": m.Requests,
