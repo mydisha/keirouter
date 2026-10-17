@@ -22,6 +22,11 @@ const SECTIONS: Section[] = [
           memakai API key, atau mengisi saldo, Anda menyetujui ketentuan ini. Jika tidak setuju, jangan gunakan layanan.
         </p>
         <p>Anda menyatakan cakap secara hukum, atau mendapat izin dari pihak yang berwenang, untuk menerima ketentuan ini.</p>
+        <p>
+          Layanan Hosting 9router juga tunduk pada{" "}
+          <a href="/ketentuan/hosting-9router" className={LINK}>Ketentuan Layanan Hosting 9router</a>, yang melengkapi
+          ketentuan ini.
+        </p>
       </>
     ),
   },

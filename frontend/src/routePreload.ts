@@ -35,6 +35,7 @@ export const routeLoaders = {
   "/portal-models": () => named(import("./pages/portal/PortalModels"), "PortalModelsPage"),
   "/portal-topup": () => named(import("./pages/portal/PortalTopup"), "PortalTopupPage"),
   "/portal-discounts": () => named(import("./pages/portal/PortalDiscounts"), "PortalDiscountsPage"),
+  "/portal-hosting": () => named(import("./pages/portal/PortalHosting"), "PortalHostingPage"),
   "/portal-docs": () => named(import("./pages/portal/PortalDocs"), "PortalDocsPage"),
   "/guardrails": () => named(import("./pages/Guardrails"), "GuardrailsPage"),
   "/audit": () => named(import("./pages/Audit"), "AuditPage"),
@@ -42,6 +43,7 @@ export const routeLoaders = {
   "/bansos": () => named(import("./pages/Bansos"), "BansosPage"),
   "/portal-users": () => named(import("./pages/PortalUsers"), "PortalUsersPage"),
   "/payments": () => named(import("./pages/Payments"), "PaymentsPage"),
+  "/hosting": () => named(import("./pages/Hosting"), "HostingPage"),
   "/model": () => import("./pages/PublicModels").then((m) => ({ default: m.default })),
 } as const;
 

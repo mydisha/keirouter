@@ -227,6 +227,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
                 </a>
               </li>
               <li><a href="/ketentuan" className="text-[var(--ink)] no-underline hover:underline">Ketentuan Layanan</a></li>
+              <li><a href="/ketentuan/hosting-9router" className="text-[var(--ink)] no-underline hover:underline">Ketentuan Hosting 9router</a></li>
             </ul>
           </div>
         </div>

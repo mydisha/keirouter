@@ -37,6 +37,7 @@ const PortalUsageRoute = lazy(routeLoaders["/portal-usage"]);
 const PortalModelsRoute = lazy(routeLoaders["/portal-models"]);
 const PortalTopupRoute = lazy(routeLoaders["/portal-topup"]);
 const PortalDiscountsRoute = lazy(routeLoaders["/portal-discounts"]);
+const PortalHostingRoute = lazy(routeLoaders["/portal-hosting"]);
 const PortalDocsRoute = lazy(routeLoaders["/portal-docs"]);
 const KeyDetailPage = lazy(routeLoaders["/key-detail"]);
 const GuardrailsPage = lazy(routeLoaders["/guardrails"]);
@@ -45,10 +46,12 @@ const ProviderHealthPage = lazy(routeLoaders["/provider-health"]);
 const BansosPage = lazy(routeLoaders["/bansos"]);
 const PortalUsersPage = lazy(routeLoaders["/portal-users"]);
 const PaymentsPage = lazy(routeLoaders["/payments"]);
+const HostingPage = lazy(routeLoaders["/hosting"]);
 const PublicLanding = lazy(() => import("./pages/PublicLanding"));
 const PublicBansos = lazy(() => import("./pages/PublicBansos"));
 const PublicModels = lazy(() => import("./pages/PublicModels"));
 const PublicTerms = lazy(() => import("./pages/PublicTerms"));
+const PublicHostingTerms = lazy(() => import("./pages/PublicHostingTerms"));
 
 function PageFallback() {
   return (
@@ -67,6 +70,7 @@ export function App() {
         <Route path="/bansos" element={<PublicBansos />} />
         <Route path="/model" element={<PublicModels />} />
         <Route path="/ketentuan" element={<PublicTerms />} />
+        <Route path="/ketentuan/hosting-9router" element={<PublicHostingTerms />} />
         <Route path="portal" element={
           <ThemeProvider storageKey={PORTAL_THEME_KEY} defaultTheme="dark" scoped>
             <PortalBrandingProvider>
@@ -81,6 +85,7 @@ export function App() {
             <Route path="models" element={<PortalModelsRoute />} />
             <Route path="discounts" element={<PortalDiscountsRoute />} />
             <Route path="topup" element={<PortalTopupRoute />} />
+            <Route path="hosting" element={<PortalHostingRoute />} />
             <Route path="docs" element={<PortalDocsRoute />} />
           </Route>
         </Route>
@@ -120,6 +125,7 @@ export function App() {
                 <Route path="budgets" element={<PlansPage />} />
                 <Route path="portal-users" element={<PortalUsersPage />} />
                 <Route path="payments" element={<PaymentsPage />} />
+                <Route path="hosting" element={<HostingPage />} />
                 <Route path="system" element={<SystemPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>

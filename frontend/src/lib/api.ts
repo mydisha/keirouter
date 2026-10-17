@@ -1926,6 +1926,11 @@ export interface PaymentOrder {
 }
 
 export interface PaymentOrderAdmin extends PaymentOrder {
+  /** "hosting" for Hosting 9router orders; "" or "credit" for credit top-ups. */
+  product?: string;
+  hosting_instance_id?: string;
+  terms_version?: string;
+  terms_accepted_at?: string;
   google_sub: string;
   user_email?: string;
   key_id: string;
@@ -2164,6 +2169,301 @@ export async function fetchPortalTopupOrder(id: string): Promise<PaymentOrder> {
   return data;
 }
 
+// ─── Hosting 9router ────────────────────────────────────────────────────────
+
+export type HostingStatus =
+  | "awaiting_payment"
+  | "paid"
+  | "provisioning"
+  | "active"
+  | "failed"
+  | "expired"
+  | "stopped"
+  | "deleted";
+
+export interface PortalHostingInstance {
+  id: string;
+  status: HostingStatus;
+  /** "" until the instance is reachable. */
+  url: string;
+  /** RFC3339, or "" before the first activation. */
+  paid_until: string;
+  /** Days paid for but not yet started (counted from activation). */
+  prepaid_days: number;
+  created_at: string;
+  pending_payment_link?: string;
+  pending_order_id?: string;
+  /** True once the instance has its own initial dashboard password. */
+  has_password: boolean;
+}
+
+export interface PortalHostingConfig {
+  enabled: boolean;
+  price_idr: number;
+  period_days: number;
+  terms_version: string;
+  terms_url: string;
+  instances: PortalHostingInstance[];
+}
+
+export interface HostingOrder {
+  order_id: string;
+  instance_id: string;
+  status: PaymentOrder["status"];
+  amount_idr: number;
+  payment_link_url: string;
+  expires_at?: string;
+  terms_version: string;
+  created_at: string;
+}
+
+/** Error from a portal call that keeps the server's machine-readable code. */
+export class PortalAPIError extends Error {
+  status: number;
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** Hosting offer plus the signed-in user's instances. */
+export async function fetchPortalHosting(): Promise<PortalHostingConfig> {
+  const resp = await fetch("/portal/api/hosting");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new PortalAPIError(resp.status, data.error?.message || data.error || "Failed to load hosting", data.error?.code);
+  return data;
+}
+
+/** Reveal the initial 9router dashboard password of the caller's instance. */
+export async function fetchPortalHostingPassword(id: string): Promise<string> {
+  const resp = await fetch(`/portal/api/hosting/instances/${encodeURIComponent(id)}/password`, { cache: "no-store" });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new PortalAPIError(resp.status, data.error?.message || data.error || "Failed to load password", data.error?.code);
+  return data.password as string;
+}
+
+/** Create a SumoPod payment for a new hosting instance, or a renewal when instance_id is set. */
+export async function createPortalHostingOrder(input: {
+  instance_id?: string;
+  accept_terms: boolean;
+  terms_version: string;
+  idempotency_key: string;
+  turnstile_token?: string;
+}): Promise<HostingOrder> {
+  const resp = await fetch("/portal/api/hosting/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new PortalAPIError(resp.status, data.error?.message || data.error || "Failed to create payment", data.error?.code);
+  return data;
+}
+
+export interface HostingSettings {
+  enabled: boolean;
+  monthly_price_idr: number;
+  dokploy_url: string;
+  api_key_masked: string;
+  has_api_key: boolean;
+  environment_id: string;
+  root_domain: string;
+  images: string[];
+  container_port: number;
+  env_template: string;
+  server_id: string;
+  password_env: string;
+  memory_limit: string;
+  cpu_limit: string;
+  data_path: string;
+  grace_days: number;
+  terms_version: string;
+  period_days: number;
+}
+
+export interface HostingSettingsInput {
+  enabled: boolean;
+  monthly_price_idr: number;
+  dokploy_url: string;
+  /** Omit or leave empty to keep the stored key. */
+  api_key?: string;
+  clear_api_key?: boolean;
+  environment_id: string;
+  root_domain: string;
+  images: string[];
+  container_port: number;
+  env_template: string;
+  server_id: string;
+  password_env: string;
+  memory_limit: string;
+  cpu_limit: string;
+  data_path: string;
+}
+
+export interface HostingInstanceOrder {
+  order_id: string;
+  status: PaymentOrder["status"];
+  amount_idr: number;
+  created_at: string;
+  paid_at?: string;
+  terms_version: string;
+  terms_accepted_at: string;
+}
+
+export interface HostingInstanceAdmin {
+  id: string;
+  key_id: string;
+  status: HostingStatus;
+  image: string;
+  subdomain: string;
+  fqdn: string;
+  url: string;
+  dokploy_app_id: string;
+  dokploy_app_name: string;
+  dokploy_domain_id: string;
+  data_volume: string;
+  last_error: string;
+  paid_until: string;
+  prepaid_days: number;
+  created_at: string;
+  updated_at: string;
+  provisioned_at: string;
+  has_password: boolean;
+  user_email?: string;
+  orders?: HostingInstanceOrder[];
+}
+
+// Hosting finance (admin): revenue vs operating cost, bucketed per WIB month.
+export interface HostingFinanceMonth {
+  /** "2026-10" */
+  month: string;
+  revenue_idr: number;
+  cost_idr: number;
+  profit_idr: number;
+  orders: number;
+  refund_idr: number;
+}
+
+export type HostingCostCategory = "vps" | "domain" | "software" | "other";
+export type HostingCostPeriod = "monthly" | "one_time";
+
+export interface HostingCost {
+  id: string;
+  name: string;
+  category: HostingCostCategory;
+  amount_idr: number;
+  period: HostingCostPeriod;
+  /** YYYY-MM-DD */
+  start_date: string;
+  /** "" or YYYY-MM-DD */
+  end_date: string;
+  note: string;
+  created_at: string;
+  updated_at: string;
+  this_month_idr: number;
+}
+
+export interface HostingCostInput {
+  name: string;
+  category: HostingCostCategory;
+  amount_idr: number;
+  period: HostingCostPeriod;
+  start_date: string;
+  end_date?: string;
+  note?: string;
+}
+
+export interface HostingFinance {
+  months: HostingFinanceMonth[];
+  current: {
+    month: string;
+    revenue_idr: number;
+    cost_idr: number;
+    profit_idr: number;
+    running_instances: number;
+    mrr_idr: number;
+    price_idr: number;
+    cost_per_instance_idr: number;
+    break_even_instances: number;
+  };
+  totals: { revenue_idr: number; cost_idr: number; profit_idr: number };
+  status_counts: Record<string, number>;
+  refunds_needed: { order_id: string; amount_idr: number; paid_at: string; instance_id: string }[] | null;
+  costs: HostingCost[];
+  note: string;
+}
+
+// Hosting monitoring (admin): Dokploy monitoring targets and their metrics.
+export interface HostingMonitorTarget {
+  id: string;
+  name: string;
+  url: string;
+  instances: boolean;
+  has_token: boolean;
+  token_masked: string;
+}
+
+export interface HostingMonitorTargetInput {
+  /** Omit for a new target. */
+  id?: string;
+  name: string;
+  url: string;
+  /** Omit or "" keeps the stored token; required again when the URL changes. */
+  token?: string;
+  instances: boolean;
+}
+
+export interface HostingServerMetric {
+  timestamp: string;
+  cpu: number;
+  cpuModel: string;
+  cpuCores: number;
+  os: string;
+  distro: string;
+  /** Percent. */
+  memUsed: number;
+  memUsedGB: number;
+  /** GB. */
+  memTotal: number;
+  /** Seconds. */
+  uptime: number;
+  /** Percent. */
+  diskUsed: number;
+  /** GB. */
+  totalDisk: number;
+  /** MB, cumulative. */
+  networkIn: number;
+  networkOut: number;
+}
+
+export interface HostingServerMetrics {
+  id: string;
+  name: string;
+  instances: boolean;
+  samples: HostingServerMetric[];
+  error?: string;
+}
+
+export interface HostingContainerMetric {
+  timestamp: string;
+  CPU: number;
+  Memory: { percentage: number; used: number; total: number; usedUnit: string; totalUnit: string };
+  Network: { input: number; output: number; inputUnit: string; outputUnit: string };
+  BlockIO: { read: number; write: number; readUnit: string; writeUnit: string };
+  Name: string;
+}
+
+export interface HostingContainerMetrics {
+  instance_id: string;
+  app_name: string;
+  fqdn: string;
+  status: HostingStatus;
+  samples: HostingContainerMetric[];
+  error?: string;
+}
+
 export const api = {
   // Auth (no session required for status/login/logout).
   authStatus: () => request<AuthStatus>("GET", "/auth/status"),
@@ -2278,6 +2578,28 @@ export const api = {
   paymentEconomics: () => request<UsageEconomics>("GET", "/payments/economics"),
   approvePaymentOrder: (id: string, reason: string) =>
     request<PaymentOrderAdmin>("POST", `/payments/orders/${id}/approve`, { reason }),
+
+  // Hosting 9router (admin): Dokploy settings and instance lifecycle.
+  getHostingSettings: () => request<HostingSettings>("GET", "/hosting/settings"),
+  putHostingSettings: (input: HostingSettingsInput) => request<HostingSettings>("PUT", "/hosting/settings", input),
+  testHostingSettings: () => request<{ ok: boolean; error?: string }>("POST", "/hosting/settings/test"),
+  listHostingInstances: (status?: string) =>
+    request<{ instances: HostingInstanceAdmin[] }>("GET", `/hosting/instances${status ? `?status=${encodeURIComponent(status)}` : ""}`),
+  provisionHosting: (id: string, image: string) =>
+    request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/provision`, { image }),
+  stopHosting: (id: string) => request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/stop`),
+  startHosting: (id: string) => request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/start`),
+  deleteHosting: (id: string) => request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/delete`),
+  hostingFinance: (months: number) => request<HostingFinance>("GET", `/hosting/finance?months=${months}`),
+  createHostingCost: (body: HostingCostInput) => request<HostingCost>("POST", "/hosting/costs", body),
+  updateHostingCost: (id: string, body: HostingCostInput) => request<HostingCost>("PUT", `/hosting/costs/${encodeURIComponent(id)}`, body),
+  deleteHostingCost: (id: string) => request<void>("DELETE", `/hosting/costs/${encodeURIComponent(id)}`),
+  getHostingMonitoring: () => request<{ targets: HostingMonitorTarget[] }>("GET", "/hosting/monitoring/settings"),
+  putHostingMonitoring: (targets: HostingMonitorTargetInput[]) =>
+    request<{ targets: HostingMonitorTarget[] }>("PUT", "/hosting/monitoring/settings", { targets }),
+  hostingServerMetrics: (limit = 60) => request<{ servers: HostingServerMetrics[] }>("GET", `/hosting/monitoring/servers?limit=${limit}`),
+  hostingContainerMetrics: (limit = 30) =>
+    request<{ server?: string; containers: HostingContainerMetrics[]; error?: string }>("GET", `/hosting/monitoring/containers?limit=${limit}`),
 
   // Finance monitor (admin): profit, upstream balances, top-ups, alerts.
   financeReport: (range: FinanceRange) =>

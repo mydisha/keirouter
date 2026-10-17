@@ -1,0 +1,410 @@
+package gateway
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/mydisha/keirouter/backend/internal/hosting"
+	"github.com/mydisha/keirouter/backend/internal/payment"
+	"github.com/mydisha/keirouter/backend/internal/store"
+)
+
+// hostingTermsPath is the public page users accept at checkout.
+const hostingTermsPath = "/ketentuan/hosting-9router"
+
+func (s *Server) loadHostingSettings(r *http.Request) (hosting.Settings, error) {
+	return hosting.Load(r.Context(), s.settingsGet(), s.financeBox())
+}
+
+// hostingInstanceView is the portal-safe view of an instance. Dokploy ids and
+// errors stay admin-only.
+func hostingInstanceView(h store.HostingInstance, pending *store.PaymentOrder) map[string]any {
+	v := map[string]any{
+		"id":           h.ID,
+		"status":       string(h.Status),
+		"url":          "",
+		"paid_until":   timeOrEmpty(h.PaidUntil),
+		"prepaid_days": h.PrepaidDays,
+		"created_at":   h.CreatedAt,
+		"has_password": h.Password.Ciphertext != "" && h.Status != store.HostingProvisioning,
+	}
+	if h.FQDN != "" && (h.Status == store.HostingActive || h.Status == store.HostingExpired) {
+		v["url"] = "https://" + h.FQDN
+	}
+	if pending != nil {
+		v["pending_payment_link"] = pending.PaymentLinkURL
+		v["pending_order_id"] = pending.ID
+	}
+	return v
+}
+
+func timeOrEmpty(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+// handlePortalHosting returns the hosting offer and the caller's instances.
+func (s *Server) handlePortalHosting(w http.ResponseWriter, r *http.Request) {
+	_, keyID, ok := s.portalKeyID(w, r)
+	if !ok {
+		return
+	}
+	st, err := s.loadHostingSettings(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	instances, err := s.db.Hosting().ListByKey(r.Context(), keyID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	orders, err := s.db.PaymentOrders().ListByKey(r.Context(), keyID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	pending := latestPendingHostingOrders(orders, time.Now(), st.MonthlyPriceIDR)
+	out := make([]map[string]any, 0, len(instances))
+	for _, h := range instances {
+		var p *store.PaymentOrder
+		if o, ok := pending[h.ID]; ok {
+			p = &o
+		}
+		out = append(out, hostingInstanceView(h, p))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"enabled":       st.Enabled && s.cfg.Payment.Enabled && s.paymentClient != nil,
+		"price_idr":     st.MonthlyPriceIDR,
+		"period_days":   hosting.PeriodDays,
+		"terms_version": hosting.TermsVersion,
+		"terms_url":     hostingTermsPath,
+		"instances":     out,
+	})
+}
+
+// latestPendingHostingOrders maps instance id to its newest unexpired
+// pending hosting order, so the portal can offer "continue payment".
+// Orders at an old price are skipped so a price change cannot be dodged.
+func latestPendingHostingOrders(orders []store.PaymentOrder, now time.Time, price int64) map[string]store.PaymentOrder {
+	out := map[string]store.PaymentOrder{}
+	for _, o := range orders { // newest first
+		if o.Product != store.ProductHosting || o.Status != store.PaymentPending || o.HostingInstanceID == "" || o.AmountIDR != price {
+			continue
+		}
+		if o.ExpiresAt != "" {
+			if t, err := time.Parse(time.RFC3339, o.ExpiresAt); err == nil && t.Before(now) {
+				continue
+			}
+		}
+		if _, seen := out[o.HostingInstanceID]; !seen {
+			out[o.HostingInstanceID] = o
+		}
+	}
+	return out
+}
+
+type createHostingOrderRequest struct {
+	InstanceID     string `json:"instance_id"`
+	AcceptTerms    bool   `json:"accept_terms"`
+	TermsVersion   string `json:"terms_version"`
+	IdempotencyKey string `json:"idempotency_key"`
+	TurnstileToken string `json:"turnstile_token"`
+}
+
+// handlePortalCreateHostingOrder creates a SumoPod payment for one month of
+// hosting: a new instance, or a renewal when instance_id is set. The caller
+// must accept the current hosting terms version.
+func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.Request) {
+	if !s.cfg.Payment.Enabled || s.paymentClient == nil {
+		writeError(w, http.StatusServiceUnavailable, "payments are not enabled")
+		return
+	}
+	var body createHostingOrderRequest
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if !body.AcceptTerms {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
+			"message": "you must accept the hosting terms", "type": "invalid_request_error", "code": "terms_required",
+		}})
+		return
+	}
+	if body.TermsVersion != hosting.TermsVersion {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": map[string]any{
+			"message": "the hosting terms have changed; review and accept them again", "type": "invalid_request_error",
+			"code": "terms_outdated", "terms_version": hosting.TermsVersion,
+		}})
+		return
+	}
+	st, err := s.loadHostingSettings(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	if !st.Enabled || st.MonthlyPriceIDR <= 0 {
+		writeError(w, http.StatusServiceUnavailable, "hosting is not available")
+		return
+	}
+	if !s.turnstileVerify(w, r, body.TurnstileToken) {
+		return
+	}
+	u, keyID, ok := s.portalKeyID(w, r)
+	if !ok {
+		return
+	}
+	key, err := s.identity.Get(r.Context(), keyID)
+	if err != nil || key.Disabled {
+		writeError(w, http.StatusConflict, "api key is not usable")
+		return
+	}
+
+	idem := strings.TrimSpace(body.IdempotencyKey)
+	if idem == "" {
+		idem = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	}
+	if idem != "" {
+		if existing, gerr := s.db.PaymentOrders().GetByIdempotencyKey(r.Context(), idem); gerr == nil {
+			if existing.KeyID != keyID || existing.Product != store.ProductHosting {
+				writeError(w, http.StatusConflict, "idempotency key already used")
+				return
+			}
+			s.writeHostingOrderResponse(w, http.StatusOK, existing)
+			return
+		} else if !errors.Is(gerr, store.ErrNotFound) {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, gerr, "internal server error"))
+			return
+		}
+	}
+
+	// Pick the instance: the one named for a renewal, else reuse an unpaid
+	// one so repeated "Order" clicks do not pile up empty instances.
+	var inst store.HostingInstance
+	newInstance := false
+	if id := strings.TrimSpace(body.InstanceID); id != "" {
+		inst, err = s.db.Hosting().Get(r.Context(), id)
+		if err != nil || inst.KeyID != keyID || inst.Status == store.HostingDeleted {
+			writeError(w, http.StatusNotFound, "instance not found")
+			return
+		}
+	} else {
+		list, lerr := s.db.Hosting().ListByKey(r.Context(), keyID)
+		if lerr != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, lerr, "internal server error"))
+			return
+		}
+		for _, h := range list {
+			if h.Status == store.HostingAwaitingPayment {
+				inst = h
+				break
+			}
+		}
+		if inst.ID == "" {
+			now := time.Now()
+			inst = store.HostingInstance{
+				ID: uuid.NewString(), TenantID: adminTenant, KeyID: keyID,
+				Status: store.HostingAwaitingPayment, CreatedAt: now, UpdatedAt: now,
+			}
+			newInstance = true
+		}
+	}
+
+	// Reuse an open payment for this instance instead of creating a new
+	// SumoPod payment on every click.
+	if !newInstance {
+		orders, oerr := s.db.PaymentOrders().ListByKey(r.Context(), keyID)
+		if oerr != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, oerr, "internal server error"))
+			return
+		}
+		if open, ok := latestPendingHostingOrders(orders, time.Now(), st.MonthlyPriceIDR)[inst.ID]; ok {
+			s.writeHostingOrderResponse(w, http.StatusOK, open)
+			return
+		}
+	}
+
+	p := s.cfg.Payment
+	orderID := uuid.NewString()
+	base := s.publicBaseURL(r)
+	created, err := s.paymentClient.CreatePayment(r.Context(), payment.CreateRequest{
+		OrderID: orderID, AmountIDR: st.MonthlyPriceIDR, Currency: "IDR",
+		ExpiresInHours:        p.ExpiresInHours,
+		SuccessReturnURL:      base + "/portal/hosting?status=success",
+		CancelReturnURL:       base + "/portal/hosting?status=cancel",
+		PaymentMethodTypeCode: p.PaymentMethodTypeCode,
+	})
+	if err != nil {
+		s.log.Error("hosting: create payment failed", "err", err)
+		writeError(w, http.StatusBadGateway, "failed to create payment")
+		return
+	}
+
+	now := time.Now()
+	o := store.PaymentOrder{
+		ID: orderID, TenantID: adminTenant, KeyID: keyID, GoogleSub: u.GoogleSub,
+		AmountIDR: st.MonthlyPriceIDR, Status: store.PaymentPending, Provider: p.Provider,
+		ProviderPaymentID: created.PaymentID, PaymentLinkURL: created.PaymentLinkURL,
+		IdempotencyKey: idem, Actor: "portal", CreatedAt: now, UpdatedAt: now,
+		ExpiresAt: created.ExpiresAt, Product: store.ProductHosting,
+		HostingInstanceID: inst.ID, TermsVersion: hosting.TermsVersion,
+		TermsAcceptedAt: now.UTC().Format(time.RFC3339),
+	}
+	if err := s.createHostingOrder(r, inst, newInstance, o); err != nil {
+		if idem != "" {
+			if existing, gerr := s.db.PaymentOrders().GetByIdempotencyKey(r.Context(), idem); gerr == nil && existing.KeyID == keyID {
+				s.writeHostingOrderResponse(w, http.StatusOK, existing)
+				return
+			}
+		}
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	s.writeHostingOrderResponse(w, http.StatusCreated, o)
+}
+
+func (s *Server) createHostingOrder(r *http.Request, inst store.HostingInstance, newInstance bool, o store.PaymentOrder) error {
+	tx, err := s.db.SQL().BeginTx(r.Context(), nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if newInstance {
+		if err := s.db.Hosting().CreateOnTx(r.Context(), tx, inst); err != nil {
+			return err
+		}
+	}
+	if err := s.db.PaymentOrders().CreateOnTx(r.Context(), tx, o); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Server) writeHostingOrderResponse(w http.ResponseWriter, status int, o store.PaymentOrder) {
+	writeJSON(w, status, map[string]any{
+		"order_id":         o.ID,
+		"instance_id":      o.HostingInstanceID,
+		"status":           string(o.Status),
+		"amount_idr":       o.AmountIDR,
+		"payment_link_url": o.PaymentLinkURL,
+		"expires_at":       o.ExpiresAt,
+		"terms_version":    o.TermsVersion,
+		"created_at":       o.CreatedAt,
+	})
+}
+
+// markHostingOrderPaid settles a hosting order exactly once: the guarded
+// pending transition must win, then the instance gains one period. An
+// instance that is not created yet banks the days in prepaid_days so its
+// clock starts when the admin creates it. A payment for a deleted instance
+// is recorded with reason refund_required and grants nothing.
+func (s *Server) markHostingOrderPaid(ctx context.Context, order store.PaymentOrder, to store.PaymentOrderStatus, actor, reason string) (bool, error) {
+	if order.Status != store.PaymentPending {
+		return false, nil
+	}
+	if order.HostingInstanceID == "" {
+		return false, errors.New("hosting: order has no instance")
+	}
+	for attempt := 0; ; attempt++ {
+		applied, err := s.markHostingOrderPaidOnce(ctx, order, to, actor, reason)
+		// Another payment changed the instance first: retry the whole
+		// settlement in a fresh transaction.
+		if errors.Is(err, store.ErrHostingConflict) && attempt < 4 {
+			continue
+		}
+		return applied, err
+	}
+}
+
+func (s *Server) markHostingOrderPaidOnce(ctx context.Context, order store.PaymentOrder, to store.PaymentOrderStatus, actor, reason string) (bool, error) {
+	tx, err := s.db.SQL().BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	inst, err := s.db.Hosting().GetOnTx(ctx, tx, order.HostingInstanceID)
+	if err != nil {
+		return false, err
+	}
+	if inst.Status == store.HostingDeleted {
+		reason = strings.TrimSpace("refund_required: instance was deleted before payment " + reason)
+		s.log.Error("hosting: payment for a deleted instance; refund it", "order", order.ID, "instance", inst.ID)
+	}
+	now := time.Now()
+	applied, err := s.db.PaymentOrders().TransitionOnTx(ctx, tx, order.ID, store.PaymentPending, to, actor, reason, now.UTC().Format(time.RFC3339))
+	if err != nil || !applied {
+		return false, err
+	}
+	if inst.Status != store.HostingDeleted {
+		if err := s.applyHostingPeriod(ctx, tx, inst, now); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Server) applyHostingPeriod(ctx context.Context, tx *sql.Tx, inst store.HostingInstance, now time.Time) error {
+	repo := s.db.Hosting()
+	if inst.ProvisionedAt.IsZero() {
+		if err := repo.ApplyPaymentOnTx(ctx, tx, inst, time.Time{}, hosting.PeriodDays); err != nil {
+			return err
+		}
+		if inst.Status == store.HostingAwaitingPayment {
+			if _, err := repo.TransitionOnTx(ctx, tx, inst.ID, []store.HostingStatus{store.HostingAwaitingPayment}, store.HostingPaid, ""); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	// Extend from the old end date while it is within the grace window, so
+	// running past the end and paying late does not get the gap for free.
+	base := now
+	if inst.PaidUntil.AddDate(0, 0, hosting.GraceDays).After(now) {
+		base = inst.PaidUntil
+	}
+	if err := repo.ApplyPaymentOnTx(ctx, tx, inst, base.AddDate(0, 0, hosting.PeriodDays), 0); err != nil {
+		return err
+	}
+	if inst.Status == store.HostingExpired {
+		if _, err := repo.TransitionOnTx(ctx, tx, inst.ID, []store.HostingStatus{store.HostingExpired}, store.HostingActive, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// handlePortalHostingPassword reveals the initial dashboard password of an
+// instance the caller owns.
+func (s *Server) handlePortalHostingPassword(w http.ResponseWriter, r *http.Request) {
+	_, keyID, ok := s.portalKeyID(w, r)
+	if !ok {
+		return
+	}
+	h, err := s.db.Hosting().Get(r.Context(), chi.URLParam(r, "id"))
+	if err != nil || h.KeyID != keyID || h.Status == store.HostingDeleted ||
+		h.Status == store.HostingProvisioning || h.Password.Ciphertext == "" {
+		writeError(w, http.StatusNotFound, "instance not found")
+		return
+	}
+	if s.vault == nil {
+		writeError(w, http.StatusServiceUnavailable, "password unavailable")
+		return
+	}
+	pw, err := s.vault.Sealer().OpenString(h.Password)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"password": pw})
+}

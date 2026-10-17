@@ -80,6 +80,21 @@ func (s *Server) handleSumopodWebhook(w http.ResponseWriter, r *http.Request) {
 
 	switch ev.EventType {
 	case "payment.completed":
+		if order.Product == store.ProductHosting {
+			// Hosting grants a service, not a refundable balance: refuse an
+			// event whose order id or amount does not match what we created.
+			if (ev.Data.OrderID != "" && ev.Data.OrderID != order.ID) || (ev.Data.Amount != 0 && ev.Data.Amount != order.AmountIDR) {
+				s.log.Error("webhook: hosting event does not match order; left pending for review",
+					"order", order.ID, "event_order", ev.Data.OrderID, "amount", ev.Data.Amount, "want", order.AmountIDR)
+				break
+			}
+			if _, herr := s.markHostingOrderPaid(r.Context(), order, store.PaymentCompleted, "webhook", ""); herr != nil {
+				s.log.Error("webhook: hosting fulfilment failed", "order", order.ID, "err", herr)
+				writeError(w, http.StatusInternalServerError, "failed to apply hosting payment")
+				return
+			}
+			break
+		}
 		if _, _, _, cerr := s.creditPaymentOrder(r.Context(), order, store.PaymentCompleted, "webhook", ""); cerr != nil {
 			s.log.Error("webhook: credit failed", "order", order.ID, "err", cerr)
 			writeError(w, http.StatusInternalServerError, "failed to apply credit")

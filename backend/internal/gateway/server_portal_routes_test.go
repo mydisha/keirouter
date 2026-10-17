@@ -22,14 +22,14 @@ func TestPortalAPIRoutesDoNotShadowSPA(t *testing.T) {
 	s := &Server{cfg: config.Default(), frontendDir: dir}
 	router := s.routes()
 
-	for _, p := range []string{"/portal/key", "/portal/usage", "/portal/topup", "/portal/discounts"} {
+	for _, p := range []string{"/portal/key", "/portal/usage", "/portal/topup", "/portal/discounts", "/portal/hosting", "/ketentuan/hosting-9router"} {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
 		require.Equal(t, http.StatusOK, rec.Code, "SPA route %s must serve the app shell", p)
 		require.Contains(t, rec.Body.String(), "SPA", "SPA route %s must not return API JSON", p)
 	}
 
-	for _, p := range []string{"/portal/api/key", "/portal/api/usage", "/portal/api/topups", "/portal/api/discounts"} {
+	for _, p := range []string{"/portal/api/key", "/portal/api/usage", "/portal/api/topups", "/portal/api/discounts", "/portal/api/hosting"} {
 		rec := httptest.NewRecorder()
 		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
 		require.Equal(t, http.StatusUnauthorized, rec.Code, "portal API %s must require a session", p)

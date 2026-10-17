@@ -34,6 +34,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/guardrails"
 	"github.com/mydisha/keirouter/backend/internal/health"
 	"github.com/mydisha/keirouter/backend/internal/healthcheck"
+	"github.com/mydisha/keirouter/backend/internal/hosting"
 	"github.com/mydisha/keirouter/backend/internal/identity"
 	"github.com/mydisha/keirouter/backend/internal/inflight"
 	"github.com/mydisha/keirouter/backend/internal/market"
@@ -121,10 +122,14 @@ type Server struct {
 	probeRunner         *health.ProbeRunner
 	portalSSO           *portalauth.Service
 	paymentClient       *payment.Client
-	inflight            *inflight.Tracker // shared with the pipeline; nil-safe
-	fin                 *finance.Loader   // admin finance dashboard data
-	turnstile           turnstileVerifier
-	router              chi.Router
+	// dokployFactory overrides the Dokploy client in tests.
+	dokployFactory func(baseURL, apiKey string) dokployAPI
+	// monitorFactory overrides the Dokploy monitoring client in tests.
+	monitorFactory func(t hosting.MonitorTarget) monitorFetcher
+	inflight       *inflight.Tracker // shared with the pipeline; nil-safe
+	fin            *finance.Loader   // admin finance dashboard data
+	turnstile      turnstileVerifier
+	router         chi.Router
 	// skillsMu serializes custom-skill writes (load-modify-save on one
 	// settings key); skillsBlock caches the rendered prompt block injected
 	// into every chat request. Nil means not loaded yet.
@@ -433,6 +438,9 @@ func (s *Server) routes() chi.Router {
 		r.Post("/portal/api/topup/orders", s.handlePortalCreateOrder)
 		r.Get("/portal/api/topup/orders", s.handlePortalListOrders)
 		r.Get("/portal/api/topup/orders/{id}", s.handlePortalGetOrder)
+		r.Get("/portal/api/hosting", s.handlePortalHosting)
+		r.Post("/portal/api/hosting/orders", s.handlePortalCreateHostingOrder)
+		r.Get("/portal/api/hosting/instances/{id}/password", s.handlePortalHostingPassword)
 		r.Post("/portal/auth/logout", s.handlePortalLogout)
 	})
 

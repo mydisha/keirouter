@@ -34,8 +34,10 @@ export function PortalOrders() {
 
   const approve = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => api.approvePaymentOrder(id, reason),
-    onSuccess: () => {
-      toast.success("Pembayaran disetujui", "Credit sudah ditambahkan ke key user.");
+    onSuccess: (order) => {
+      const hosting = (order?.product ?? approving?.product) === "hosting";
+      toast.success("Pembayaran disetujui", hosting ? "Instance siap dibuat di halaman Hosting." : "Credit sudah ditambahkan ke key user.");
+      if (hosting) qc.invalidateQueries({ queryKey: ["hosting-instances"] });
       qc.invalidateQueries({ queryKey: ["payment-orders"] });
       qc.invalidateQueries({ queryKey: ["payment-summary"] });
       qc.invalidateQueries({ queryKey: ["finance"] });
@@ -94,12 +96,17 @@ export function PortalOrders() {
                 {paged.map((o) => (
                   <tr key={o.order_id} className="transition-colors hover:bg-hover">
                     <td className="px-4 py-2.5">
-                      <p className="text-fg">{o.user_email || o.google_sub || "-"}</p>
+                      <p className="flex flex-wrap items-center gap-1.5 text-fg">
+                        {o.user_email || o.google_sub || "-"}
+                        {o.product === "hosting" && <Badge tone="accent">Hosting</Badge>}
+                      </p>
                       <p className="font-mono text-[11px] text-fg-muted">{o.provider_payment_id}</p>
                     </td>
                     <td className="px-4 py-2.5 font-mono text-[12px] text-fg-muted">{o.key_display || o.key_id}</td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums">{idr(o.amount_idr)}</td>
-                    <td className="whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular-nums">{usd(o.credit_usd)}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular-nums">
+                      {o.product === "hosting" ? <span className="font-normal text-fg-muted">—</span> : usd(o.credit_usd)}
+                    </td>
                     <td className="px-4 py-2.5">
                       <Badge tone={STATUS_TONE[o.status] ?? "neutral"}>{STATUS_LABEL[o.status] ?? o.status}</Badge>
                     </td>
@@ -125,7 +132,10 @@ export function PortalOrders() {
         <Modal open onClose={close} title="Setujui pembayaran">
           <div className="space-y-3 px-5 py-4">
             <p className="text-[13px] text-fg-muted">
-              Tambah credit {usd(approving.credit_usd)} ke {approving.user_email || approving.key_id}. Tindakan ini tidak bisa dibatalkan otomatis.
+              {approving.product === "hosting"
+                ? `Tandai order hosting ${idr(approving.amount_idr)} dari ${approving.user_email || approving.key_id} sebagai lunas. Instance lalu bisa dibuat di halaman Hosting.`
+                : `Tambah credit ${usd(approving.credit_usd)} ke ${approving.user_email || approving.key_id}.`}{" "}
+              Tindakan ini tidak bisa dibatalkan otomatis.
             </p>
             <Textarea
               value={reason}
@@ -142,7 +152,7 @@ export function PortalOrders() {
             </Button>
             <Button onClick={() => approve.mutate({ id: approving.order_id, reason })} disabled={approve.isPending}>
               {approve.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <CreditCard aria-hidden="true" />}
-              Setujui dan tambah credit
+              {approving.product === "hosting" ? "Setujui pembayaran" : "Setujui dan tambah credit"}
             </Button>
           </ModalFooter>
         </Modal>

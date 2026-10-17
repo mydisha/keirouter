@@ -224,9 +224,19 @@ func (s *Server) handlePortalListOrders(w http.ResponseWriter, r *http.Request) 
 	}
 	out := make([]map[string]any, 0, len(orders))
 	for _, o := range orders {
+		if productOrCredit(o.Product) != store.ProductCredit {
+			continue // hosting orders show on the hosting page
+		}
 		out = append(out, s.orderView(o))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"orders": out})
+}
+
+func productOrCredit(p string) string {
+	if p == "" {
+		return store.ProductCredit
+	}
+	return p
 }
 
 // handlePortalGetOrder returns one order the caller owns.
@@ -257,5 +267,6 @@ func (s *Server) orderView(o store.PaymentOrder) map[string]any {
 		"credit_usd": float64(o.CreditMicros) / 1_000_000,
 		"fx_rate":    float64(o.FxRateMicros) / 1_000_000,
 		"created_at": o.CreatedAt, "paid_at": o.PaidAt,
+		"product": productOrCredit(o.Product),
 	}
 }

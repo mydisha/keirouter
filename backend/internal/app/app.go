@@ -753,6 +753,11 @@ func (a *App) Run(ctx context.Context) error {
 			defer a.bg.Done()
 			a.runFinanceAlerts(ctx)
 		}()
+		a.bg.Add(1)
+		go func() {
+			defer a.bg.Done()
+			a.runHostingExpiry(ctx)
+		}()
 	}
 
 	errCh := make(chan error, 1)

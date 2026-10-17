@@ -43,6 +43,7 @@ var sealedColumnPairs = []struct{ table, dek, ct string }{
 	{"accounts", "token_wrapped_dek", "token_ciphertext"},
 	{"accounts", "refresh_wrapped_dek", "refresh_ciphertext"},
 	{"portal_users", "sealed_wrapped_dek", "sealed_ciphertext"},
+	{"hosting_instances", "password_wrapped_dek", "password_ciphertext"},
 }
 
 // adminFullBackup serves POST /api/settings/backup {"passphrase": "..."} as a

@@ -14,7 +14,7 @@
         var dark = function (t) { return t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches); };
         // Public pages (PublicLayout) and the portal keep their own theme and
         // default to dark; the dashboard defaults to light.
-        var on = /^\/(bansos|model|ketentuan)?\/?$/.test(path)
+        var on = /^\/(bansos|model|ketentuan(\/hosting-9router)?)?\/?$/.test(path)
           ? localStorage.getItem("keirouter-public-theme") !== "light"
           : /^\/portal(\/|$)/.test(path)
             ? (function (t) { return t ? dark(t) : true; })(localStorage.getItem("keirouter-portal-theme"))

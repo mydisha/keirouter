@@ -394,7 +394,21 @@ type PaymentOrder struct {
 	UpdatedAt         time.Time
 	PaidAt            string
 	ExpiresAt         string
+	// Product is ProductCredit (a top-up) or ProductHosting (a 9router
+	// instance month). HostingInstanceID is set for hosting orders.
+	Product           string
+	HostingInstanceID string
+	// TermsVersion and TermsAcceptedAt record the hosting terms the user
+	// accepted at checkout. Empty for credit orders.
+	TermsVersion    string
+	TermsAcceptedAt string
 }
+
+// Payment order products.
+const (
+	ProductCredit  = "credit"
+	ProductHosting = "hosting"
+)
 
 // AuditEntry is one append-only audit record. Field names follow the
 // audit_log columns; the comments give the OpenTelemetry attribute each one

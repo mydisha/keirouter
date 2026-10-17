@@ -25,6 +25,9 @@ func (s *Server) adminListPaymentOrders(w http.ResponseWriter, r *http.Request) 
 		view["provider"] = o.Provider
 		view["provider_payment_id"] = o.ProviderPaymentID
 		view["actor"] = o.Actor
+		view["hosting_instance_id"] = o.HostingInstanceID
+		view["terms_version"] = o.TermsVersion
+		view["terms_accepted_at"] = o.TermsAcceptedAt
 		if key, kerr := s.identity.Get(r.Context(), o.KeyID); kerr == nil {
 			view["key_display"] = key.Display
 		}
@@ -114,6 +117,24 @@ func (s *Server) adminApprovePaymentOrder(w http.ResponseWriter, r *http.Request
 	}
 	if order.Status != store.PaymentPending {
 		writeError(w, http.StatusConflict, "order is already "+string(order.Status))
+		return
+	}
+	if order.Product == store.ProductHosting {
+		applied, herr := s.markHostingOrderPaid(r.Context(), order, store.PaymentManual, "dashboard", reason)
+		if herr != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, herr, "internal server error"))
+			return
+		}
+		if !applied {
+			writeError(w, http.StatusConflict, "order was already handled")
+			return
+		}
+		updated, gerr := s.db.PaymentOrders().Get(r.Context(), order.ID)
+		if gerr != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, gerr, "internal server error"))
+			return
+		}
+		writeJSON(w, http.StatusOK, s.orderView(updated))
 		return
 	}
 	updated, budget, applied, err := s.creditPaymentOrder(r.Context(), order, store.PaymentManual, "dashboard", reason)
