@@ -55,6 +55,15 @@ export const fmtRate = (n: number) => `$${n.toLocaleString("id-ID", { maximumFra
 export const fmtCount = (n: number) => (n > 0 ? fmtInt.format(n) : "0");
 export const fmtShort = (n: number) => (n > 0 ? fmtCompact.format(n) : "0");
 
+// Context windows read as "1M", "1,05M" or "128K". Exact binary sizes
+// (1048576, 131072) round to their familiar names.
+export const fmtContext = (tokens: number) => {
+  const fmt = (n: number, unit: string) => `${n.toLocaleString("id-ID", { maximumFractionDigits: 2 })}${unit}`;
+  if (tokens >= 1_000_000) return tokens % 1_048_576 === 0 ? fmt(tokens / 1_048_576, "M") : fmt(tokens / 1_000_000, "M");
+  if (tokens >= 1_000) return tokens % 1_024 === 0 ? fmt(tokens / 1_024, "K") : fmt(tokens / 1_000, "K");
+  return fmtInt.format(tokens);
+};
+
 export const MODEL_PAGE = 24;
 
 function CopyId({ id }: { id: string }) {
@@ -114,7 +123,15 @@ export function ModelCard({ model }: { model: PublicModel }) {
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-[15px] font-semibold tracking-[-0.2px] text-[var(--ink)]" title={model.name}>{model.name}</h3>
-          <p className="text-[12px] text-[var(--muted)]">{resolveProvider(model).label}</p>
+          <p className="truncate text-[12px] text-[var(--muted)]">
+            {resolveProvider(model).label}
+            {model.context_tokens ? (
+              <span title={`Konteks ${fmtInt.format(model.context_tokens)} token`}>
+                {" · "}
+                <span className="font-mono tabular-nums text-[var(--ink)]">{fmtContext(model.context_tokens)}</span> konteks
+              </span>
+            ) : null}
+          </p>
         </div>
         {model.sold_out ? (
           <span className="shrink-0 rounded-md border border-[var(--line)] bg-[var(--soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--muted)]">

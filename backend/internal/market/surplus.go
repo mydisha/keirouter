@@ -28,8 +28,6 @@ type surplusEnvelope struct {
 		BestCacheReadPer1M  *float64 `json:"best_cache_read_per_1m"`
 		BestCacheWritePer1M *float64 `json:"best_cache_write_per_1m"`
 		BestReasoningPer1M  *float64 `json:"best_reasoning_per_1m"`
-		DirectInputPer1M    *float64 `json:"direct_input_per_1m"`
-		DirectOutputPer1M   *float64 `json:"direct_output_per_1m"`
 	} `json:"markets"`
 }
 
@@ -64,10 +62,6 @@ func ParseSurplus(r io.Reader) ([]Model, error) {
 		}
 		if m.BestReasoningPer1M != nil {
 			model.Reasoning = positiveOrZero(*m.BestReasoningPer1M / surplusUnitScale)
-		}
-		if m.DirectInputPer1M != nil && m.DirectOutputPer1M != nil {
-			model.DirectIn = positiveOrZero(*m.DirectInputPer1M / surplusUnitScale)
-			model.DirectOut = positiveOrZero(*m.DirectOutputPer1M / surplusUnitScale)
 		}
 		out = append(out, model)
 	}

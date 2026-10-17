@@ -4,7 +4,6 @@ import (
 	"math"
 	"strings"
 
-	"github.com/mydisha/keirouter/backend/internal/connectors"
 	"github.com/mydisha/keirouter/backend/internal/market"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
@@ -14,12 +13,15 @@ import (
 type officialPrice struct {
 	InputPerM  float64
 	OutputPerM float64
-	// Source is manual | surplus | openrouter | catalog.
+	// Source is manual | models.dev.
 	Source string
+	// Provider is the models.dev vendor listing the price came from; empty
+	// for manual prices and for the most-common-price fallback.
+	Provider string
 }
 
 // chainOfficialPrice resolves a chain's official price: the operator's manual
-// value when both sides are set, otherwise the automatic reference.
+// value when both sides are set, otherwise models.dev.
 func (s *Server) chainOfficialPrice(c store.Chain) (officialPrice, bool) {
 	if c.OfficialInputPerM != nil && c.OfficialOutputPerM != nil {
 		ref := market.Reference{InputPerM: *c.OfficialInputPerM, OutputPerM: *c.OfficialOutputPerM}
@@ -30,41 +32,30 @@ func (s *Server) chainOfficialPrice(c store.Chain) (officialPrice, bool) {
 	return s.autoOfficialPrice(c)
 }
 
-// autoOfficialPrice looks the chain's model up in the automatic references, in
-// order: the Surplus feed's direct price, OpenRouter's list price, then the
-// built-in catalog. Candidate names come from the chain's market slugs and
-// step models.
+// autoOfficialPrice looks the chain's model up on models.dev.
 func (s *Server) autoOfficialPrice(c store.Chain) (officialPrice, bool) {
-	names := officialCandidateNames(c)
-	if s.marketCache != nil {
-		for _, name := range names {
-			if m, ok := s.marketCache.Lookup(market.SurplusPrefix + name); ok {
-				if ref := (market.Reference{InputPerM: m.DirectIn, OutputPerM: m.DirectOut}); ref.Valid() {
-					return officialPrice{InputPerM: ref.InputPerM, OutputPerM: ref.OutputPerM, Source: "surplus"}, true
-				}
-			}
-		}
-	}
-	for _, name := range names {
-		if ref, ok := s.references.Lookup(name); ok {
-			return officialPrice{InputPerM: ref.InputPerM, OutputPerM: ref.OutputPerM, Source: "openrouter"}, true
-		}
-	}
-	for _, st := range c.Steps {
-		price, ok := connectors.ModelPriceByProviderModel(st.Provider, st.Model)
-		if !ok || price.Estimated || (price.Source != "official" && price.Source != "catalog") {
-			continue
-		}
-		if ref := (market.Reference{InputPerM: price.InputPerM, OutputPerM: price.OutputPerM}); ref.Valid() {
-			return officialPrice{InputPerM: ref.InputPerM, OutputPerM: ref.OutputPerM, Source: "catalog"}, true
+	for _, name := range officialCandidateNames(c) {
+		if ref, ok := s.references.Lookup(name); ok && ref.Valid() {
+			return officialPrice{InputPerM: ref.InputPerM, OutputPerM: ref.OutputPerM, Source: "models.dev", Provider: ref.Provider}, true
 		}
 	}
 	return officialPrice{}, false
 }
 
+// chainContextTokens is the chain model's context window from models.dev;
+// 0 when unknown.
+func (s *Server) chainContextTokens(c store.Chain) int {
+	for _, name := range officialCandidateNames(c) {
+		if ref, ok := s.references.Lookup(name); ok && ref.ContextTokens > 0 {
+			return ref.ContextTokens
+		}
+	}
+	return 0
+}
+
 // officialCandidateNames lists the model names a chain may be known by, most
-// specific first: market slug names (prefix stripped), then step models,
-// then the bare names of vendor-prefixed ones.
+// specific first: market slug names (prefix stripped), then step models.
+// Lookups ignore vendor prefixes, so "ali/deepseek-v4.1-flash" works too.
 func officialCandidateNames(c store.Chain) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -92,13 +83,6 @@ func officialCandidateNames(c store.Chain) []string {
 	}
 	for _, st := range c.Steps {
 		add(st.Model)
-	}
-	// Vendor-prefixed names ("ali/deepseek-v4.1-flash") also try the bare
-	// model name, so they match the Surplus feed like an unprefixed chain.
-	for _, name := range out {
-		if i := strings.LastIndex(name, "/"); i >= 0 {
-			add(name[i+1:])
-		}
 	}
 	return out
 }

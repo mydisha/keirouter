@@ -428,7 +428,7 @@ export interface Chain {
   official_input_per_m?: number | null;
   official_output_per_m?: number | null;
   /** Automatically detected official price; null when none is found. */
-  official_auto?: { input_per_m: number; output_per_m: number; source: "surplus" | "openrouter" | "catalog" } | null;
+  official_auto?: { input_per_m: number; output_per_m: number; source: "models.dev"; provider: string } | null;
   steps: ChainStep[];
 }
 

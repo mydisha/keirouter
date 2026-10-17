@@ -84,9 +84,11 @@ type publicModelRow struct {
 	// no reference is known. DiscountPct is 0 when there is nothing to show.
 	Official    *officialPrice
 	DiscountPct int
-	Requests    int64
-	Tokens      int64
-	Users       int
+	// Context is the model's context window in tokens from models.dev (0 = unknown).
+	Context  int
+	Requests int64
+	Tokens   int64
+	Users    int
 }
 
 // chainSoldOut reports whether a market-bound chain has no live quote for any
@@ -189,6 +191,7 @@ func (s *Server) publicModelRows(ctx context.Context) ([]publicModelRow, error) 
 			SoldOut:      soldOut,
 			Official:     official,
 			DiscountPct:  discount,
+			Context:      s.chainContextTokens(c),
 			Requests:     u.TotalRequests,
 			Tokens:       u.PromptTokens + u.CompletionTokens,
 			Users:        u.DistinctKeys,
@@ -227,6 +230,10 @@ func (s *Server) publicModels(w http.ResponseWriter, r *http.Request) {
 		if m.DiscountPct > 0 {
 			discount = m.DiscountPct
 		}
+		var contextTokens any
+		if m.Context > 0 {
+			contextTokens = m.Context
+		}
 		out = append(out, map[string]any{
 			"name":              m.Name,
 			"model_id":          m.ModelID,
@@ -242,6 +249,7 @@ func (s *Server) publicModels(w http.ResponseWriter, r *http.Request) {
 			"official_input_per_m":  officialIn,
 			"official_output_per_m": officialOut,
 			"discount_pct":          discount,
+			"context_tokens":        contextTokens,
 			"capabilities":          caps,
 			"usage": map[string]any{
 				"users":    m.Users,

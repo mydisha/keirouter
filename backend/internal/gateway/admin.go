@@ -1995,7 +1995,7 @@ func (s *Server) adminListChains(w http.ResponseWriter, r *http.Request) {
 			"sold_out": s.chainSoldOut(c),
 		}
 		if ref, ok := s.autoOfficialPrice(c); ok {
-			entry["official_auto"] = map[string]any{"input_per_m": ref.InputPerM, "output_per_m": ref.OutputPerM, "source": ref.Source}
+			entry["official_auto"] = map[string]any{"input_per_m": ref.InputPerM, "output_per_m": ref.OutputPerM, "source": ref.Source, "provider": ref.Provider}
 		}
 		if c.FallbackProvider != "" && c.FallbackModel != "" {
 			entry["fallback_provider"] = c.FallbackProvider

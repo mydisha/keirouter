@@ -59,7 +59,6 @@ const ZERO_PRICE = { inputPerM: 0, outputPerM: 0, cacheWritePerM: 0, cacheReadPe
 const chainPriceOf = (chain?: Chain) => chain
   ? { inputPerM: chain.input_per_m ?? 0, outputPerM: chain.output_per_m ?? 0, cacheWritePerM: chain.cache_write_per_m ?? 0, cacheReadPerM: chain.cache_read_per_m ?? 0 }
   : ZERO_PRICE;
-const OFFICIAL_SOURCE_LABEL = { surplus: "Surplus", openrouter: "OpenRouter", catalog: "the built-in catalog" } as const;
 const invalidOfficialRate = (raw: string) => raw.trim() === "" || !Number.isFinite(Number(raw)) || Number(raw) <= 0 || Number(raw) > 100000;
 const hasAnyPrice = (p: typeof ZERO_PRICE) => p.inputPerM > 0 || p.outputPerM > 0 || p.cacheWritePerM > 0 || p.cacheReadPerM > 0;
 
@@ -559,10 +558,10 @@ export function ChainEditorPage() {
                   {officialManual
                     ? "The discount is measured against these prices instead of the detected ones."
                     : officialAuto
-                      ? <>Off: detected from {OFFICIAL_SOURCE_LABEL[officialAuto.source]}: <span className="font-mono text-fg">${officialAuto.input_per_m}</span> input, <span className="font-mono text-fg">${officialAuto.output_per_m}</span> output per 1M.</>
+                      ? <>Off: from models.dev ({officialAuto.provider ? `${officialAuto.provider}'s own listing` : "most common price across providers"}): <span className="font-mono text-fg">${officialAuto.input_per_m}</span> input, <span className="font-mono text-fg">${officialAuto.output_per_m}</span> output per 1M.</>
                       : isEdit
-                        ? "Off: no official price found for this model, so no discount is shown."
-                        : "Off: detected from Surplus, OpenRouter or the built-in catalog after saving."}
+                        ? "Off: this model is not on models.dev, so no discount is shown."
+                        : "Off: detected from models.dev after saving."}
                 </span>
                 {officialPreview > 0 && <span className="mt-1 block text-[12px] leading-5 text-fg-muted">Public page shows <span className="font-medium text-tone">-{officialPreview}%</span> at the current chain price.</span>}
               </span>

@@ -172,7 +172,7 @@ type Deps struct {
 	ReloadPricing        func(context.Context) error
 	SyncMarketPrices     func(context.Context) (int, error)
 	MarketCache          *market.SnapshotCache
-	References           *market.ReferenceCache // official list prices for public discounts
+	References           *market.ReferenceCache // models.dev official prices and context windows
 	Guardrails           *guardrails.Engine
 	GuardrailRepo        *store.GuardrailRepo
 	GuardrailLogs        *store.GuardrailLogRepo

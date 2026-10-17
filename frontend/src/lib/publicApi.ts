@@ -39,6 +39,8 @@ export interface PublicModel {
   official_output_per_m?: number | null;
   /** Whole-percent discount from the official price; null when none. */
   discount_pct?: number | null;
+  /** Context window in tokens (models.dev); null when unknown. */
+  context_tokens?: number | null;
   capabilities: PublicCapabilities;
   usage: PublicUsage;
 }
