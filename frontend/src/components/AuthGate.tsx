@@ -111,7 +111,6 @@ function LoginScreen() {
   const uid = useId();
   const inputId = `${uid}-password`;
   const errorId = `${uid}-error`;
-  const hintId = `${uid}-hint`;
   const siteKey = useTurnstileSiteKey();
   const [turnstileToken, setTurnstileToken] = useState("");
   const [resetSignal, setResetSignal] = useState(0);
@@ -158,7 +157,7 @@ function LoginScreen() {
               autoComplete="current-password"
               aria-required="true"
               aria-invalid={error ? true : undefined}
-              aria-describedby={error ? `${errorId} ${hintId}` : hintId}
+              aria-describedby={error ? errorId : undefined}
               autoFocus
             />
             {error && (
@@ -185,9 +184,6 @@ function LoginScreen() {
           </span>
         </form>
       </div>
-      <p id={hintId} className="rounded-b-2xl border-t border-line bg-subtle px-6 py-3 text-center text-[12px] text-fg-muted">
-        First run? The default password is <code className="font-mono text-fg">keirouter</code>.
-      </p>
     </AuthShell>
   );
 }
