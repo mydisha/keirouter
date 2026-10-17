@@ -40,6 +40,13 @@ const SECTIONS: Section[] = [
           ketersediaan dan biaya dari penyedia. Batas pemakaian juga dapat berubah, dan model bisa berstatus habis jika
           tidak ada penyedia yang dapat melayaninya.
         </p>
+        <p>
+          Token yang sudah diproses penyedia tetap ditagih walaupun koneksi Anda terputus sebelum respons diterima, baik
+          karena dibatalkan, kena timeout di sisi klien, maupun gangguan jaringan. Untuk permintaan non-streaming, model
+          tetap menyelesaikan jawabannya dan seluruh tokennya ditagih. Untuk permintaan streaming, yang ditagih adalah token
+          yang sudah dihasilkan sampai koneksi terputus. Untuk prompt besar atau jawaban panjang, kami sarankan memakai
+          mode streaming (<code className="font-mono text-[13px]">stream: true</code>) agar koneksi tidak terputus karena timeout.
+        </p>
       </>
     ),
   },

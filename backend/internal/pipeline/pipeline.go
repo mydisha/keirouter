@@ -346,13 +346,25 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 	if reqTimeout > 0 {
 		requestDeadline = time.Now().Add(reqTimeout)
 	}
+	// Upstream calls run detached from the client connection. A unary
+	// upstream bills the whole generation even when we drop the connection
+	// mid-flight, so letting it finish lets us bill the client for what it
+	// cost instead of eating it. The request deadline (or a hard cap when no
+	// timeout is configured) still bounds the detached call.
+	upstreamCtx := context.WithoutCancel(ctx)
 	withRequestDeadline := func(c context.Context) (context.Context, context.CancelFunc) {
 		if requestDeadline.IsZero() {
-			return c, func() {}
+			return context.WithTimeout(c, detachedUnaryCap)
 		}
 		return context.WithDeadline(c, requestDeadline)
 	}
 	for i := 0; ; i++ {
+		// A client that already left gets no new attempts: nothing would
+		// receive the answer, and each attempt costs upstream money.
+		if ctx.Err() != nil {
+			lastErr = clientGoneError(lastAttempt)
+			break
+		}
 		if !hasAttempt {
 			// Every candidate was tried. When all of them were throttled with
 			// a short reset window, wait once and re-plan instead of handing
@@ -411,14 +423,14 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 		attemptDone := p.inflight.Inc(attempt.Target.Provider)
 		// Inject proxy config from credentials into context so the connector's
 		// HTTP client uses the right proxy/relay for this account.
-		callCtx, cancelTimeout := withRequestDeadline(core.WithProxy(ctx, attempt.Creds))
+		callCtx, cancelTimeout := withRequestDeadline(core.WithProxy(upstreamCtx, attempt.Creds))
 		resp, callErr := attempt.Conn.Chat(callCtx, attemptReq, attempt.Creds)
 		cancelTimeout() // cancel immediately to avoid timer goroutine leak
-		if callErr != nil && isUnsupportedCloudflareImageError(callErr, attempt.Target.Provider, attempt.Target.Model, attemptReq) {
+		if callErr != nil && ctx.Err() == nil && isUnsupportedCloudflareImageError(callErr, attempt.Target.Provider, attempt.Target.Model, attemptReq) {
 			p.log.Debug("retrying Cloudflare request without images", "model", attempt.Target.Model)
 			retryReq := cloneForTarget(attemptBaseReq, attempt.Target)
 			capability.StripImages(retryReq)
-			retryCtx, retryCancel := withRequestDeadline(core.WithProxy(ctx, attempt.Creds))
+			retryCtx, retryCancel := withRequestDeadline(core.WithProxy(upstreamCtx, attempt.Creds))
 			resp, callErr = attempt.Conn.Chat(retryCtx, retryReq, attempt.Creds)
 			retryCancel()
 		}
@@ -431,10 +443,10 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 		// stream into a single ChatResponse. This handles all connectors
 		// uniformly (OpenAI-compatible, Qwen, IFlow, etc.) without requiring
 		// per-connector fixes.
-		if callErr != nil && isStreamRequiredError(callErr) {
+		if callErr != nil && ctx.Err() == nil && isStreamRequiredError(callErr) {
 			p.log.Debug("provider requires streaming, retrying via Stream()",
 				"provider", attempt.Target.Provider, "model", attempt.Target.Model)
-			streamCtx, streamCancel := withRequestDeadline(core.WithProxy(ctx, attempt.Creds))
+			streamCtx, streamCancel := withRequestDeadline(core.WithProxy(upstreamCtx, attempt.Creds))
 			streamReq := cloneForTarget(attemptBaseReq, attempt.Target)
 			stream, sErr := attempt.Conn.Stream(streamCtx, streamReq, attempt.Creds, core.StreamConfig{})
 			if sErr == nil {
@@ -519,7 +531,22 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 		}
 
 		// Reset backoff and clear model cooldown on success.
-		p.dispatcher.NoteSuccessAt(ctx, attempt.Target.Provider, attempt.Account.ID, attempt.Target.Model, started)
+		p.dispatcher.NoteSuccessAt(upstreamCtx, attempt.Target.Provider, attempt.Account.ID, attempt.Target.Model, started)
+
+		// The client hung up while the upstream was generating. The upstream
+		// already charged us for the completed generation, so bill it the
+		// same way and report the disconnect instead of a delivered answer.
+		if ctx.Err() != nil {
+			pe := clientGoneError(attempt)
+			pe.Message = "client disconnected before the response was delivered; the completed upstream usage was billed"
+			cost := p.recordOutcomeWithTTFT(upstreamCtx, req.Metadata, attempt, resp.Usage,
+				"cancelled", string(pe.Kind), false, latency, time.Since(requestStarted), 0, save)
+			p.recordSuccessTelemetry(req.Metadata, attempt, resp.Usage, latency, 0, fellBack, cost)
+			p.cacheStore(upstreamCtx, vec, resp)
+			p.budgetConfirm(scope, cost)
+			limitTokens = usageTokens(resp.Usage)
+			return nil, pe
+		}
 
 		// Guardrails outbound: PII scan / response masking. Runs after the
 		// upstream succeeds but before we record usage so a Block decision
@@ -540,9 +567,9 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 			return nil, blockErr
 		}
 
-		cost := p.recordWithEndToEnd(ctx, req.Metadata, attempt, resp.Usage, false,
+		cost := p.recordWithEndToEnd(upstreamCtx, req.Metadata, attempt, resp.Usage, false,
 			latency, time.Since(requestStarted), save, fellBack)
-		p.cacheStore(ctx, vec, resp)
+		p.cacheStore(upstreamCtx, vec, resp)
 		// Confirm budget reservation — usage is now recorded in DB.
 		p.budgetConfirm(scope, cost)
 		limitTokens = usageTokens(resp.Usage)
@@ -571,6 +598,23 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 	p.budgetConfirm(scope, cost)
 	limitTokens = failedUsageTokens(priorAttemptUsage)
 	return nil, pe
+}
+
+// detachedUnaryCap bounds a detached unary upstream call when no request
+// timeout is configured, so a client disconnect never leaves it running
+// forever.
+const detachedUnaryCap = 30 * time.Minute
+
+// clientGoneError reports that the client disconnected from a unary request.
+func clientGoneError(last dispatch.Attempt) *core.ProviderError {
+	return &core.ProviderError{
+		Kind:     core.ErrClientCanceled,
+		Scope:    core.FailureScopeRequest,
+		Provider: last.Target.Provider,
+		Model:    last.Target.Model,
+		Message:  "client canceled request",
+		Cause:    context.Canceled,
+	}
 }
 
 // requestTimeoutError reports that the non-streaming request timeout ran out
