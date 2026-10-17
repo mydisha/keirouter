@@ -27,6 +27,10 @@ type Model struct {
 	// them (Surplus). Zero means "not published": callers derive from input.
 	CacheRead  float64 `json:"-"`
 	CacheWrite float64 `json:"-"`
+	// Reasoning is the published reasoning-output rate when a source prices
+	// reasoning tokens separately (Surplus). Zero means "not published":
+	// reasoning tokens bill at the output rate.
+	Reasoning float64 `json:"-"`
 	// FailoverIn/FailoverOut are the next-best available ask for a source whose
 	// cheapest offer may go dark (Surplus). Zero means "not known": the safety
 	// margin then cannot floor against them.

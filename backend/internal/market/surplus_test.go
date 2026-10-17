@@ -110,3 +110,28 @@ func TestParseSurplusBookNoAvailableOffers(t *testing.T) {
 		t.Fatal("expected found=false when no offer is available")
 	}
 }
+
+func TestParseSurplusReasoningRate(t *testing.T) {
+	const fixture = `{"markets":[
+  {"model":"priced","best_input_per_1m":100,"best_output_per_1m":200,"best_reasoning_per_1m":500},
+  {"model":"unpriced","best_input_per_1m":100,"best_output_per_1m":200,"best_reasoning_per_1m":null}
+]}`
+	models, err := ParseSurplus(strings.NewReader(fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(models) != 2 {
+		t.Fatalf("got %d, want 2", len(models))
+	}
+	if models[0].Reasoning != 0.0005 {
+		t.Fatalf("reasoning = %v, want 0.0005", models[0].Reasoning)
+	}
+	if models[1].Reasoning != 0 {
+		t.Fatalf("null reasoning = %v, want 0", models[1].Reasoning)
+	}
+	c := NewSnapshotCache()
+	c.Replace(models)
+	if r, _ := c.Rate("surplus:priced"); r.ReasoningPerM != 0.0005 {
+		t.Fatalf("cache reasoning = %v, want 0.0005", r.ReasoningPerM)
+	}
+}

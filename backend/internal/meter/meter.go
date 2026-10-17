@@ -150,12 +150,16 @@ type Event struct {
 	// derives them from MarketRateIn using the default market multipliers.
 	MarketCacheReadRate  float64
 	MarketCacheWriteRate float64
+	// MarketReasoningRate is the slug's billable reasoning-output rate. Zero
+	// means reasoning tokens bill at MarketRateOut.
+	MarketReasoningRate float64
 	// UpstreamRateIn/Out are the pre-markup market rates for the slug: the
 	// operator's cost. Used for profit accounting only, never charged to users.
 	UpstreamRateIn         float64
 	UpstreamRateOut        float64
 	UpstreamCacheReadRate  float64
 	UpstreamCacheWriteRate float64
+	UpstreamReasoningRate  float64
 	// CheapestRateIn is the chain's cheapest aggregate input rate (pre-fallback).
 	// When the winning market slug costs more than this, the request is a
 	// fallback and this value is retained for the audit trail.

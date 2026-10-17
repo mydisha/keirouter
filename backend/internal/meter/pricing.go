@@ -406,7 +406,7 @@ func marketPrice(ev Event) (Price, bool) {
 	return Price{
 		InputPerM: ev.MarketRateIn, OutputPerM: ev.MarketRateOut,
 		CachedInputPerM: cacheRead, CacheWritePerM: cacheWrite,
-		ReasoningPerM: ev.MarketRateOut, Source: "market_slug",
+		ReasoningPerM: rateOr(ev.MarketReasoningRate, ev.MarketRateOut), Source: "market_slug",
 	}, true
 }
 
@@ -420,8 +420,16 @@ func providerPrice(ev Event) (Price, bool) {
 	return Price{
 		InputPerM: ev.UpstreamRateIn, OutputPerM: ev.UpstreamRateOut,
 		CachedInputPerM: ev.UpstreamCacheReadRate, CacheWritePerM: ev.UpstreamCacheWriteRate,
-		ReasoningPerM: ev.UpstreamRateOut, Source: "market_slug",
+		ReasoningPerM: rateOr(ev.UpstreamReasoningRate, ev.UpstreamRateOut), Source: "market_slug",
 	}, true
+}
+
+// rateOr returns rate when it is set, else fallback.
+func rateOr(rate, fallback float64) float64 {
+	if rate > 0 {
+		return rate
+	}
+	return fallback
 }
 
 // upstreamCostForEvent computes the operator's pre-markup cost for a request.

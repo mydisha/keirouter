@@ -124,6 +124,36 @@ func TestUpstreamCostUsesPreMarkupRate(t *testing.T) {
 	}
 }
 
+func TestMarketReasoningRateBillsReasoningTokens(t *testing.T) {
+	m := New(nil, nil, map[string]Price{})
+	ev := Event{
+		Provider: "custom-openai-surplus", Model: "deepseek-v4.1-flash",
+		MarketSlug:   "surplus:deepseek-v4.1-flash",
+		MarketRateIn: 0.10, MarketRateOut: 0.40, MarketReasoningRate: 1.00,
+		UpstreamRateIn: 0.05, UpstreamRateOut: 0.20, UpstreamReasoningRate: 0.50,
+		Usage: core.Usage{PromptTokens: 1_000_000, CompletionTokens: 2_000_000, ReasoningTokens: 1_000_000},
+	}
+	bd := m.costForEvent(ev)
+	if bd.ReasoningRatePerM != 1.00 || bd.OutputRatePerM != 0.40 {
+		t.Fatalf("rates = (out %v, reasoning %v), want (0.40, 1.00)", bd.OutputRatePerM, bd.ReasoningRatePerM)
+	}
+	// 0.10 input + 0.40 regular output + 1.00 reasoning = 1.50 USD
+	if bd.CostNanos != 1_500_000_000 {
+		t.Fatalf("CostNanos = %d, want 1500000000", bd.CostNanos)
+	}
+	// 0.05 + 0.20 + 0.50 = 0.75 USD
+	if up := upstreamCostForEvent(ev); up.CostNanos != 750_000_000 {
+		t.Fatalf("upstream CostNanos = %d, want 750000000", up.CostNanos)
+	}
+
+	// Unpublished reasoning rate falls back to the output rate.
+	ev.MarketReasoningRate, ev.UpstreamReasoningRate = 0, 0
+	bd = m.costForEvent(ev)
+	if bd.ReasoningRatePerM != 0.40 || bd.CostNanos != 900_000_000 {
+		t.Fatalf("fallback = (reasoning %v, cost %d), want (0.40, 900000000)", bd.ReasoningRatePerM, bd.CostNanos)
+	}
+}
+
 func TestUpstreamCostZeroWithoutSlug(t *testing.T) {
 	ev := Event{
 		Provider: "openai", Model: "gpt-4o",

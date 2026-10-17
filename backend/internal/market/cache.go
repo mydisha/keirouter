@@ -41,7 +41,11 @@ func (c *SnapshotCache) Rate(slug string) (Rate, bool) {
 	if !validRate(m.MinAskIn) || !validRate(m.MinAskOut) {
 		return Rate{}, false
 	}
-	return Rate{InputPerM: m.MinAskIn, OutputPerM: m.MinAskOut}, true
+	reasoning := m.Reasoning
+	if !validRate(reasoning) {
+		reasoning = 0
+	}
+	return Rate{InputPerM: m.MinAskIn, OutputPerM: m.MinAskOut, ReasoningPerM: reasoning}, true
 }
 
 // Age reports time since the last successful Replace. A never-populated cache

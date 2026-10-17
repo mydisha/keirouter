@@ -108,6 +108,9 @@ type Target struct {
 	// for MarketSlug. Zero when unbound; the meter derives them if absent.
 	MarketCacheReadRate  float64
 	MarketCacheWriteRate float64
+	// MarketReasoningRate is the billable reasoning-output rate for MarketSlug
+	// when the source prices reasoning separately. Zero means the output rate.
+	MarketReasoningRate float64
 	// UpstreamRateIn/Out are the pre-markup market rates for MarketSlug: what the
 	// operator pays the upstream provider. Used only for operator cost accounting
 	// (profit = billable - upstream); never charged to the user.
@@ -115,6 +118,7 @@ type Target struct {
 	UpstreamRateOut        float64
 	UpstreamCacheReadRate  float64
 	UpstreamCacheWriteRate float64
+	UpstreamReasoningRate  float64
 
 	// BillUpstreamCost marks a surplus-trusted step: the user is charged the
 	// upstream's reported cost (usage.buyer_cost_micro) × UpstreamCostMult,

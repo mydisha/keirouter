@@ -355,6 +355,8 @@ func stampMarketRate(t *dispatch.Target, r market.Rate, mult float64) {
 	t.UpstreamRateOut = r.OutputPerM
 	t.UpstreamCacheReadRate = r.InputPerM * market.CacheReadMult
 	t.UpstreamCacheWriteRate = r.InputPerM * market.CacheWriteMult
+	t.MarketReasoningRate = r.ReasoningPerM * mult
+	t.UpstreamReasoningRate = r.ReasoningPerM
 }
 
 // stampSurplusTrusted marks every surplus-trusted step for upstream-cost

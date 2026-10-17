@@ -7,6 +7,8 @@ type Rate struct {
 	OutputPerM      float64
 	CachedInputPerM float64
 	CacheWritePerM  float64
+	// ReasoningPerM is the reasoning-output rate; zero means the output rate.
+	ReasoningPerM float64
 }
 
 // ComputeChainRate derives a chain's rates from the single cheapest of its bound
