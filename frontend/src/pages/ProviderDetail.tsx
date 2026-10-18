@@ -44,6 +44,7 @@ import { ProviderLogo } from "../components/ProviderLogo";
 import { useToast } from "../components/Toast";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { ConnectProviderDialog, connectOptions, type ConnectMode } from "../components/connect";
+import { ConnectDialog, FormError, PrimaryAction, SecondaryAction, TextField } from "../components/connect/ConnectKit";
 import { Badge, Button, IconTile, Kpi, KpiGrid, SectionTitle, Skeleton, TablePagination, Toggle, useClientPagination, EmptyState } from "../components/ui";
 import { ICONS } from "../lib/icons";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
@@ -107,6 +108,7 @@ export function ProviderDetailPage() {
       return p;
     }, { replace: true });
   const [connect, setConnect] = useState<ConnectMode | null>(null);
+  const [editing, setEditing] = useState(false);
 
   const providers = useQuery({ queryKey: ["providers"], queryFn: () => api.providers() });
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api.listAccounts() });
@@ -259,6 +261,10 @@ export function ProviderDetailPage() {
                 {provider.custom && (
                   <>
                     {(opts.alsoApiKey || opts.bulk) && <DropdownMenuSeparator />}
+                    <DropdownMenuItem onSelect={() => setEditing(true)}>
+                      <Pencil />
+                      Edit provider
+                    </DropdownMenuItem>
                     <DropdownMenuItem tone="danger" onSelect={removeProvider}>
                       <Trash2 />
                       Delete custom provider
@@ -318,7 +324,135 @@ export function ProviderDetailPage() {
       </div>
 
       {connect && <ConnectProviderDialog provider={provider} oauth={oauth} mode={connect} onClose={() => setConnect(null)} />}
+      {editing && <EditCustomProviderModal provider={provider} accountCount={myAccounts.length} onClose={() => setEditing(false)} />}
     </>
+  );
+}
+
+// EditCustomProviderModal edits a custom provider's name, route prefix and
+// base URL. Only changed fields are sent, so an untouched prefix is never
+// re-derived from a new name.
+function EditCustomProviderModal({ provider, accountCount, onClose }: { provider: Provider; accountCount: number; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const formId = useId();
+  const [name, setName] = useState(provider.display_name);
+  const [baseURL, setBaseURL] = useState(provider.base_url ?? "");
+  const [alias, setAlias] = useState(provider.alias ?? "");
+  const [error, setError] = useState("");
+  const [showErrors, setShowErrors] = useState(false);
+
+  const patch: { display_name?: string; alias?: string; base_url?: string } = {};
+  if (name.trim() !== provider.display_name) patch.display_name = name.trim();
+  if (alias.trim() !== (provider.alias ?? "")) patch.alias = alias.trim();
+  if (baseURL.trim() !== (provider.base_url ?? "")) patch.base_url = baseURL.trim();
+  const urlChanged = patch.base_url !== undefined;
+  const dirty = Object.keys(patch).length > 0;
+
+  const save = useMutation({
+    mutationFn: () => api.updateCustomProvider(provider.id, patch),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["providers"] });
+      qc.invalidateQueries({ queryKey: ["provider-models", provider.id] });
+      toast.success("Provider updated", urlChanged ? "New requests use the new base URL." : undefined);
+      onClose();
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const nameMissing = name.trim().length === 0;
+  const urlMissing = baseURL.trim().length === 0;
+  const canSubmit = dirty && !nameMissing && !urlMissing && !save.isPending;
+
+  return (
+    <ConnectDialog
+      title={`Edit ${provider.display_name}`}
+      description={provider.dialect === "anthropic" ? "Anthropic-compatible endpoint" : "OpenAI-compatible endpoint"}
+      onClose={onClose}
+      footer={
+        <>
+          <SecondaryAction onClick={onClose}>Cancel</SecondaryAction>
+          <PrimaryAction type="submit" form={formId} busy={save.isPending} disabled={!dirty}>
+            {!save.isPending && <Check aria-hidden="true" />}
+            {save.isPending ? "Saving…" : "Save changes"}
+          </PrimaryAction>
+        </>
+      }
+    >
+      <form
+        id={formId}
+        className="space-y-3.5"
+        noValidate
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canSubmit) {
+            save.mutate();
+            return;
+          }
+          if (save.isPending || !dirty) return;
+          const formEl = e.currentTarget;
+          setShowErrors(true);
+          window.requestAnimationFrame(() => formEl.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus());
+        }}
+      >
+        <TextField
+          label="Name"
+          required
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            setError("");
+          }}
+          error={showErrors && nameMissing ? "Enter a name." : undefined}
+        />
+        <TextField
+          label="Base URL"
+          required
+          value={baseURL}
+          onChange={(e) => {
+            setBaseURL(e.target.value);
+            setError("");
+          }}
+          placeholder="https://llm.example.com/v1"
+          className="font-mono"
+          error={showErrors && urlMissing ? "Enter the endpoint's base URL." : undefined}
+        />
+        {urlChanged && !urlMissing && (
+          <div role="note" className="flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3 py-2.5 text-[12.5px] leading-5 text-fg">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
+            <span>
+              {accountCount > 0
+                ? `The API key${accountCount === 1 ? "" : "s"} of ${accountCount} account${accountCount === 1 ? "" : "s"} will be sent to this URL. `
+                : ""}
+              Requests already running finish on the old URL. Test an account after saving.
+            </span>
+          </div>
+        )}
+        <TextField
+          label="Route prefix"
+          optional
+          value={alias}
+          onChange={(e) => {
+            const slug = e.target.value
+              .toLowerCase()
+              .replace(/\s+/g, "-")
+              .replace(/[^a-z0-9-]/g, "")
+              .replace(/-+/g, "-");
+            setAlias(slug);
+            setError("");
+          }}
+          pattern="[A-Za-z0-9-]*"
+          maxLength={32}
+          className="font-mono"
+          hint={
+            <>
+              Models route as <code className="font-mono text-fg">{alias || "<prefix>"}/&lt;model&gt;</code>. Empty uses the name. Changing it breaks clients and chains that use the old prefix.
+            </>
+          }
+        />
+        <FormError message={error} />
+      </form>
+    </ConnectDialog>
   );
 }
 
