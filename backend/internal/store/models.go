@@ -402,6 +402,13 @@ type PaymentOrder struct {
 	// accepted at checkout. Empty for credit orders.
 	TermsVersion    string
 	TermsAcceptedAt string
+	// Coupon fields are set when a hosting order used a coupon: the coupon,
+	// the price before the discount and the extra days it grants. They are
+	// frozen at checkout so later coupon edits do not change a paid order.
+	CouponID      string
+	CouponCode    string
+	BaseAmountIDR int64
+	BonusDays     int
 }
 
 // Payment order products.

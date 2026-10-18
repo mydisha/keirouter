@@ -4,6 +4,8 @@ export const QK_HOSTING = {
   settings: ["hosting-settings"] as const,
   instances: ["hosting-instances"] as const,
   finance: ["hosting-finance"] as const,
+  coupons: ["hosting-coupons"] as const,
+  nodes: ["hosting-nodes"] as const,
   monitorSettings: ["hosting-monitor-settings"] as const,
   monitorServers: ["hosting-monitor-servers"] as const,
   monitorContainers: ["hosting-monitor-containers"] as const,
@@ -30,6 +32,42 @@ export const STATUS_TONE: Record<HostingStatus, "success" | "warning" | "danger"
   stopped: "neutral",
   deleted: "neutral",
 };
+
+/** "12/20", or "3/∞" for a node without a capacity limit. */
+export function nodeUsage(n: { used: number; capacity: number }): string {
+  return `${n.used}/${n.capacity > 0 ? n.capacity : "∞"}`;
+}
+
+/** Why a node takes no new instances, or "" when it does. */
+export function nodeBlockedLabel(n: { enabled: boolean; available: boolean }): string {
+  if (!n.enabled) return "nonaktif";
+  return n.available ? "" : "penuh";
+}
+
+/** Node name by id, falling back to the id itself. */
+export function nodeName(nodes: readonly { id: string; name: string }[] | undefined, id: string): string {
+  if (!id) return "";
+  return nodes?.find((n) => n.id === id)?.name || id;
+}
+
+/** A fresh node id matching the server's ^[a-z0-9][a-z0-9-]{0,39}$. */
+export function newNodeId(): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  return "n-" + Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("");
+}
+
+/** "*.n1.Example.com." → "n1.example.com", the form the server stores. */
+export function normalizeDomain(d: string): string {
+  return d.trim().toLowerCase().replace(/^\*\./, "").replace(/^\.+|\.+$/g, "");
+}
+
+/** Mirrors the server's validDomain. */
+export function validDomain(d: string): boolean {
+  if (d.length > 253 || !d.includes(".")) return false;
+  return d.split(".").every((l) => l.length > 0 && l.length <= 63 && /^[a-z0-9-]+$/.test(l) && !l.startsWith("-") && !l.endsWith("-"));
+}
 
 /** "2026-10" → "Okt 2026". */
 export function monthLabel(month: string): string {

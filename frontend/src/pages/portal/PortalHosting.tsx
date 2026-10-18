@@ -1,13 +1,15 @@
 import { useEffect, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, Copy, CreditCard, ExternalLink, Eye, EyeOff, KeyRound, Loader2, RefreshCw, Server, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, Copy, CreditCard, ExternalLink, Eye, EyeOff, Loader2, MessageCircle, RefreshCw, Server, Ticket, X, XCircle } from "lucide-react";
 import {
+  checkPortalHostingCoupon,
   createPortalHostingOrder,
   fetchPortalHosting,
   fetchPortalHostingPassword,
   fetchPortalStatus,
   PortalAPIError,
+  type HostingCouponCheck,
   type PortalHostingInstance,
 } from "../../lib/api";
 import { Badge, Button, EmptyState, ErrorCard, Spinner } from "../../components/ui";
@@ -30,8 +32,13 @@ function formatDateLong(value: string): string {
 
 type Tone = "success" | "warning" | "danger" | "neutral" | "accent";
 
-// Customers do not need the admin-side steps: paid, provisioning and a failed
-// attempt all mean "we are setting it up".
+// waitingActivation: paid, but the admin has not finished creating it yet.
+// Customers do not need the admin-side steps (paid, provisioning, a failed
+// attempt); they all mean "waiting for activation".
+function waitingActivation(s: PortalHostingInstance["status"]): boolean {
+  return s === "paid" || s === "provisioning" || s === "failed";
+}
+
 function statusView(s: PortalHostingInstance["status"]): { label: string; tone: Tone } {
   switch (s) {
     case "awaiting_payment":
@@ -39,7 +46,7 @@ function statusView(s: PortalHostingInstance["status"]): { label: string; tone: 
     case "paid":
     case "provisioning":
     case "failed":
-      return { label: "Sedang disiapkan", tone: "accent" };
+      return { label: "Menunggu aktivasi", tone: "accent" };
     case "active":
       return { label: "Aktif", tone: "success" };
     case "expired":
@@ -86,6 +93,31 @@ export function PortalHostingPage() {
   const siteKey = useTurnstileSiteKey();
   const [turnstileToken, setTurnstileToken] = useState("");
   const [resetSignal, setResetSignal] = useState(0);
+  const [couponInput, setCouponInput] = useState("");
+  const [coupon, setCoupon] = useState<Extract<HostingCouponCheck, { valid: true }> | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+
+  const checkCoupon = useMutation({
+    mutationFn: (code: string) => checkPortalHostingCoupon(code),
+    onSuccess: (res) => {
+      if (res.valid) {
+        setCoupon(res);
+        setCouponError(null);
+      } else {
+        setCoupon(null);
+        setCouponError(res.message);
+      }
+    },
+    onError: (e: Error) => {
+      setCoupon(null);
+      setCouponError(e instanceof PortalAPIError && e.status === 429 ? "Terlalu banyak percobaan. Tunggu 1 menit." : "Gagal mengecek kupon. Coba lagi.");
+    },
+  });
+  const clearCoupon = () => {
+    setCoupon(null);
+    setCouponError(null);
+    setCouponInput("");
+  };
 
   // Back from the gateway: refresh so the paid instance shows its new state.
   useEffect(() => {
@@ -102,6 +134,7 @@ export function PortalHostingPage() {
         terms_version: hosting.data?.terms_version ?? "",
         idempotency_key: crypto.randomUUID(),
         turnstile_token: turnstileToken || undefined,
+        coupon_code: coupon?.coupon_code,
       }),
     onSuccess: (o) => {
       const link = safeHttpUrl(o.payment_link_url);
@@ -124,6 +157,11 @@ export function PortalHostingPage() {
       if (code === "terms_required") {
         setAccepted(false);
         setTermsNotice("Centang persetujuan Ketentuan Layanan Hosting 9router sebelum memesan.");
+        return;
+      }
+      if (code?.startsWith("coupon_")) {
+        setCoupon(null);
+        setCouponError(e.message);
         return;
       }
       if (e instanceof PortalAPIError && e.status === 503) {
@@ -166,6 +204,8 @@ export function PortalHostingPage() {
   const canOrder = cfg.enabled && cfg.price_idr > 0;
   const ready = canOrder && accepted && !order.isPending && (!siteKey || !!turnstileToken);
   const pendingFor = order.isPending ? (order.variables ?? "") : null;
+  const supportUrl = safeHttpUrl(cfg.support_url);
+  const finalPrice = coupon ? coupon.final_idr : cfg.price_idr;
 
   const blockedReason = !canOrder
     ? "Pemesanan hosting sedang ditutup."
@@ -184,11 +224,14 @@ export function PortalHostingPage() {
       />
 
       {returnStatus === "success" && (
-        <div role="status" className="flex items-start gap-3 rounded-2xl border border-ok/30 bg-ok/10 px-4 py-3">
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" strokeWidth={1.75} aria-hidden="true" />
-          <p className="text-[13px] text-fg">
-            Pembayaran diterima. Instance Anda akan disiapkan admin paling lambat 1x24 jam pada hari kerja.
-          </p>
+        <div role="status" className="flex flex-col gap-3 rounded-2xl border border-ok/30 bg-ok/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" strokeWidth={1.75} aria-hidden="true" />
+            <p className="text-[13px] text-fg">
+              Pembayaran diterima. Instance Anda berstatus <strong>Menunggu aktivasi</strong> dan akan diaktifkan admin paling lambat 1x24 jam pada hari kerja.
+            </p>
+          </div>
+          {supportUrl && <SupportLink href={supportUrl} />}
         </div>
       )}
       {returnStatus === "cancel" && (
@@ -233,6 +276,27 @@ export function PortalHostingPage() {
               </p>
             </div>
 
+            <CouponField
+              value={couponInput}
+              onChange={(v) => {
+                setCouponInput(v);
+                setCouponError(null);
+              }}
+              applied={coupon}
+              error={couponError}
+              checking={checkCoupon.isPending}
+              disabled={!canOrder}
+              onCheck={() => {
+                const code = couponInput.trim();
+                if (!code) {
+                  setCouponError("Masukkan kode kupon.");
+                  return;
+                }
+                checkCoupon.mutate(code);
+              }}
+              onClear={clearCoupon}
+            />
+
             {termsNotice && (
               <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-warn/30 bg-warn/10 px-3.5 py-2.5">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
@@ -243,8 +307,21 @@ export function PortalHostingPage() {
 
           <div className="flex flex-col border-t border-line bg-subtle p-4 sm:p-5 lg:border-l lg:border-t-0">
             <dl className="space-y-1">
-              <dt className="text-[13px] text-fg-muted">Harga per {periodDays} hari</dt>
-              <dd className="text-[22px] font-semibold tabular-nums text-fg">{cfg.price_idr > 0 ? formatIDR(cfg.price_idr) : "—"}</dd>
+              <dt className="text-[13px] text-fg-muted">
+                Harga per {periodDays} hari{coupon?.bonus_days ? ` + ${coupon.bonus_days} hari bonus` : ""}
+              </dt>
+              <dd className="flex flex-wrap items-baseline gap-x-2">
+                <span className="text-[22px] font-semibold tabular-nums text-fg">{cfg.price_idr > 0 ? formatIDR(finalPrice) : "—"}</span>
+                {coupon && coupon.discount_idr > 0 && (
+                  <span className="text-[13px] tabular-nums text-fg-muted line-through">{formatIDR(coupon.base_idr)}</span>
+                )}
+              </dd>
+              {coupon && (
+                <dd className="text-[12.5px] text-ok">
+                  Kupon {coupon.coupon_code}:{" "}
+                  {coupon.discount_idr > 0 ? `hemat ${formatIDR(coupon.discount_idr)}` : `masa aktif ${periodDays + coupon.bonus_days} hari`}
+                </dd>
+              )}
             </dl>
             {!canOrder && (
               <p className="mt-2 text-[12.5px] text-fg-muted" role="status">
@@ -281,6 +358,7 @@ export function PortalHostingPage() {
                 renewTitle={blockedReason}
                 pending={pendingFor === inst.id}
                 onRenew={() => order.mutate(inst.id)}
+                supportUrl={supportUrl}
               />
             ))}
           </ul>
@@ -297,6 +375,7 @@ function InstanceRow({
   renewTitle,
   pending,
   onRenew,
+  supportUrl,
 }: {
   inst: PortalHostingInstance;
   periodDays: number;
@@ -304,11 +383,13 @@ function InstanceRow({
   renewTitle?: string;
   pending: boolean;
   onRenew: () => void;
+  supportUrl: string | null;
 }) {
   const view = statusView(inst.status);
   const url = safeHttpUrl(inst.url);
   const payLink = safeHttpUrl(inst.pending_payment_link);
   const awaiting = inst.status === "awaiting_payment";
+  const waiting = waitingActivation(inst.status);
 
   let period: string | null = null;
   if (inst.paid_until) {
@@ -335,17 +416,30 @@ function InstanceRow({
             </a>
           ) : (
             <span className="text-[13px] text-fg-muted">
-              {awaiting ? "Selesaikan pembayaran untuk memproses pesanan." : inst.status === "stopped" ? "Instance tidak berjalan." : "Alamat muncul setelah instance aktif."}
+              {awaiting
+                ? "Selesaikan pembayaran untuk memproses pesanan."
+                : waiting
+                  ? "Pembayaran diterima. Instance sedang menunggu aktivasi oleh admin."
+                  : inst.status === "stopped"
+                    ? "Instance tidak berjalan."
+                    : "Alamat muncul setelah instance aktif."}
             </span>
           )}
         </div>
+        {waiting && (
+          <p className="flex items-start gap-1.5 text-[12.5px] text-fg-muted">
+            <Clock3 className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+            Aktivasi paling lambat 1x24 jam pada hari kerja. URL dan password muncul di sini setelah aktif.
+          </p>
+        )}
         {period && <p className="text-[12.5px] text-fg-muted">{period}</p>}
-        {inst.has_password && <PasswordReveal instanceId={inst.id} />}
+        {inst.has_password && inst.status === "active" && <PasswordReveal instanceId={inst.id} />}
         {inst.status === "expired" && (
           <p className="text-[12.5px] text-fg-muted">Perpanjang untuk menambah {periodDays} hari. Data dapat dihapus 7 hari setelah tanggal berakhir.</p>
         )}
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
+        {waiting && supportUrl && <SupportLink href={supportUrl} />}
         {payLink && (
           <a
             href={payLink}
@@ -355,7 +449,7 @@ function InstanceRow({
             Lanjutkan pembayaran
           </a>
         )}
-        {!(awaiting && payLink) && (
+        {!(awaiting && payLink) && !waiting && (
           <Button variant="secondary" onClick={onRenew} disabled={!canRenew} title={renewTitle}>
             {pending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
             {awaiting ? "Buat tagihan baru" : "Perpanjang"}
@@ -366,56 +460,172 @@ function InstanceRow({
   );
 }
 
-/** Shows the instance's initial dashboard password on request. */
+/** Contact button for customers waiting on activation. */
+function SupportLink({ href }: { href: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+    >
+      <MessageCircle className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+      Hubungi admin
+    </a>
+  );
+}
+
+/** Coupon code input with a "check" button and the check result. */
+function CouponField({
+  value,
+  onChange,
+  applied,
+  error,
+  checking,
+  disabled,
+  onCheck,
+  onClear,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  applied: Extract<HostingCouponCheck, { valid: true }> | null;
+  error: string | null;
+  checking: boolean;
+  disabled: boolean;
+  onCheck: () => void;
+  onClear: () => void;
+}) {
+  const inputId = useId();
+  const msgId = useId();
+  if (applied) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-xl border border-ok/30 bg-ok/10 px-3.5 py-2.5" role="status">
+        <div className="flex min-w-0 items-center gap-2 text-[13px] text-fg">
+          <Ticket className="h-4 w-4 shrink-0 text-ok" strokeWidth={1.75} aria-hidden="true" />
+          <span className="min-w-0">
+            Kupon <span className="font-mono font-medium">{applied.coupon_code}</span> terpasang:{" "}
+            {applied.kind === "bonus_days"
+              ? `bonus ${applied.bonus_days} hari masa aktif`
+              : applied.discount_type === "percent"
+                ? `diskon ${applied.discount_value}%`
+                : `potongan ${formatIDR(applied.discount_idr)}`}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onClear}
+          aria-label="Hapus kupon"
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded text-fg-muted hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={inputId} className="text-[13px] font-medium text-fg">
+        Kode kupon <span className="font-normal text-fg-muted">(opsional)</span>
+      </label>
+      <form
+        className="flex gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onCheck();
+        }}
+      >
+        <input
+          id={inputId}
+          value={value}
+          onChange={(e) => onChange(e.target.value.toUpperCase())}
+          placeholder="KODEKUPON"
+          maxLength={32}
+          autoComplete="off"
+          spellCheck={false}
+          disabled={disabled}
+          aria-invalid={!!error}
+          aria-describedby={error ? msgId : undefined}
+          className="h-9 min-w-0 flex-1 rounded-lg border border-input bg-surface px-3 font-mono text-[13px] uppercase text-fg placeholder:text-fg-faint focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-60"
+        />
+        <Button type="submit" variant="secondary" disabled={disabled || checking}>
+          {checking ? <Loader2 className="animate-spin" aria-hidden="true" /> : null}
+          Cek
+        </Button>
+      </form>
+      {error && (
+        <p id={msgId} role="alert" className="text-[12.5px] text-bad">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The instance's initial dashboard password, hidden until asked for, like an
+ * API key. It is fetched on first reveal or copy and kept only in state.
+ */
 function PasswordReveal({ instanceId }: { instanceId: string }) {
   const toast = useToast();
   const [password, setPassword] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
-  const reveal = useMutation({
+  const load = useMutation({
     mutationFn: () => fetchPortalHostingPassword(instanceId),
-    onSuccess: (pw) => {
-      setPassword(pw);
-      setVisible(true);
-    },
     onError: () => toast.error("Gagal memuat password", "Coba lagi sebentar lagi."),
   });
 
-  if (password === null) {
-    return (
-      <button
-        type="button"
-        onClick={() => reveal.mutate()}
-        disabled={reveal.isPending}
-        className="inline-flex items-center gap-1.5 text-[12.5px] font-medium text-link hover:underline disabled:opacity-60 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 rounded"
-      >
-        {reveal.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <KeyRound className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />}
-        Lihat password awal dashboard
-      </button>
-    );
-  }
+  const ensure = async (): Promise<string | null> => {
+    if (password !== null) return password;
+    try {
+      const pw = await load.mutateAsync();
+      setPassword(pw);
+      return pw;
+    } catch {
+      return null;
+    }
+  };
+
   return (
     <div className="space-y-1">
       <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
-        <span className="text-fg-muted">Password awal:</span>
-        <code className="rounded bg-hover px-1.5 py-0.5 font-mono text-[12.5px] text-fg">{visible ? password : "••••••••••••••••••••"}</code>
+        <span className="text-fg-muted">Password:</span>
+        <code className="rounded bg-hover px-1.5 py-0.5 font-mono text-[12.5px] text-fg">
+          {visible && password !== null ? password : "••••••••••••"}
+        </code>
         <button
           type="button"
-          onClick={() => setVisible((v) => !v)}
+          disabled={load.isPending}
+          onClick={async () => {
+            if (visible) {
+              setVisible(false);
+              return;
+            }
+            if (await ensure()) setVisible(true);
+          }}
           aria-label={visible ? "Sembunyikan password" : "Tampilkan password"}
-          className="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+          className="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-60"
         >
-          {visible ? <EyeOff className="h-3.5 w-3.5" aria-hidden="true" /> : <Eye className="h-3.5 w-3.5" aria-hidden="true" />}
+          {load.isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+          ) : visible ? (
+            <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+          ) : (
+            <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
         </button>
         <button
           type="button"
-          onClick={() => {
-            void navigator.clipboard?.writeText(password).then(
+          disabled={load.isPending}
+          onClick={async () => {
+            const pw = await ensure();
+            if (!pw) return;
+            navigator.clipboard?.writeText(pw).then(
               () => toast.success("Password disalin"),
               () => toast.error("Gagal menyalin password"),
             );
           }}
           aria-label="Salin password"
-          className="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+          className="inline-flex h-7 w-7 items-center justify-center rounded text-fg-muted hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-60"
         >
           <Copy className="h-3.5 w-3.5" aria-hidden="true" />
         </button>

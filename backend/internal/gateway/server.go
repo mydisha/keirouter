@@ -126,10 +126,16 @@ type Server struct {
 	dokployFactory func(baseURL, apiKey string) dokployAPI
 	// monitorFactory overrides the Dokploy monitoring client in tests.
 	monitorFactory func(t hosting.MonitorTarget) monitorFetcher
-	inflight       *inflight.Tracker // shared with the pipeline; nil-safe
-	fin            *finance.Loader   // admin finance dashboard data
-	turnstile      turnstileVerifier
-	router         chi.Router
+	// hostingOrderLocks serializes hosting checkouts per API key, so double
+	// clicks cannot create two unpaid instances or two coupon holds.
+	hostingOrderLocks sync.Map // key id -> *sync.Mutex
+	// couponChecks limits coupon lookups per API key against code guessing.
+	couponChecks     *ipLimiter
+	couponChecksOnce sync.Once
+	inflight         *inflight.Tracker // shared with the pipeline; nil-safe
+	fin              *finance.Loader   // admin finance dashboard data
+	turnstile        turnstileVerifier
+	router           chi.Router
 	// skillsMu serializes custom-skill writes (load-modify-save on one
 	// settings key); skillsBlock caches the rendered prompt block injected
 	// into every chat request. Nil means not loaded yet.
@@ -441,6 +447,7 @@ func (s *Server) routes() chi.Router {
 		r.Get("/portal/api/hosting", s.handlePortalHosting)
 		r.Post("/portal/api/hosting/orders", s.handlePortalCreateHostingOrder)
 		r.Get("/portal/api/hosting/instances/{id}/password", s.handlePortalHostingPassword)
+		r.Post("/portal/api/hosting/coupons/check", s.handlePortalCheckHostingCoupon)
 		r.Post("/portal/auth/logout", s.handlePortalLogout)
 	})
 

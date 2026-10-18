@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -8,17 +8,27 @@ import {
   Loader2,
   Play,
   PlugZap,
+  Plus,
   ReceiptText,
   Rocket,
   RotateCcw,
   Server,
   Settings2,
   Square,
+  Ticket,
   Trash2,
   Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, type HostingInstanceAdmin, type HostingSettings, type HostingStatus } from "../lib/api";
+import {
+  api,
+  type HostingInstanceAdmin,
+  type HostingMonitorTarget,
+  type HostingNode,
+  type HostingNodeLoad,
+  type HostingSettings,
+  type HostingStatus,
+} from "../lib/api";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
 import { useConfirm } from "../components/ui/confirm-dialog";
@@ -44,9 +54,20 @@ import {
 import { Panel, REFETCH_MS, TH, THEAD, dateID, errorText, idr } from "./payments/shared";
 import { FinanceTab } from "./hosting/HostingFinance";
 import { MonitoringTab } from "./hosting/HostingMonitoring";
-import { QK_HOSTING, STATUS_LABEL, STATUS_TONE } from "./hosting/shared";
+import { CouponsTab } from "./hosting/HostingCoupons";
+import {
+  QK_HOSTING,
+  STATUS_LABEL,
+  STATUS_TONE,
+  newNodeId,
+  nodeBlockedLabel,
+  nodeName,
+  nodeUsage,
+  normalizeDomain,
+  validDomain,
+} from "./hosting/shared";
 
-type Tab = "instances" | "finance" | "monitoring" | "settings";
+type Tab = "instances" | "coupons" | "finance" | "monitoring" | "settings";
 const TABS_ID = "hosting-tabs";
 
 const ORDER_STATUS_LABEL: Record<string, string> = {
@@ -82,6 +103,7 @@ export function HostingPage() {
         onChange={setTab}
         tabs={[
           { value: "instances", label: "Instance", icon: Server },
+          { value: "coupons", label: "Kupon", icon: Ticket },
           { value: "finance", label: "Keuangan", icon: Wallet },
           { value: "monitoring", label: "Monitoring", icon: Activity },
           { value: "settings", label: "Pengaturan", icon: Settings2 },
@@ -89,7 +111,9 @@ export function HostingPage() {
       />
       <TabPanel idPrefix={TABS_ID} value={tab}>
         {tab === "instances" ? (
-          <InstancesTab settings={settings.data} />
+          <InstancesTab settings={settings.data} onOpenSettings={() => setTab("settings")} />
+        ) : tab === "coupons" ? (
+          <CouponsTab />
         ) : tab === "finance" ? (
           <FinanceTab />
         ) : tab === "monitoring" ? (
@@ -104,11 +128,15 @@ export function HostingPage() {
 
 // ─── Instances ──────────────────────────────────────────────────────────────
 
-function InstancesTab({ settings }: { settings?: HostingSettings }) {
+/** Node filter value for instances that have no node yet. */
+const NO_NODE = "__none";
+
+function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings; onOpenSettings: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const confirm = useConfirm();
   const [status, setStatus] = useState("");
+  const [nodeFilter, setNodeFilter] = useState("");
   const [provisioning, setProvisioning] = useState<HostingInstanceAdmin | null>(null);
   const [ordersOf, setOrdersOf] = useState<HostingInstanceAdmin | null>(null);
 
@@ -117,10 +145,20 @@ function InstancesTab({ settings }: { settings?: HostingSettings }) {
     queryFn: () => api.listHostingInstances(status || undefined),
     refetchInterval: REFETCH_MS,
   });
-  const instances = list.data?.instances ?? [];
+  const nodesQ = useQuery({ queryKey: QK_HOSTING.nodes, queryFn: api.listHostingNodes, refetchInterval: REFETCH_MS });
+  const nodeList: { id: string; name: string }[] = nodesQ.data?.nodes ?? settings?.nodes ?? [];
+  const all = list.data?.instances;
+  const instances = useMemo(() => {
+    const rows = all ?? [];
+    if (!nodeFilter) return rows;
+    return rows.filter((h) => (nodeFilter === NO_NODE ? !h.node_id : h.node_id === nodeFilter));
+  }, [all, nodeFilter]);
   const { paged, page, pages, setPage, total } = useClientPagination(instances, 10);
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: QK_HOSTING.instances });
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: QK_HOSTING.instances });
+    qc.invalidateQueries({ queryKey: QK_HOSTING.nodes });
+  };
 
   const action = useMutation({
     mutationFn: ({ kind, id }: { kind: "stop" | "start" | "delete"; id: string }) =>
@@ -159,16 +197,30 @@ function InstancesTab({ settings }: { settings?: HostingSettings }) {
       title="Instance"
       subtitle="Status, alamat, dan masa aktif tiap instance. Diperbarui tiap 15 detik."
       action={
-        <Select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter status" className="w-auto min-w-[180px]">
-          <option value="">Semua status</option>
-          {(Object.keys(STATUS_LABEL) as HostingStatus[]).map((s) => (
-            <option key={s} value={s}>
-              {STATUS_LABEL[s]}
-            </option>
-          ))}
-        </Select>
+        <div className="flex flex-wrap gap-2">
+          {nodeList.length > 1 && (
+            <Select value={nodeFilter} onChange={(e) => setNodeFilter(e.target.value)} aria-label="Filter node" className="w-auto min-w-[150px]">
+              <option value="">Semua node</option>
+              {nodeList.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.name || n.id}
+                </option>
+              ))}
+              <option value={NO_NODE}>Belum ada node</option>
+            </Select>
+          )}
+          <Select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter status" className="w-auto min-w-[180px]">
+            <option value="">Semua status</option>
+            {(Object.keys(STATUS_LABEL) as HostingStatus[]).map((s) => (
+              <option key={s} value={s}>
+                {STATUS_LABEL[s]}
+              </option>
+            ))}
+          </Select>
+        </div>
       }
     >
+      {nodesQ.data && <NodeUsageStrip nodes={nodesQ.data.nodes} onOpenSettings={onOpenSettings} />}
       {list.isLoading ? (
         <LoadingRegion label="Memuat instance" className="space-y-2 p-4">
           {[0, 1, 2].map((i) => (
@@ -183,17 +235,18 @@ function InstancesTab({ settings }: { settings?: HostingSettings }) {
         <EmptyState
           icon={Server}
           size="sm"
-          title={status ? "Tidak ada instance dengan status ini" : "Belum ada instance"}
+          title={status || nodeFilter ? "Tidak ada instance yang cocok dengan filter" : "Belum ada instance"}
           hint="Pesanan hosting dari portal muncul di sini begitu user memulai pembayaran."
         />
       ) : (
         <>
           <div className="overflow-x-auto" role="region" aria-label="Tabel instance hosting" tabIndex={0}>
-            <table className="w-full min-w-[1040px] text-[13px]">
+            <table className="w-full min-w-[1140px] text-[13px]">
               <thead>
                 <tr className={THEAD}>
                   <th scope="col" className={TH}>User</th>
                   <th scope="col" className={TH}>Status</th>
+                  <th scope="col" className={TH}>Node</th>
                   <th scope="col" className={TH}>Alamat</th>
                   <th scope="col" className={TH}>Image</th>
                   <th scope="col" className={TH}>Aktif sampai</th>
@@ -216,6 +269,7 @@ function InstancesTab({ settings }: { settings?: HostingSettings }) {
                         <p className="mt-1 max-w-[260px] break-words text-[11.5px] text-bad">{h.last_error}</p>
                       )}
                     </td>
+                    <td className="whitespace-nowrap px-4 py-2.5">{h.node_id ? nodeName(nodeList, h.node_id) : <span className="text-fg-muted">-</span>}</td>
                     <td className="px-4 py-2.5">
                       {h.url ? (
                         <a
@@ -284,8 +338,15 @@ function InstancesTab({ settings }: { settings?: HostingSettings }) {
         <ProvisionModal
           inst={provisioning}
           images={settings?.images ?? []}
+          nodes={nodesQ.data}
+          nodesLoading={nodesQ.isLoading}
+          nodesError={nodesQ.isError && !nodesQ.data ? nodesQ.error : null}
           onClose={() => setProvisioning(null)}
           onDone={invalidate}
+          onOpenSettings={() => {
+            setProvisioning(null);
+            onOpenSettings();
+          }}
         />
       )}
       {ordersOf && <OrdersModal inst={ordersOf} onClose={() => setOrdersOf(null)} />}
@@ -293,21 +354,78 @@ function InstancesTab({ settings }: { settings?: HostingSettings }) {
   );
 }
 
+/** Compact per-node usage so the admin sees when a node is filling up. */
+function NodeUsageStrip({ nodes, onOpenSettings }: { nodes: HostingNodeLoad[]; onOpenSettings: () => void }) {
+  if (nodes.length === 0) {
+    return (
+      <div className="border-b border-line px-4 py-3">
+        <ErrorBanner message="Belum ada node. Tambahkan node di tab Pengaturan sebelum membuat instance." />
+        <Button variant="ghost" className="mt-2" onClick={onOpenSettings}>
+          <Settings2 aria-hidden="true" />
+          Buka Pengaturan
+        </Button>
+      </div>
+    );
+  }
+  const noneAvailable = !nodes.some((n) => n.available);
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-4 py-2.5" role="list" aria-label="Pemakaian node">
+      <span className="mr-1 text-[12px] text-fg-muted">Node:</span>
+      {nodes.map((n) => {
+        const blocked = nodeBlockedLabel(n);
+        return (
+          <span key={n.id} role="listitem">
+            <Badge
+              tone={!n.enabled ? "neutral" : !n.available ? "danger" : n.capacity > 0 && n.free <= Math.max(1, Math.floor(n.capacity * 0.1)) ? "warning" : "neutral"}
+              title={`${n.root_domain}${blocked ? ` · ${blocked}` : ""}`}
+            >
+              {n.name || n.id} · <span className="tabular-nums">{nodeUsage(n)}</span>
+              {blocked && <span> · {blocked}</span>}
+            </Badge>
+          </span>
+        );
+      })}
+      {noneAvailable && (
+        <button type="button" onClick={onOpenSettings} className="ml-1 text-[12px] text-bad underline-offset-2 hover:underline">
+          Semua node penuh atau nonaktif. Tambah node di Pengaturan.
+        </button>
+      )}
+    </div>
+  );
+}
+
 function ProvisionModal({
   inst,
   images,
+  nodes,
+  nodesLoading,
+  nodesError,
   onClose,
   onDone,
+  onOpenSettings,
 }: {
   inst: HostingInstanceAdmin;
   images: string[];
+  nodes?: { nodes: HostingNodeLoad[]; recommended: string };
+  nodesLoading: boolean;
+  nodesError: unknown;
   onClose: () => void;
   onDone: () => void;
+  onOpenSettings: () => void;
 }) {
   const toast = useToast();
   const [image, setImage] = useState(inst.image && images.includes(inst.image) ? inst.image : images[0] ?? "");
+  // null follows the server's recommendation, which may arrive after the modal opens.
+  const [picked, setPicked] = useState<string | null>(null);
+  // A failed instance that already got a subdomain stays on its node.
+  const lockedNode = inst.node_id && inst.subdomain ? inst.node_id : "";
+  const nodeList = nodes?.nodes ?? [];
+  const nodeId = lockedNode || (picked ?? nodes?.recommended ?? "");
+  const anyAvailable = nodeList.some((n) => n.available);
+  const nodeReady = lockedNode ? true : !!nodeId && anyAvailable;
+
   const provision = useMutation({
-    mutationFn: () => api.provisionHosting(inst.id, image),
+    mutationFn: () => api.provisionHosting(inst.id, image, lockedNode ? undefined : nodeId),
     onSuccess: (h) => {
       toast.success("Instance dibuat", h.fqdn ? `Aktif di ${h.fqdn}.` : undefined);
       onDone();
@@ -317,6 +435,7 @@ function ProvisionModal({
     onError: onDone,
   });
   const retry = inst.status === "failed";
+  const locked = lockedNode ? nodeList.find((n) => n.id === lockedNode) : undefined;
 
   return (
     <Modal
@@ -327,7 +446,7 @@ function ProvisionModal({
     >
       <div className="space-y-3 px-5 py-4">
         <p className="text-[13px] text-fg-muted">
-          Instance dibuat di Dokploy dengan subdomain acak. Masa aktif mulai dihitung saat instance aktif.
+          Instance dibuat di Dokploy dengan subdomain acak pada domain node terpilih. Masa aktif mulai dihitung saat instance aktif.
         </p>
         {retry && inst.last_error && <ErrorBanner message={`Percobaan terakhir gagal: ${inst.last_error}`} />}
         {images.length === 0 ? (
@@ -343,13 +462,62 @@ function ProvisionModal({
             </Select>
           </Field>
         )}
+        {lockedNode ? (
+          <Field label="Node" hint="Instance ini sudah disiapkan di node ini, jadi percobaan ulang tetap di sana. Hapus instance jika perlu pindah node.">
+            <p className="rounded-lg border border-line bg-subtle px-3 py-2 text-[13px] text-fg">
+              {locked?.name || lockedNode}
+              {locked && (
+                <span className="text-fg-muted">
+                  {" "}
+                  · {nodeUsage(locked)}
+                  {nodeBlockedLabel(locked) && ` · ${nodeBlockedLabel(locked)}`}
+                </span>
+              )}
+              <span className="ml-1 font-mono text-[11.5px] text-fg-muted">{inst.fqdn || inst.subdomain}</span>
+            </p>
+          </Field>
+        ) : nodesLoading ? (
+          <Skeleton className="h-[62px] w-full" />
+        ) : nodesError ? (
+          <ErrorBanner message={`Daftar node gagal dimuat. ${errorText(nodesError)}`} />
+        ) : !anyAvailable ? (
+          <div className="space-y-2">
+            <ErrorBanner
+              message={
+                nodeList.length === 0
+                  ? "Belum ada node. Tambahkan node di tab Pengaturan dulu."
+                  : "Semua node penuh atau nonaktif. Tambah node baru, naikkan kapasitas, atau aktifkan node di tab Pengaturan."
+              }
+            />
+            <Button variant="ghost" onClick={onOpenSettings}>
+              <Settings2 aria-hidden="true" />
+              Buka Pengaturan
+            </Button>
+          </div>
+        ) : (
+          <Field
+            label="Node"
+            hint={nodeId === nodes?.recommended ? "Dipilih otomatis: node dengan ruang paling lega." : "Node dipilih manual."}
+          >
+            <Select value={nodeId} onChange={(e) => setPicked(e.target.value)}>
+              {nodeList.map((n) => {
+                const blocked = nodeBlockedLabel(n);
+                return (
+                  <option key={n.id} value={n.id} disabled={!n.available}>
+                    {`${n.name || n.id} — ${nodeUsage(n)}${blocked ? ` (${blocked})` : ""}`}
+                  </option>
+                );
+              })}
+            </Select>
+          </Field>
+        )}
         {provision.isError && <ErrorBanner message={`Instance gagal dibuat. ${errorText(provision.error)}`} />}
       </div>
       <ModalFooter>
         <Button variant="ghost" onClick={onClose} disabled={provision.isPending}>
           Batal
         </Button>
-        <Button onClick={() => provision.mutate()} disabled={!image || provision.isPending}>
+        <Button onClick={() => provision.mutate()} disabled={!image || !nodeReady || provision.isPending}>
           {provision.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Rocket aria-hidden="true" />}
           {provision.isPending ? "Membuat…" : retry ? "Coba lagi" : "Buat instance"}
         </Button>
@@ -366,12 +534,13 @@ function OrdersModal({ inst, onClose }: { inst: HostingInstanceAdmin; onClose: (
         <EmptyState icon={ReceiptText} size="sm" title="Belum ada order" />
       ) : (
         <div className="overflow-x-auto" role="region" aria-label="Tabel order hosting" tabIndex={0}>
-          <table className="w-full min-w-[640px] text-[13px]">
+          <table className="w-full min-w-[760px] text-[13px]">
             <thead>
               <tr className={THEAD}>
                 <th scope="col" className={TH}>Order</th>
                 <th scope="col" className={TH}>Status</th>
                 <th scope="col" className={cn(TH, "text-right")}>Jumlah</th>
+                <th scope="col" className={TH}>Kupon</th>
                 <th scope="col" className={TH}>Dibayar</th>
                 <th scope="col" className={TH}>Ketentuan</th>
               </tr>
@@ -386,7 +555,23 @@ function OrdersModal({ inst, onClose }: { inst: HostingInstanceAdmin; onClose: (
                   <td className="px-4 py-2.5">
                     <Badge tone={ORDER_STATUS_TONE[o.status] ?? "neutral"}>{ORDER_STATUS_LABEL[o.status] ?? o.status}</Badge>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums">{idr(o.amount_idr)}</td>
+                  <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums">
+                    {idr(o.amount_idr)}
+                    {!!o.base_amount_idr && o.base_amount_idr !== o.amount_idr && (
+                      <p className="text-[11.5px] text-fg-faint line-through">{idr(o.base_amount_idr)}</p>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {o.coupon_code ? (
+                      <>
+                        <p className="font-mono text-[12px]">{o.coupon_code}</p>
+                        {!!o.bonus_days && <p className="text-[11.5px] text-fg-muted">+{o.bonus_days} hari</p>}
+                      </>
+                    ) : (
+                      "-"
+                    )}
+                    {o.reason?.startsWith("refund_required") && <Badge tone="danger">Perlu refund</Badge>}
+                  </td>
                   <td className="whitespace-nowrap px-4 py-2.5 tabular-nums">{o.paid_at ? dateID(o.paid_at, true) : "-"}</td>
                   <td className="px-4 py-2.5">
                     <p className="font-mono text-[12px]">{o.terms_version || "-"}</p>
@@ -428,7 +613,7 @@ function SettingsTab({ query }: { query: { data?: HostingSettings; isLoading: bo
           <SettingsForm key={JSON.stringify(query.data)} settings={query.data} />
         )}
       </Panel>
-      <SetupChecklist rootDomain={query.data?.root_domain} />
+      <SetupChecklist nodes={query.data?.nodes} />
     </div>
   );
 }
@@ -442,15 +627,15 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const [dokployUrl, setDokployUrl] = useState(settings.dokploy_url);
   const [apiKey, setApiKey] = useState("");
   const [environmentId, setEnvironmentId] = useState(settings.environment_id);
-  const [rootDomain, setRootDomain] = useState(settings.root_domain);
   const [images, setImages] = useState(settings.images.join("\n"));
   const [port, setPort] = useState(String(settings.container_port || ""));
   const [envTemplate, setEnvTemplate] = useState(settings.env_template);
-  const [serverId, setServerId] = useState(settings.server_id ?? "");
+  const [nodes, setNodes] = useState<NodeDraft[]>(() => (settings.nodes ?? []).map(toNodeDraft));
   const [passwordEnv, setPasswordEnv] = useState(settings.password_env || "INITIAL_PASSWORD");
   const [memoryLimit, setMemoryLimit] = useState(settings.memory_limit ?? "");
   const [cpuLimit, setCpuLimit] = useState(settings.cpu_limit ?? "");
   const [dataPath, setDataPath] = useState(settings.data_path || "/data");
+  const [supportUrl, setSupportUrl] = useState(settings.support_url || "https://t.me/damnwahhh");
 
   const priceNum = Number(price);
   const portNum = Number(port);
@@ -465,9 +650,14 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const cpuError = !digits.test(cpuLimit.trim()) ? "Isi angka bulat dalam nano-CPU, atau kosongkan." : null;
   const dataPathError = !dataPath.trim().startsWith("/") || dataPath.includes("..") ? "Isi path absolut di dalam container, misal /data." : null;
   const envNameError = !/^[A-Za-z_][A-Za-z0-9_]*$/.test(passwordEnv.trim()) ? "Nama variabel tidak valid." : null;
+  const supportUrlError = !/^https:\/\/[^\s/]+/.test(supportUrl.trim()) ? "Isi link https://, misal https://t.me/username." : null;
   const urlChanged = dokployUrl.trim().replace(/\/+$/, "") !== settings.dokploy_url;
   const keyNeeded = settings.has_api_key && urlChanged && dokployUrl.trim() !== "" && apiKey.trim() === "";
-  const valid = !priceError && !portError && !memError && !cpuError && !envNameError && !dataPathError;
+  const nodeErrors = nodeErrorsOf(nodes);
+  const nodesError = enabled && !nodes.some((n) => n.enabled) ? "Tambahkan minimal satu node aktif sebelum membuka pemesanan." : null;
+  const valid =
+    !priceError && !portError && !memError && !cpuError && !envNameError && !dataPathError && !nodesError && !supportUrlError &&
+    nodeErrors.every((e) => !e.name && !e.domain && !e.capacity);
 
   const save = useMutation({
     mutationFn: (opts: { clearKey?: boolean }) =>
@@ -478,19 +668,30 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
         ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
         ...(opts.clearKey ? { clear_api_key: true } : {}),
         environment_id: environmentId.trim(),
-        root_domain: rootDomain.trim(),
         images: imageList,
         container_port: portNum,
         env_template: envTemplate,
-        server_id: serverId.trim(),
+        nodes: nodes.map(
+          (n): HostingNode => ({
+            id: n.id,
+            name: n.name.trim(),
+            server_id: n.serverId.trim(),
+            root_domain: normalizeDomain(n.rootDomain),
+            monitor_target_id: n.monitorTargetId,
+            capacity: Number(n.capacity.trim() || "0"),
+            enabled: n.enabled,
+          }),
+        ),
         password_env: passwordEnv.trim(),
         memory_limit: memoryLimit.trim(),
         cpu_limit: cpuLimit.trim(),
         data_path: dataPath.trim(),
+        support_url: supportUrl.trim(),
       }),
     onSuccess: (data) => {
       qc.setQueryData(QK_HOSTING.settings, data);
       qc.invalidateQueries({ queryKey: QK_HOSTING.finance });
+      qc.invalidateQueries({ queryKey: QK_HOSTING.nodes });
       toast.success("Pengaturan disimpan", data.enabled ? "Pemesanan hosting dibuka di portal." : "Pemesanan hosting ditutup di portal.");
     },
   });
@@ -565,18 +766,18 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
           <Field label="Environment ID" hint="environmentId dari project Dokploy tempat instance dibuat.">
             <Input value={environmentId} onChange={(e) => setEnvironmentId(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" />
           </Field>
-          <Field label="Root domain" hint="Subdomain acak dibuat di bawah domain ini.">
-            <Input value={rootDomain} onChange={(e) => setRootDomain(e.target.value)} placeholder="hosting.example.com" autoComplete="off" spellCheck={false} className="font-mono" />
+          <Field
+            label="Link kontak aktivasi"
+            hint="Tombol “Hubungi admin” untuk pelanggan yang sudah bayar dan menunggu aktivasi."
+            error={supportUrlError}
+          >
+            <Input type="url" value={supportUrl} onChange={(e) => setSupportUrl(e.target.value)} placeholder="https://t.me/damnwahhh" autoComplete="off" spellCheck={false} className="font-mono" />
           </Field>
         </div>
 
+        <NodesEditor nodes={nodes} setNodes={setNodes} errors={nodeErrors} listError={nodesError} />
+
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field
-            label="Server ID Dokploy"
-            hint="Disarankan: serverId dari server remote khusus pelanggan, agar container tidak bisa menjangkau database dan Redis milik Dokploy. Kosongkan untuk server utama."
-          >
-            <Input value={serverId} onChange={(e) => setServerId(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" />
-          </Field>
           <Field
             label="Env password awal"
             hint="Setiap instance mendapat password acak di variabel ini. Pastikan sesuai dengan yang dibaca image 9router."
@@ -671,29 +872,250 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   );
 }
 
-function SetupChecklist({ rootDomain }: { rootDomain?: string }) {
-  const domain = rootDomain?.trim() || "<root_domain>";
+// ─── Nodes ──────────────────────────────────────────────────────────────────
+
+interface NodeDraft {
+  key: string;
+  id: string;
+  name: string;
+  serverId: string;
+  rootDomain: string;
+  monitorTargetId: string;
+  capacity: string;
+  enabled: boolean;
+  isNew: boolean;
+}
+
+const MAX_NODE_CAPACITY = 10000;
+
+const toNodeDraft = (n: HostingNode): NodeDraft => ({
+  key: n.id,
+  id: n.id,
+  name: n.name,
+  serverId: n.server_id ?? "",
+  rootDomain: n.root_domain,
+  monitorTargetId: n.monitor_target_id ?? "",
+  capacity: String(n.capacity ?? 0),
+  enabled: n.enabled,
+  isNew: false,
+});
+
+function nodeErrorsOf(nodes: NodeDraft[]) {
+  const domains = nodes.map((n) => normalizeDomain(n.rootDomain));
+  return nodes.map((n, i) => {
+    const name = n.name.trim();
+    const domain = domains[i];
+    const capText = n.capacity.trim();
+    const cap = Number(capText || "0");
+    return {
+      name: !name ? "Isi nama node." : name.length > 80 ? "Maksimal 80 karakter." : null,
+      domain: !domain
+        ? "Isi root domain node."
+        : !validDomain(domain)
+          ? "Domain tidak valid, misal n1.example.com."
+          : domains.indexOf(domain) !== i
+            ? "Domain ini sudah dipakai node lain."
+            : null,
+      capacity:
+        !/^[0-9]*$/.test(capText) || !Number.isInteger(cap) || cap > MAX_NODE_CAPACITY ? `Isi angka bulat 0 sampai ${MAX_NODE_CAPACITY}.` : null,
+    };
+  });
+}
+
+function NodesEditor({
+  nodes,
+  setNodes,
+  errors,
+  listError,
+}: {
+  nodes: NodeDraft[];
+  setNodes: (fn: (rows: NodeDraft[]) => NodeDraft[]) => void;
+  errors: ReturnType<typeof nodeErrorsOf>;
+  listError: string | null;
+}) {
+  const confirm = useConfirm();
+  const loads = useQuery({ queryKey: QK_HOSTING.nodes, queryFn: api.listHostingNodes });
+  const monitor = useQuery({ queryKey: QK_HOSTING.monitorSettings, queryFn: api.getHostingMonitoring });
+  const targets: HostingMonitorTarget[] = monitor.data?.targets ?? [];
+  const loadOf = (id: string) => loads.data?.nodes.find((n) => n.id === id);
+
+  const update = (key: string, patch: Partial<NodeDraft>) => setNodes((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  const add = () =>
+    setNodes((rs) => {
+      const id = newNodeId();
+      return [
+        ...rs,
+        { key: id, id, name: `Node ${rs.length + 1}`, serverId: "", rootDomain: "", monitorTargetId: "", capacity: "0", enabled: true, isNew: true },
+      ];
+    });
+  const remove = async (r: NodeDraft) => {
+    const used = loadOf(r.id)?.used ?? 0;
+    if (used > 0) {
+      const ok = await confirm({
+        title: `Hapus ${r.name.trim() || "node"}?`,
+        description: (
+          <>
+            Node ini masih dipakai {used} instance. Instance yang berjalan tidak ikut dihapus, tetapi instance gagal di node ini tidak bisa dicoba
+            ulang lagi. Jika hanya ingin berhenti menerima instance baru, matikan saja tombol Aktif di node ini.
+          </>
+        ),
+        confirmLabel: "Tetap hapus",
+        cancelLabel: "Batal",
+        tone: "danger",
+      });
+      if (!ok) return;
+    }
+    setNodes((rs) => rs.filter((x) => x.key !== r.key));
+  };
+
   return (
-    <Panel icon={ListChecks} title="Persiapan Dokploy" subtitle="Lakukan sekali sebelum membuka pemesanan.">
+    <section aria-labelledby="hosting-nodes-title" className="space-y-3">
+      <div>
+        <p id="hosting-nodes-title" className="text-[13px] font-medium text-fg">
+          Node
+        </p>
+        <p className="text-[12px] text-fg-muted">
+          Server Dokploy yang menjalankan container pelanggan. Tiap node butuh DNS wildcard sendiri{" "}
+          <span className="font-mono text-fg">*.&lt;root domain&gt;</span> yang mengarah ke IP node itu. Tambahkan server di Dokploy (Settings → Servers),
+          lalu salin Server ID-nya. Instance baru otomatis ditaruh di node aktif dengan ruang paling lega.
+        </p>
+      </div>
+      {nodes.length === 0 && (
+        <p className="rounded-xl border border-dashed border-line-strong px-4 py-6 text-center text-[13px] text-fg-muted">
+          Belum ada node. Tambahkan minimal satu node agar instance bisa dibuat.
+        </p>
+      )}
+      {nodes.map((r, i) => {
+        const err = errors[i];
+        const load = loadOf(r.id);
+        const cap = Number(r.capacity.trim() || "0");
+        const full = load ? cap > 0 && load.used >= cap : false;
+        const domain = normalizeDomain(r.rootDomain);
+        const unknownTarget = r.monitorTargetId !== "" && monitor.data && !targets.some((t) => t.id === r.monitorTargetId);
+        const toggleId = `hosting-node-enabled-${r.key}`;
+        return (
+          <fieldset key={r.key} className="rounded-xl border border-line bg-subtle/60 p-3.5">
+            <legend className="sr-only">{r.name.trim() || `Node ${i + 1}`}</legend>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="text-[12.5px] font-medium text-fg">{r.name.trim() || `Node ${i + 1}`}</span>
+                <span className="font-mono text-[11px] text-fg-faint">{r.id}</span>
+                {r.isNew ? (
+                  <Badge tone="accent">Baru</Badge>
+                ) : load ? (
+                  <Badge tone={!r.enabled ? "neutral" : full ? "danger" : "neutral"} title="Instance di node ini / kapasitas">
+                    <span className="tabular-nums">{load.used}/{cap > 0 ? cap : "∞"}</span> instance{full && r.enabled ? " · penuh" : ""}
+                  </Badge>
+                ) : null}
+                {!r.enabled && <Badge tone="neutral">Nonaktif</Badge>}
+              </div>
+              <div className="flex items-center gap-2">
+                <span id={toggleId} className="text-[12px] text-fg-muted">
+                  Aktif
+                </span>
+                <Toggle checked={r.enabled} onChange={(v) => update(r.key, { enabled: v })} aria-labelledby={toggleId} />
+                <Button type="button" variant="ghost" onClick={() => remove(r)} aria-label={`Hapus ${r.name.trim() || `node ${i + 1}`}`} title="Hapus node">
+                  <Trash2 aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <Field label="Nama" error={err.name}>
+                <Input value={r.name} onChange={(e) => update(r.key, { name: e.target.value })} placeholder="Node 1" maxLength={80} autoComplete="off" />
+              </Field>
+              <Field
+                label="Root domain"
+                error={err.domain}
+                hint={!err.domain && domain ? <>Arahkan <span className="font-mono">*.{domain}</span> ke IP node ini.</> : undefined}
+              >
+                <Input
+                  value={r.rootDomain}
+                  onChange={(e) => update(r.key, { rootDomain: e.target.value })}
+                  placeholder="n1.example.com"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="font-mono"
+                />
+              </Field>
+              <Field label="Server ID Dokploy" hint="Kosongkan untuk server utama Dokploy (tidak disarankan).">
+                <Input value={r.serverId} onChange={(e) => update(r.key, { serverId: e.target.value })} autoComplete="off" spellCheck={false} className="font-mono" />
+              </Field>
+              <Field label="Server monitoring" hint={monitor.isError ? `Daftar server monitoring gagal dimuat. ${errorText(monitor.error)}` : undefined}>
+                <Select value={r.monitorTargetId} onChange={(e) => update(r.key, { monitorTargetId: e.target.value })}>
+                  <option value="">Otomatis (server pelanggan)</option>
+                  {targets.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                  {unknownTarget && <option value={r.monitorTargetId}>(server tidak ditemukan)</option>}
+                </Select>
+              </Field>
+              <Field label="Kapasitas" hint={err.capacity ? undefined : "Jumlah instance maksimal. 0 = tanpa batas."} error={err.capacity}>
+                <Input
+                  type="number"
+                  inputMode="numeric"
+                  min="0"
+                  max={MAX_NODE_CAPACITY}
+                  step="1"
+                  value={r.capacity}
+                  onChange={(e) => update(r.key, { capacity: e.target.value })}
+                  className="tabular-nums"
+                />
+              </Field>
+            </div>
+          </fieldset>
+        );
+      })}
+      {listError && <ErrorBanner message={listError} />}
+      <Button type="button" variant="ghost" onClick={add}>
+        <Plus aria-hidden="true" />
+        Tambah node
+      </Button>
+    </section>
+  );
+}
+
+function SetupChecklist({ nodes }: { nodes?: HostingNode[] }) {
+  const domains = (nodes ?? []).map((n) => n.root_domain).filter(Boolean);
+  return (
+    <Panel icon={ListChecks} title="Persiapan Dokploy" subtitle="Lakukan sekali sebelum membuka pemesanan, dan ulangi langkah node setiap menambah server.">
       <ol className="list-decimal space-y-2 px-4 py-4 pl-9 text-[13px] text-fg-muted">
         <li>
           Buat project dan environment di Dokploy khusus untuk hosting, lalu salin <span className="font-mono text-fg">environmentId</span>-nya ke kolom Environment ID.
         </li>
         <li>
-          Arahkan DNS wildcard <span className="font-mono text-fg">*.{domain}</span> ke IP server Dokploy agar setiap subdomain langsung bisa diakses dengan HTTPS.
-        </li>
-        <li>
           Buat API key di Dokploy lewat menu <span className="text-fg">Settings → Profile → API</span>, lalu tempel di kolom API key Dokploy.
         </li>
         <li>
-          Tambahkan server remote khusus pelanggan di Dokploy (Settings → Servers) dan isi <span className="font-mono text-fg">Server ID</span>. Container pelanggan
-          di server utama bisa menjangkau database dan Redis milik Dokploy.
+          Tambahkan server remote khusus pelanggan di Dokploy (Settings → Servers), lalu daftarkan sebagai node dan isi <span className="font-mono text-fg">Server ID</span>-nya.
+          Container pelanggan di server utama bisa menjangkau database dan Redis milik Dokploy.
+        </li>
+        <li>
+          Beri tiap node root domain sendiri dan arahkan DNS wildcard-nya ke IP node itu, karena satu wildcard hanya bisa mengarah ke satu server
+          {domains.length > 0 ? (
+            <>
+              :{" "}
+              {domains.map((d, i) => (
+                <span key={d}>
+                  {i > 0 && ", "}
+                  <span className="font-mono text-fg">*.{d}</span>
+                </span>
+              ))}
+              .
+            </>
+          ) : (
+            <>
+              , misal <span className="font-mono text-fg">*.n1.example.com</span>.
+            </>
+          )}
         </li>
         <li>
           Pakai image 9router versi 0.4.60 atau lebih baru, dan pastikan nama env password awal sesuai image tersebut. Buat satu instance uji, lalu cek bahwa
           password default <span className="font-mono text-fg">123456</span> ditolak.
         </li>
         <li>Isi minimal satu image Docker 9router, simpan, lalu klik Tes koneksi sebelum menyalakan pemesanan.</li>
+        <li>Saat node mendekati penuh, tambah server baru di Dokploy lalu tambahkan sebagai node baru dengan domain wildcard sendiri.</li>
       </ol>
     </Panel>
   );

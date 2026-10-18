@@ -39,7 +39,10 @@ type HostingInstance struct {
 	DokployDomainID string
 	// DataVolume is the Docker volume mounted at the data dir; set once the
 	// mount exists so a retry never mounts twice.
-	DataVolume  string
+	DataVolume string
+	// NodeID is the hosting node (Dokploy server) the instance runs on;
+	// empty until it is first provisioned.
+	NodeID      string
 	LastError   string
 	PaidUntil   time.Time
 	PrepaidDays int // paid days not yet started; they start at provisioning
@@ -62,7 +65,7 @@ func (db *DB) Hosting() *HostingRepo { return &HostingRepo{db: db} }
 const hostingCols = `id, tenant_id, key_id, status, image, subdomain, fqdn,
 	dokploy_app_id, dokploy_app_name, dokploy_domain_id, data_volume, last_error, paid_until,
 	prepaid_days, password_wrapped_dek, password_ciphertext,
-	created_at, updated_at, provisioned_at`
+	created_at, updated_at, provisioned_at, node_id`
 
 // Create inserts an instance.
 func (r *HostingRepo) Create(ctx context.Context, h HostingInstance) error {
@@ -76,12 +79,12 @@ func (r *HostingRepo) CreateOnTx(ctx context.Context, tx *sql.Tx, h HostingInsta
 
 func (r *HostingRepo) insert(ctx context.Context, ex sqlExec, h HostingInstance) error {
 	q := r.db.rebind(`INSERT INTO hosting_instances (` + hostingCols + `)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	_, err := ex.ExecContext(ctx, q,
 		h.ID, h.TenantID, h.KeyID, string(h.Status), h.Image, h.Subdomain, h.FQDN,
 		h.DokployAppID, h.DokployAppName, h.DokployDomainID, h.DataVolume, h.LastError,
 		formatTime(h.PaidUntil), h.PrepaidDays, h.Password.WrappedDEK, h.Password.Ciphertext, formatTime(h.CreatedAt), formatTime(h.UpdatedAt),
-		formatTime(h.ProvisionedAt))
+		formatTime(h.ProvisionedAt), h.NodeID)
 	if err != nil {
 		return fmt.Errorf("store: create hosting instance: %w", err)
 	}
@@ -167,11 +170,11 @@ func (r *HostingRepo) transition(ctx context.Context, ex sqlExec, id string, fro
 func (r *HostingRepo) SetDokploy(ctx context.Context, h HostingInstance) error {
 	q := r.db.rebind(`UPDATE hosting_instances SET image = ?, subdomain = ?, fqdn = ?,
 		dokploy_app_id = ?, dokploy_app_name = ?, dokploy_domain_id = ?, data_volume = ?,
-		password_wrapped_dek = ?, password_ciphertext = ?, updated_at = ?
+		password_wrapped_dek = ?, password_ciphertext = ?, node_id = ?, updated_at = ?
 		WHERE id = ?`)
 	_, err := r.db.sql.ExecContext(ctx, q, h.Image, h.Subdomain, h.FQDN,
 		h.DokployAppID, h.DokployAppName, h.DokployDomainID, h.DataVolume,
-		h.Password.WrappedDEK, h.Password.Ciphertext, formatTime(time.Now()), h.ID)
+		h.Password.WrappedDEK, h.Password.Ciphertext, h.NodeID, formatTime(time.Now()), h.ID)
 	if err != nil {
 		return fmt.Errorf("store: set hosting dokploy ids: %w", err)
 	}
@@ -207,17 +210,18 @@ func (r *HostingRepo) MarkProvisioned(ctx context.Context, h HostingInstance, at
 
 // ApplyPaymentOnTx records one paid period. A provisioned instance extends
 // paid_until to newUntil; an unprovisioned one adds days to prepaid_days. The
-// update only applies if the row still holds prevUntil and prevPrepaid, so a
-// concurrent payment for the same instance fails instead of being lost.
+// update only applies if the row still holds prevUntil, prevPrepaid and the
+// status that was read, so a concurrent payment or admin action (such as a
+// delete) fails the update instead of being lost; the caller retries.
 func (r *HostingRepo) ApplyPaymentOnTx(ctx context.Context, tx *sql.Tx, h HostingInstance, newUntil time.Time, addPrepaid int) error {
 	q := r.db.rebind(`UPDATE hosting_instances SET paid_until = ?, prepaid_days = prepaid_days + ?, updated_at = ?
-		WHERE id = ? AND paid_until = ? AND prepaid_days = ?`)
+		WHERE id = ? AND paid_until = ? AND prepaid_days = ? AND status = ?`)
 	until := h.PaidUntil
 	if !newUntil.IsZero() {
 		until = newUntil
 	}
 	res, err := tx.ExecContext(ctx, q, formatTime(until), addPrepaid, formatTime(time.Now()),
-		h.ID, formatTime(h.PaidUntil), h.PrepaidDays)
+		h.ID, formatTime(h.PaidUntil), h.PrepaidDays, string(h.Status))
 	if err != nil {
 		return fmt.Errorf("store: apply hosting payment: %w", err)
 	}
@@ -229,6 +233,29 @@ func (r *HostingRepo) ApplyPaymentOnTx(ctx context.Context, tx *sql.Tx, h Hostin
 		return ErrHostingConflict
 	}
 	return nil
+}
+
+// CountByNode returns how many instances occupy each node: every status that
+// holds (or may hold) a container there.
+func (r *HostingRepo) CountByNode(ctx context.Context) (map[string]int, error) {
+	q := r.db.rebind(`SELECT node_id, COUNT(*) FROM hosting_instances
+		WHERE node_id <> '' AND status IN (?, ?, ?, ?, ?) GROUP BY node_id`)
+	rows, err := r.db.sql.QueryContext(ctx, q, string(HostingProvisioning), string(HostingActive),
+		string(HostingExpired), string(HostingStopped), string(HostingFailed))
+	if err != nil {
+		return nil, fmt.Errorf("store: count hosting by node: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
 }
 
 // SubdomainExists reports whether any instance already holds sub.
@@ -299,7 +326,7 @@ func scanHosting(scan func(dest ...any) error) (HostingInstance, error) {
 	)
 	err := scan(&h.ID, &h.TenantID, &h.KeyID, &status, &h.Image, &h.Subdomain, &h.FQDN,
 		&h.DokployAppID, &h.DokployAppName, &h.DokployDomainID, &h.DataVolume, &h.LastError,
-		&paidUntil, &h.PrepaidDays, &h.Password.WrappedDEK, &h.Password.Ciphertext, &created, &updated, &provisioned)
+		&paidUntil, &h.PrepaidDays, &h.Password.WrappedDEK, &h.Password.Ciphertext, &created, &updated, &provisioned, &h.NodeID)
 	if err != nil {
 		return HostingInstance{}, err
 	}

@@ -2203,6 +2203,8 @@ export interface PortalHostingConfig {
   period_days: number;
   terms_version: string;
   terms_url: string;
+  /** Where paid customers waiting for activation contact the admin. */
+  support_url: string;
   instances: PortalHostingInstance[];
 }
 
@@ -2215,7 +2217,31 @@ export interface HostingOrder {
   expires_at?: string;
   terms_version: string;
   created_at: string;
+  coupon_code?: string;
+  /** Price before the coupon; 0 when no coupon was used. */
+  base_amount_idr?: number;
+  bonus_days?: number;
 }
+
+export type HostingCouponKind = "discount" | "bonus_days";
+export type HostingCouponDiscountType = "percent" | "fixed";
+
+/** Result of checking a coupon before checkout. */
+export type HostingCouponCheck =
+  | {
+      valid: true;
+      coupon_code: string;
+      kind: HostingCouponKind;
+      discount_type: HostingCouponDiscountType | "";
+      discount_value: number;
+      base_idr: number;
+      discount_idr: number;
+      final_idr: number;
+      bonus_days: number;
+      period_days: number;
+      expires_at: string;
+    }
+  | { valid: false; code: string; message: string };
 
 /** Error from a portal call that keeps the server's machine-readable code. */
 export class PortalAPIError extends Error {
@@ -2244,8 +2270,21 @@ export async function fetchPortalHostingPassword(id: string): Promise<string> {
   return data.password as string;
 }
 
+/** Check a hosting coupon for the signed-in user. It does not use the coupon. */
+export async function checkPortalHostingCoupon(code: string): Promise<HostingCouponCheck> {
+  const resp = await fetch("/portal/api/hosting/coupons/check", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new PortalAPIError(resp.status, data.error?.message || data.error || "Failed to check coupon", data.error?.code);
+  return data;
+}
+
 /** Create a SumoPod payment for a new hosting instance, or a renewal when instance_id is set. */
 export async function createPortalHostingOrder(input: {
+  coupon_code?: string;
   instance_id?: string;
   accept_terms: boolean;
   terms_version: string;
@@ -2262,6 +2301,30 @@ export async function createPortalHostingOrder(input: {
   return data;
 }
 
+/** A Dokploy server that runs customer containers, with its own wildcard domain. */
+export interface HostingNode {
+  /** ^[a-z0-9][a-z0-9-]{0,39}$, unique, never changed once saved. */
+  id: string;
+  name: string;
+  /** Dokploy serverId; "" = the Dokploy host itself. */
+  server_id: string;
+  /** Wildcard *.root_domain must point at this node's IP. */
+  root_domain: string;
+  /** Monitoring target id; "" falls back to the target flagged instances. */
+  monitor_target_id: string;
+  /** 0 = unlimited. */
+  capacity: number;
+  enabled: boolean;
+}
+
+export interface HostingNodeLoad extends HostingNode {
+  used: number;
+  /** Open slots, or -1 when unlimited. */
+  free: number;
+  /** Enabled and not full. */
+  available: boolean;
+}
+
 export interface HostingSettings {
   enabled: boolean;
   monthly_price_idr: number;
@@ -2269,15 +2332,15 @@ export interface HostingSettings {
   api_key_masked: string;
   has_api_key: boolean;
   environment_id: string;
-  root_domain: string;
   images: string[];
   container_port: number;
   env_template: string;
-  server_id: string;
+  nodes: HostingNode[];
   password_env: string;
   memory_limit: string;
   cpu_limit: string;
   data_path: string;
+  support_url: string;
   grace_days: number;
   terms_version: string;
   period_days: number;
@@ -2291,15 +2354,15 @@ export interface HostingSettingsInput {
   api_key?: string;
   clear_api_key?: boolean;
   environment_id: string;
-  root_domain: string;
   images: string[];
   container_port: number;
   env_template: string;
-  server_id: string;
+  nodes: HostingNode[];
   password_env: string;
   memory_limit: string;
   cpu_limit: string;
   data_path: string;
+  support_url: string;
 }
 
 export interface HostingInstanceOrder {
@@ -2310,6 +2373,49 @@ export interface HostingInstanceOrder {
   paid_at?: string;
   terms_version: string;
   terms_accepted_at: string;
+  coupon_code?: string;
+  base_amount_idr?: number;
+  bonus_days?: number;
+  reason?: string;
+}
+
+/** Admin view of a hosting coupon. */
+export interface HostingCoupon {
+  id: string;
+  code: string;
+  kind: HostingCouponKind;
+  discount_type: HostingCouponDiscountType | "";
+  discount_value: number;
+  bonus_days: number;
+  /** 0 = unlimited. */
+  max_uses: number;
+  /** Paid uses. */
+  used_count: number;
+  /** Uses held by payments still pending. */
+  held_count: number;
+  /** -1 = unlimited. */
+  remaining: number;
+  starts_at: string;
+  expires_at: string;
+  active: boolean;
+  state: "active" | "inactive" | "scheduled" | "expired" | "exhausted";
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HostingCouponInput {
+  code: string;
+  kind: HostingCouponKind;
+  discount_type?: HostingCouponDiscountType;
+  discount_value?: number;
+  bonus_days?: number;
+  max_uses: number;
+  /** RFC3339, or "" for none. */
+  starts_at: string;
+  expires_at: string;
+  active: boolean;
+  note: string;
 }
 
 export interface HostingInstanceAdmin {
@@ -2331,6 +2437,8 @@ export interface HostingInstanceAdmin {
   updated_at: string;
   provisioned_at: string;
   has_password: boolean;
+  /** Node the instance runs on; "" before it is provisioned. */
+  node_id: string;
   user_email?: string;
   orders?: HostingInstanceOrder[];
 }
@@ -2460,6 +2568,9 @@ export interface HostingContainerMetrics {
   app_name: string;
   fqdn: string;
   status: HostingStatus;
+  node_id: string;
+  /** Monitoring target name the metrics came from. */
+  server?: string;
   samples: HostingContainerMetric[];
   error?: string;
 }
@@ -2585,11 +2696,21 @@ export const api = {
   testHostingSettings: () => request<{ ok: boolean; error?: string }>("POST", "/hosting/settings/test"),
   listHostingInstances: (status?: string) =>
     request<{ instances: HostingInstanceAdmin[] }>("GET", `/hosting/instances${status ? `?status=${encodeURIComponent(status)}` : ""}`),
-  provisionHosting: (id: string, image: string) =>
-    request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/provision`, { image }),
+  listHostingNodes: () => request<{ nodes: HostingNodeLoad[]; recommended: string }>("GET", "/hosting/nodes"),
+  /** Omit nodeId to let the server pick the node with the most room. */
+  provisionHosting: (id: string, image: string, nodeId?: string) =>
+    request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/provision`, {
+      image,
+      ...(nodeId ? { node_id: nodeId } : {}),
+    }),
   stopHosting: (id: string) => request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/stop`),
   startHosting: (id: string) => request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/start`),
   deleteHosting: (id: string) => request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/delete`),
+  listHostingCoupons: () => request<{ coupons: HostingCoupon[] }>("GET", "/hosting/coupons"),
+  createHostingCoupon: (body: HostingCouponInput) => request<HostingCoupon>("POST", "/hosting/coupons", body),
+  updateHostingCoupon: (id: string, body: HostingCouponInput) =>
+    request<HostingCoupon>("PUT", `/hosting/coupons/${encodeURIComponent(id)}`, body),
+  deleteHostingCoupon: (id: string) => request<{ deleted: boolean }>("DELETE", `/hosting/coupons/${encodeURIComponent(id)}`),
   hostingFinance: (months: number) => request<HostingFinance>("GET", `/hosting/finance?months=${months}`),
   createHostingCost: (body: HostingCostInput) => request<HostingCost>("POST", "/hosting/costs", body),
   updateHostingCost: (id: string, body: HostingCostInput) => request<HostingCost>("PUT", `/hosting/costs/${encodeURIComponent(id)}`, body),
@@ -2599,7 +2720,7 @@ export const api = {
     request<{ targets: HostingMonitorTarget[] }>("PUT", "/hosting/monitoring/settings", { targets }),
   hostingServerMetrics: (limit = 60) => request<{ servers: HostingServerMetrics[] }>("GET", `/hosting/monitoring/servers?limit=${limit}`),
   hostingContainerMetrics: (limit = 30) =>
-    request<{ server?: string; containers: HostingContainerMetrics[]; error?: string }>("GET", `/hosting/monitoring/containers?limit=${limit}`),
+    request<{ containers: HostingContainerMetrics[]; error?: string }>("GET", `/hosting/monitoring/containers?limit=${limit}`),
 
   // Finance monitor (admin): profit, upstream balances, top-ups, alerts.
   financeReport: (range: FinanceRange) =>

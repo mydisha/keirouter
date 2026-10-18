@@ -43,7 +43,7 @@ import {
   Sparkline,
 } from "../../components/ui";
 import { Panel, TH, THEAD, errorText } from "../payments/shared";
-import { QK_HOSTING, STATUS_LABEL, STATUS_TONE, num, pct, uptimeID } from "./shared";
+import { QK_HOSTING, STATUS_LABEL, STATUS_TONE, nodeName, num, pct, uptimeID } from "./shared";
 
 const REFRESH_MS = 30_000;
 const MAX_TARGETS = 10;
@@ -283,9 +283,10 @@ type SortKey = "cpu" | "mem";
 function ContainersSection({
   query,
 }: {
-  query: { data?: { server?: string; containers: HostingContainerMetrics[]; error?: string }; isLoading: boolean; isError: boolean; error: unknown };
+  query: { data?: { containers: HostingContainerMetrics[]; error?: string }; isLoading: boolean; isError: boolean; error: unknown };
 }) {
   const [sort, setSort] = useState<SortKey>("cpu");
+  const nodes = useQuery({ queryKey: QK_HOSTING.nodes, queryFn: api.listHostingNodes });
   const data = query.data;
   const rows = useMemo(() => {
     const list = (data?.containers ?? []).map((c) => ({ c, last: c.samples[c.samples.length - 1] as HostingContainerMetric | undefined }));
@@ -297,7 +298,7 @@ function ContainersSection({
     <Panel
       icon={Boxes}
       title="Container pelanggan"
-      subtitle={data?.server ? `Dari server ${data.server}. Diurutkan dari pemakaian tertinggi.` : "Pemakaian resource tiap instance hosting."}
+      subtitle="Pemakaian resource tiap instance hosting, diurutkan dari pemakaian tertinggi."
       action={
         <SegmentedControl<SortKey>
           label="Urutkan berdasarkan"
@@ -341,10 +342,11 @@ function ContainersSection({
             />
           ) : (
             <div className="overflow-x-auto" role="region" aria-label="Tabel pemakaian container" tabIndex={0}>
-              <table className="w-full min-w-[880px] text-[13px]">
+              <table className="w-full min-w-[1000px] text-[13px]">
                 <thead>
                   <tr className={THEAD}>
                     <th scope="col" className={TH}>Instance</th>
+                    <th scope="col" className={TH}>Node</th>
                     <th scope="col" className={cn(TH, "text-right")} aria-sort={sort === "cpu" ? "descending" : undefined}>CPU</th>
                     <th scope="col" className={TH}>
                       <span className="sr-only">Tren CPU</span>
@@ -363,7 +365,11 @@ function ContainersSection({
                           {c.app_name && c.fqdn && <span className="font-mono text-[11px] text-fg-muted">{c.app_name}</span>}
                           {c.status && c.status !== "active" && <Badge tone={STATUS_TONE[c.status] ?? "neutral"}>{STATUS_LABEL[c.status] ?? c.status}</Badge>}
                         </div>
-                        {c.error && <p className="mt-1 max-w-[320px] break-words text-[11.5px] text-bad">{c.error}</p>}
+                        {c.error && <p className="mt-1 max-w-[320px] break-words text-[11.5px] text-bad">{containerRowError(c.error)}</p>}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <p className="text-fg">{nodeName(nodes.data?.nodes, c.node_id) || "-"}</p>
+                        {c.server && <p className="text-[11.5px] text-fg-muted">Monitoring: {c.server}</p>}
                       </td>
                       {last ? (
                         <>
@@ -399,6 +405,13 @@ function ContainersSection({
       )}
     </Panel>
   );
+}
+
+function containerRowError(msg: string): string {
+  if (msg.includes("no monitoring server is set for this node")) {
+    return "Node ini belum punya server monitoring. Pilih server monitoring node di Pengaturan hosting, atau tandai server pelanggan di Pengaturan monitoring.";
+  }
+  return msg;
 }
 
 function containersError(msg: string): string {

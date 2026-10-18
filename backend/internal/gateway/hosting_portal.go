@@ -19,7 +19,11 @@ import (
 const hostingTermsPath = "/ketentuan/hosting-9router"
 
 func (s *Server) loadHostingSettings(r *http.Request) (hosting.Settings, error) {
-	return hosting.Load(r.Context(), s.settingsGet(), s.financeBox())
+	return s.loadHostingSettingsCtx(r.Context())
+}
+
+func (s *Server) loadHostingSettingsCtx(ctx context.Context) (hosting.Settings, error) {
+	return hosting.Load(ctx, s.settingsGet(), s.financeBox())
 }
 
 // hostingInstanceView is the portal-safe view of an instance. Dokploy ids and
@@ -72,7 +76,7 @@ func (s *Server) handlePortalHosting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
-	pending := latestPendingHostingOrders(orders, time.Now(), st.MonthlyPriceIDR)
+	pending := latestPendingHostingOrders(orders, time.Now(), st.MonthlyPriceIDR, nil)
 	out := make([]map[string]any, 0, len(instances))
 	for _, h := range instances {
 		var p *store.PaymentOrder
@@ -87,17 +91,27 @@ func (s *Server) handlePortalHosting(w http.ResponseWriter, r *http.Request) {
 		"period_days":   hosting.PeriodDays,
 		"terms_version": hosting.TermsVersion,
 		"terms_url":     hostingTermsPath,
+		"support_url":   st.SupportURL,
 		"instances":     out,
 	})
 }
 
 // latestPendingHostingOrders maps instance id to its newest unexpired
 // pending hosting order, so the portal can offer "continue payment".
-// Orders at an old price are skipped so a price change cannot be dodged.
-func latestPendingHostingOrders(orders []store.PaymentOrder, now time.Time, price int64) map[string]store.PaymentOrder {
+// Orders at an old base price are skipped so a price change cannot be
+// dodged. A non-nil coupon keeps only orders made with that coupon code
+// ("" = no coupon), so a reused payment always matches what was asked for.
+func latestPendingHostingOrders(orders []store.PaymentOrder, now time.Time, price int64, coupon *string) map[string]store.PaymentOrder {
 	out := map[string]store.PaymentOrder{}
 	for _, o := range orders { // newest first
-		if o.Product != store.ProductHosting || o.Status != store.PaymentPending || o.HostingInstanceID == "" || o.AmountIDR != price {
+		base := o.BaseAmountIDR
+		if base == 0 {
+			base = o.AmountIDR
+		}
+		if o.Product != store.ProductHosting || o.Status != store.PaymentPending || o.HostingInstanceID == "" || base != price {
+			continue
+		}
+		if coupon != nil && o.CouponCode != *coupon {
 			continue
 		}
 		if o.ExpiresAt != "" {
@@ -118,6 +132,7 @@ type createHostingOrderRequest struct {
 	TermsVersion   string `json:"terms_version"`
 	IdempotencyKey string `json:"idempotency_key"`
 	TurnstileToken string `json:"turnstile_token"`
+	CouponCode     string `json:"coupon_code"`
 }
 
 // handlePortalCreateHostingOrder creates a SumoPod payment for one month of
@@ -166,6 +181,12 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusConflict, "api key is not usable")
 		return
 	}
+	couponCode := hosting.NormalizeCouponCode(body.CouponCode)
+
+	// One checkout at a time per key: the unpaid-instance reuse and the
+	// coupon hold below are read-then-write.
+	unlock := s.lockHostingOrders(keyID)
+	defer unlock()
 
 	idem := strings.TrimSpace(body.IdempotencyKey)
 	if idem == "" {
@@ -225,17 +246,33 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, oerr, "internal server error"))
 			return
 		}
-		if open, ok := latestPendingHostingOrders(orders, time.Now(), st.MonthlyPriceIDR)[inst.ID]; ok {
+		if open, ok := latestPendingHostingOrders(orders, time.Now(), st.MonthlyPriceIDR, &couponCode)[inst.ID]; ok {
 			s.writeHostingOrderResponse(w, http.StatusOK, open)
 			return
 		}
+	}
+
+	quote := hosting.Quote{BaseIDR: st.MonthlyPriceIDR, FinalIDR: st.MonthlyPriceIDR}
+	var coupon store.HostingCoupon
+	if couponCode != "" {
+		c, reject, cerr := s.lookupHostingCoupon(r.Context(), couponCode, keyID, time.Now())
+		if cerr != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, cerr, "internal server error"))
+			return
+		}
+		if reject != "" {
+			writeCouponRejection(w, reject)
+			return
+		}
+		coupon = c
+		quote = hosting.QuoteCoupon(st.MonthlyPriceIDR, c, s.hostingMinChargeIDR())
 	}
 
 	p := s.cfg.Payment
 	orderID := uuid.NewString()
 	base := s.publicBaseURL(r)
 	created, err := s.paymentClient.CreatePayment(r.Context(), payment.CreateRequest{
-		OrderID: orderID, AmountIDR: st.MonthlyPriceIDR, Currency: "IDR",
+		OrderID: orderID, AmountIDR: quote.FinalIDR, Currency: "IDR",
 		ExpiresInHours:        p.ExpiresInHours,
 		SuccessReturnURL:      base + "/portal/hosting?status=success",
 		CancelReturnURL:       base + "/portal/hosting?status=cancel",
@@ -250,14 +287,22 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 	now := time.Now()
 	o := store.PaymentOrder{
 		ID: orderID, TenantID: adminTenant, KeyID: keyID, GoogleSub: u.GoogleSub,
-		AmountIDR: st.MonthlyPriceIDR, Status: store.PaymentPending, Provider: p.Provider,
+		AmountIDR: quote.FinalIDR, Status: store.PaymentPending, Provider: p.Provider,
 		ProviderPaymentID: created.PaymentID, PaymentLinkURL: created.PaymentLinkURL,
 		IdempotencyKey: idem, Actor: "portal", CreatedAt: now, UpdatedAt: now,
 		ExpiresAt: created.ExpiresAt, Product: store.ProductHosting,
 		HostingInstanceID: inst.ID, TermsVersion: hosting.TermsVersion,
 		TermsAcceptedAt: now.UTC().Format(time.RFC3339),
+		CouponID:        coupon.ID, CouponCode: coupon.Code, BonusDays: quote.BonusDays,
 	}
-	if err := s.createHostingOrder(r, inst, newInstance, o); err != nil {
+	if coupon.ID != "" {
+		o.BaseAmountIDR = quote.BaseIDR
+	}
+	if err := s.createHostingOrder(r, inst, newInstance, o, s.couponHoldUntil(created.ExpiresAt, now)); err != nil {
+		if reject := couponReserveRejection(err); reject != "" {
+			writeCouponRejection(w, reject)
+			return
+		}
 		if idem != "" {
 			if existing, gerr := s.db.PaymentOrders().GetByIdempotencyKey(r.Context(), idem); gerr == nil && existing.KeyID == keyID {
 				s.writeHostingOrderResponse(w, http.StatusOK, existing)
@@ -270,7 +315,9 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 	s.writeHostingOrderResponse(w, http.StatusCreated, o)
 }
 
-func (s *Server) createHostingOrder(r *http.Request, inst store.HostingInstance, newInstance bool, o store.PaymentOrder) error {
+// createHostingOrder stores the order (and a new instance) and, for a coupon
+// order, takes one coupon use until holdUntil, all in one transaction.
+func (s *Server) createHostingOrder(r *http.Request, inst store.HostingInstance, newInstance bool, o store.PaymentOrder, holdUntil time.Time) error {
 	tx, err := s.db.SQL().BeginTx(r.Context(), nil)
 	if err != nil {
 		return err
@@ -283,6 +330,11 @@ func (s *Server) createHostingOrder(r *http.Request, inst store.HostingInstance,
 	}
 	if err := s.db.PaymentOrders().CreateOnTx(r.Context(), tx, o); err != nil {
 		return err
+	}
+	if o.CouponID != "" {
+		if err := s.db.HostingCoupons().ReserveOnTx(r.Context(), tx, o.CouponID, o.KeyID, o.ID, holdUntil, o.CreatedAt); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
 }
@@ -297,6 +349,9 @@ func (s *Server) writeHostingOrderResponse(w http.ResponseWriter, status int, o 
 		"expires_at":       o.ExpiresAt,
 		"terms_version":    o.TermsVersion,
 		"created_at":       o.CreatedAt,
+		"coupon_code":      o.CouponCode,
+		"base_amount_idr":  o.BaseAmountIDR,
+		"bonus_days":       o.BonusDays,
 	})
 }
 
@@ -343,8 +398,22 @@ func (s *Server) markHostingOrderPaidOnce(ctx context.Context, order store.Payme
 		return false, err
 	}
 	if inst.Status != store.HostingDeleted {
-		if err := s.applyHostingPeriod(ctx, tx, inst, now); err != nil {
+		if err := s.applyHostingPeriod(ctx, tx, inst, now, hosting.PeriodDays+order.BonusDays); err != nil {
 			return false, err
+		}
+	}
+	if order.CouponID != "" {
+		coupons := s.db.HostingCoupons()
+		if inst.Status == store.HostingDeleted {
+			// The payment is refunded, so the coupon use goes back too.
+			if _, err := coupons.ReleaseOnTx(ctx, tx, order.ID, now); err != nil {
+				return false, err
+			}
+		} else if counted, err := coupons.ConsumeOnTx(ctx, tx, order.ID, now); err != nil {
+			return false, err
+		} else if !counted {
+			s.log.Warn("hosting: paid coupon order could not be counted against the coupon",
+				"order", order.ID, "coupon", order.CouponCode)
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -353,10 +422,12 @@ func (s *Server) markHostingOrderPaidOnce(ctx context.Context, order store.Payme
 	return true, nil
 }
 
-func (s *Server) applyHostingPeriod(ctx context.Context, tx *sql.Tx, inst store.HostingInstance, now time.Time) error {
+// applyHostingPeriod adds days (one period plus any coupon bonus) to the
+// instance.
+func (s *Server) applyHostingPeriod(ctx context.Context, tx *sql.Tx, inst store.HostingInstance, now time.Time, days int) error {
 	repo := s.db.Hosting()
 	if inst.ProvisionedAt.IsZero() {
-		if err := repo.ApplyPaymentOnTx(ctx, tx, inst, time.Time{}, hosting.PeriodDays); err != nil {
+		if err := repo.ApplyPaymentOnTx(ctx, tx, inst, time.Time{}, days); err != nil {
 			return err
 		}
 		if inst.Status == store.HostingAwaitingPayment {
@@ -372,7 +443,7 @@ func (s *Server) applyHostingPeriod(ctx context.Context, tx *sql.Tx, inst store.
 	if inst.PaidUntil.AddDate(0, 0, hosting.GraceDays).After(now) {
 		base = inst.PaidUntil
 	}
-	if err := repo.ApplyPaymentOnTx(ctx, tx, inst, base.AddDate(0, 0, hosting.PeriodDays), 0); err != nil {
+	if err := repo.ApplyPaymentOnTx(ctx, tx, inst, base.AddDate(0, 0, days), 0); err != nil {
 		return err
 	}
 	if inst.Status == store.HostingExpired {

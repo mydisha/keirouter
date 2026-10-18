@@ -38,6 +38,11 @@ func (a *App) hostingExpiryPass(ctx context.Context, now time.Time) {
 	} else if n > 0 {
 		a.log.Warn("hosting: instances interrupted mid-provisioning marked failed", "count", n)
 	}
+	if n, err := a.db.HostingCoupons().ReleaseExpired(ctx, "", now); err != nil {
+		a.log.Warn("hosting: release lapsed coupon holds failed", "err", err)
+	} else if n > 0 {
+		a.log.Info("hosting: lapsed coupon holds released", "count", n)
+	}
 	if n, err := repo.ExpireDue(ctx, now); err != nil {
 		a.log.Warn("hosting expiry pass failed", "err", err)
 		return
@@ -71,14 +76,23 @@ func (a *App) hostingExpiryPass(ctx context.Context, now time.Time) {
 	}
 	api := dokploy.NewClient(st.DokployURL, st.APIKey)
 	for _, h := range due {
-		if h.DokployAppID != "" {
-			if err := api.Stop(ctx, h.DokployAppID); err != nil {
-				a.log.Warn("hosting: auto-stop failed", "instance", h.ID, "err", err)
-				continue
-			}
-		}
-		if _, err := repo.Transition(ctx, h.ID, []store.HostingStatus{store.HostingExpired}, store.HostingStopped, autoStopReason); err != nil {
+		// Claim the row first: a renewal that lands now moves it out of
+		// expired, so the claim fails and the paid instance keeps running.
+		// A renewal after the claim extends paid_until on the stopped row,
+		// and the restart loop below starts it again.
+		moved, err := repo.Transition(ctx, h.ID, []store.HostingStatus{store.HostingExpired}, store.HostingStopped, autoStopReason)
+		if err != nil {
 			a.log.Warn("hosting: mark auto-stopped failed", "instance", h.ID, "err", err)
+			continue
+		}
+		if !moved || h.DokployAppID == "" {
+			continue
+		}
+		if err := api.Stop(ctx, h.DokployAppID); err != nil {
+			a.log.Warn("hosting: auto-stop failed", "instance", h.ID, "err", err)
+			if _, rerr := repo.Transition(ctx, h.ID, []store.HostingStatus{store.HostingStopped}, store.HostingExpired, ""); rerr != nil {
+				a.log.Warn("hosting: undo auto-stop mark failed", "instance", h.ID, "err", rerr)
+			}
 		}
 	}
 	for _, h := range renewed {

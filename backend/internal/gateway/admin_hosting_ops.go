@@ -50,7 +50,7 @@ func (s *Server) adminHostingFinance(w http.ResponseWriter, r *http.Request) {
 		months = n
 	}
 	ctx := r.Context()
-	orders, err := s.db.PaymentOrders().ListAll(ctx)
+	orders, err := s.db.PaymentOrders().ListByProduct(ctx, store.ProductHosting)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
@@ -386,7 +386,9 @@ func (s *Server) adminHostingServerMetrics(w http.ResponseWriter, r *http.Reques
 }
 
 // adminHostingContainerMetrics returns recent per-container samples for
-// every running instance, read from the server marked as running them.
+// every running instance, each read from the monitoring server of the node
+// it runs on (falling back to the server marked as running customer
+// instances).
 func (s *Server) adminHostingContainerMetrics(w http.ResponseWriter, r *http.Request) {
 	limit := 30
 	if v := r.URL.Query().Get("limit"); v != "" {
@@ -399,15 +401,29 @@ func (s *Server) adminHostingContainerMetrics(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
-	var target *hosting.MonitorTarget
+	st, err := s.loadHostingSettings(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	byID := map[string]hosting.MonitorTarget{}
+	var fallback *hosting.MonitorTarget
 	for i := range targets {
+		byID[targets[i].ID] = targets[i]
 		if targets[i].Instances {
-			target = &targets[i]
+			fallback = &targets[i]
 		}
 	}
-	if target == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"containers": []any{}, "error": "no monitoring server is marked as running customer instances"})
-		return
+	targetFor := func(nodeID string) (hosting.MonitorTarget, bool) {
+		if n, ok := st.Node(nodeID); ok && n.MonitorTargetID != "" {
+			if t, ok := byID[n.MonitorTargetID]; ok {
+				return t, true
+			}
+		}
+		if fallback != nil {
+			return *fallback, true
+		}
+		return hosting.MonitorTarget{}, false
 	}
 	instances, err := s.db.Hosting().ListAll(r.Context(), "")
 	if err != nil {
@@ -422,31 +438,42 @@ func (s *Server) adminHostingContainerMetrics(w http.ResponseWriter, r *http.Req
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	client := s.monitorClient(*target)
+	clients := map[string]monitorFetcher{}
 	out := make([]map[string]any, len(running))
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup
 	for i, h := range running {
+		v := map[string]any{
+			"instance_id": h.ID, "app_name": h.DokployAppName, "fqdn": h.FQDN,
+			"status": string(h.Status), "node_id": h.NodeID, "samples": []hosting.ContainerMetric{},
+		}
+		out[i] = v
+		t, ok := targetFor(h.NodeID)
+		if !ok {
+			v["error"] = "no monitoring server is set for this node"
+			continue
+		}
+		v["server"] = t.Name
+		c, ok := clients[t.ID]
+		if !ok {
+			c = s.monitorClient(t)
+			clients[t.ID] = c
+		}
 		wg.Add(1)
-		go func(i int, h store.HostingInstance) {
+		go func(v map[string]any, c monitorFetcher, app string) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			v := map[string]any{
-				"instance_id": h.ID, "app_name": h.DokployAppName, "fqdn": h.FQDN,
-				"status": string(h.Status), "samples": []hosting.ContainerMetric{},
-			}
-			samples, err := client.Container(ctx, h.DokployAppName, limit)
+			samples, err := c.Container(ctx, app, limit)
 			if err != nil {
 				v["error"] = err.Error()
 			} else if samples != nil {
 				v["samples"] = samples
 			}
-			out[i] = v
-		}(i, h)
+		}(v, c, h.DokployAppName)
 	}
 	wg.Wait()
-	writeJSON(w, http.StatusOK, map[string]any{"server": target.Name, "containers": out})
+	writeJSON(w, http.StatusOK, map[string]any{"containers": out})
 }
 
 // monitorFetcher is the monitoring surface; tests swap it via monitorFactory.

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/payment"
 	"github.com/mydisha/keirouter/backend/internal/store"
@@ -83,7 +84,8 @@ func (s *Server) handleSumopodWebhook(w http.ResponseWriter, r *http.Request) {
 		if order.Product == store.ProductHosting {
 			// Hosting grants a service, not a refundable balance: refuse an
 			// event whose order id or amount does not match what we created.
-			if (ev.Data.OrderID != "" && ev.Data.OrderID != order.ID) || (ev.Data.Amount != 0 && ev.Data.Amount != order.AmountIDR) {
+			// The amount must be present and exact.
+			if (ev.Data.OrderID != "" && ev.Data.OrderID != order.ID) || ev.Data.Amount != order.AmountIDR {
 				s.log.Error("webhook: hosting event does not match order; left pending for review",
 					"order", order.ID, "event_order", ev.Data.OrderID, "amount", ev.Data.Amount, "want", order.AmountIDR)
 				break
@@ -111,8 +113,18 @@ func (s *Server) handleSumopodWebhook(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		if _, terr := s.db.PaymentOrders().TransitionOnTx(r.Context(), tx, order.ID, store.PaymentPending, to, "webhook", "", ""); terr != nil {
+		applied, terr := s.db.PaymentOrders().TransitionOnTx(r.Context(), tx, order.ID, store.PaymentPending, to, "webhook", "", "")
+		if terr != nil {
 			s.log.Error("webhook: transition failed", "order", order.ID, "to", to, "err", terr)
+		}
+		// An unpaid coupon order gives its coupon use back.
+		if applied && order.CouponID != "" {
+			if _, rerr := s.db.HostingCoupons().ReleaseOnTx(r.Context(), tx, order.ID, time.Now()); rerr != nil {
+				_ = tx.Rollback()
+				s.log.Error("webhook: release coupon failed", "order", order.ID, "err", rerr)
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
 		}
 		if cerr := tx.Commit(); cerr != nil {
 			s.log.Error("webhook: commit failed", "order", order.ID, "err", cerr)

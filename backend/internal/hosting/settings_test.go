@@ -11,7 +11,10 @@ import (
 func TestNormalize(t *testing.T) {
 	s := Settings{RootDomain: " *.Host.Example.com. ", Images: []string{" a:1 ", "a:1", ""}, DokployURL: "https://d.example.com/"}
 	require.NoError(t, s.Normalize())
-	require.Equal(t, "host.example.com", s.RootDomain)
+	require.Len(t, s.Nodes, 1, "legacy root_domain becomes the default node")
+	require.Equal(t, LegacyNodeID, s.Nodes[0].ID)
+	require.Equal(t, "host.example.com", s.Nodes[0].RootDomain)
+	require.Empty(t, s.RootDomain)
 	require.Equal(t, []string{"a:1"}, s.Images)
 	require.Equal(t, DefaultPort, s.ContainerPort)
 	require.Equal(t, "https://d.example.com", s.DokployURL)

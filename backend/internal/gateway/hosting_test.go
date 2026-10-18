@@ -545,3 +545,75 @@ func TestHostingMonitoring(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "refused")
 }
+
+func TestHosting_MultiNodePlacement(t *testing.T) {
+	s, _, fake := hostingTestServer(t)
+	ctx := t.Context()
+	st, err := s.loadHostingSettingsCtx(ctx)
+	require.NoError(t, err)
+	require.Len(t, st.Nodes, 1, "legacy settings fold into the default node")
+	require.Equal(t, hosting.LegacyNodeID, st.Nodes[0].ID)
+
+	st.Nodes = []hosting.Node{
+		{ID: "n1", Name: "Node 1", ServerID: "srv-1", RootDomain: "n1.example.com", Capacity: 1, Enabled: true},
+		{ID: "n2", Name: "Node 2", ServerID: "srv-2", RootDomain: "n2.example.com", Capacity: 3, Enabled: true},
+		{ID: "n3", Name: "Node 3", ServerID: "srv-3", RootDomain: "n3.example.com", Capacity: 10, Enabled: false},
+	}
+	require.NoError(t, hosting.Save(ctx, s.settingsSet(), s.financeBox(), st))
+
+	now := time.Now()
+	mkPaid := func(id string) {
+		require.NoError(t, s.db.Hosting().Create(ctx, store.HostingInstance{
+			ID: id, TenantID: adminTenant, KeyID: "k", Status: store.HostingPaid, PrepaidDays: 30, CreatedAt: now, UpdatedAt: now,
+		}))
+	}
+	prov := func(id, body string) *httptest.ResponseRecorder {
+		return adminHostingCall(s, http.MethodPost, "/x", id, body, s.adminProvisionHosting)
+	}
+	img := `"image":"luqmenul/9router-go:latest"`
+
+	// Auto: n2 has 3 free slots vs n1's 1.
+	mkPaid("a")
+	require.Equal(t, http.StatusOK, prov("a", `{`+img+`}`).Code)
+	a, _ := s.db.Hosting().Get(ctx, "a")
+	require.Equal(t, "n2", a.NodeID)
+	require.Equal(t, a.Subdomain+".n2.example.com", a.FQDN)
+	require.Equal(t, "srv-2", fake.lastServer)
+
+	// Explicit node.
+	mkPaid("b")
+	require.Equal(t, http.StatusOK, prov("b", `{`+img+`,"node_id":"n1"}`).Code)
+	b, _ := s.db.Hosting().Get(ctx, "b")
+	require.Equal(t, "n1", b.NodeID)
+	require.Equal(t, "srv-1", fake.lastServer)
+
+	// n1 is now full, n3 disabled, unknown rejected.
+	mkPaid("c")
+	require.Equal(t, http.StatusConflict, prov("c", `{`+img+`,"node_id":"n1"}`).Code)
+	require.Equal(t, http.StatusConflict, prov("c", `{`+img+`,"node_id":"n3"}`).Code)
+	require.Equal(t, http.StatusBadRequest, prov("c", `{`+img+`,"node_id":"nope"}`).Code)
+
+	// Nodes endpoint reports usage and the recommended node.
+	r := chi.NewRouter()
+	s.mountHosting(r)
+	rec := doJSON(t, r, http.MethodGet, "/hosting/nodes", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	nb := decodeBody(t, rec)
+	require.Equal(t, "n2", nb["recommended"])
+
+	// A failed instance retries on its own node only.
+	fake.failDomainOnce = true
+	require.Equal(t, http.StatusBadGateway, prov("c", `{`+img+`,"node_id":"n2"}`).Code)
+	require.Equal(t, http.StatusConflict, prov("c", `{`+img+`,"node_id":"n1"}`).Code)
+	require.Equal(t, http.StatusOK, prov("c", `{`+img+`}`).Code)
+	c, _ := s.db.Hosting().Get(ctx, "c")
+	require.Equal(t, "n2", c.NodeID)
+
+	// Fill n2 (3 of 3), then auto has nowhere to go.
+	mkPaid("d")
+	require.Equal(t, http.StatusOK, prov("d", `{`+img+`}`).Code)
+	mkPaid("e")
+	rec = prov("e", `{`+img+`}`)
+	require.Equal(t, http.StatusConflict, rec.Code)
+	require.Contains(t, rec.Body.String(), "full")
+}

@@ -52,11 +52,13 @@ func (s *Server) mountHosting(r chi.Router) {
 	r.Get("/hosting/settings", s.adminGetHostingSettings)
 	r.Put("/hosting/settings", s.adminPutHostingSettings)
 	r.Post("/hosting/settings/test", s.adminTestHostingSettings)
+	r.Get("/hosting/nodes", s.adminListHostingNodes)
 	r.Get("/hosting/instances", s.adminListHostingInstances)
 	r.Post("/hosting/instances/{id}/provision", s.adminProvisionHosting)
 	r.Post("/hosting/instances/{id}/stop", s.adminStopHosting)
 	r.Post("/hosting/instances/{id}/start", s.adminStartHosting)
 	r.Post("/hosting/instances/{id}/delete", s.adminDeleteHosting)
+	s.mountHostingCoupons(r)
 }
 
 func hostingSettingsView(st hosting.Settings) map[string]any {
@@ -71,15 +73,15 @@ func hostingSettingsView(st hosting.Settings) map[string]any {
 		"api_key_masked":    hosting.MaskAPIKey(st.APIKey),
 		"has_api_key":       st.APIKey != "",
 		"environment_id":    st.EnvironmentID,
-		"root_domain":       st.RootDomain,
+		"nodes":             nodesOrEmpty(st.Nodes),
 		"images":            images,
 		"container_port":    st.ContainerPort,
 		"env_template":      st.EnvTemplate,
-		"server_id":         st.ServerID,
 		"password_env":      st.PasswordEnv,
 		"memory_limit":      st.MemoryLimit,
 		"cpu_limit":         st.CPULimit,
 		"data_path":         st.DataPath,
+		"support_url":       st.SupportURL,
 		"grace_days":        hosting.GraceDays,
 		"terms_version":     hosting.TermsVersion,
 		"period_days":       hosting.PeriodDays,
@@ -96,21 +98,23 @@ func (s *Server) adminGetHostingSettings(w http.ResponseWriter, r *http.Request)
 }
 
 type hostingSettingsRequest struct {
-	Enabled         bool     `json:"enabled"`
-	MonthlyPriceIDR int64    `json:"monthly_price_idr"`
-	DokployURL      string   `json:"dokploy_url"`
-	APIKey          *string  `json:"api_key"` // nil or "" keeps the stored key
-	ClearAPIKey     bool     `json:"clear_api_key"`
-	EnvironmentID   string   `json:"environment_id"`
-	RootDomain      string   `json:"root_domain"`
-	Images          []string `json:"images"`
-	ContainerPort   int      `json:"container_port"`
-	EnvTemplate     string   `json:"env_template"`
-	ServerID        string   `json:"server_id"`
-	PasswordEnv     string   `json:"password_env"`
-	MemoryLimit     string   `json:"memory_limit"`
-	CPULimit        string   `json:"cpu_limit"`
-	DataPath        string   `json:"data_path"`
+	Enabled         bool           `json:"enabled"`
+	MonthlyPriceIDR int64          `json:"monthly_price_idr"`
+	DokployURL      string         `json:"dokploy_url"`
+	APIKey          *string        `json:"api_key"` // nil or "" keeps the stored key
+	ClearAPIKey     bool           `json:"clear_api_key"`
+	EnvironmentID   string         `json:"environment_id"`
+	RootDomain      string         `json:"root_domain"` // legacy single node; folded into nodes
+	Nodes           []hosting.Node `json:"nodes"`
+	Images          []string       `json:"images"`
+	ContainerPort   int            `json:"container_port"`
+	EnvTemplate     string         `json:"env_template"`
+	ServerID        string         `json:"server_id"`
+	PasswordEnv     string         `json:"password_env"`
+	MemoryLimit     string         `json:"memory_limit"`
+	CPULimit        string         `json:"cpu_limit"`
+	DataPath        string         `json:"data_path"`
+	SupportURL      string         `json:"support_url"`
 }
 
 func (s *Server) adminPutHostingSettings(w http.ResponseWriter, r *http.Request) {
@@ -127,8 +131,9 @@ func (s *Server) adminPutHostingSettings(w http.ResponseWriter, r *http.Request)
 		Enabled: body.Enabled, MonthlyPriceIDR: body.MonthlyPriceIDR,
 		DokployURL: body.DokployURL, APIKey: cur.APIKey, EnvironmentID: body.EnvironmentID,
 		RootDomain: body.RootDomain, Images: body.Images, ContainerPort: body.ContainerPort,
-		EnvTemplate: body.EnvTemplate, ServerID: body.ServerID, PasswordEnv: body.PasswordEnv,
+		EnvTemplate: body.EnvTemplate, ServerID: body.ServerID, PasswordEnv: body.PasswordEnv, Nodes: body.Nodes,
 		MemoryLimit: body.MemoryLimit, CPULimit: body.CPULimit, DataPath: body.DataPath,
+		SupportURL: body.SupportURL,
 	}
 	newKey := body.APIKey != nil && strings.TrimSpace(*body.APIKey) != ""
 	if body.ClearAPIKey {
@@ -186,6 +191,8 @@ func (s *Server) adminTestHostingSettings(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// adminHostingView renders one instance for the admin. orders must be this
+// instance's own orders.
 func (s *Server) adminHostingView(h store.HostingInstance, orders []store.PaymentOrder, emails map[string]string) map[string]any {
 	v := map[string]any{
 		"id":                h.ID,
@@ -199,6 +206,7 @@ func (s *Server) adminHostingView(h store.HostingInstance, orders []store.Paymen
 		"dokploy_app_name":  h.DokployAppName,
 		"dokploy_domain_id": h.DokployDomainID,
 		"data_volume":       h.DataVolume,
+		"node_id":           h.NodeID,
 		"last_error":        h.LastError,
 		"paid_until":        timeOrEmpty(h.PaidUntil),
 		"prepaid_days":      h.PrepaidDays,
@@ -210,11 +218,8 @@ func (s *Server) adminHostingView(h store.HostingInstance, orders []store.Paymen
 	if h.FQDN != "" {
 		v["url"] = "https://" + h.FQDN
 	}
-	list := make([]map[string]any, 0)
+	list := make([]map[string]any, 0, len(orders))
 	for _, o := range orders {
-		if o.HostingInstanceID != h.ID {
-			continue
-		}
 		if e, ok := emails[o.GoogleSub]; ok && v["user_email"] == nil {
 			v["user_email"] = e
 		}
@@ -222,6 +227,8 @@ func (s *Server) adminHostingView(h store.HostingInstance, orders []store.Paymen
 			"order_id": o.ID, "status": string(o.Status), "amount_idr": o.AmountIDR,
 			"created_at": o.CreatedAt, "paid_at": o.PaidAt,
 			"terms_version": o.TermsVersion, "terms_accepted_at": o.TermsAcceptedAt,
+			"coupon_code": o.CouponCode, "base_amount_idr": o.BaseAmountIDR, "bonus_days": o.BonusDays,
+			"reason": o.Reason,
 		})
 	}
 	v["orders"] = list
@@ -235,29 +242,29 @@ func (s *Server) adminListHostingInstances(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
-	all, err := s.db.PaymentOrders().ListAll(r.Context())
+	orders, err := s.db.PaymentOrders().ListByProduct(r.Context(), store.ProductHosting)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
-	var orders []store.PaymentOrder
+	byInstance := make(map[string][]store.PaymentOrder, len(instances))
+	for _, o := range orders {
+		byInstance[o.HostingInstanceID] = append(byInstance[o.HostingInstanceID], o)
+	}
 	emails := map[string]string{}
-	for _, o := range all {
-		if o.Product != store.ProductHosting {
-			continue
+	if len(orders) > 0 {
+		users, uerr := s.db.PortalUsers().List(r.Context())
+		if uerr != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, uerr, "internal server error"))
+			return
 		}
-		orders = append(orders, o)
-		if _, seen := emails[o.GoogleSub]; !seen && o.GoogleSub != "" {
-			if u, uerr := s.db.PortalUsers().GetBySub(r.Context(), o.GoogleSub); uerr == nil {
-				emails[o.GoogleSub] = u.Email
-			} else {
-				emails[o.GoogleSub] = ""
-			}
+		for _, u := range users {
+			emails[u.GoogleSub] = u.Email
 		}
 	}
 	out := make([]map[string]any, 0, len(instances))
 	for _, h := range instances {
-		out = append(out, s.adminHostingView(h, orders, emails))
+		out = append(out, s.adminHostingView(h, byInstance[h.ID], emails))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"instances": out})
 }
@@ -283,8 +290,8 @@ func (s *Server) loadReadyHostingSettings(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return hosting.Settings{}, false
 	}
-	if st.DokployURL == "" || st.APIKey == "" || st.EnvironmentID == "" || st.RootDomain == "" {
-		writeError(w, http.StatusBadRequest, "hosting settings are incomplete: set the Dokploy URL, API key, environment ID and root domain")
+	if st.DokployURL == "" || st.APIKey == "" || st.EnvironmentID == "" || len(st.Nodes) == 0 {
+		writeError(w, http.StatusBadRequest, "hosting settings are incomplete: set the Dokploy URL, API key, environment ID and at least one node")
 		return hosting.Settings{}, false
 	}
 	return st, true
@@ -296,7 +303,8 @@ func (s *Server) loadReadyHostingSettings(w http.ResponseWriter, r *http.Request
 // the first missing step instead of creating duplicates.
 func (s *Server) adminProvisionHosting(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Image string `json:"image"`
+		Image  string `json:"image"`
+		NodeID string `json:"node_id"` // empty picks the node with the most room
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -318,6 +326,11 @@ func (s *Server) adminProvisionHosting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "a master key is required to store instance passwords")
 		return
 	}
+	node, status, msg := s.chooseHostingNode(r.Context(), st, h, strings.TrimSpace(body.NodeID))
+	if status != 0 {
+		writeError(w, status, msg)
+		return
+	}
 	from := []store.HostingStatus{store.HostingPaid, store.HostingFailed}
 	if h.Status == store.HostingProvisioning && time.Since(h.UpdatedAt) > staleProvisioning {
 		from = append(from, store.HostingProvisioning) // a crash left it stuck
@@ -335,7 +348,7 @@ func (s *Server) adminProvisionHosting(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), dokployTimeout)
 	defer cancel()
 	h.Image = image
-	if perr := s.provisionOnDokploy(ctx, st, &h); perr != nil {
+	if perr := s.provisionOnDokploy(ctx, st, node, &h); perr != nil {
 		s.log.Error("hosting: provision failed", "instance", h.ID, "err", perr)
 		if _, terr := s.db.Hosting().Transition(ctx, h.ID, []store.HostingStatus{store.HostingProvisioning}, store.HostingFailed, perr.Error()); terr != nil {
 			s.log.Error("hosting: mark failed", "instance", h.ID, "err", terr)
@@ -372,7 +385,78 @@ func (s *Server) adminProvisionHosting(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.adminHostingView(final, nil, nil))
 }
 
-func (s *Server) provisionOnDokploy(ctx context.Context, st hosting.Settings, h *store.HostingInstance) error {
+// chooseHostingNode picks where an instance is created. An instance that
+// already has a subdomain is tied to its node (the subdomain lives under that
+// node's wildcard domain). Otherwise the requested node is used if it is
+// enabled and has room, or the node with the most room when none is named.
+// A non-zero status is an error to return.
+func (s *Server) chooseHostingNode(ctx context.Context, st hosting.Settings, h store.HostingInstance, want string) (hosting.Node, int, string) {
+	if h.NodeID != "" && h.Subdomain != "" {
+		n, ok := st.Node(h.NodeID)
+		if !ok {
+			return hosting.Node{}, http.StatusConflict, "this instance's node " + h.NodeID + " was removed from the settings; add it back to retry"
+		}
+		if want != "" && want != h.NodeID {
+			return hosting.Node{}, http.StatusConflict, "this instance is already set up on node " + n.Name + "; retry it there or delete it"
+		}
+		return n, 0, ""
+	}
+	used, err := s.db.Hosting().CountByNode(ctx)
+	if err != nil {
+		return hosting.Node{}, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error")
+	}
+	loads := st.Loads(used)
+	if want == "" {
+		best, ok := hosting.PickNode(loads)
+		if !ok {
+			return hosting.Node{}, http.StatusConflict, "every node is full or disabled; add a node or raise a capacity"
+		}
+		return best.Node, 0, ""
+	}
+	for _, l := range loads {
+		if l.ID != want {
+			continue
+		}
+		if !l.Enabled {
+			return hosting.Node{}, http.StatusConflict, "node " + l.Name + " is disabled"
+		}
+		if !l.Available {
+			return hosting.Node{}, http.StatusConflict, "node " + l.Name + " is full"
+		}
+		return l.Node, 0, ""
+	}
+	return hosting.Node{}, http.StatusBadRequest, "unknown node"
+}
+
+func nodesOrEmpty(n []hosting.Node) []hosting.Node {
+	if n == nil {
+		return []hosting.Node{}
+	}
+	return n
+}
+
+// adminListHostingNodes returns every node with its usage and the node a new
+// instance would go to by default.
+func (s *Server) adminListHostingNodes(w http.ResponseWriter, r *http.Request) {
+	st, err := s.loadHostingSettings(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	used, err := s.db.Hosting().CountByNode(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	loads := st.Loads(used)
+	recommended := ""
+	if best, ok := hosting.PickNode(loads); ok {
+		recommended = best.ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"nodes": loads, "recommended": recommended})
+}
+
+func (s *Server) provisionOnDokploy(ctx context.Context, st hosting.Settings, node hosting.Node, h *store.HostingInstance) error {
 	api := s.dokployClient(st)
 	repo := s.db.Hosting()
 
@@ -393,7 +477,8 @@ func (s *Server) provisionOnDokploy(ctx context.Context, st hosting.Settings, h 
 		if h.Subdomain == "" {
 			return errors.New("could not pick a free subdomain")
 		}
-		h.FQDN = h.Subdomain + "." + st.RootDomain
+		h.NodeID = node.ID
+		h.FQDN = h.Subdomain + "." + node.RootDomain
 		if err := repo.SetDokploy(ctx, *h); err != nil {
 			return err
 		}
@@ -422,7 +507,7 @@ func (s *Server) provisionOnDokploy(ctx context.Context, st hosting.Settings, h 
 	}
 
 	if h.DokployAppID == "" {
-		app, err := api.CreateApplication(ctx, "9router-"+h.Subdomain, "nr-"+h.Subdomain, st.EnvironmentID, st.ServerID)
+		app, err := api.CreateApplication(ctx, "9router-"+h.Subdomain, "nr-"+h.Subdomain, st.EnvironmentID, node.ServerID)
 		if err != nil {
 			return fmt.Errorf("create application: %w", err)
 		}
@@ -536,6 +621,10 @@ func (s *Server) hostingDokployAction(w http.ResponseWriter, r *http.Request, fr
 		writeError(w, http.StatusConflict, "instance is "+string(h.Status))
 		return
 	}
+	// Only the status that was read may move: a payment that changes the
+	// instance mid-call (say expired to active) makes the action fail
+	// instead of silently overriding it.
+	from = []store.HostingStatus{h.Status}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), dokployTimeout)
 	defer cancel()
 	if h.DokployAppID != "" {

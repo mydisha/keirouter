@@ -17,7 +17,8 @@ func (db *DB) PaymentOrders() *PaymentOrderRepo { return &PaymentOrderRepo{db: d
 const paymentOrderCols = `id, tenant_id, key_id, google_sub, amount_idr, credit_micros,
 	fx_rate_micros, status, provider, provider_payment_id, payment_link_url,
 	idempotency_key, actor, reason, created_at, updated_at, paid_at, expires_at,
-	product, hosting_instance_id, terms_version, terms_accepted_at`
+	product, hosting_instance_id, terms_version, terms_accepted_at,
+	coupon_id, coupon_code, base_amount_idr, bonus_days`
 
 // Create inserts a payment order.
 func (r *PaymentOrderRepo) Create(ctx context.Context, o PaymentOrder) error {
@@ -35,13 +36,14 @@ func (r *PaymentOrderRepo) insert(ctx context.Context, ex sqlExec, o PaymentOrde
 		product = ProductCredit
 	}
 	q := r.db.rebind(`INSERT INTO payment_orders (` + paymentOrderCols + `)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	_, err := ex.ExecContext(ctx, q,
 		o.ID, o.TenantID, o.KeyID, o.GoogleSub, o.AmountIDR, o.CreditMicros,
 		o.FxRateMicros, string(o.Status), o.Provider, o.ProviderPaymentID,
 		o.PaymentLinkURL, o.IdempotencyKey, o.Actor, o.Reason,
 		formatTime(o.CreatedAt), formatTime(o.UpdatedAt), o.PaidAt, o.ExpiresAt,
-		product, o.HostingInstanceID, o.TermsVersion, o.TermsAcceptedAt)
+		product, o.HostingInstanceID, o.TermsVersion, o.TermsAcceptedAt,
+		o.CouponID, o.CouponCode, o.BaseAmountIDR, o.BonusDays)
 	if err != nil {
 		return fmt.Errorf("store: create payment order: %w", err)
 	}
@@ -88,6 +90,12 @@ func (r *PaymentOrderRepo) ListByKey(ctx context.Context, keyID string) ([]Payme
 func (r *PaymentOrderRepo) ListAll(ctx context.Context) ([]PaymentOrder, error) {
 	q := r.db.rebind(`SELECT ` + paymentOrderCols + ` FROM payment_orders ORDER BY created_at DESC, id DESC`)
 	return r.queryList(ctx, q)
+}
+
+// ListByProduct returns every order of one product, newest first.
+func (r *PaymentOrderRepo) ListByProduct(ctx context.Context, product string) ([]PaymentOrder, error) {
+	q := r.db.rebind(`SELECT ` + paymentOrderCols + ` FROM payment_orders WHERE product = ? ORDER BY created_at DESC, id DESC`)
+	return r.queryList(ctx, q, product)
 }
 
 // ListByStatus returns orders in a given status, newest first.
@@ -151,7 +159,8 @@ func scanPaymentOrder(scan func(dest ...any) error) (PaymentOrder, error) {
 	err := scan(&o.ID, &o.TenantID, &o.KeyID, &o.GoogleSub, &o.AmountIDR, &o.CreditMicros,
 		&o.FxRateMicros, &status, &o.Provider, &o.ProviderPaymentID, &o.PaymentLinkURL,
 		&o.IdempotencyKey, &o.Actor, &o.Reason, &created, &updated, &o.PaidAt, &o.ExpiresAt,
-		&o.Product, &o.HostingInstanceID, &o.TermsVersion, &o.TermsAcceptedAt)
+		&o.Product, &o.HostingInstanceID, &o.TermsVersion, &o.TermsAcceptedAt,
+		&o.CouponID, &o.CouponCode, &o.BaseAmountIDR, &o.BonusDays)
 	if err != nil {
 		return PaymentOrder{}, err
 	}

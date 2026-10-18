@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -44,18 +45,22 @@ type SecretBox interface {
 
 // Settings configures the hosting product and its Dokploy target.
 type Settings struct {
-	Enabled         bool     `json:"enabled"`
-	MonthlyPriceIDR int64    `json:"monthly_price_idr"`
-	DokployURL      string   `json:"dokploy_url"`
-	APIKey          string   `json:"-"`
-	EnvironmentID   string   `json:"environment_id"`
-	RootDomain      string   `json:"root_domain"`
-	Images          []string `json:"images"`
-	ContainerPort   int      `json:"container_port"`
-	EnvTemplate     string   `json:"env_template"`
+	Enabled         bool   `json:"enabled"`
+	MonthlyPriceIDR int64  `json:"monthly_price_idr"`
+	DokployURL      string `json:"dokploy_url"`
+	APIKey          string `json:"-"`
+	EnvironmentID   string `json:"environment_id"`
+	// RootDomain and ServerID are the pre-multi-node single target. They are
+	// read once and folded into Nodes as the "default" node.
+	RootDomain    string   `json:"root_domain,omitempty"`
+	Images        []string `json:"images"`
+	ContainerPort int      `json:"container_port"`
+	EnvTemplate   string   `json:"env_template"`
 	// ServerID deploys customer apps to a separate Dokploy server so they
 	// cannot reach the Dokploy host's own services. Empty uses the host.
-	ServerID string `json:"server_id"`
+	ServerID string `json:"server_id,omitempty"`
+	// Nodes are the Dokploy servers that run customer instances.
+	Nodes []Node `json:"nodes"`
 	// PasswordEnv names the env var that receives each instance's random
 	// initial dashboard password.
 	PasswordEnv string `json:"password_env"`
@@ -65,6 +70,9 @@ type Settings struct {
 	CPULimit    string `json:"cpu_limit"`
 	// DataPath is the container path of the instance's persistent volume.
 	DataPath string `json:"data_path"`
+	// SupportURL is where customers waiting for activation can contact the
+	// admin (a Telegram link by default).
+	SupportURL string `json:"support_url"`
 }
 
 type storedSettings struct {
@@ -79,6 +87,9 @@ const DefaultPort = 20130
 // CLI token. It is always backed by a per-instance Docker volume.
 const DefaultDataPath = "/data"
 
+// DefaultSupportURL is the activation contact shown to paid customers.
+const DefaultSupportURL = "https://t.me/damnwahhh"
+
 // sharedSecretEnv are env vars that must stay unique per instance. Putting
 // one in the shared template would let every customer forge sessions on
 // every other customer's instance.
@@ -88,7 +99,7 @@ var sharedSecretEnv = []string{"JWT_SECRET"}
 func Load(ctx context.Context, get func(context.Context, string) (string, error), box SecretBox) (Settings, error) {
 	raw, err := get(ctx, SettingsKey)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && raw == "") {
-		return Settings{ContainerPort: DefaultPort, PasswordEnv: DefaultPasswordEnv, DataPath: DefaultDataPath}, nil
+		return Settings{ContainerPort: DefaultPort, PasswordEnv: DefaultPasswordEnv, DataPath: DefaultDataPath, SupportURL: DefaultSupportURL}, nil
 	}
 	if err != nil {
 		return Settings{}, err
@@ -98,6 +109,7 @@ func Load(ctx context.Context, get func(context.Context, string) (string, error)
 		return Settings{}, fmt.Errorf("hosting: decode settings: %w", err)
 	}
 	s := st.Settings
+	s.foldLegacyNode()
 	if st.APIKeySealed != nil {
 		if box == nil {
 			return Settings{}, errors.New("hosting: api key is sealed but no sealer is configured")
@@ -116,6 +128,9 @@ func Load(ctx context.Context, get func(context.Context, string) (string, error)
 	}
 	if s.DataPath == "" {
 		s.DataPath = DefaultDataPath
+	}
+	if s.SupportURL == "" {
+		s.SupportURL = DefaultSupportURL
 	}
 	return s, nil
 }
@@ -146,6 +161,14 @@ func (s *Settings) Normalize() error {
 	s.EnvironmentID = strings.TrimSpace(s.EnvironmentID)
 	s.RootDomain = strings.ToLower(strings.Trim(strings.TrimSpace(s.RootDomain), "."))
 	s.RootDomain = strings.TrimPrefix(s.RootDomain, "*.")
+	s.ServerID = strings.TrimSpace(s.ServerID)
+	if s.RootDomain != "" && !validDomain(s.RootDomain) {
+		return fmt.Errorf("root_domain %q is not a valid domain", s.RootDomain)
+	}
+	s.foldLegacyNode()
+	if err := s.normalizeNodes(); err != nil {
+		return err
+	}
 	var imgs []string
 	seen := map[string]bool{}
 	for _, img := range s.Images {
@@ -166,7 +189,6 @@ func (s *Settings) Normalize() error {
 	if s.ContainerPort == 0 {
 		s.ContainerPort = DefaultPort
 	}
-	s.ServerID = strings.TrimSpace(s.ServerID)
 	s.PasswordEnv = strings.TrimSpace(s.PasswordEnv)
 	if s.PasswordEnv == "" {
 		s.PasswordEnv = DefaultPasswordEnv
@@ -180,6 +202,13 @@ func (s *Settings) Normalize() error {
 	}
 	if !strings.HasPrefix(s.DataPath, "/") || strings.Contains(s.DataPath, "..") || strings.ContainsAny(s.DataPath, " \t\n") {
 		return errors.New("data_path must be an absolute container path")
+	}
+	s.SupportURL = strings.TrimSpace(s.SupportURL)
+	if s.SupportURL == "" {
+		s.SupportURL = DefaultSupportURL
+	}
+	if u, err := url.Parse(s.SupportURL); err != nil || u.Scheme != "https" || u.Host == "" || len(s.SupportURL) > 500 {
+		return errors.New("support_url must be an https:// link")
 	}
 	for _, line := range strings.Split(s.EnvTemplate, "\n") {
 		name, _, _ := strings.Cut(strings.TrimSpace(line), "=")
@@ -205,20 +234,28 @@ func (s *Settings) Normalize() error {
 	if s.MonthlyPriceIDR < 0 {
 		return errors.New("monthly_price_idr must not be negative")
 	}
-	if s.RootDomain != "" && !validDomain(s.RootDomain) {
-		return fmt.Errorf("root_domain %q is not a valid domain", s.RootDomain)
-	}
 	if s.Enabled {
 		switch {
 		case s.MonthlyPriceIDR <= 0:
 			return errors.New("set monthly_price_idr before enabling hosting")
-		case s.DokployURL == "", s.APIKey == "", s.EnvironmentID == "", s.RootDomain == "":
-			return errors.New("set the Dokploy URL, API key, environment ID and root domain before enabling hosting")
+		case s.DokployURL == "", s.APIKey == "", s.EnvironmentID == "":
+			return errors.New("set the Dokploy URL, API key and environment ID before enabling hosting")
+		case !s.hasEnabledNode():
+			return errors.New("add at least one enabled node before enabling hosting")
 		case len(s.Images) == 0:
 			return errors.New("add at least one image before enabling hosting")
 		}
 	}
 	return nil
+}
+
+func (s Settings) hasEnabledNode() bool {
+	for _, n := range s.Nodes {
+		if n.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 // HasImage reports whether img is in the allowed list.
