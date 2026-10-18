@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -230,9 +231,11 @@ func (s *Server) kimchiCallback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	// json.Marshal escapes <, > and & so the state can never close the script.
+	payload, _ := json.Marshal(map[string]string{"type": "kimchi-callback", "status": "success", "state": state})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>Kimchi Connected</title></head><body><p style="font-family:sans-serif;text-align:center;margin-top:40vh">Kimchi connected. You can close this tab.</p><script>try{window.opener&&window.opener.postMessage({type:"kimchi-callback",status:"success",state:"` + state + `"},"*")}catch(e){}setTimeout(function(){window.close()},500)</script></body></html>`))
+	_, _ = w.Write([]byte(`<!DOCTYPE html><html><head><title>Kimchi Connected</title></head><body><p style="font-family:sans-serif;text-align:center;margin-top:40vh">Kimchi connected. You can close this tab.</p><script>try{window.opener&&window.opener.postMessage(` + string(payload) + `,"*")}catch(e){}setTimeout(function(){window.close()},500)</script></body></html>`))
 }
 
 

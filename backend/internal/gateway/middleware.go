@@ -120,6 +120,18 @@ func extractToken(r *http.Request) string {
 
 // loopbackOnly rejects non-loopback clients when bind-loopback-only is set. This
 // guards the dashboard/admin surface in local single-user mode.
+// securityHeaders sets headers every response gets: nosniff stops a browser
+// from treating a JSON or text body as HTML, and the referrer policy keeps
+// full dashboard URLs (which may carry ids) off other sites.
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *Server) loopbackOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.cfg.Security.BindLoopbackOnly {

@@ -16,6 +16,7 @@ import { Badge, Button, EmptyState, ErrorCard, Spinner } from "../../components/
 import { TurnstileWidget, useTurnstileSiteKey } from "../../components/TurnstileWidget";
 import { useToast } from "../../components/Toast";
 import { portal } from "../../lib/portalRoutes";
+import { safeHttpUrl } from "../../lib/safeUrl";
 import { PageHeader, PanelCard } from "./components";
 
 const HOSTING_QK = ["portal-hosting"] as const;
@@ -58,15 +59,6 @@ function statusView(s: PortalHostingInstance["status"]): { label: string; tone: 
   }
 }
 
-function safeHttpUrl(link: string | undefined): string | null {
-  if (!link) return null;
-  try {
-    const proto = new URL(link).protocol;
-    return proto === "http:" || proto === "https:" ? link : null;
-  } catch {
-    return null;
-  }
-}
 
 export function PortalHostingPage() {
   const qc = useQueryClient();

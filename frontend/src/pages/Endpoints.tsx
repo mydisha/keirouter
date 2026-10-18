@@ -18,6 +18,7 @@ import {
   Skeleton,
 } from "../components/ui";
 import { dashboard } from "../lib/dashboardRoutes";
+import { openExternal } from "../lib/safeUrl";
 
 // Polling intervals (ms).
 const STATUS_POLL_FAST = 5000;
@@ -856,9 +857,9 @@ export function TailscaleTunnel() {
       setLoading(false);
       if (data.needsLogin && data.authUrl) {
         setAuthUrl(data.authUrl);
-        window.open(data.authUrl, "_blank", "width=600,height=700");
+        openExternal(data.authUrl, "_blank", "width=600,height=700");
       } else if (data.funnelNotEnabled && data.enableUrl) {
-        window.open(data.enableUrl, "_blank", "width=600,height=700");
+        openExternal(data.enableUrl, "_blank", "width=600,height=700");
       } else if (data.success) {
         setAuthUrl(null);
         qc.invalidateQueries({ queryKey: ["tunnel-status"] });

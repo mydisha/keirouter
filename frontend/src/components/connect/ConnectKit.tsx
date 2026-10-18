@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Dialog } from "radix-ui";
 import { AlertTriangle, ArrowLeft, Check, ChevronRight, Copy, ExternalLink, Loader2, RefreshCw, X, type LucideIcon } from "lucide-react";
 import type { DeviceCode } from "../../lib/api";
+import { openExternal } from "../../lib/safeUrl";
 import { cn } from "@/lib/utils";
 import { ProviderLogo } from "../ProviderLogo";
 import { Badge, IconTile } from "../ui";
@@ -364,7 +365,7 @@ export function useDevicePoll(opts: DevicePollOptions) {
       setCode(dc);
       setStatus("waiting");
       clock.current = window.setInterval(() => setElapsed((s) => s + 1), 1000);
-      if (o.autoOpen) window.open(dc.verification_uri_complete || dc.verification_uri, "_blank", "noopener");
+      if (o.autoOpen) openExternal(dc.verification_uri_complete || dc.verification_uri, "_blank", "noopener");
       schedule(dc.device_code, intervalRef.current);
     } catch (e) {
       setError((e as Error).message);

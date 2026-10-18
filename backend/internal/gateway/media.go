@@ -246,7 +246,13 @@ func (s *Server) handleAudioSpeech(w http.ResponseWriter, r *http.Request) {
 		s.writeMediaError(w, perr)
 		return
 	}
-	w.Header().Set("Content-Type", resp.ContentType)
+	// The type comes from the upstream; only pass audio types through so a
+	// provider can never make this response render as HTML.
+	ct := resp.ContentType
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "audio/") {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
 	w.Header().Set("X-KeiRouter-Provider", provider)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp.Audio)

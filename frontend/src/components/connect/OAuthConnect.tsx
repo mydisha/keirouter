@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, Loader2 } from "lucide-react";
 import { api, type DeviceCode, type OAuthProvider } from "../../lib/api";
+import { openExternal } from "../../lib/safeUrl";
 import { useToast } from "../Toast";
 import {
   ActionRow,
@@ -146,7 +147,7 @@ function OAuthCodeConnect({ provider, logo, onClose }: { provider: OAuthProvider
     try {
       const res = await api.oauthAuthorize(provider.provider, redirectURIForProvider(provider));
       stateRef.current = res.state;
-      popupRef.current = window.open(res.authorize_url, "_blank", "popup,width=560,height=760");
+      popupRef.current = openExternal(res.authorize_url, "_blank", "popup,width=560,height=760");
       setPhase("waiting");
     } catch (e) {
       setError((e as Error).message);
