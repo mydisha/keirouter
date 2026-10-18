@@ -1,7 +1,7 @@
 import { useEffect, useId, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, Clock3, Copy, CreditCard, ExternalLink, Eye, EyeOff, Loader2, MessageCircle, RefreshCw, Server, Ticket, X, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock3, MapPin, Copy, CreditCard, ExternalLink, Eye, EyeOff, Loader2, MessageCircle, RefreshCw, Server, Ticket, X, XCircle } from "lucide-react";
 import {
   checkPortalHostingCoupon,
   createPortalHostingOrder,
@@ -10,6 +10,7 @@ import {
   fetchPortalStatus,
   PortalAPIError,
   type HostingCouponCheck,
+  type HostingRegionOffer,
   type PortalHostingInstance,
 } from "../../lib/api";
 import { Badge, Button, EmptyState, ErrorCard, Spinner } from "../../components/ui";
@@ -17,6 +18,7 @@ import { TurnstileWidget, useTurnstileSiteKey } from "../../components/Turnstile
 import { useToast } from "../../components/Toast";
 import { portal } from "../../lib/portalRoutes";
 import { safeHttpUrl } from "../../lib/safeUrl";
+import { cn } from "@/lib/utils";
 import { PageHeader, PanelCard } from "./components";
 
 const HOSTING_QK = ["portal-hosting"] as const;
@@ -66,6 +68,7 @@ export function PortalHostingPage() {
   const termsId = useId();
   const [params] = useSearchParams();
   const returnStatus = params.get("status");
+  const wantedRegion = params.get("region");
 
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ["portal-status"],
@@ -88,9 +91,20 @@ export function PortalHostingPage() {
   const [couponInput, setCouponInput] = useState("");
   const [coupon, setCoupon] = useState<Extract<HostingCouponCheck, { valid: true }> | null>(null);
   const [couponError, setCouponError] = useState<string | null>(null);
+  const [pickedRegion, setPickedRegion] = useState<string | null>(null);
+
+  // The region asked for in the link, else the first one with stock.
+  const regionOffers = hosting.data?.regions ?? [];
+  const regionId =
+    pickedRegion ??
+    regionOffers.find((r) => r.id === wantedRegion && !r.sold_out)?.id ??
+    regionOffers.find((r) => !r.sold_out)?.id ??
+    regionOffers[0]?.id ??
+    "";
+  const region = regionOffers.find((r) => r.id === regionId) ?? null;
 
   const checkCoupon = useMutation({
-    mutationFn: (code: string) => checkPortalHostingCoupon(code),
+    mutationFn: (code: string) => checkPortalHostingCoupon(code, { region: regionId || undefined }),
     onSuccess: (res) => {
       if (res.valid) {
         setCoupon(res);
@@ -127,6 +141,7 @@ export function PortalHostingPage() {
         idempotency_key: crypto.randomUUID(),
         turnstile_token: turnstileToken || undefined,
         coupon_code: coupon?.coupon_code,
+        region: instanceId ? undefined : regionId || undefined,
       }),
     onSuccess: (o) => {
       const link = safeHttpUrl(o.payment_link_url);
@@ -149,6 +164,11 @@ export function PortalHostingPage() {
       if (code === "terms_required") {
         setAccepted(false);
         setTermsNotice("Centang persetujuan Ketentuan Layanan Hosting 9router sebelum memesan.");
+        return;
+      }
+      if (code === "region_sold_out" || code === "region_unavailable") {
+        toast.error("Region tidak tersedia", e.message);
+        qc.invalidateQueries({ queryKey: HOSTING_QK });
         return;
       }
       if (code?.startsWith("coupon_")) {
@@ -193,15 +213,27 @@ export function PortalHostingPage() {
   const instances = cfg.instances ?? [];
   const termsUrl = cfg.terms_url || "/ketentuan/hosting-9router";
   const periodDays = cfg.period_days || 30;
-  const canOrder = cfg.enabled && cfg.price_idr > 0;
-  const ready = canOrder && accepted && !order.isPending && (!siteKey || !!turnstileToken);
+  // Renewing an existing instance needs no stock; a new order needs a region
+  // that is not sold out.
+  const canRenewAny = cfg.enabled;
+  const canOrder = cfg.enabled && !!region && !region.sold_out && region.price_idr > 0;
+  const formReady = accepted && !order.isPending && (!siteKey || !!turnstileToken);
+  const ready = canOrder && formReady;
   const pendingFor = order.isPending ? (order.variables ?? "") : null;
   const supportUrl = safeHttpUrl(cfg.support_url);
-  const finalPrice = coupon ? coupon.final_idr : cfg.price_idr;
+  const basePrice = region?.price_idr ?? 0;
+  const finalPrice = coupon ? coupon.final_idr : basePrice;
 
-  const blockedReason = !canOrder
+  const formBlocked = !accepted
+    ? "Centang persetujuan ketentuan dulu."
+    : siteKey && !turnstileToken
+      ? "Selesaikan verifikasi di atas dulu."
+      : undefined;
+  const blockedReason = !cfg.enabled
     ? "Pemesanan hosting sedang ditutup."
-    : !accepted
+    : region?.sold_out
+      ? `Stok region ${region.name} sedang habis.`
+      : !accepted
       ? "Centang persetujuan ketentuan dulu."
       : siteKey && !turnstileToken
         ? "Selesaikan verifikasi di atas dulu."
@@ -298,12 +330,27 @@ export function PortalHostingPage() {
           </div>
 
           <div className="flex flex-col border-t border-line bg-subtle p-4 sm:p-5 lg:border-l lg:border-t-0">
-            <dl className="space-y-1">
+            {regionOffers.length > 0 && (
+              <RegionPicker
+                regions={regionOffers}
+                value={regionId}
+                periodDays={periodDays}
+                disabled={!cfg.enabled || order.isPending}
+                onChange={(id) => {
+                  if (id === regionId) return;
+                  setPickedRegion(id);
+                  // A coupon was priced for the old region; check it again.
+                  setCoupon(null);
+                  setCouponError(null);
+                }}
+              />
+            )}
+            <dl className="mt-4 space-y-1">
               <dt className="text-[13px] text-fg-muted">
                 Harga per {periodDays} hari{coupon?.bonus_days ? ` + ${coupon.bonus_days} hari bonus` : ""}
               </dt>
               <dd className="flex flex-wrap items-baseline gap-x-2">
-                <span className="text-[22px] font-semibold tabular-nums text-fg">{cfg.price_idr > 0 ? formatIDR(finalPrice) : "—"}</span>
+                <span className="text-[22px] font-semibold tabular-nums text-fg">{basePrice > 0 ? formatIDR(finalPrice) : "—"}</span>
                 {coupon && coupon.discount_idr > 0 && (
                   <span className="text-[13px] tabular-nums text-fg-muted line-through">{formatIDR(coupon.base_idr)}</span>
                 )}
@@ -315,12 +362,16 @@ export function PortalHostingPage() {
                 </dd>
               )}
             </dl>
-            {!canOrder && (
+            {!cfg.enabled ? (
               <p className="mt-2 text-[12.5px] text-fg-muted" role="status">
                 Pemesanan hosting sedang ditutup. Instance yang sudah ada tetap tampil di bawah.
               </p>
-            )}
-            {canOrder && (
+            ) : region?.sold_out ? (
+              <p className="mt-2 text-[12.5px] text-fg-muted" role="status">
+                Stok {region.name} sedang habis. Pilih region lain, atau cek lagi nanti. Perpanjangan instance tetap bisa.
+              </p>
+            ) : null}
+            {canRenewAny && (
               <TurnstileWidget
                 siteKey={siteKey}
                 onToken={setTurnstileToken}
@@ -330,7 +381,7 @@ export function PortalHostingPage() {
             )}
             <Button className="mt-4 w-full" onClick={() => order.mutate(undefined)} disabled={!ready} title={blockedReason}>
               {pendingFor === "" ? <Loader2 className="animate-spin" aria-hidden="true" /> : <CreditCard aria-hidden="true" />}
-              {pendingFor === "" ? "Membuka pembayaran…" : "Pesan sekarang"}
+              {pendingFor === "" ? "Membuka pembayaran…" : region?.sold_out ? "Stok habis" : "Pesan sekarang"}
             </Button>
           </div>
         </div>
@@ -346,8 +397,8 @@ export function PortalHostingPage() {
                 key={inst.id}
                 inst={inst}
                 periodDays={periodDays}
-                canRenew={ready}
-                renewTitle={blockedReason}
+                canRenew={canRenewAny && formReady}
+                renewTitle={!cfg.enabled ? "Pemesanan hosting sedang ditutup." : formBlocked}
                 pending={pendingFor === inst.id}
                 onRenew={() => order.mutate(inst.id)}
                 supportUrl={supportUrl}
@@ -424,6 +475,13 @@ function InstanceRow({
             Aktivasi paling lambat 1x24 jam pada hari kerja. URL dan password muncul di sini setelah aktif.
           </p>
         )}
+        {inst.region_name && (
+          <p className="flex items-center gap-1.5 text-[12.5px] text-fg-muted">
+            <MapPin className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+            {inst.region_name}
+            {inst.price_idr > 0 && ` · ${formatIDR(inst.price_idr)} per ${periodDays} hari`}
+          </p>
+        )}
         {period && <p className="text-[12.5px] text-fg-muted">{period}</p>}
         {inst.has_password && inst.status === "active" && <PasswordReveal instanceId={inst.id} />}
         {inst.status === "expired" && (
@@ -449,6 +507,61 @@ function InstanceRow({
         )}
       </div>
     </li>
+  );
+}
+
+/** Radio cards for the region of a new instance, with price and stock. */
+function RegionPicker({
+  regions,
+  value,
+  periodDays,
+  disabled,
+  onChange,
+}: {
+  regions: HostingRegionOffer[];
+  value: string;
+  periodDays: number;
+  disabled: boolean;
+  onChange: (id: string) => void;
+}) {
+  const name = useId();
+  return (
+    <fieldset>
+      <legend className="text-[13px] font-medium text-fg">Region</legend>
+      <div className="mt-2 grid grid-cols-1 gap-2">
+        {regions.map((r) => {
+          const checked = r.id === value;
+          const stock = r.sold_out ? "Habis" : r.stock < 0 ? "Tersedia" : `Sisa ${r.stock}`;
+          return (
+            <label
+              key={r.id}
+              className={cn(
+                "flex cursor-pointer items-center gap-3 rounded-xl border bg-surface px-3 py-2.5 transition-colors focus-within:ring-2 focus-within:ring-accent-500",
+                checked ? "border-accent-500" : "border-line hover:bg-hover",
+                (disabled || r.sold_out) && "cursor-not-allowed opacity-60",
+              )}
+            >
+              <input
+                type="radio"
+                name={name}
+                value={r.id}
+                checked={checked}
+                disabled={disabled || r.sold_out}
+                onChange={() => onChange(r.id)}
+                className="h-4 w-4 shrink-0 accent-accent-500"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="block text-[13px] font-medium text-fg">{r.name}</span>
+                <span className="block text-[12px] tabular-nums text-fg-muted">
+                  {formatIDR(r.price_idr)} / {periodDays} hari
+                </span>
+              </span>
+              <span className={cn("shrink-0 text-[12px] tabular-nums", r.sold_out ? "text-bad" : "text-fg-muted")}>{stock}</span>
+            </label>
+          );
+        })}
+      </div>
+    </fieldset>
   );
 }
 

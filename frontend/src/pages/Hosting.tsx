@@ -26,6 +26,8 @@ import {
   type HostingMonitorTarget,
   type HostingNode,
   type HostingNodeLoad,
+  type HostingRegion,
+  type HostingRegionStock,
   type HostingSettings,
   type HostingStatus,
 } from "../lib/api";
@@ -220,6 +222,7 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
         </div>
       }
     >
+      {nodesQ.data && <RegionStockStrip regions={nodesQ.data.regions ?? []} />}
       {nodesQ.data && <NodeUsageStrip nodes={nodesQ.data.nodes} onOpenSettings={onOpenSettings} />}
       {list.isLoading ? (
         <LoadingRegion label="Memuat instance" className="space-y-2 p-4">
@@ -246,7 +249,7 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
                 <tr className={THEAD}>
                   <th scope="col" className={TH}>User</th>
                   <th scope="col" className={TH}>Status</th>
-                  <th scope="col" className={TH}>Node</th>
+                  <th scope="col" className={TH}>Node / region</th>
                   <th scope="col" className={TH}>Alamat</th>
                   <th scope="col" className={TH}>Image</th>
                   <th scope="col" className={TH}>Aktif sampai</th>
@@ -269,7 +272,10 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
                         <p className="mt-1 max-w-[260px] break-words text-[11.5px] text-bad">{h.last_error}</p>
                       )}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-2.5">{h.node_id ? nodeName(nodeList, h.node_id) : <span className="text-fg-muted">-</span>}</td>
+                    <td className="whitespace-nowrap px-4 py-2.5">
+                      {h.node_id ? nodeName(nodeList, h.node_id) : <span className="text-fg-muted">-</span>}
+                      {h.region && <p className="text-[11.5px] text-fg-muted">{settings?.regions.find((r) => r.id === h.region)?.name ?? h.region}</p>}
+                    </td>
                     <td className="px-4 py-2.5">
                       {h.url ? (
                         <a
@@ -339,6 +345,7 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
           inst={provisioning}
           images={settings?.images ?? []}
           nodes={nodesQ.data}
+          regions={settings?.regions ?? []}
           nodesLoading={nodesQ.isLoading}
           nodesError={nodesQ.isError && !nodesQ.data ? nodesQ.error : null}
           onClose={() => setProvisioning(null)}
@@ -351,6 +358,29 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
       )}
       {ordersOf && <OrdersModal inst={ordersOf} onClose={() => setOrdersOf(null)} />}
     </Panel>
+  );
+}
+
+/** Containers still available per region: what the landing page sells. */
+function RegionStockStrip({ regions }: { regions: HostingRegionStock[] }) {
+  if (regions.length === 0) return null;
+  return (
+    <div className="flex flex-col divide-y divide-line border-b border-line sm:flex-row sm:divide-x sm:divide-y-0" role="list" aria-label="Stok per region">
+      {regions.map((r) => (
+        <div key={r.id} role="listitem" className="min-w-0 flex-1 px-4 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[13px] font-medium text-fg">{r.name}</p>
+            <Badge tone={!r.enabled ? "neutral" : r.sold_out ? "danger" : r.stock >= 0 && r.stock <= 2 ? "warning" : "success"}>
+              {!r.enabled ? "Nonaktif" : r.sold_out ? "Sold out" : r.stock < 0 ? "Tanpa batas" : `${r.stock} tersedia`}
+            </Badge>
+          </div>
+          <p className="mt-1 text-[12px] tabular-nums text-fg-muted">
+            {r.nodes} node · {r.used} terpakai{r.reserved > 0 ? ` · ${r.reserved} menunggu dibuat` : ""}
+            {r.capacity >= 0 ? ` · kapasitas ${r.capacity}` : ""} · {idr(r.price_idr)}
+          </p>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -394,10 +424,21 @@ function NodeUsageStrip({ nodes, onOpenSettings }: { nodes: HostingNodeLoad[]; o
   );
 }
 
+/** The node with the most room, mirroring the server's choice. */
+function bestNode(nodes: HostingNodeLoad[], overcommit: boolean): HostingNodeLoad | undefined {
+  const open = nodes.filter((n) => n.available);
+  const rank = (n: HostingNodeLoad) => (n.free === -1 ? Number.MAX_SAFE_INTEGER - n.used : n.free);
+  if (open.length > 0) return [...open].sort((a, b) => rank(b) - rank(a))[0];
+  if (!overcommit) return undefined;
+  // Every node is full: the least overfull enabled one.
+  return [...nodes.filter((n) => n.enabled)].sort((a, b) => a.used - a.capacity - (b.used - b.capacity))[0];
+}
+
 function ProvisionModal({
   inst,
   images,
   nodes,
+  regions,
   nodesLoading,
   nodesError,
   onClose,
@@ -407,6 +448,7 @@ function ProvisionModal({
   inst: HostingInstanceAdmin;
   images: string[];
   nodes?: { nodes: HostingNodeLoad[]; recommended: string };
+  regions: HostingRegion[];
   nodesLoading: boolean;
   nodesError: unknown;
   onClose: () => void;
@@ -415,17 +457,27 @@ function ProvisionModal({
 }) {
   const toast = useToast();
   const [image, setImage] = useState(inst.image && images.includes(inst.image) ? inst.image : images[0] ?? "");
-  // null follows the server's recommendation, which may arrive after the modal opens.
+  // null follows the automatic choice, which may arrive after the modal opens.
   const [picked, setPicked] = useState<string | null>(null);
+  const [overcommit, setOvercommit] = useState(false);
   // A failed instance that already got a subdomain stays on its node.
   const lockedNode = inst.node_id && inst.subdomain ? inst.node_id : "";
-  const nodeList = nodes?.nodes ?? [];
-  const nodeId = lockedNode || (picked ?? nodes?.recommended ?? "");
-  const anyAvailable = nodeList.some((n) => n.available);
-  const nodeReady = lockedNode ? true : !!nodeId && anyAvailable;
+  const allNodes = nodes?.nodes ?? [];
+  const regionName = regions.find((r) => r.id === inst.region)?.name ?? inst.region;
+  // The customer paid for a region: its nodes come first. With no node there
+  // at all, every node is offered so the admin is never stuck.
+  const inRegion = inst.region ? allNodes.filter((n) => n.region === inst.region) : allNodes;
+  const candidates = inRegion.length > 0 ? inRegion : allNodes;
+  const auto = bestNode(candidates, overcommit);
+  const nodeId = lockedNode || (picked ?? auto?.id ?? "");
+  const chosen = candidates.find((n) => n.id === nodeId);
+  const anyAvailable = candidates.some((n) => n.available);
+  const anyEnabled = candidates.some((n) => n.enabled);
+  const chosenFull = !!chosen && chosen.enabled && !chosen.available;
+  const nodeReady = lockedNode ? true : !!chosen && chosen.enabled && (chosen.available || overcommit);
 
   const provision = useMutation({
-    mutationFn: () => api.provisionHosting(inst.id, image, lockedNode ? undefined : nodeId),
+    mutationFn: () => api.provisionHosting(inst.id, image, lockedNode ? undefined : nodeId, !lockedNode && overcommit && chosenFull),
     onSuccess: (h) => {
       toast.success("Instance dibuat", h.fqdn ? `Aktif di ${h.fqdn}.` : undefined);
       onDone();
@@ -435,14 +487,14 @@ function ProvisionModal({
     onError: onDone,
   });
   const retry = inst.status === "failed";
-  const locked = lockedNode ? nodeList.find((n) => n.id === lockedNode) : undefined;
+  const locked = lockedNode ? allNodes.find((n) => n.id === lockedNode) : undefined;
 
   return (
     <Modal
       open
       onClose={provision.isPending ? () => {} : onClose}
       title={retry ? "Coba buat ulang instance" : "Buat instance"}
-      subtitle={inst.user_email || inst.key_id}
+      subtitle={`${inst.user_email || inst.key_id}${inst.region ? ` · ${regionName}` : ""}`}
     >
       <div className="space-y-3 px-5 py-4">
         <p className="text-[13px] text-fg-muted">
@@ -480,13 +532,13 @@ function ProvisionModal({
           <Skeleton className="h-[62px] w-full" />
         ) : nodesError ? (
           <ErrorBanner message={`Daftar node gagal dimuat. ${errorText(nodesError)}`} />
-        ) : !anyAvailable ? (
+        ) : !anyEnabled ? (
           <div className="space-y-2">
             <ErrorBanner
               message={
-                nodeList.length === 0
+                candidates.length === 0
                   ? "Belum ada node. Tambahkan node di tab Pengaturan dulu."
-                  : "Semua node penuh atau nonaktif. Tambah node baru, naikkan kapasitas, atau aktifkan node di tab Pengaturan."
+                  : "Semua node di region ini nonaktif. Aktifkan node atau tambah node baru di tab Pengaturan."
               }
             />
             <Button variant="ghost" onClick={onOpenSettings}>
@@ -495,21 +547,55 @@ function ProvisionModal({
             </Button>
           </div>
         ) : (
-          <Field
-            label="Node"
-            hint={nodeId === nodes?.recommended ? "Dipilih otomatis: node dengan ruang paling lega." : "Node dipilih manual."}
-          >
-            <Select value={nodeId} onChange={(e) => setPicked(e.target.value)}>
-              {nodeList.map((n) => {
-                const blocked = nodeBlockedLabel(n);
-                return (
-                  <option key={n.id} value={n.id} disabled={!n.available}>
-                    {`${n.name || n.id} — ${nodeUsage(n)}${blocked ? ` (${blocked})` : ""}`}
-                  </option>
-                );
-              })}
-            </Select>
-          </Field>
+          <>
+            {inst.region && inRegion.length === 0 && (
+              <ErrorBanner message={`Belum ada node di region ${regionName}. Instance akan dibuat di node region lain.`} />
+            )}
+            <Field
+              label={inst.region && inRegion.length > 0 ? `Node di ${regionName}` : "Node"}
+              hint={
+                !anyAvailable && !overcommit
+                  ? "Semua node penuh. Centang overcommit untuk tetap membuat instance."
+                  : picked === null
+                    ? "Dipilih otomatis: node dengan ruang paling lega."
+                    : "Node dipilih manual."
+              }
+            >
+              <Select value={nodeId} onChange={(e) => setPicked(e.target.value)}>
+                {!chosen && <option value="">Pilih node</option>}
+                {candidates.map((n) => {
+                  const blocked = nodeBlockedLabel(n);
+                  return (
+                    <option key={n.id} value={n.id} disabled={!n.enabled || (!n.available && !overcommit)}>
+                      {`${n.name || n.id} — ${nodeUsage(n)}${blocked ? ` (${blocked})` : ""}`}
+                    </option>
+                  );
+                })}
+              </Select>
+            </Field>
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-line bg-subtle px-3.5 py-2.5 text-[13px]">
+              <input
+                type="checkbox"
+                checked={overcommit}
+                onChange={(e) => {
+                  setOvercommit(e.target.checked);
+                  if (!e.target.checked && chosenFull) setPicked(null);
+                }}
+                className="mt-0.5 h-4 w-4 shrink-0 accent-accent-500"
+              />
+              <span>
+                <span className="font-medium text-fg">Overcommit</span>
+                <span className="block text-[12px] text-fg-muted">
+                  Tetap buat instance walau node sudah mencapai kapasitas. Pastikan RAM dan CPU server masih cukup.
+                </span>
+              </span>
+            </label>
+            {overcommit && chosenFull && (
+              <p role="status" className="text-[12.5px] text-warn">
+                {chosen?.name || chosen?.id} sudah penuh ({nodeUsage(chosen!)}). Instance ini akan melebihi kapasitas.
+              </p>
+            )}
+          </>
         )}
         {provision.isError && <ErrorBanner message={`Instance gagal dibuat. ${errorText(provision.error)}`} />}
       </div>
@@ -636,10 +722,11 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const [cpuLimit, setCpuLimit] = useState(settings.cpu_limit ?? "");
   const [dataPath, setDataPath] = useState(settings.data_path || "/data");
   const [supportUrl, setSupportUrl] = useState(settings.support_url || "https://t.me/damnwahhh");
+  const [regions, setRegions] = useState<RegionDraft[]>(() => (settings.regions ?? []).map(toRegionDraft));
 
   const priceNum = Number(price);
   const portNum = Number(port);
-  const priceError = price.trim() === "" || !Number.isInteger(priceNum) || priceNum < 0 ? "Isi angka bulat 0 atau lebih." : null;
+  const priceError = price.trim() !== "" && (!Number.isInteger(priceNum) || priceNum < 0) ? "Isi angka bulat 0 atau lebih, atau kosongkan." : null;
   const portError = port.trim() === "" || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535 ? "Isi port 1 sampai 65535." : null;
   const imageList = images
     .split("\n")
@@ -654,9 +741,19 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const urlChanged = dokployUrl.trim().replace(/\/+$/, "") !== settings.dokploy_url;
   const keyNeeded = settings.has_api_key && urlChanged && dokployUrl.trim() !== "" && apiKey.trim() === "";
   const nodeErrors = nodeErrorsOf(nodes);
-  const nodesError = enabled && !nodes.some((n) => n.enabled) ? "Tambahkan minimal satu node aktif sebelum membuka pemesanan." : null;
+  const regionErrors = regionErrorsOf(regions);
+  const sellable = regions.some((rg) => rg.enabled && Number(rg.price) > 0 && nodes.some((n) => n.enabled && n.region === rg.id));
+  const nodesError =
+    enabled && !nodes.some((n) => n.enabled)
+      ? "Tambahkan minimal satu node aktif sebelum membuka pemesanan."
+      : enabled && !sellable
+        ? "Masukkan minimal satu node aktif ke region aktif yang berharga sebelum membuka pemesanan."
+        : nodes.some((n) => n.region && !regions.some((rg) => rg.id === n.region))
+          ? "Ada node di region yang sudah dihapus. Pilih ulang region-nya."
+          : null;
   const valid =
     !priceError && !portError && !memError && !cpuError && !envNameError && !dataPathError && !nodesError && !supportUrlError &&
+    regionErrors.every((e) => !e.name && !e.price) &&
     nodeErrors.every((e) => !e.name && !e.domain && !e.capacity);
 
   const save = useMutation({
@@ -680,6 +777,7 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
             monitor_target_id: n.monitorTargetId,
             capacity: Number(n.capacity.trim() || "0"),
             enabled: n.enabled,
+            region: n.region,
           }),
         ),
         password_env: passwordEnv.trim(),
@@ -687,6 +785,7 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
         cpu_limit: cpuLimit.trim(),
         data_path: dataPath.trim(),
         support_url: supportUrl.trim(),
+        regions: regions.map((rg): HostingRegion => ({ id: rg.id, name: rg.name.trim(), price_idr: Number(rg.price), enabled: rg.enabled })),
       }),
     onSuccess: (data) => {
       qc.setQueryData(QK_HOSTING.settings, data);
@@ -733,7 +832,11 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label={`Harga per ${settings.period_days || 30} hari (IDR)`} error={priceError} hint={!priceError && priceNum > 0 ? idr(priceNum) : undefined}>
+          <Field
+            label="Harga instance lama (IDR)"
+            error={priceError}
+            hint={priceError ? undefined : "Hanya untuk perpanjangan instance lama yang belum punya region. Pesanan baru memakai harga region."}
+          >
             <Input type="number" inputMode="numeric" min="0" step="1" value={price} onChange={(e) => setPrice(e.target.value)} className="tabular-nums" />
           </Field>
           <Field label="Port container" hint="Diisi ke env PORT. Image luqmenul/9router-go memakai 20130." error={portError}>
@@ -775,7 +878,9 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
           </Field>
         </div>
 
-        <NodesEditor nodes={nodes} setNodes={setNodes} errors={nodeErrors} listError={nodesError} />
+        <RegionsEditor regions={regions} setRegions={setRegions} errors={regionErrors} />
+
+        <NodesEditor nodes={nodes} setNodes={setNodes} regions={regions} errors={nodeErrors} listError={nodesError} />
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field
@@ -883,6 +988,7 @@ interface NodeDraft {
   monitorTargetId: string;
   capacity: string;
   enabled: boolean;
+  region: string;
   isNew: boolean;
 }
 
@@ -897,6 +1003,7 @@ const toNodeDraft = (n: HostingNode): NodeDraft => ({
   monitorTargetId: n.monitor_target_id ?? "",
   capacity: String(n.capacity ?? 0),
   enabled: n.enabled,
+  region: n.region ?? "",
   isNew: false,
 });
 
@@ -922,13 +1029,97 @@ function nodeErrorsOf(nodes: NodeDraft[]) {
   });
 }
 
+// ─── Regions ────────────────────────────────────────────────────────────────
+
+interface RegionDraft {
+  id: string;
+  name: string;
+  price: string;
+  enabled: boolean;
+}
+
+const toRegionDraft = (r: HostingRegion): RegionDraft => ({ id: r.id, name: r.name, price: String(r.price_idr), enabled: r.enabled });
+
+function regionErrorsOf(regions: RegionDraft[]) {
+  return regions.map((r) => {
+    const n = Number(r.price);
+    return {
+      name: !r.name.trim() ? "Isi nama region." : null,
+      price: r.price.trim() === "" || !Number.isInteger(n) || n < 0 ? "Isi angka bulat 0 atau lebih." : null,
+    };
+  });
+}
+
+function RegionsEditor({
+  regions,
+  setRegions,
+  errors,
+}: {
+  regions: RegionDraft[];
+  setRegions: (fn: (rows: RegionDraft[]) => RegionDraft[]) => void;
+  errors: ReturnType<typeof regionErrorsOf>;
+}) {
+  const update = (id: string, patch: Partial<RegionDraft>) => setRegions((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  return (
+    <section aria-labelledby="hosting-regions-title" className="space-y-3">
+      <div>
+        <p id="hosting-regions-title" className="text-[13px] font-medium text-fg">
+          Region
+        </p>
+        <p className="text-[12px] text-fg-muted">
+          Pilihan lokasi di halaman hosting dan portal, masing-masing dengan harga per 30 hari. Region nonaktif atau tanpa node tampil sebagai sold out.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        {regions.map((r, i) => {
+          const err = errors[i];
+          const toggleId = `hosting-region-enabled-${r.id}`;
+          const priceNum = Number(r.price);
+          return (
+            <fieldset key={r.id} className="rounded-xl border border-line bg-subtle/60 p-3.5">
+              <legend className="sr-only">{r.name || r.id}</legend>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <span className="font-mono text-[11px] text-fg-faint">{r.id}</span>
+                <div className="flex items-center gap-2">
+                  <span id={toggleId} className="text-[12px] text-fg-muted">
+                    Dijual
+                  </span>
+                  <Toggle checked={r.enabled} onChange={(v) => update(r.id, { enabled: v })} aria-labelledby={toggleId} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label="Nama" error={err.name}>
+                  <Input value={r.name} onChange={(e) => update(r.id, { name: e.target.value })} maxLength={60} autoComplete="off" />
+                </Field>
+                <Field label="Harga (IDR)" error={err.price} hint={!err.price && priceNum > 0 ? idr(priceNum) : undefined}>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    step="1"
+                    value={r.price}
+                    onChange={(e) => update(r.id, { price: e.target.value })}
+                    className="tabular-nums"
+                  />
+                </Field>
+              </div>
+            </fieldset>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function NodesEditor({
   nodes,
   setNodes,
+  regions,
   errors,
   listError,
 }: {
   nodes: NodeDraft[];
+  regions: RegionDraft[];
   setNodes: (fn: (rows: NodeDraft[]) => NodeDraft[]) => void;
   errors: ReturnType<typeof nodeErrorsOf>;
   listError: string | null;
@@ -945,7 +1136,10 @@ function NodesEditor({
       const id = newNodeId();
       return [
         ...rs,
-        { key: id, id, name: `Node ${rs.length + 1}`, serverId: "", rootDomain: "", monitorTargetId: "", capacity: "0", enabled: true, isNew: true },
+        {
+          key: id, id, name: `Node ${rs.length + 1}`, serverId: "", rootDomain: "", monitorTargetId: "", capacity: "0", enabled: true,
+          region: regions[0]?.id ?? "", isNew: true,
+        },
       ];
     });
   const remove = async (r: NodeDraft) => {
@@ -977,7 +1171,7 @@ function NodesEditor({
         <p className="text-[12px] text-fg-muted">
           Server Dokploy yang menjalankan container pelanggan. Tiap node butuh DNS wildcard sendiri{" "}
           <span className="font-mono text-fg">*.&lt;root domain&gt;</span> yang mengarah ke IP node itu. Tambahkan server di Dokploy (Settings → Servers),
-          lalu salin Server ID-nya. Instance baru otomatis ditaruh di node aktif dengan ruang paling lega.
+          lalu salin Server ID-nya. Region menentukan stok yang dijual di halaman hosting: jumlah slot kosong node aktif di region itu.
         </p>
       </div>
       {nodes.length === 0 && (
@@ -1008,6 +1202,7 @@ function NodesEditor({
                   </Badge>
                 ) : null}
                 {!r.enabled && <Badge tone="neutral">Nonaktif</Badge>}
+                {!r.region && <Badge tone="warning">Tanpa region</Badge>}
               </div>
               <div className="flex items-center gap-2">
                 <span id={toggleId} className="text-[12px] text-fg-muted">
@@ -1051,7 +1246,21 @@ function NodesEditor({
                   {unknownTarget && <option value={r.monitorTargetId}>(server tidak ditemukan)</option>}
                 </Select>
               </Field>
-              <Field label="Kapasitas" hint={err.capacity ? undefined : "Jumlah instance maksimal. 0 = tanpa batas."} error={err.capacity}>
+              <Field label="Region" hint={r.region ? undefined : "Node tanpa region tidak menambah stok yang dijual."}>
+                <Select value={r.region} onChange={(e) => update(r.key, { region: e.target.value })}>
+                  <option value="">Tanpa region (tidak dijual)</option>
+                  {regions.map((rg) => (
+                    <option key={rg.id} value={rg.id}>
+                      {rg.name.trim() || rg.id}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field
+                label="Kapasitas container"
+                hint={err.capacity ? undefined : "Slot yang dijual di node ini. 0 = tanpa batas. Bisa dilewati dengan overcommit saat membuat instance."}
+                error={err.capacity}
+              >
                 <Input
                   type="number"
                   inputMode="numeric"

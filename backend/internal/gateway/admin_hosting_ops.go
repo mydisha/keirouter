@@ -76,10 +76,26 @@ func (s *Server) adminHostingFinance(w http.ResponseWriter, r *http.Request) {
 	cur := series[len(series)-1]
 	counts := map[string]int{}
 	running := 0
+	var mrr int64 // monthly revenue of the running instances at today's prices
 	for _, h := range instances {
 		counts[string(h.Status)]++
 		if h.Status == store.HostingActive || h.Status == store.HostingExpired {
 			running++
+			if p, ok := st.PeriodPrice(st.InstanceRegion(h.Region, h.NodeID)); ok {
+				mrr += p
+			}
+		}
+	}
+	// Break-even uses the average price of what is running, or the cheapest
+	// region when nothing runs yet.
+	avgPrice := int64(0)
+	if running > 0 {
+		avgPrice = mrr / int64(running)
+	} else {
+		for _, rg := range st.Regions {
+			if rg.Enabled && rg.PriceIDR > 0 && (avgPrice == 0 || rg.PriceIDR < avgPrice) {
+				avgPrice = rg.PriceIDR
+			}
 		}
 	}
 	var refundOpen []map[string]any
@@ -99,8 +115,8 @@ func (s *Server) adminHostingFinance(w http.ResponseWriter, r *http.Request) {
 	if running > 0 {
 		perInstance = cur.CostIDR / int64(running)
 	}
-	if st.MonthlyPriceIDR > 0 {
-		breakEven = (cur.CostIDR + st.MonthlyPriceIDR - 1) / st.MonthlyPriceIDR
+	if avgPrice > 0 {
+		breakEven = (cur.CostIDR + avgPrice - 1) / avgPrice
 	}
 	costViews := make([]map[string]any, 0, len(costs))
 	for _, c := range costs {
@@ -116,8 +132,8 @@ func (s *Server) adminHostingFinance(w http.ResponseWriter, r *http.Request) {
 			"cost_idr":              cur.CostIDR,
 			"profit_idr":            cur.ProfitIDR,
 			"running_instances":     running,
-			"mrr_idr":               int64(running) * st.MonthlyPriceIDR,
-			"price_idr":             st.MonthlyPriceIDR,
+			"mrr_idr":               mrr,
+			"price_idr":             avgPrice,
 			"cost_per_instance_idr": perInstance,
 			"break_even_instances":  breakEven,
 		},

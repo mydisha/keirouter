@@ -463,6 +463,7 @@ func (s *Server) routes() chi.Router {
 		r.Get("/v1/public/notifications", s.publicNotifications)
 		r.Get("/v1/public/bansos", s.publicBansos)
 		r.Get("/v1/public/bansos/key", s.publicBansosKey)
+		r.Get("/v1/public/hosting", s.publicHosting)
 	})
 
 	// Public live prices for the chains an admin published (off by default).

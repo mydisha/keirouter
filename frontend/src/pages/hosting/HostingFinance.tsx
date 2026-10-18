@@ -138,7 +138,7 @@ function CurrentMonth({ f }: { f: HostingFinance }) {
           icon={Repeat}
           label="MRR"
           value={idr(c.mrr_idr)}
-          hint={c.price_idr > 0 ? `${count(c.running_instances)} × ${idr(c.price_idr)}` : "Harga belum diatur"}
+          hint={c.price_idr > 0 ? `${count(c.running_instances)} instance, rata-rata ${idr(c.price_idr)}` : "Harga belum diatur"}
         />
       </KpiGrid>
       <KpiGrid cols={3} label="Kapasitas dan titik impas">

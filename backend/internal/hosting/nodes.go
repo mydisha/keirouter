@@ -27,6 +27,9 @@ type Node struct {
 	// Capacity is the most instances the node takes; 0 means no limit.
 	Capacity int  `json:"capacity"`
 	Enabled  bool `json:"enabled"`
+	// Region is the region the node's slots are sold in; empty means the
+	// node is not sold in any region yet.
+	Region string `json:"region"`
 }
 
 var nodeIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
@@ -54,6 +57,7 @@ func (s *Settings) normalizeNodes() error {
 		n.Name = strings.TrimSpace(n.Name)
 		n.ServerID = strings.TrimSpace(n.ServerID)
 		n.MonitorTargetID = strings.TrimSpace(n.MonitorTargetID)
+		n.Region = strings.ToLower(strings.TrimSpace(n.Region))
 		n.RootDomain = strings.TrimPrefix(strings.ToLower(strings.Trim(strings.TrimSpace(n.RootDomain), ".")), "*.")
 		switch {
 		case !nodeIDRe.MatchString(n.ID):

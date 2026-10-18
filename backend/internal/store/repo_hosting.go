@@ -42,7 +42,10 @@ type HostingInstance struct {
 	DataVolume string
 	// NodeID is the hosting node (Dokploy server) the instance runs on;
 	// empty until it is first provisioned.
-	NodeID      string
+	NodeID string
+	// Region is the region the customer bought it in; empty for instances
+	// from before regions.
+	Region      string
 	LastError   string
 	PaidUntil   time.Time
 	PrepaidDays int // paid days not yet started; they start at provisioning
@@ -65,7 +68,7 @@ func (db *DB) Hosting() *HostingRepo { return &HostingRepo{db: db} }
 const hostingCols = `id, tenant_id, key_id, status, image, subdomain, fqdn,
 	dokploy_app_id, dokploy_app_name, dokploy_domain_id, data_volume, last_error, paid_until,
 	prepaid_days, password_wrapped_dek, password_ciphertext,
-	created_at, updated_at, provisioned_at, node_id`
+	created_at, updated_at, provisioned_at, node_id, region`
 
 // Create inserts an instance.
 func (r *HostingRepo) Create(ctx context.Context, h HostingInstance) error {
@@ -79,12 +82,12 @@ func (r *HostingRepo) CreateOnTx(ctx context.Context, tx *sql.Tx, h HostingInsta
 
 func (r *HostingRepo) insert(ctx context.Context, ex sqlExec, h HostingInstance) error {
 	q := r.db.rebind(`INSERT INTO hosting_instances (` + hostingCols + `)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	_, err := ex.ExecContext(ctx, q,
 		h.ID, h.TenantID, h.KeyID, string(h.Status), h.Image, h.Subdomain, h.FQDN,
 		h.DokployAppID, h.DokployAppName, h.DokployDomainID, h.DataVolume, h.LastError,
 		formatTime(h.PaidUntil), h.PrepaidDays, h.Password.WrappedDEK, h.Password.Ciphertext, formatTime(h.CreatedAt), formatTime(h.UpdatedAt),
-		formatTime(h.ProvisionedAt), h.NodeID)
+		formatTime(h.ProvisionedAt), h.NodeID, h.Region)
 	if err != nil {
 		return fmt.Errorf("store: create hosting instance: %w", err)
 	}
@@ -258,6 +261,28 @@ func (r *HostingRepo) CountByNode(ctx context.Context) (map[string]int, error) {
 	return out, rows.Err()
 }
 
+// CountWaitingByRegion counts paid instances not placed on a node yet, per
+// region: they will take a slot in that region once created.
+func (r *HostingRepo) CountWaitingByRegion(ctx context.Context) (map[string]int, error) {
+	q := r.db.rebind(`SELECT region, COUNT(*) FROM hosting_instances
+		WHERE node_id = '' AND region <> '' AND status IN (?, ?, ?) GROUP BY region`)
+	rows, err := r.db.sql.QueryContext(ctx, q, string(HostingPaid), string(HostingProvisioning), string(HostingFailed))
+	if err != nil {
+		return nil, fmt.Errorf("store: count waiting hosting by region: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var region string
+		var n int
+		if err := rows.Scan(&region, &n); err != nil {
+			return nil, err
+		}
+		out[region] = n
+	}
+	return out, rows.Err()
+}
+
 // SubdomainExists reports whether any instance already holds sub.
 func (r *HostingRepo) SubdomainExists(ctx context.Context, sub string) (bool, error) {
 	q := r.db.rebind(`SELECT COUNT(*) FROM hosting_instances WHERE subdomain = ?`)
@@ -326,7 +351,7 @@ func scanHosting(scan func(dest ...any) error) (HostingInstance, error) {
 	)
 	err := scan(&h.ID, &h.TenantID, &h.KeyID, &status, &h.Image, &h.Subdomain, &h.FQDN,
 		&h.DokployAppID, &h.DokployAppName, &h.DokployDomainID, &h.DataVolume, &h.LastError,
-		&paidUntil, &h.PrepaidDays, &h.Password.WrappedDEK, &h.Password.Ciphertext, &created, &updated, &provisioned, &h.NodeID)
+		&paidUntil, &h.PrepaidDays, &h.Password.WrappedDEK, &h.Password.Ciphertext, &created, &updated, &provisioned, &h.NodeID, &h.Region)
 	if err != nil {
 		return HostingInstance{}, err
 	}

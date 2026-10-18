@@ -82,6 +82,7 @@ func hostingSettingsView(st hosting.Settings) map[string]any {
 		"cpu_limit":         st.CPULimit,
 		"data_path":         st.DataPath,
 		"support_url":       st.SupportURL,
+		"regions":           regionsOrEmpty(st.Regions),
 		"grace_days":        hosting.GraceDays,
 		"terms_version":     hosting.TermsVersion,
 		"period_days":       hosting.PeriodDays,
@@ -98,23 +99,24 @@ func (s *Server) adminGetHostingSettings(w http.ResponseWriter, r *http.Request)
 }
 
 type hostingSettingsRequest struct {
-	Enabled         bool           `json:"enabled"`
-	MonthlyPriceIDR int64          `json:"monthly_price_idr"`
-	DokployURL      string         `json:"dokploy_url"`
-	APIKey          *string        `json:"api_key"` // nil or "" keeps the stored key
-	ClearAPIKey     bool           `json:"clear_api_key"`
-	EnvironmentID   string         `json:"environment_id"`
-	RootDomain      string         `json:"root_domain"` // legacy single node; folded into nodes
-	Nodes           []hosting.Node `json:"nodes"`
-	Images          []string       `json:"images"`
-	ContainerPort   int            `json:"container_port"`
-	EnvTemplate     string         `json:"env_template"`
-	ServerID        string         `json:"server_id"`
-	PasswordEnv     string         `json:"password_env"`
-	MemoryLimit     string         `json:"memory_limit"`
-	CPULimit        string         `json:"cpu_limit"`
-	DataPath        string         `json:"data_path"`
-	SupportURL      string         `json:"support_url"`
+	Enabled         bool             `json:"enabled"`
+	MonthlyPriceIDR int64            `json:"monthly_price_idr"`
+	DokployURL      string           `json:"dokploy_url"`
+	APIKey          *string          `json:"api_key"` // nil or "" keeps the stored key
+	ClearAPIKey     bool             `json:"clear_api_key"`
+	EnvironmentID   string           `json:"environment_id"`
+	RootDomain      string           `json:"root_domain"` // legacy single node; folded into nodes
+	Nodes           []hosting.Node   `json:"nodes"`
+	Images          []string         `json:"images"`
+	ContainerPort   int              `json:"container_port"`
+	EnvTemplate     string           `json:"env_template"`
+	ServerID        string           `json:"server_id"`
+	PasswordEnv     string           `json:"password_env"`
+	MemoryLimit     string           `json:"memory_limit"`
+	CPULimit        string           `json:"cpu_limit"`
+	DataPath        string           `json:"data_path"`
+	SupportURL      string           `json:"support_url"`
+	Regions         []hosting.Region `json:"regions"`
 }
 
 func (s *Server) adminPutHostingSettings(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +135,7 @@ func (s *Server) adminPutHostingSettings(w http.ResponseWriter, r *http.Request)
 		RootDomain: body.RootDomain, Images: body.Images, ContainerPort: body.ContainerPort,
 		EnvTemplate: body.EnvTemplate, ServerID: body.ServerID, PasswordEnv: body.PasswordEnv, Nodes: body.Nodes,
 		MemoryLimit: body.MemoryLimit, CPULimit: body.CPULimit, DataPath: body.DataPath,
-		SupportURL: body.SupportURL,
+		SupportURL: body.SupportURL, Regions: body.Regions,
 	}
 	newKey := body.APIKey != nil && strings.TrimSpace(*body.APIKey) != ""
 	if body.ClearAPIKey {
@@ -207,6 +209,7 @@ func (s *Server) adminHostingView(h store.HostingInstance, orders []store.Paymen
 		"dokploy_domain_id": h.DokployDomainID,
 		"data_volume":       h.DataVolume,
 		"node_id":           h.NodeID,
+		"region":            h.Region,
 		"last_error":        h.LastError,
 		"paid_until":        timeOrEmpty(h.PaidUntil),
 		"prepaid_days":      h.PrepaidDays,
@@ -305,6 +308,9 @@ func (s *Server) adminProvisionHosting(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Image  string `json:"image"`
 		NodeID string `json:"node_id"` // empty picks the node with the most room
+		// Overcommit places the instance even when the node (or every node
+		// in the region) is full.
+		Overcommit bool `json:"overcommit"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -326,7 +332,7 @@ func (s *Server) adminProvisionHosting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "a master key is required to store instance passwords")
 		return
 	}
-	node, status, msg := s.chooseHostingNode(r.Context(), st, h, strings.TrimSpace(body.NodeID))
+	node, status, msg := s.chooseHostingNode(r.Context(), st, h, strings.TrimSpace(body.NodeID), body.Overcommit)
 	if status != 0 {
 		writeError(w, status, msg)
 		return
@@ -388,9 +394,10 @@ func (s *Server) adminProvisionHosting(w http.ResponseWriter, r *http.Request) {
 // chooseHostingNode picks where an instance is created. An instance that
 // already has a subdomain is tied to its node (the subdomain lives under that
 // node's wildcard domain). Otherwise the requested node is used if it is
-// enabled and has room, or the node with the most room when none is named.
+// enabled and has room, or the node with the most room in the instance's
+// region when none is named. overcommit lets a full node take it anyway.
 // A non-zero status is an error to return.
-func (s *Server) chooseHostingNode(ctx context.Context, st hosting.Settings, h store.HostingInstance, want string) (hosting.Node, int, string) {
+func (s *Server) chooseHostingNode(ctx context.Context, st hosting.Settings, h store.HostingInstance, want string, overcommit bool) (hosting.Node, int, string) {
 	if h.NodeID != "" && h.Subdomain != "" {
 		n, ok := st.Node(h.NodeID)
 		if !ok {
@@ -407,9 +414,18 @@ func (s *Server) chooseHostingNode(ctx context.Context, st hosting.Settings, h s
 	}
 	loads := st.Loads(used)
 	if want == "" {
-		best, ok := hosting.PickNode(loads)
+		// The customer paid for a region: only its nodes are candidates.
+		candidates := hosting.InRegion(loads, h.Region)
+		pick := hosting.PickNode
+		if overcommit {
+			pick = hosting.PickNodeOvercommit
+		}
+		best, ok := pick(candidates)
 		if !ok {
-			return hosting.Node{}, http.StatusConflict, "every node is full or disabled; add a node or raise a capacity"
+			if h.Region != "" {
+				return hosting.Node{}, http.StatusConflict, "every node in region " + h.Region + " is full or disabled; pick a node, raise a capacity or overcommit"
+			}
+			return hosting.Node{}, http.StatusConflict, "every node is full or disabled; add a node, raise a capacity or overcommit"
 		}
 		return best.Node, 0, ""
 	}
@@ -420,12 +436,19 @@ func (s *Server) chooseHostingNode(ctx context.Context, st hosting.Settings, h s
 		if !l.Enabled {
 			return hosting.Node{}, http.StatusConflict, "node " + l.Name + " is disabled"
 		}
-		if !l.Available {
-			return hosting.Node{}, http.StatusConflict, "node " + l.Name + " is full"
+		if !l.Available && !overcommit {
+			return hosting.Node{}, http.StatusConflict, "node " + l.Name + " is full; overcommit to place it anyway"
 		}
 		return l.Node, 0, ""
 	}
 	return hosting.Node{}, http.StatusBadRequest, "unknown node"
+}
+
+func regionsOrEmpty(r []hosting.Region) []hosting.Region {
+	if r == nil {
+		return []hosting.Region{}
+	}
+	return r
 }
 
 func nodesOrEmpty(n []hosting.Node) []hosting.Node {
@@ -453,7 +476,14 @@ func (s *Server) adminListHostingNodes(w http.ResponseWriter, r *http.Request) {
 	if best, ok := hosting.PickNode(loads); ok {
 		recommended = best.ID
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"nodes": loads, "recommended": recommended})
+	waiting, err := s.db.Hosting().CountWaitingByRegion(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"nodes": loads, "recommended": recommended, "regions": st.RegionStocks(used, waiting),
+	})
 }
 
 func (s *Server) provisionOnDokploy(ctx context.Context, st hosting.Settings, node hosting.Node, h *store.HostingInstance) error {

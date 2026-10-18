@@ -91,3 +91,22 @@ export const fetchPublicBansos = () => getJSON<PublicBansos>("/v1/public/bansos"
 
 export const fetchPublicBansosKey = () =>
   getJSON<{ key: string }>("/v1/public/bansos/key").then((d) => d.key);
+
+export interface PublicHostingRegion {
+  id: string;
+  name: string;
+  price_idr: number;
+  /** Open slots; -1 = unlimited. */
+  stock: number;
+  sold_out: boolean;
+}
+
+export interface PublicHosting {
+  /** Ordering is open (hosting and payments enabled). */
+  enabled: boolean;
+  period_days: number;
+  terms_url: string;
+  regions: PublicHostingRegion[];
+}
+
+export const fetchPublicHosting = () => getJSON<PublicHosting>("/v1/public/hosting");

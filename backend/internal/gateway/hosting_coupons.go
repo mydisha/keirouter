@@ -110,6 +110,9 @@ func writeCouponRejection(w http.ResponseWriter, code string) {
 func (s *Server) handlePortalCheckHostingCoupon(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Code string `json:"code"`
+		// Region prices a new order; InstanceID prices a renewal.
+		Region     string `json:"region"`
+		InstanceID string `json:"instance_id"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
@@ -134,6 +137,22 @@ func (s *Server) handlePortalCheckHostingCoupon(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
+	region := ""
+	if id := strings.TrimSpace(body.InstanceID); id != "" {
+		h, gerr := s.db.Hosting().Get(r.Context(), id)
+		if gerr != nil || h.KeyID != keyID || h.Status == store.HostingDeleted {
+			writeError(w, http.StatusNotFound, "instance not found")
+			return
+		}
+		region = st.InstanceRegion(h.Region, h.NodeID)
+	} else if rg, ok := s.orderRegion(st, body.Region); ok {
+		region = rg
+	}
+	price, priced := st.PeriodPrice(region)
+	if !priced {
+		writeError(w, http.StatusServiceUnavailable, "hosting is not available for this region")
+		return
+	}
 	c, reject, err := s.lookupHostingCoupon(r.Context(), code, keyID, time.Now())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
@@ -143,7 +162,7 @@ func (s *Server) handlePortalCheckHostingCoupon(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "code": reject, "message": hosting.CouponMessage(reject)})
 		return
 	}
-	q := hosting.QuoteCoupon(st.MonthlyPriceIDR, c, s.hostingMinChargeIDR())
+	q := hosting.QuoteCoupon(price, c, s.hostingMinChargeIDR())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"valid":          true,
 		"coupon_code":    c.Code,

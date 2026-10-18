@@ -6,6 +6,7 @@ import { useBranding } from "../../contexts/BrandingContext";
 import { Button, Spinner } from "../../components/ui";
 import { BrandMark } from "../../components/BrandMark";
 import { TurnstileWidget, useTurnstileSiteKey } from "../../components/TurnstileWidget";
+import { rememberPortalReturn } from "../../lib/portalReturn";
 
 function SignInCard() {
   const { branding, logoSrc } = useBranding();
@@ -16,6 +17,7 @@ function SignInCard() {
 
   const start = () => {
     if (!ready) return;
+    rememberPortalReturn();
     window.location.href = siteKey
       ? `/portal/auth/google/start?token=${encodeURIComponent(token)}`
       : "/portal/auth/google/start";

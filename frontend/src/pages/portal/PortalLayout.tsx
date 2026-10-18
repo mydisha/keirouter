@@ -1,11 +1,12 @@
 import { useEffect, useId, useState } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   BadgePercent, BarChart3, Bell, BookOpen, Key, Layers, LayoutGrid, LogOut, Menu, Monitor, Moon, Server, Sun, Wallet, X,
   type LucideIcon,
 } from "lucide-react";
 import { fetchPortalStatus, portalLogout, type LandingNotification } from "../../lib/api";
+import { takePortalReturn } from "../../lib/portalReturn";
 import { fetchPublicNotifications } from "../../lib/publicApi";
 import { useBranding } from "../../contexts/BrandingContext";
 import { useTheme, type Theme } from "../../components/ThemeProvider";
@@ -261,6 +262,15 @@ export function PortalLayoutPage() {
   useEffect(() => {
     document.title = `${branding.name || "KeiRouter"} - ${title}`;
   }, [title, branding.name]);
+
+  // Back from Google sign-in: go to the page the visitor asked for.
+  const navigate = useNavigate();
+  useEffect(() => {
+    const to = takePortalReturn();
+    if (to && to !== location.pathname + location.search) navigate(to, { replace: true });
+    // Only once, right after sign-in.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleLogout = async () => {
     await portalLogout();

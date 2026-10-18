@@ -26,12 +26,21 @@ func (s *Server) loadHostingSettingsCtx(ctx context.Context) (hosting.Settings, 
 	return hosting.Load(ctx, s.settingsGet(), s.financeBox())
 }
 
-// hostingInstanceView is the portal-safe view of an instance. Dokploy ids and
-// errors stay admin-only.
-func hostingInstanceView(h store.HostingInstance, pending *store.PaymentOrder) map[string]any {
+// hostingInstanceView is the portal-safe view of an instance. Dokploy ids,
+// node and errors stay admin-only; the region is the customer's own choice.
+func hostingInstanceView(st hosting.Settings, h store.HostingInstance, pending *store.PaymentOrder) map[string]any {
+	region := st.InstanceRegion(h.Region, h.NodeID)
+	regionName := ""
+	if rg, ok := st.Region(region); ok {
+		regionName = rg.Name
+	}
+	price, _ := st.PeriodPrice(region)
 	v := map[string]any{
 		"id":           h.ID,
 		"status":       string(h.Status),
+		"region":       region,
+		"region_name":  regionName,
+		"price_idr":    price,
 		"url":          "",
 		"paid_until":   timeOrEmpty(h.PaidUntil),
 		"prepaid_days": h.PrepaidDays,
@@ -46,6 +55,27 @@ func hostingInstanceView(h store.HostingInstance, pending *store.PaymentOrder) m
 		v["pending_order_id"] = pending.ID
 	}
 	return v
+}
+
+// orderRegion resolves the region asked for at checkout: a named region must
+// be enabled and priced; an empty one takes the first such region.
+func (s *Server) orderRegion(st hosting.Settings, want string) (string, bool) {
+	want = strings.ToLower(strings.TrimSpace(want))
+	for _, rg := range st.Regions {
+		if !rg.Enabled || rg.PriceIDR <= 0 {
+			continue
+		}
+		if want == "" || rg.ID == want {
+			return rg.ID, true
+		}
+	}
+	return "", false
+}
+
+func writeHostingRegionError(w http.ResponseWriter, status int, code, msg string) {
+	writeJSON(w, status, map[string]any{"error": map[string]any{
+		"message": msg, "type": "invalid_request_error", "code": code,
+	}})
 }
 
 func timeOrEmpty(t time.Time) string {
@@ -76,18 +106,32 @@ func (s *Server) handlePortalHosting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
-	pending := latestPendingHostingOrders(orders, time.Now(), st.MonthlyPriceIDR, nil)
+	pending := latestPendingHostingOrders(orders, time.Now(), s.instancePrices(st, instances), nil)
 	out := make([]map[string]any, 0, len(instances))
 	for _, h := range instances {
 		var p *store.PaymentOrder
 		if o, ok := pending[h.ID]; ok {
 			p = &o
 		}
-		out = append(out, hostingInstanceView(h, p))
+		out = append(out, hostingInstanceView(st, h, p))
+	}
+	open := st.Enabled && s.cfg.Payment.Enabled && s.paymentClient != nil
+	regions := []map[string]any{}
+	if st.Enabled {
+		stocks, serr := s.hostingRegionStocks(r.Context(), st)
+		if serr != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, serr, "internal server error"))
+			return
+		}
+		for _, rs := range stocks {
+			if rs.Enabled && rs.PriceIDR > 0 {
+				regions = append(regions, publicRegionView(rs, open))
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"enabled":       st.Enabled && s.cfg.Payment.Enabled && s.paymentClient != nil,
-		"price_idr":     st.MonthlyPriceIDR,
+		"enabled":       open,
+		"regions":       regions,
 		"period_days":   hosting.PeriodDays,
 		"terms_version": hosting.TermsVersion,
 		"terms_url":     hostingTermsPath,
@@ -96,19 +140,32 @@ func (s *Server) handlePortalHosting(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// instancePrices maps each instance to the current price of its region.
+func (s *Server) instancePrices(st hosting.Settings, instances []store.HostingInstance) map[string]int64 {
+	out := make(map[string]int64, len(instances))
+	for _, h := range instances {
+		if p, ok := st.PeriodPrice(st.InstanceRegion(h.Region, h.NodeID)); ok {
+			out[h.ID] = p
+		}
+	}
+	return out
+}
+
 // latestPendingHostingOrders maps instance id to its newest unexpired
 // pending hosting order, so the portal can offer "continue payment".
-// Orders at an old base price are skipped so a price change cannot be
-// dodged. A non-nil coupon keeps only orders made with that coupon code
-// ("" = no coupon), so a reused payment always matches what was asked for.
-func latestPendingHostingOrders(orders []store.PaymentOrder, now time.Time, price int64, coupon *string) map[string]store.PaymentOrder {
+// prices holds each instance's current base price; orders at another price
+// are skipped so a price change cannot be dodged. A non-nil coupon keeps
+// only orders made with that coupon code ("" = no coupon), so a reused
+// payment always matches what was asked for.
+func latestPendingHostingOrders(orders []store.PaymentOrder, now time.Time, prices map[string]int64, coupon *string) map[string]store.PaymentOrder {
 	out := map[string]store.PaymentOrder{}
 	for _, o := range orders { // newest first
 		base := o.BaseAmountIDR
 		if base == 0 {
 			base = o.AmountIDR
 		}
-		if o.Product != store.ProductHosting || o.Status != store.PaymentPending || o.HostingInstanceID == "" || base != price {
+		price, priced := prices[o.HostingInstanceID]
+		if o.Product != store.ProductHosting || o.Status != store.PaymentPending || o.HostingInstanceID == "" || !priced || base != price {
 			continue
 		}
 		if coupon != nil && o.CouponCode != *coupon {
@@ -133,6 +190,9 @@ type createHostingOrderRequest struct {
 	IdempotencyKey string `json:"idempotency_key"`
 	TurnstileToken string `json:"turnstile_token"`
 	CouponCode     string `json:"coupon_code"`
+	// Region is where a new instance runs; empty takes the first region
+	// on sale. Renewals keep the instance's region.
+	Region string `json:"region"`
 }
 
 // handlePortalCreateHostingOrder creates a SumoPod payment for one month of
@@ -165,7 +225,7 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
-	if !st.Enabled || st.MonthlyPriceIDR <= 0 {
+	if !st.Enabled {
 		writeError(w, http.StatusServiceUnavailable, "hosting is not available")
 		return
 	}
@@ -207,7 +267,8 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 	}
 
 	// Pick the instance: the one named for a renewal, else reuse an unpaid
-	// one so repeated "Order" clicks do not pile up empty instances.
+	// one in the same region so repeated "Order" clicks do not pile up
+	// empty instances.
 	var inst store.HostingInstance
 	newInstance := false
 	if id := strings.TrimSpace(body.InstanceID); id != "" {
@@ -217,13 +278,18 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 			return
 		}
 	} else {
+		region, ok := s.orderRegion(st, body.Region)
+		if !ok {
+			writeHostingRegionError(w, http.StatusBadRequest, "region_unavailable", "Region ini tidak tersedia.")
+			return
+		}
 		list, lerr := s.db.Hosting().ListByKey(r.Context(), keyID)
 		if lerr != nil {
 			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, lerr, "internal server error"))
 			return
 		}
 		for _, h := range list {
-			if h.Status == store.HostingAwaitingPayment {
+			if h.Status == store.HostingAwaitingPayment && h.Region == region {
 				inst = h
 				break
 			}
@@ -231,10 +297,29 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 		if inst.ID == "" {
 			now := time.Now()
 			inst = store.HostingInstance{
-				ID: uuid.NewString(), TenantID: adminTenant, KeyID: keyID,
+				ID: uuid.NewString(), TenantID: adminTenant, KeyID: keyID, Region: region,
 				Status: store.HostingAwaitingPayment, CreatedAt: now, UpdatedAt: now,
 			}
 			newInstance = true
+		}
+	}
+	region := st.InstanceRegion(inst.Region, inst.NodeID)
+	price, priced := st.PeriodPrice(region)
+	if !priced {
+		writeError(w, http.StatusServiceUnavailable, "hosting is not available for this region")
+		return
+	}
+	// An instance nobody has paid for yet takes a new slot, so its region
+	// must have stock. Renewals of paid instances do not.
+	if inst.Status == store.HostingAwaitingPayment {
+		rs, known, serr := s.hostingRegionStock(r.Context(), st, region)
+		if serr != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, serr, "internal server error"))
+			return
+		}
+		if region != "" && (!known || rs.SoldOut) {
+			writeHostingRegionError(w, http.StatusConflict, "region_sold_out", "Stok region ini sedang habis.")
+			return
 		}
 	}
 
@@ -246,13 +331,13 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, oerr, "internal server error"))
 			return
 		}
-		if open, ok := latestPendingHostingOrders(orders, time.Now(), st.MonthlyPriceIDR, &couponCode)[inst.ID]; ok {
+		if open, ok := latestPendingHostingOrders(orders, time.Now(), map[string]int64{inst.ID: price}, &couponCode)[inst.ID]; ok {
 			s.writeHostingOrderResponse(w, http.StatusOK, open)
 			return
 		}
 	}
 
-	quote := hosting.Quote{BaseIDR: st.MonthlyPriceIDR, FinalIDR: st.MonthlyPriceIDR}
+	quote := hosting.Quote{BaseIDR: price, FinalIDR: price}
 	var coupon store.HostingCoupon
 	if couponCode != "" {
 		c, reject, cerr := s.lookupHostingCoupon(r.Context(), couponCode, keyID, time.Now())
@@ -265,7 +350,7 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 			return
 		}
 		coupon = c
-		quote = hosting.QuoteCoupon(st.MonthlyPriceIDR, c, s.hostingMinChargeIDR())
+		quote = hosting.QuoteCoupon(price, c, s.hostingMinChargeIDR())
 	}
 
 	p := s.cfg.Payment

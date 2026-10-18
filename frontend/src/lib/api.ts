@@ -2184,6 +2184,11 @@ export type HostingStatus =
 export interface PortalHostingInstance {
   id: string;
   status: HostingStatus;
+  /** Region the instance was bought in ("" for very old instances). */
+  region: string;
+  region_name: string;
+  /** Current price of one period for this instance's region. */
+  price_idr: number;
   /** "" until the instance is reachable. */
   url: string;
   /** RFC3339, or "" before the first activation. */
@@ -2197,9 +2202,18 @@ export interface PortalHostingInstance {
   has_password: boolean;
 }
 
+export interface HostingRegionOffer {
+  id: string;
+  name: string;
+  price_idr: number;
+  /** Open slots; -1 = unlimited. */
+  stock: number;
+  sold_out: boolean;
+}
+
 export interface PortalHostingConfig {
   enabled: boolean;
-  price_idr: number;
+  regions: HostingRegionOffer[];
   period_days: number;
   terms_version: string;
   terms_url: string;
@@ -2271,11 +2285,14 @@ export async function fetchPortalHostingPassword(id: string): Promise<string> {
 }
 
 /** Check a hosting coupon for the signed-in user. It does not use the coupon. */
-export async function checkPortalHostingCoupon(code: string): Promise<HostingCouponCheck> {
+export async function checkPortalHostingCoupon(
+  code: string,
+  target: { region?: string; instance_id?: string } = {},
+): Promise<HostingCouponCheck> {
   const resp = await fetch("/portal/api/hosting/coupons/check", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ code, ...target }),
   });
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new PortalAPIError(resp.status, data.error?.message || data.error || "Failed to check coupon", data.error?.code);
@@ -2285,6 +2302,8 @@ export async function checkPortalHostingCoupon(code: string): Promise<HostingCou
 /** Create a SumoPod payment for a new hosting instance, or a renewal when instance_id is set. */
 export async function createPortalHostingOrder(input: {
   coupon_code?: string;
+  /** Region of a new instance; renewals keep the instance's region. */
+  region?: string;
   instance_id?: string;
   accept_terms: boolean;
   terms_version: string;
@@ -2315,6 +2334,29 @@ export interface HostingNode {
   /** 0 = unlimited. */
   capacity: number;
   enabled: boolean;
+  /** Region id the node's slots are sold in; "" = not sold yet. */
+  region: string;
+}
+
+/** A location sold at checkout, with its own price. */
+export interface HostingRegion {
+  id: string;
+  name: string;
+  price_idr: number;
+  enabled: boolean;
+}
+
+/** Admin view of a region's remaining slots. */
+export interface HostingRegionStock extends HostingRegion {
+  /** Slots of enabled nodes; -1 = unlimited. */
+  capacity: number;
+  used: number;
+  /** Paid instances not created yet. */
+  reserved: number;
+  /** Open slots; -1 = unlimited, 0 = sold out. */
+  stock: number;
+  sold_out: boolean;
+  nodes: number;
 }
 
 export interface HostingNodeLoad extends HostingNode {
@@ -2341,6 +2383,7 @@ export interface HostingSettings {
   cpu_limit: string;
   data_path: string;
   support_url: string;
+  regions: HostingRegion[];
   grace_days: number;
   terms_version: string;
   period_days: number;
@@ -2363,6 +2406,7 @@ export interface HostingSettingsInput {
   cpu_limit: string;
   data_path: string;
   support_url: string;
+  regions: HostingRegion[];
 }
 
 export interface HostingInstanceOrder {
@@ -2439,6 +2483,8 @@ export interface HostingInstanceAdmin {
   has_password: boolean;
   /** Node the instance runs on; "" before it is provisioned. */
   node_id: string;
+  /** Region bought in; "" for instances from before regions. */
+  region: string;
   user_email?: string;
   orders?: HostingInstanceOrder[];
 }
@@ -2696,12 +2742,14 @@ export const api = {
   testHostingSettings: () => request<{ ok: boolean; error?: string }>("POST", "/hosting/settings/test"),
   listHostingInstances: (status?: string) =>
     request<{ instances: HostingInstanceAdmin[] }>("GET", `/hosting/instances${status ? `?status=${encodeURIComponent(status)}` : ""}`),
-  listHostingNodes: () => request<{ nodes: HostingNodeLoad[]; recommended: string }>("GET", "/hosting/nodes"),
+  listHostingNodes: () =>
+    request<{ nodes: HostingNodeLoad[]; recommended: string; regions: HostingRegionStock[] }>("GET", "/hosting/nodes"),
   /** Omit nodeId to let the server pick the node with the most room. */
-  provisionHosting: (id: string, image: string, nodeId?: string) =>
+  provisionHosting: (id: string, image: string, nodeId?: string, overcommit?: boolean) =>
     request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/provision`, {
       image,
       ...(nodeId ? { node_id: nodeId } : {}),
+      ...(overcommit ? { overcommit: true } : {}),
     }),
   stopHosting: (id: string) => request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/stop`),
   startHosting: (id: string) => request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/start`),

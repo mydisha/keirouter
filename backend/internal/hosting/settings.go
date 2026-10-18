@@ -73,6 +73,9 @@ type Settings struct {
 	// SupportURL is where customers waiting for activation can contact the
 	// admin (a Telegram link by default).
 	SupportURL string `json:"support_url"`
+	// Regions are the locations sold at checkout, each with its own price.
+	// MonthlyPriceIDR stays as the price of instances made before regions.
+	Regions []Region `json:"regions"`
 }
 
 type storedSettings struct {
@@ -99,7 +102,7 @@ var sharedSecretEnv = []string{"JWT_SECRET"}
 func Load(ctx context.Context, get func(context.Context, string) (string, error), box SecretBox) (Settings, error) {
 	raw, err := get(ctx, SettingsKey)
 	if errors.Is(err, store.ErrNotFound) || (err == nil && raw == "") {
-		return Settings{ContainerPort: DefaultPort, PasswordEnv: DefaultPasswordEnv, DataPath: DefaultDataPath, SupportURL: DefaultSupportURL}, nil
+		return Settings{ContainerPort: DefaultPort, PasswordEnv: DefaultPasswordEnv, DataPath: DefaultDataPath, SupportURL: DefaultSupportURL, Regions: DefaultRegions()}, nil
 	}
 	if err != nil {
 		return Settings{}, err
@@ -131,6 +134,9 @@ func Load(ctx context.Context, get func(context.Context, string) (string, error)
 	}
 	if s.SupportURL == "" {
 		s.SupportURL = DefaultSupportURL
+	}
+	if len(s.Regions) == 0 {
+		s.Regions = DefaultRegions()
 	}
 	return s, nil
 }
@@ -167,6 +173,9 @@ func (s *Settings) Normalize() error {
 	}
 	s.foldLegacyNode()
 	if err := s.normalizeNodes(); err != nil {
+		return err
+	}
+	if err := s.normalizeRegions(); err != nil {
 		return err
 	}
 	var imgs []string
@@ -236,17 +245,33 @@ func (s *Settings) Normalize() error {
 	}
 	if s.Enabled {
 		switch {
-		case s.MonthlyPriceIDR <= 0:
-			return errors.New("set monthly_price_idr before enabling hosting")
 		case s.DokployURL == "", s.APIKey == "", s.EnvironmentID == "":
 			return errors.New("set the Dokploy URL, API key and environment ID before enabling hosting")
 		case !s.hasEnabledNode():
 			return errors.New("add at least one enabled node before enabling hosting")
 		case len(s.Images) == 0:
 			return errors.New("add at least one image before enabling hosting")
+		case !s.hasSellableRegion():
+			return errors.New("put an enabled node in an enabled region with a price before enabling hosting")
 		}
 	}
 	return nil
+}
+
+// hasSellableRegion reports whether some enabled, priced region has an
+// enabled node to put instances on.
+func (s Settings) hasSellableRegion() bool {
+	for _, r := range s.Regions {
+		if !r.Enabled || r.PriceIDR <= 0 {
+			continue
+		}
+		for _, n := range s.Nodes {
+			if n.Enabled && n.Region == r.ID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s Settings) hasEnabledNode() bool {

@@ -93,8 +93,11 @@ func hostingTestServer(t *testing.T) (*Server, string, *fakeDokploy) {
 	s.dokployFactory = func(string, string) dokployAPI { return fake }
 	require.NoError(t, hosting.Save(t.Context(), s.settingsSet(), s.financeBox(), hosting.Settings{
 		Enabled: true, MonthlyPriceIDR: 50000, DokployURL: "https://dokploy.example.com",
-		APIKey: "dk", EnvironmentID: "env-1", RootDomain: "host.example.com",
-		Images: []string{"luqmenul/9router-go:latest"}, ContainerPort: 20130, DataPath: "/data",
+		APIKey: "dk", EnvironmentID: "env-1",
+		Nodes: []hosting.Node{{ID: hosting.LegacyNodeID, Name: "Node 1", ServerID: "srv-1",
+			RootDomain: "host.example.com", Enabled: true, Region: "id"}},
+		Regions: []hosting.Region{{ID: "id", Name: "Indonesia", PriceIDR: 50000, Enabled: true}},
+		Images:  []string{"luqmenul/9router-go:latest"}, ContainerPort: 20130, DataPath: "/data",
 		EnvTemplate: "BASE_URL={{URL}}\nINITIAL_PASSWORD=123456", ServerID: "srv-1",
 		PasswordEnv: "INITIAL_PASSWORD", MemoryLimit: "536870912", CPULimit: "1000000000",
 	}))
@@ -316,7 +319,8 @@ func TestHostingSettings_MasksKey(t *testing.T) {
 
 	// Saving without api_key keeps the stored key.
 	rec = doJSON(t, r, http.MethodPut, "/hosting/settings", `{"enabled":true,"monthly_price_idr":60000,
-		"dokploy_url":"https://dokploy.example.com","environment_id":"env-1","root_domain":"host.example.com",
+		"dokploy_url":"https://dokploy.example.com","environment_id":"env-1",
+		"nodes":[{"id":"default","name":"Node 1","root_domain":"host.example.com","enabled":true,"region":"id"}],
 		"images":["luqmenul/9router-go:latest"],"container_port":20130,"env_template":""}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	st, err := hosting.Load(t.Context(), s.settingsGet(), s.financeBox())
