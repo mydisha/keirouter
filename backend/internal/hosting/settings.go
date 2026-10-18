@@ -22,7 +22,8 @@ import (
 const SettingsKey = "hosting_settings"
 
 // TermsVersion is the hosting terms version users must accept at checkout.
-// Bump it whenever the terms page (/ketentuan/hosting-9router) changes.
+// Bump it whenever the hosting part of the terms page (/ketentuan#hosting)
+// changes materially, together with HOSTING_TERMS_VERSION in the frontend.
 const TermsVersion = "2026-10-17"
 
 // PeriodDays is how long one paid order keeps an instance active.

@@ -1,17 +1,17 @@
 // Terms of service at `/ketentuan`, linked from the public footer. Static
 // copy only; styling is scoped through `.landing-root` tokens like the other
-// public pages.
+// public pages. The Hosting 9router terms are one part of this page
+// (/ketentuan#hosting), so there is a single terms page.
 
-import { useEffect, type ReactNode } from "react";
+import { useEffect } from "react";
 import { PublicLayout, TELEGRAM_URL } from "../components/PublicLayout";
+import { HOSTING_EFFECTIVE_DATE, HOSTING_SECTIONS, HOSTING_TERMS_VERSION, type TermsSection } from "./hostingTerms";
 
 const EFFECTIVE_DATE = "22 Oktober 2026";
 
 const LINK = "text-[var(--link)] underline underline-offset-2 hover:opacity-80";
 
-type Section = { id: string; title: string; body: ReactNode };
-
-const SECTIONS: Section[] = [
+const SECTIONS: TermsSection[] = [
   {
     id: "penerimaan",
     title: "Penerimaan ketentuan",
@@ -23,9 +23,8 @@ const SECTIONS: Section[] = [
         </p>
         <p>Anda menyatakan cakap secara hukum, atau mendapat izin dari pihak yang berwenang, untuk menerima ketentuan ini.</p>
         <p>
-          Layanan Hosting 9router juga tunduk pada{" "}
-          <a href="/ketentuan/hosting-9router" className={LINK}>Ketentuan Layanan Hosting 9router</a>, yang melengkapi
-          ketentuan ini.
+          Layanan Hosting 9router juga tunduk pada bagian{" "}
+          <a href="#hosting" className={LINK}>Hosting 9router</a> di halaman ini, yang melengkapi ketentuan umum.
         </p>
       </>
     ),
@@ -230,9 +229,40 @@ const SECTIONS: Section[] = [
   },
 ];
 
+// The hosting part sits just before the closing sections.
+const HOSTING_AT = SECTIONS.findIndex((x) => x.id === "perubahan");
+const BEFORE = SECTIONS.slice(0, HOSTING_AT);
+const AFTER = SECTIONS.slice(HOSTING_AT);
+const HOSTING_NO = BEFORE.length + 1;
+
+function SectionBody({ s, no }: { s: TermsSection; no: string }) {
+  return (
+    <section id={s.id} className="scroll-mt-20">
+      <h2 className="text-[18px] font-semibold tracking-[-0.3px] text-[var(--ink)]">
+        <span className="mr-2 font-mono text-[var(--muted)]">{no}.</span>
+        {s.title}
+      </h2>
+      <div className="mt-3 space-y-3 text-[15px] leading-relaxed text-[var(--muted)]">{s.body}</div>
+    </section>
+  );
+}
+
+function TocLink({ id, no, title, nested }: { id: string; no: string; title: string; nested?: boolean }) {
+  return (
+    <a href={`#${id}`} className="flex gap-2 text-[var(--ink)] no-underline hover:underline">
+      <span className={`${nested ? "w-11" : "w-7"} shrink-0 font-mono text-[var(--muted)]`}>{no}</span>
+      {title}
+    </a>
+  );
+}
+
 export default function PublicTerms() {
   useEffect(() => {
     document.title = "Tokenizer - Ketentuan Layanan";
+    // Links like /ketentuan#hosting arrive after the SPA renders, so the
+    // browser has not scrolled to the anchor yet.
+    const id = decodeURIComponent(window.location.hash.slice(1));
+    if (id) document.getElementById(id)?.scrollIntoView();
   }, []);
 
   return (
@@ -243,30 +273,63 @@ export default function PublicTerms() {
         <p className="mt-2 text-[13px] text-[var(--muted)]">Berlaku sejak {EFFECTIVE_DATE}</p>
       </header>
 
-      <div className="mt-8 grid gap-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-12">
-        <nav aria-label="Daftar isi" className="lg:sticky lg:top-20 lg:self-start">
+      <div className="mt-8 grid gap-8 lg:grid-cols-[240px_minmax(0,1fr)] lg:gap-12">
+        <nav aria-label="Daftar isi" className="lg:sticky lg:top-20 lg:max-h-[calc(100dvh-6rem)] lg:self-start lg:overflow-y-auto">
           <p className="font-mono text-[11px] uppercase tracking-[1px] text-[var(--muted)]">Daftar isi</p>
           <ol className="mt-3 space-y-1.5 text-[13px]">
-            {SECTIONS.map((s, i) => (
+            {BEFORE.map((s, i) => (
               <li key={s.id}>
-                <a href={`#${s.id}`} className="flex gap-2 text-[var(--ink)] no-underline hover:underline">
-                  <span className="w-5 shrink-0 font-mono text-[var(--muted)]">{i + 1}.</span>
-                  {s.title}
-                </a>
+                <TocLink id={s.id} no={`${i + 1}.`} title={s.title} />
+              </li>
+            ))}
+            <li>
+              <TocLink id="hosting" no={`${HOSTING_NO}.`} title="Hosting 9router" />
+              <ol className="mt-1.5 space-y-1.5 pl-3">
+                {HOSTING_SECTIONS.map((s, i) => (
+                  <li key={s.id}>
+                    <TocLink id={s.id} no={`${HOSTING_NO}.${i + 1}`} title={s.title} nested />
+                  </li>
+                ))}
+              </ol>
+            </li>
+            {AFTER.map((s, i) => (
+              <li key={s.id}>
+                <TocLink id={s.id} no={`${HOSTING_NO + 1 + i}.`} title={s.title} />
               </li>
             ))}
           </ol>
         </nav>
 
         <article className="max-w-2xl space-y-10">
-          {SECTIONS.map((s, i) => (
-            <section key={s.id} id={s.id} className="scroll-mt-20">
-              <h2 className="text-[18px] font-semibold tracking-[-0.3px] text-[var(--ink)]">
-                <span className="mr-2 font-mono text-[var(--muted)]">{i + 1}.</span>
-                {s.title}
+          {BEFORE.map((s, i) => (
+            <SectionBody key={s.id} s={s} no={String(i + 1)} />
+          ))}
+
+          <section id="hosting" className="scroll-mt-20 space-y-8 rounded-xl border border-[var(--line)] bg-[var(--paper)] p-5 sm:p-6">
+            <header>
+              <h2 className="text-[20px] font-semibold tracking-[-0.3px] text-[var(--ink)]">
+                <span className="mr-2 font-mono text-[var(--muted)]">{HOSTING_NO}.</span>
+                Hosting 9router
               </h2>
-              <div className="mt-3 space-y-3 text-[15px] leading-relaxed text-[var(--muted)]">{s.body}</div>
-            </section>
+              <p className="mt-1.5 text-[13px] text-[var(--muted)]">
+                Berlaku sejak {HOSTING_EFFECTIVE_DATE} · <span className="font-mono">Versi {HOSTING_TERMS_VERSION}</span>
+              </p>
+            </header>
+            {HOSTING_SECTIONS.map((s, i) => (
+              <section key={s.id} id={s.id} className="scroll-mt-20">
+                <h3 className="text-[16px] font-semibold tracking-[-0.2px] text-[var(--ink)]">
+                  <span className="mr-2 font-mono text-[var(--muted)]">
+                    {HOSTING_NO}.{i + 1}
+                  </span>
+                  {s.title}
+                </h3>
+                <div className="mt-2.5 space-y-3 text-[15px] leading-relaxed text-[var(--muted)]">{s.body}</div>
+              </section>
+            ))}
+          </section>
+
+          {AFTER.map((s, i) => (
+            <SectionBody key={s.id} s={s} no={String(HOSTING_NO + 1 + i)} />
           ))}
         </article>
       </div>

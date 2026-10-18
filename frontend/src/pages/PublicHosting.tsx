@@ -1,4 +1,4 @@
-// Hosting 9router landing at `/hosting-9router`. Shows each region's price
+// Hosting 9router landing at `/9router`. Shows each region's price
 // and live stock from /v1/public/hosting; "Pesan" sends the visitor to the
 // portal hosting page with the region preselected. A sold-out region (or
 // closed ordering) cannot be ordered.
@@ -43,7 +43,7 @@ export default function PublicHosting() {
   const open = !!data?.enabled;
   const regions = data?.regions ?? [];
   const periodDays = data?.period_days || 30;
-  const termsUrl = data?.terms_url || "/ketentuan/hosting-9router";
+  const termsUrl = data?.terms_url || "/ketentuan#hosting";
   const cheapest = regions.reduce<number | null>((min, r) => (min === null || r.price_idr < min ? r.price_idr : min), null);
 
   return (

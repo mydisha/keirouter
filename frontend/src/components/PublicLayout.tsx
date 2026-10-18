@@ -30,7 +30,7 @@ function storedTheme(): Theme {
 const TABS: { id: string; label: string; href: string; icon: LucideIcon }[] = [
   { id: "overview", label: "Home", href: "/", icon: Home },
   { id: "models", label: "Model", href: "/model", icon: Boxes },
-  { id: "hosting", label: "Hosting", href: "/hosting-9router", icon: Server },
+  { id: "hosting", label: "9router", href: "/9router", icon: Server },
   { id: "bansos", label: "Bansos", href: "/bansos", icon: Gift },
   { id: "telegram", label: "Telegram", href: TELEGRAM_URL, icon: Send },
 ];
@@ -122,7 +122,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
   const [active] = useState(() => {
     const p = window.location.pathname;
     if (p.startsWith("/bansos")) return "bansos";
-    if (p.startsWith("/hosting-9router")) return "hosting";
+    if (p.startsWith("/9router")) return "hosting";
     if (p.startsWith("/model")) return "models";
     return "overview";
   });
@@ -216,7 +216,7 @@ export function PublicLayout({ children }: { children: ReactNode }) {
             <p className="font-mono text-[11px] uppercase tracking-[1px] text-[var(--muted)]">Layanan</p>
             <ul className="mt-3 space-y-2">
               <li><a href="/model" className="text-[var(--ink)] no-underline hover:underline">Model &amp; harga</a></li>
-              <li><a href="/hosting-9router" className="text-[var(--ink)] no-underline hover:underline">Hosting 9router</a></li>
+              <li><a href="/9router" className="text-[var(--ink)] no-underline hover:underline">Hosting 9router</a></li>
               <li><a href="/bansos" className="text-[var(--ink)] no-underline hover:underline">Bansos</a></li>
               <li><a href="/portal" className="text-[var(--ink)] no-underline hover:underline">Portal pengguna</a></li>
             </ul>
@@ -230,7 +230,6 @@ export function PublicLayout({ children }: { children: ReactNode }) {
                 </a>
               </li>
               <li><a href="/ketentuan" className="text-[var(--ink)] no-underline hover:underline">Ketentuan Layanan</a></li>
-              <li><a href="/ketentuan/hosting-9router" className="text-[var(--ink)] no-underline hover:underline">Ketentuan Hosting 9router</a></li>
             </ul>
           </div>
         </div>

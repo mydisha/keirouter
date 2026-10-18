@@ -11,12 +11,12 @@ interface ThemeAPI {
 const ThemeContext = createContext<ThemeAPI | null>(null);
 const STORAGE_KEY = "keirouter-theme";
 
-// Public pages (landing, /model, /bansos, /ketentuan[/hosting-9router]) run their own theme in
+// Public pages (landing, /model, /bansos, /9router, /ketentuan) run their own theme in
 // PublicLayout; keep in sync with the pre-paint script in index.html.
-export const PUBLIC_PATH = /^\/(bansos|model|ketentuan(\/hosting-9router)?)?\/?$/;
+export const PUBLIC_PATH = /^\/(bansos|model|9router|hosting-9router|ketentuan(\/hosting-9router)?)?\/?$/;
 // Paths whose root class is owned by something other than the dashboard
 // theme: the public pages and the customer portal (its own ThemeProvider).
-const SEPARATE_THEME_PATH = /^\/((bansos|model|ketentuan(\/hosting-9router)?)?\/?$|portal(\/|$))/;
+const SEPARATE_THEME_PATH = /^\/((bansos|model|9router|hosting-9router|ketentuan(\/hosting-9router)?)?\/?$|portal(\/|$))/;
 
 /** Storage key for the customer portal theme; read by index.html too. */
 export const PORTAL_THEME_KEY = "keirouter-portal-theme";

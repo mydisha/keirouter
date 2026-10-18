@@ -51,7 +51,6 @@ const PublicLanding = lazy(() => import("./pages/PublicLanding"));
 const PublicBansos = lazy(() => import("./pages/PublicBansos"));
 const PublicModels = lazy(() => import("./pages/PublicModels"));
 const PublicTerms = lazy(() => import("./pages/PublicTerms"));
-const PublicHostingTerms = lazy(() => import("./pages/PublicHostingTerms"));
 const PublicHosting = lazy(() => import("./pages/PublicHosting"));
 
 function PageFallback() {
@@ -70,9 +69,11 @@ export function App() {
         <Route path="/" element={<PublicLanding />} />
         <Route path="/bansos" element={<PublicBansos />} />
         <Route path="/model" element={<PublicModels />} />
-        <Route path="/hosting-9router" element={<PublicHosting />} />
+        <Route path="/9router" element={<PublicHosting />} />
+        {/* Old addresses still shared around: keep them working. */}
+        <Route path="/hosting-9router" element={<Navigate to="/9router" replace />} />
         <Route path="/ketentuan" element={<PublicTerms />} />
-        <Route path="/ketentuan/hosting-9router" element={<PublicHostingTerms />} />
+        <Route path="/ketentuan/hosting-9router" element={<Navigate to="/ketentuan#hosting" replace />} />
         <Route path="portal" element={
           <ThemeProvider storageKey={PORTAL_THEME_KEY} defaultTheme="dark" scoped>
             <PortalBrandingProvider>

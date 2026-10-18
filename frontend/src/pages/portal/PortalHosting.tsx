@@ -211,7 +211,7 @@ export function PortalHostingPage() {
 
   const cfg = hosting.data;
   const instances = cfg.instances ?? [];
-  const termsUrl = cfg.terms_url || "/ketentuan/hosting-9router";
+  const termsUrl = cfg.terms_url || "/ketentuan#hosting";
   const periodDays = cfg.period_days || 30;
   // Renewing an existing instance needs no stock; a new order needs a region
   // that is not sold out.

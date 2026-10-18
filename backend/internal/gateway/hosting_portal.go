@@ -16,7 +16,7 @@ import (
 )
 
 // hostingTermsPath is the public page users accept at checkout.
-const hostingTermsPath = "/ketentuan/hosting-9router"
+const hostingTermsPath = "/ketentuan#hosting"
 
 func (s *Server) loadHostingSettings(r *http.Request) (hosting.Settings, error) {
 	return s.loadHostingSettingsCtx(r.Context())

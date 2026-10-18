@@ -1,37 +1,37 @@
-// Hosting 9router terms at `/ketentuan/hosting-9router`, linked from the
-// portal checkout and the public footer. Same layout as PublicTerms. Bump
-// TERMS_VERSION together with hosting.TermsVersion in the backend.
+// Hosting 9router terms: the "Hosting 9router" part of the terms page at
+// /ketentuan#hosting, which the portal checkout links to. Bump
+// HOSTING_TERMS_VERSION together with hosting.TermsVersion in the backend
+// whenever this text changes materially.
 
-import { useEffect, type ReactNode } from "react";
-import { PublicLayout, TELEGRAM_URL } from "../components/PublicLayout";
+import type { ReactNode } from "react";
+import { TELEGRAM_URL } from "../components/PublicLayout";
 
-const EFFECTIVE_DATE = "17 Oktober 2026";
-const TERMS_VERSION = "2026-10-17";
+export const HOSTING_EFFECTIVE_DATE = "17 Oktober 2026";
+export const HOSTING_TERMS_VERSION = "2026-10-17";
 
 const LINK = "text-[var(--link)] underline underline-offset-2 hover:opacity-80";
 
-type Section = { id: string; title: string; body: ReactNode };
+export type TermsSection = { id: string; title: string; body: ReactNode };
 
-const SECTIONS: Section[] = [
+export const HOSTING_SECTIONS: TermsSection[] = [
   {
-    id: "penerimaan",
+    id: "hosting-penerimaan",
     title: "Penerimaan ketentuan",
     body: (
       <>
         <p>
-          Ketentuan ini mengatur layanan Hosting 9router dari Tokenizer dan melengkapi{" "}
-          <a href="/ketentuan" className={LINK}>Ketentuan Layanan</a> umum Tokenizer. Jika ada yang berbeda, ketentuan
-          ini yang berlaku untuk layanan hosting.
+          Bagian ini berlaku khusus untuk layanan Hosting 9router dan melengkapi ketentuan di atas. Jika ada yang
+          berbeda, bagian ini yang berlaku untuk layanan hosting.
         </p>
         <p>
-          Anda menyetujui ketentuan ini dengan mencentang kotak persetujuan saat memesan atau memperpanjang. Setiap pesanan
+          Anda menyetujui bagian ini dengan mencentang kotak persetujuan saat memesan atau memperpanjang. Setiap pesanan
           dan perpanjangan mencatat versi ketentuan yang Anda setujui beserta waktunya.
         </p>
       </>
     ),
   },
   {
-    id: "layanan",
+    id: "hosting-layanan",
     title: "Layanan",
     body: (
       <>
@@ -48,7 +48,7 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "aktivasi",
+    id: "hosting-aktivasi",
     title: "Aktivasi",
     body: (
       <>
@@ -61,19 +61,19 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "tagihan",
+    id: "hosting-tagihan",
     title: "Tagihan dan masa aktif",
     body: (
       <ul className="list-disc space-y-2 pl-5">
         <li>Harga berlaku per 30 hari dan ditampilkan di portal sebelum Anda membayar.</li>
-        <li>Pembayaran dilakukan di muka melalui SumoPod.</li>
+        <li>Pembayaran dilakukan di muka melalui portal.</li>
         <li>Perpanjangan menambah 30 hari dihitung dari tanggal berakhir yang sedang berjalan.</li>
         <li>Tidak ada perpanjangan otomatis. Anda perlu memperpanjang sendiri dari portal.</li>
       </ul>
     ),
   },
   {
-    id: "kedaluwarsa",
+    id: "hosting-kedaluwarsa",
     title: "Kedaluwarsa",
     body: (
       <p>
@@ -85,7 +85,7 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "pengembalian-dana",
+    id: "hosting-pengembalian-dana",
     title: "Pengembalian dana",
     body: (
       <p>
@@ -96,7 +96,7 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "tanggung-jawab-pengguna",
+    id: "hosting-tanggung-jawab-pengguna",
     title: "Tanggung jawab pengguna",
     body: (
       <>
@@ -119,7 +119,7 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "data",
+    id: "hosting-data",
     title: "Data dan cadangan",
     body: (
       <p>
@@ -129,7 +129,7 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "ketersediaan",
+    id: "hosting-ketersediaan",
     title: "Ketersediaan",
     body: (
       <p>
@@ -139,7 +139,7 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "penangguhan",
+    id: "hosting-penangguhan",
     title: "Penangguhan",
     body: (
       <p>
@@ -149,7 +149,7 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "batasan",
+    id: "hosting-batasan",
     title: "Batasan tanggung jawab",
     body: (
       <p>
@@ -159,62 +159,14 @@ const SECTIONS: Section[] = [
     ),
   },
   {
-    id: "perubahan",
+    id: "hosting-perubahan",
     title: "Perubahan ketentuan",
     body: (
       <p>
-        Kami dapat memperbarui ketentuan ini. Versi baru berlaku untuk pesanan atau perpanjangan berikutnya, dan Anda
+        Kami dapat memperbarui bagian ini. Versi baru berlaku untuk pesanan atau perpanjangan berikutnya, dan Anda
         akan diminta menyetujuinya lagi saat itu. Pertanyaan dapat dikirim melalui{" "}
         <a href={TELEGRAM_URL} target="_blank" rel="noopener noreferrer" className={LINK}>komunitas Telegram</a>.
       </p>
     ),
   },
 ];
-
-export default function PublicHostingTerms() {
-  useEffect(() => {
-    document.title = "Tokenizer - Ketentuan Layanan Hosting 9router";
-  }, []);
-
-  return (
-    <PublicLayout>
-      <header className="max-w-2xl">
-        <p className="font-mono text-[11px] uppercase tracking-[1.2px] text-[var(--green)]">Legal</p>
-        <h1 className="mt-2 text-[28px] font-semibold tracking-[-0.6px] text-[var(--ink)] sm:text-[34px]">
-          Ketentuan Layanan Hosting 9router
-        </h1>
-        <p className="mt-2 text-[13px] text-[var(--muted)]">
-          Berlaku sejak {EFFECTIVE_DATE} · <span className="font-mono">Versi {TERMS_VERSION}</span>
-        </p>
-      </header>
-
-      <div className="mt-8 grid gap-8 lg:grid-cols-[220px_minmax(0,1fr)] lg:gap-12">
-        <nav aria-label="Daftar isi" className="lg:sticky lg:top-20 lg:self-start">
-          <p className="font-mono text-[11px] uppercase tracking-[1px] text-[var(--muted)]">Daftar isi</p>
-          <ol className="mt-3 space-y-1.5 text-[13px]">
-            {SECTIONS.map((s, i) => (
-              <li key={s.id}>
-                <a href={`#${s.id}`} className="flex gap-2 text-[var(--ink)] no-underline hover:underline">
-                  <span className="w-5 shrink-0 font-mono text-[var(--muted)]">{i + 1}.</span>
-                  {s.title}
-                </a>
-              </li>
-            ))}
-          </ol>
-        </nav>
-
-        <article className="max-w-2xl space-y-10">
-          {SECTIONS.map((s, i) => (
-            <section key={s.id} id={s.id} className="scroll-mt-20">
-              <h2 className="text-[18px] font-semibold tracking-[-0.3px] text-[var(--ink)]">
-                <span className="mr-2 font-mono text-[var(--muted)]">{i + 1}.</span>
-                {s.title}
-              </h2>
-              <div className="mt-3 space-y-3 text-[15px] leading-relaxed text-[var(--muted)]">{s.body}</div>
-            </section>
-          ))}
-        </article>
-      </div>
-    </PublicLayout>
-  );
-}
