@@ -847,3 +847,32 @@ func TestHostingDelete_DNSFailureKeepsInstance(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, store.HostingActive, h.Status)
 }
+
+func TestHostingProvision_RejectsDomainOutsideZone(t *testing.T) {
+	s, _, _, dns := hostingTestServerDNS(t)
+	dns.zoneName = "other.com"
+	paidHosting(t, s, "z1")
+	require.Equal(t, http.StatusBadGateway, provisionHosting(s, "z1").Code)
+	require.Equal(t, 0, dns.creates)
+	h, err := s.db.Hosting().Get(t.Context(), "z1")
+	require.NoError(t, err)
+	require.Contains(t, h.LastError, "not in zone")
+}
+
+func TestHostingProvision_RepairsMissingRecord(t *testing.T) {
+	s, _, fake, dns := hostingTestServerDNS(t)
+	paidHosting(t, s, "r1")
+	fake.failDomainOnce = true
+	require.Equal(t, http.StatusBadGateway, provisionHosting(s, "r1").Code)
+	h, err := s.db.Hosting().Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.NotEmpty(t, h.DNSRecordID)
+
+	// The record disappears (deleted by hand, or by a racing delete).
+	delete(dns.records, h.FQDN)
+	require.Equal(t, http.StatusOK, provisionHosting(s, "r1").Code)
+	require.Equal(t, 2, dns.creates, "the retry recreates the missing record")
+	h, err = s.db.Hosting().Get(t.Context(), "r1")
+	require.NoError(t, err)
+	require.Equal(t, dns.records[h.FQDN].ID, h.DNSRecordID)
+}

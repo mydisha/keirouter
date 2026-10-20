@@ -614,11 +614,14 @@ func (s *Server) provisionOnDokploy(ctx context.Context, st hosting.Settings, no
 	if err := api.SetResources(ctx, h.DokployAppID, st.MemoryLimit, st.CPULimit); err != nil {
 		return fmt.Errorf("set resource limits: %w", err)
 	}
-	if h.DNSRecordID == "" {
-		id, err := s.ensureDNSRecord(ctx, st, node, *h)
-		if err != nil {
-			return err
-		}
+	// Always checked, not only the first time: a record deleted by hand or
+	// by a racing delete is recreated instead of leaving the instance
+	// without DNS. FindA by name keeps this from making duplicates.
+	id, err := s.ensureDNSRecord(ctx, st, node, *h)
+	if err != nil {
+		return err
+	}
+	if id != h.DNSRecordID {
 		h.DNSRecordID = id
 		if err := repo.SetDokploy(ctx, *h); err != nil {
 			return err
@@ -645,9 +648,17 @@ func (s *Server) provisionOnDokploy(ctx context.Context, st hosting.Settings, no
 
 // ensureDNSRecord returns the id of the proxied A record for the instance's
 // FQDN, creating it when missing. A record already there is reused when it
-// points at the node, and refused when it points elsewhere.
+// points at the node, and refused when it points elsewhere. The zone must
+// hold the main domain, or the record would land under the wrong name.
 func (s *Server) ensureDNSRecord(ctx context.Context, st hosting.Settings, node hosting.Node, h store.HostingInstance) (string, error) {
 	dns := s.dnsClient(st)
+	zone, err := dns.Zone(ctx, st.CloudflareZoneID)
+	if err != nil {
+		return "", fmt.Errorf("read Cloudflare zone: %w", err)
+	}
+	if !st.InZone(zone) {
+		return "", fmt.Errorf("main domain %q is not in zone %s", st.RootDomain, zone)
+	}
 	rec, found, err := dns.FindA(ctx, st.CloudflareZoneID, h.FQDN)
 	if err != nil {
 		return "", fmt.Errorf("find DNS record: %w", err)
