@@ -614,6 +614,16 @@ func (s *Server) provisionOnDokploy(ctx context.Context, st hosting.Settings, no
 	if err := api.SetResources(ctx, h.DokployAppID, st.MemoryLimit, st.CPULimit); err != nil {
 		return fmt.Errorf("set resource limits: %w", err)
 	}
+	if h.DNSRecordID == "" {
+		id, err := s.ensureDNSRecord(ctx, st, node, *h)
+		if err != nil {
+			return err
+		}
+		h.DNSRecordID = id
+		if err := repo.SetDokploy(ctx, *h); err != nil {
+			return err
+		}
+	}
 	if h.DokployDomainID == "" {
 		d, err := api.CreateDomain(ctx, h.DokployAppID, h.FQDN, st.ContainerPort)
 		if err != nil {
@@ -631,6 +641,28 @@ func (s *Server) provisionOnDokploy(ctx context.Context, st hosting.Settings, no
 		return fmt.Errorf("deploy: %w", err)
 	}
 	return nil
+}
+
+// ensureDNSRecord returns the id of the proxied A record for the instance's
+// FQDN, creating it when missing. A record already there is reused when it
+// points at the node, and refused when it points elsewhere.
+func (s *Server) ensureDNSRecord(ctx context.Context, st hosting.Settings, node hosting.Node, h store.HostingInstance) (string, error) {
+	dns := s.dnsClient(st)
+	rec, found, err := dns.FindA(ctx, st.CloudflareZoneID, h.FQDN)
+	if err != nil {
+		return "", fmt.Errorf("find DNS record: %w", err)
+	}
+	if found {
+		if rec.Content != node.PublicIP {
+			return "", fmt.Errorf("DNS record %s exists with a different IP (%s)", h.FQDN, rec.Content)
+		}
+		return rec.ID, nil
+	}
+	rec, err = dns.CreateA(ctx, st.CloudflareZoneID, h.FQDN, node.PublicIP, "keirouter hosting "+h.ID)
+	if err != nil {
+		return "", fmt.Errorf("create DNS record: %w", err)
+	}
+	return rec.ID, nil
 }
 
 // buildHostingEnv fills the admin's env template, then sets the variables the
@@ -703,6 +735,19 @@ func (s *Server) hostingDokployAction(w http.ResponseWriter, r *http.Request, fr
 	from = []store.HostingStatus{h.Status}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), dokployTimeout)
 	defer cancel()
+	// Deleting removes the DNS record first: if Cloudflare fails nothing has
+	// changed yet and the admin can simply retry.
+	if to == store.HostingDeleted && h.DNSRecordID != "" {
+		st, ok := s.loadReadyHostingSettings(w, r)
+		if !ok {
+			return
+		}
+		if err := s.dnsClient(st).Delete(ctx, st.CloudflareZoneID, h.DNSRecordID); err != nil {
+			s.log.Error("hosting: delete DNS record failed", "instance", h.ID, "err", err)
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+	}
 	if h.DokployAppID != "" {
 		st, ok := s.loadReadyHostingSettings(w, r)
 		if !ok {

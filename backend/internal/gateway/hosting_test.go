@@ -734,3 +734,116 @@ func TestHostingSettingsTest_Cloudflare(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"error":"Cloudflare: `)
 	require.Contains(t, rec.Body.String(), "Authentication error")
 }
+
+// paidHosting inserts a paid instance waiting to be created.
+func paidHosting(t *testing.T, s *Server, id string) {
+	t.Helper()
+	now := time.Now()
+	require.NoError(t, s.db.Hosting().Create(t.Context(), store.HostingInstance{
+		ID: id, TenantID: adminTenant, KeyID: "k", Status: store.HostingPaid, PrepaidDays: 30, CreatedAt: now, UpdatedAt: now,
+	}))
+}
+
+func provisionHosting(s *Server, id string) *httptest.ResponseRecorder {
+	return adminHostingCall(s, http.MethodPost, "/x", id, `{"image":"luqmenul/9router-go:latest"}`, s.adminProvisionHosting)
+}
+
+func TestHostingProvision_CreatesDNSRecord(t *testing.T) {
+	s, _, _, dns := hostingTestServerDNS(t)
+	paidHosting(t, s, "d1")
+	rec := provisionHosting(s, "d1")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	inst, err := s.db.Hosting().Get(t.Context(), "d1")
+	require.NoError(t, err)
+	require.Equal(t, inst.Subdomain+".host.example.com", inst.FQDN)
+	require.Equal(t, 1, dns.creates)
+	r, ok := dns.records[inst.FQDN]
+	require.True(t, ok, "record named after the instance FQDN")
+	require.Equal(t, "203.0.113.7", r.Content, "points at the node IP")
+	require.Equal(t, "keirouter hosting d1", dns.lastComment)
+	require.Equal(t, r.ID, inst.DNSRecordID)
+}
+
+func TestHostingProvision_RetryNoSecondRecord(t *testing.T) {
+	s, _, fake, dns := hostingTestServerDNS(t)
+	paidHosting(t, s, "d2")
+	fake.failDomainOnce = true
+	require.Equal(t, http.StatusBadGateway, provisionHosting(s, "d2").Code)
+	require.Equal(t, http.StatusOK, provisionHosting(s, "d2").Code)
+	require.Equal(t, 1, dns.creates)
+}
+
+func TestHostingProvision_AdoptsExistingRecord(t *testing.T) {
+	s, _, _, dns := hostingTestServerDNS(t)
+	ctx := t.Context()
+	paidHosting(t, s, "d3")
+	// Pin the subdomain so the existing record's name is known.
+	h, err := s.db.Hosting().Get(ctx, "d3")
+	require.NoError(t, err)
+	h.Subdomain, h.FQDN = "pinned01", "pinned01.host.example.com"
+	require.NoError(t, s.db.Hosting().SetDokploy(ctx, h))
+	dns.records["pinned01.host.example.com"] = cloudflare.Record{ID: "old", Name: "pinned01.host.example.com", Content: "203.0.113.7"}
+
+	require.Equal(t, http.StatusOK, provisionHosting(s, "d3").Code)
+	require.Equal(t, 0, dns.creates)
+	h, err = s.db.Hosting().Get(ctx, "d3")
+	require.NoError(t, err)
+	require.Equal(t, "old", h.DNSRecordID)
+
+	paidHosting(t, s, "d4")
+	h, err = s.db.Hosting().Get(ctx, "d4")
+	require.NoError(t, err)
+	h.Subdomain, h.FQDN = "pinned02", "pinned02.host.example.com"
+	require.NoError(t, s.db.Hosting().SetDokploy(ctx, h))
+	dns.records["pinned02.host.example.com"] = cloudflare.Record{ID: "x", Name: "pinned02.host.example.com", Content: "198.51.100.1"}
+	require.Equal(t, http.StatusBadGateway, provisionHosting(s, "d4").Code)
+	h, err = s.db.Hosting().Get(ctx, "d4")
+	require.NoError(t, err)
+	require.Contains(t, h.LastError, "different IP")
+}
+
+func deleteHosting(s *Server, id string) *httptest.ResponseRecorder {
+	return adminHostingCall(s, http.MethodPost, "/x", id, "", s.adminDeleteHosting)
+}
+
+func TestHostingDelete_RemovesDNSRecord(t *testing.T) {
+	s, _, _, dns := hostingTestServerDNS(t)
+	paidHosting(t, s, "e1")
+	require.Equal(t, http.StatusOK, provisionHosting(s, "e1").Code)
+	rec := deleteHosting(s, "e1")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, 1, dns.deletes)
+	require.Empty(t, dns.records)
+	h, err := s.db.Hosting().Get(t.Context(), "e1")
+	require.NoError(t, err)
+	require.Equal(t, store.HostingDeleted, h.Status)
+}
+
+func TestHostingDelete_DNSOnlyInstance(t *testing.T) {
+	s, _, fake, dns := hostingTestServerDNS(t)
+	ctx := t.Context()
+	now := time.Now()
+	require.NoError(t, s.db.Hosting().Create(ctx, store.HostingInstance{
+		ID: "e2", TenantID: adminTenant, KeyID: "k", Status: store.HostingFailed, Subdomain: "dnsonly1",
+		FQDN: "dnsonly1.host.example.com", DNSRecordID: "rec-x", CreatedAt: now, UpdatedAt: now,
+	}))
+	dns.records["dnsonly1.host.example.com"] = cloudflare.Record{ID: "rec-x"}
+	rec := deleteHosting(s, "e2")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, 1, dns.deletes)
+	require.Equal(t, 0, fake.deletes, "no Dokploy app to delete")
+}
+
+func TestHostingDelete_DNSFailureKeepsInstance(t *testing.T) {
+	s, _, fake, dns := hostingTestServerDNS(t)
+	paidHosting(t, s, "e3")
+	require.Equal(t, http.StatusOK, provisionHosting(s, "e3").Code)
+	dns.failDelete = errors.New("cloudflare: rate limited")
+	rec := deleteHosting(s, "e3")
+	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
+	require.Equal(t, 0, fake.deletes)
+	h, err := s.db.Hosting().Get(t.Context(), "e3")
+	require.NoError(t, err)
+	require.Equal(t, store.HostingActive, h.Status)
+}
