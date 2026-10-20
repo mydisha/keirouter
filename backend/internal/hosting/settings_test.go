@@ -134,7 +134,7 @@ func TestRegionStocks(t *testing.T) {
 }
 
 func TestPeriodPriceAndOvercommit(t *testing.T) {
-	s := Settings{MonthlyPriceIDR: 50000, Regions: DefaultRegions(),
+	s := Settings{Regions: DefaultRegions(),
 		Nodes: []Node{{ID: "a", Region: "eu"}}}
 	p, ok := s.PeriodPrice("id")
 	require.True(t, ok)
@@ -142,9 +142,8 @@ func TestPeriodPriceAndOvercommit(t *testing.T) {
 	p, ok = s.PeriodPrice(s.InstanceRegion("", "a"))
 	require.True(t, ok)
 	require.EqualValues(t, 10000, p, "an old instance takes its node's region")
-	p, ok = s.PeriodPrice("")
-	require.True(t, ok)
-	require.EqualValues(t, 50000, p, "no region at all keeps the legacy price")
+	_, ok = s.PeriodPrice("")
+	require.False(t, ok, "no region has no price")
 	_, ok = s.PeriodPrice("mars")
 	require.False(t, ok)
 

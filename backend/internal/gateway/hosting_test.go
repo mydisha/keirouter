@@ -92,7 +92,7 @@ func hostingTestServer(t *testing.T) (*Server, string, *fakeDokploy) {
 	fake := &fakeDokploy{}
 	s.dokployFactory = func(string, string) dokployAPI { return fake }
 	require.NoError(t, hosting.Save(t.Context(), s.settingsSet(), s.financeBox(), hosting.Settings{
-		Enabled: true, MonthlyPriceIDR: 50000, DokployURL: "https://dokploy.example.com",
+		Enabled: true, DokployURL: "https://dokploy.example.com",
 		APIKey: "dk", EnvironmentID: "env-1",
 		Nodes: []hosting.Node{{ID: hosting.LegacyNodeID, Name: "Node 1", ServerID: "srv-1",
 			RootDomain: "host.example.com", Enabled: true, Region: "id"}},
@@ -318,7 +318,7 @@ func TestHostingSettings_MasksKey(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `"has_api_key":true`)
 
 	// Saving without api_key keeps the stored key.
-	rec = doJSON(t, r, http.MethodPut, "/hosting/settings", `{"enabled":true,"monthly_price_idr":60000,
+	rec = doJSON(t, r, http.MethodPut, "/hosting/settings", `{"enabled":true,
 		"dokploy_url":"https://dokploy.example.com","environment_id":"env-1",
 		"nodes":[{"id":"default","name":"Node 1","root_domain":"host.example.com","enabled":true,"region":"id"}],
 		"images":["luqmenul/9router-go:latest"],"container_port":20130,"env_template":""}`)
@@ -326,7 +326,6 @@ func TestHostingSettings_MasksKey(t *testing.T) {
 	st, err := hosting.Load(t.Context(), s.settingsGet(), s.financeBox())
 	require.NoError(t, err)
 	require.Equal(t, "dk", st.APIKey)
-	require.EqualValues(t, 60000, st.MonthlyPriceIDR)
 }
 
 func TestHostingOrder_RequiresTurnstile(t *testing.T) {
@@ -412,7 +411,7 @@ func TestHostingSettings_URLChangeNeedsKey(t *testing.T) {
 	s, _, _ := hostingTestServer(t)
 	r := chi.NewRouter()
 	s.mountHosting(r)
-	base := `"enabled":false,"monthly_price_idr":50000,"environment_id":"env-1","root_domain":"host.example.com","images":["luqmenul/9router-go:latest"],"container_port":20130,"env_template":""`
+	base := `"enabled":false,"environment_id":"env-1","root_domain":"host.example.com","images":["luqmenul/9router-go:latest"],"container_port":20130,"env_template":""`
 	rec := doJSON(t, r, http.MethodPut, "/hosting/settings", `{`+base+`,"dokploy_url":"https://attacker.example.net"}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "re-enter")

@@ -2369,7 +2369,6 @@ export interface HostingNodeLoad extends HostingNode {
 
 export interface HostingSettings {
   enabled: boolean;
-  monthly_price_idr: number;
   dokploy_url: string;
   api_key_masked: string;
   has_api_key: boolean;
@@ -2391,7 +2390,6 @@ export interface HostingSettings {
 
 export interface HostingSettingsInput {
   enabled: boolean;
-  monthly_price_idr: number;
   dokploy_url: string;
   /** Omit or leave empty to keep the stored key. */
   api_key?: string;

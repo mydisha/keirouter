@@ -709,7 +709,6 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const toast = useToast();
   const confirm = useConfirm();
   const [enabled, setEnabled] = useState(settings.enabled);
-  const [price, setPrice] = useState(String(settings.monthly_price_idr || ""));
   const [dokployUrl, setDokployUrl] = useState(settings.dokploy_url);
   const [apiKey, setApiKey] = useState("");
   const [environmentId, setEnvironmentId] = useState(settings.environment_id);
@@ -724,9 +723,7 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const [supportUrl, setSupportUrl] = useState(settings.support_url || "https://t.me/damnwahhh");
   const [regions, setRegions] = useState<RegionDraft[]>(() => (settings.regions ?? []).map(toRegionDraft));
 
-  const priceNum = Number(price);
   const portNum = Number(port);
-  const priceError = price.trim() !== "" && (!Number.isInteger(priceNum) || priceNum < 0) ? "Isi angka bulat 0 atau lebih, atau kosongkan." : null;
   const portError = port.trim() === "" || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535 ? "Isi port 1 sampai 65535." : null;
   const imageList = images
     .split("\n")
@@ -752,7 +749,7 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
           ? "Ada node di region yang sudah dihapus. Pilih ulang region-nya."
           : null;
   const valid =
-    !priceError && !portError && !memError && !cpuError && !envNameError && !dataPathError && !nodesError && !supportUrlError &&
+    !portError && !memError && !cpuError && !envNameError && !dataPathError && !nodesError && !supportUrlError &&
     regionErrors.every((e) => !e.name && !e.price) &&
     nodeErrors.every((e) => !e.name && !e.domain && !e.capacity);
 
@@ -760,7 +757,6 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
     mutationFn: (opts: { clearKey?: boolean }) =>
       api.putHostingSettings({
         enabled,
-        monthly_price_idr: priceNum,
         dokploy_url: dokployUrl.trim(),
         ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
         ...(opts.clearKey ? { clear_api_key: true } : {}),
@@ -832,13 +828,6 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
         </div>
 
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field
-            label="Harga instance lama (IDR)"
-            error={priceError}
-            hint={priceError ? undefined : "Hanya untuk perpanjangan instance lama yang belum punya region. Pesanan baru memakai harga region."}
-          >
-            <Input type="number" inputMode="numeric" min="0" step="1" value={price} onChange={(e) => setPrice(e.target.value)} className="tabular-nums" />
-          </Field>
           <Field label="Port container" hint="Diisi ke env PORT. Image luqmenul/9router-go memakai 20130." error={portError}>
             <Input type="number" inputMode="numeric" min="1" max="65535" value={port} onChange={(e) => setPort(e.target.value)} className="tabular-nums" />
           </Field>

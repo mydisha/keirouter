@@ -46,11 +46,10 @@ type SecretBox interface {
 
 // Settings configures the hosting product and its Dokploy target.
 type Settings struct {
-	Enabled         bool   `json:"enabled"`
-	MonthlyPriceIDR int64  `json:"monthly_price_idr"`
-	DokployURL      string `json:"dokploy_url"`
-	APIKey          string `json:"-"`
-	EnvironmentID   string `json:"environment_id"`
+	Enabled       bool   `json:"enabled"`
+	DokployURL    string `json:"dokploy_url"`
+	APIKey        string `json:"-"`
+	EnvironmentID string `json:"environment_id"`
 	// RootDomain and ServerID are the pre-multi-node single target. They are
 	// read once and folded into Nodes as the "default" node.
 	RootDomain    string   `json:"root_domain,omitempty"`
@@ -75,7 +74,6 @@ type Settings struct {
 	// admin (a Telegram link by default).
 	SupportURL string `json:"support_url"`
 	// Regions are the locations sold at checkout, each with its own price.
-	// MonthlyPriceIDR stays as the price of instances made before regions.
 	Regions []Region `json:"regions"`
 }
 
@@ -240,9 +238,6 @@ func (s *Settings) Normalize() error {
 	}
 	if s.ContainerPort < 1 || s.ContainerPort > 65535 {
 		return errors.New("container_port must be 1-65535")
-	}
-	if s.MonthlyPriceIDR < 0 {
-		return errors.New("monthly_price_idr must not be negative")
 	}
 	if s.Enabled {
 		switch {

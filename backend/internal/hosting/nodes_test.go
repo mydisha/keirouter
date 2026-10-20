@@ -26,7 +26,7 @@ func TestNormalizeNodes(t *testing.T) {
 		require.Error(t, st.Normalize(), name)
 	}
 
-	off := Settings{Enabled: true, MonthlyPriceIDR: 1, DokployURL: "https://d.example.com", APIKey: "k", EnvironmentID: "e",
+	off := Settings{Enabled: true, DokployURL: "https://d.example.com", APIKey: "k", EnvironmentID: "e",
 		Images: []string{"x:1"}, Nodes: []Node{{ID: "a", Name: "A", RootDomain: "a.example.com"}}}
 	require.ErrorContains(t, off.Normalize(), "enabled node")
 }

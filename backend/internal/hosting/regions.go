@@ -80,15 +80,11 @@ func (s Settings) InstanceRegion(region, nodeID string) string {
 	return ""
 }
 
-// PeriodPrice is the price of one period in region. An instance with no
-// region (made before regions existed) pays the legacy single price. ok is
-// false when there is no usable price.
+// PeriodPrice is the price of one period in region. ok is false when there
+// is no usable price.
 func (s Settings) PeriodPrice(region string) (int64, bool) {
 	if r, ok := s.Region(region); ok && r.PriceIDR > 0 {
 		return r.PriceIDR, true
-	}
-	if region == "" && s.MonthlyPriceIDR > 0 {
-		return s.MonthlyPriceIDR, true
 	}
 	return 0, false
 }
