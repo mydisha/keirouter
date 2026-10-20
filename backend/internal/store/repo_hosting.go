@@ -45,7 +45,9 @@ type HostingInstance struct {
 	NodeID string
 	// Region is the region the customer bought it in; empty for instances
 	// from before regions.
-	Region      string
+	Region string
+	// DNSRecordID is the Cloudflare record of FQDN; set once it exists.
+	DNSRecordID string
 	LastError   string
 	PaidUntil   time.Time
 	PrepaidDays int // paid days not yet started; they start at provisioning
@@ -68,7 +70,7 @@ func (db *DB) Hosting() *HostingRepo { return &HostingRepo{db: db} }
 const hostingCols = `id, tenant_id, key_id, status, image, subdomain, fqdn,
 	dokploy_app_id, dokploy_app_name, dokploy_domain_id, data_volume, last_error, paid_until,
 	prepaid_days, password_wrapped_dek, password_ciphertext,
-	created_at, updated_at, provisioned_at, node_id, region`
+	created_at, updated_at, provisioned_at, node_id, region, dns_record_id`
 
 // Create inserts an instance.
 func (r *HostingRepo) Create(ctx context.Context, h HostingInstance) error {
@@ -82,12 +84,12 @@ func (r *HostingRepo) CreateOnTx(ctx context.Context, tx *sql.Tx, h HostingInsta
 
 func (r *HostingRepo) insert(ctx context.Context, ex sqlExec, h HostingInstance) error {
 	q := r.db.rebind(`INSERT INTO hosting_instances (` + hostingCols + `)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	_, err := ex.ExecContext(ctx, q,
 		h.ID, h.TenantID, h.KeyID, string(h.Status), h.Image, h.Subdomain, h.FQDN,
 		h.DokployAppID, h.DokployAppName, h.DokployDomainID, h.DataVolume, h.LastError,
 		formatTime(h.PaidUntil), h.PrepaidDays, h.Password.WrappedDEK, h.Password.Ciphertext, formatTime(h.CreatedAt), formatTime(h.UpdatedAt),
-		formatTime(h.ProvisionedAt), h.NodeID, h.Region)
+		formatTime(h.ProvisionedAt), h.NodeID, h.Region, h.DNSRecordID)
 	if err != nil {
 		return fmt.Errorf("store: create hosting instance: %w", err)
 	}
@@ -173,11 +175,11 @@ func (r *HostingRepo) transition(ctx context.Context, ex sqlExec, id string, fro
 func (r *HostingRepo) SetDokploy(ctx context.Context, h HostingInstance) error {
 	q := r.db.rebind(`UPDATE hosting_instances SET image = ?, subdomain = ?, fqdn = ?,
 		dokploy_app_id = ?, dokploy_app_name = ?, dokploy_domain_id = ?, data_volume = ?,
-		password_wrapped_dek = ?, password_ciphertext = ?, node_id = ?, updated_at = ?
+		password_wrapped_dek = ?, password_ciphertext = ?, node_id = ?, dns_record_id = ?, updated_at = ?
 		WHERE id = ?`)
 	_, err := r.db.sql.ExecContext(ctx, q, h.Image, h.Subdomain, h.FQDN,
 		h.DokployAppID, h.DokployAppName, h.DokployDomainID, h.DataVolume,
-		h.Password.WrappedDEK, h.Password.Ciphertext, h.NodeID, formatTime(time.Now()), h.ID)
+		h.Password.WrappedDEK, h.Password.Ciphertext, h.NodeID, h.DNSRecordID, formatTime(time.Now()), h.ID)
 	if err != nil {
 		return fmt.Errorf("store: set hosting dokploy ids: %w", err)
 	}
@@ -351,7 +353,7 @@ func scanHosting(scan func(dest ...any) error) (HostingInstance, error) {
 	)
 	err := scan(&h.ID, &h.TenantID, &h.KeyID, &status, &h.Image, &h.Subdomain, &h.FQDN,
 		&h.DokployAppID, &h.DokployAppName, &h.DokployDomainID, &h.DataVolume, &h.LastError,
-		&paidUntil, &h.PrepaidDays, &h.Password.WrappedDEK, &h.Password.Ciphertext, &created, &updated, &provisioned, &h.NodeID, &h.Region)
+		&paidUntil, &h.PrepaidDays, &h.Password.WrappedDEK, &h.Password.Ciphertext, &created, &updated, &provisioned, &h.NodeID, &h.Region, &h.DNSRecordID)
 	if err != nil {
 		return HostingInstance{}, err
 	}
