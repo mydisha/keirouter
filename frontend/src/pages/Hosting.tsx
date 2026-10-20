@@ -410,7 +410,7 @@ function NodeUsageStrip({ nodes, onOpenSettings }: { nodes: HostingNodeLoad[]; o
           <span key={n.id} role="listitem">
             <Badge
               tone={!n.enabled ? "neutral" : !n.available ? "danger" : n.capacity > 0 && n.free <= Math.max(1, Math.floor(n.capacity * 0.1)) ? "warning" : "neutral"}
-              title={`${n.root_domain}${blocked ? ` · ${blocked}` : ""}`}
+              title={`${n.public_ip}${blocked ? ` · ${blocked}` : ""}`}
             >
               {n.name || n.id} · <span className="tabular-nums">{nodeUsage(n)}</span>
               {blocked && <span> · {blocked}</span>}
@@ -714,6 +714,9 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const [dokployUrl, setDokployUrl] = useState(settings.dokploy_url);
   const [apiKey, setApiKey] = useState("");
   const [environmentId, setEnvironmentId] = useState(settings.environment_id);
+  const [rootDomain, setRootDomain] = useState(settings.root_domain ?? "");
+  const [zoneId, setZoneId] = useState(settings.cloudflare_zone_id ?? "");
+  const [cfToken, setCfToken] = useState("");
   const [images, setImages] = useState(settings.images.join("\n"));
   const [port, setPort] = useState(String(settings.container_port || ""));
   const [envTemplate, setEnvTemplate] = useState(settings.env_template);
@@ -740,6 +743,10 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const supportUrlError = !/^https:\/\/[^\s/]+/.test(supportUrl.trim()) ? "Isi link https://, misal https://t.me/username." : null;
   const urlChanged = dokployUrl.trim().replace(/\/+$/, "") !== settings.dokploy_url;
   const keyNeeded = settings.has_api_key && urlChanged && dokployUrl.trim() !== "" && apiKey.trim() === "";
+  const mainDomain = normalizeDomain(rootDomain);
+  const rootDomainError = mainDomain !== "" && !validDomain(mainDomain) ? "Domain tidak valid, misal tokenizer.ai.id." : null;
+  const zoneChanged = zoneId.trim() !== (settings.cloudflare_zone_id ?? "");
+  const tokenNeeded = settings.has_cloudflare_token && zoneChanged && cfToken.trim() === "";
   const nodeErrors = nodeErrorsOf(nodes);
   const regionErrors = regionErrorsOf(regions);
   const sellable = regions.some((rg) => rg.enabled && Number(rg.price) > 0 && nodes.some((n) => n.enabled && n.region === rg.id));
@@ -752,18 +759,22 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
           ? "Ada node di region yang sudah dihapus. Pilih ulang region-nya."
           : null;
   const valid =
-    !portError && !memError && !cpuError && !envNameError && !dataPathError && !nodesError && !supportUrlError &&
+    !rootDomainError && !tokenNeeded && !portError && !memError && !cpuError && !envNameError && !dataPathError && !nodesError && !supportUrlError &&
     regionErrors.every((e) => !e.name && !e.price) &&
-    nodeErrors.every((e) => !e.name && !e.domain && !e.capacity);
+    nodeErrors.every((e) => !e.name && !e.ip && !e.capacity);
 
   const save = useMutation({
-    mutationFn: (opts: { clearKey?: boolean }) =>
+    mutationFn: (opts: { clearKey?: boolean; clearToken?: boolean }) =>
       api.putHostingSettings({
         enabled,
         dokploy_url: dokployUrl.trim(),
         ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
         ...(opts.clearKey ? { clear_api_key: true } : {}),
         environment_id: environmentId.trim(),
+        root_domain: mainDomain,
+        cloudflare_zone_id: zoneId.trim(),
+        ...(cfToken.trim() ? { cloudflare_token: cfToken.trim() } : {}),
+        ...(opts.clearToken ? { clear_cloudflare_token: true } : {}),
         images: imageList,
         container_port: portNum,
         env_template: envTemplate,
@@ -772,7 +783,7 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
             id: n.id,
             name: n.name.trim(),
             server_id: n.serverId.trim(),
-            root_domain: normalizeDomain(n.rootDomain),
+            public_ip: n.publicIp.trim(),
             monitor_target_id: n.monitorTargetId,
             capacity: Number(n.capacity.trim() || "0"),
             enabled: n.enabled,
@@ -817,12 +828,26 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
     save.mutate({ clearKey: true });
   };
 
+  const onClearToken = async () => {
+    const ok = await confirm({
+      title: "Hapus API token Cloudflare?",
+      description: "Instance baru tidak bisa dibuat atau dihapus sampai token baru disimpan, karena record DNS-nya dikelola lewat token ini.",
+      confirmLabel: "Hapus token",
+      cancelLabel: "Batal",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setCfToken("");
+    save.mutate({ clearToken: true });
+  };
+
   const dokployBase = dokployUrl.trim().replace(/\/+$/, "");
   const hasDokployBase = /^https:\/\/[^\s/]+/.test(dokployBase);
   const anyRegionError = regionErrors.some((e) => e.name || e.price);
   const anyNodeError = nodeErrors.some((e) => e.name || e.domain || e.capacity) || !!nodesError;
   const steps: { title: string; short: string; error: boolean }[] = [
     { title: "Koneksi Dokploy", short: "Dokploy", error: keyNeeded },
+    { title: "Domain & Cloudflare", short: "Domain", error: !!rootDomainError || tokenNeeded },
     { title: "Image & container", short: "Image", error: !!(portError || memError || cpuError || envNameError || dataPathError) },
     { title: "Region & harga", short: "Region", error: anyRegionError },
     { title: "Node", short: "Node", error: anyNodeError },
@@ -831,6 +856,7 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const last = steps.length - 1;
   const ready = [
     { ok: !!dokployBase && (settings.has_api_key || !!apiKey.trim()) && !!environmentId.trim(), label: "URL, API key, dan Environment ID Dokploy terisi" },
+    { ok: !!mainDomain && !!zoneId.trim() && (settings.has_cloudflare_token || !!cfToken.trim()), label: "Domain utama dan Cloudflare terisi" },
     { ok: imageList.length > 0, label: "Minimal satu image Docker" },
     { ok: sellable, label: "Region aktif berharga dengan minimal satu node aktif" },
   ];
@@ -885,11 +911,69 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
 
         {step === 1 && (
           <StepIntro>
+            Setiap instance mendapat subdomain acak di domain utama. Saat instance dibuat, record DNS-nya ditambahkan otomatis ke Cloudflare
+            (proxied) dan mengarah ke IP node.
+          </StepIntro>
+        )}
+        {step === 1 && (
+          <>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field
+                label="Domain utama"
+                error={rootDomainError}
+                hint={rootDomainError ? undefined : <>Instance jadi <span className="font-mono">abc123xy.{mainDomain || "tokenizer.ai.id"}</span>.</>}
+                className="sm:col-span-2"
+              >
+                <Input value={rootDomain} onChange={(e) => setRootDomain(e.target.value)} placeholder="tokenizer.ai.id" autoComplete="off" spellCheck={false} className="font-mono" />
+              </Field>
+              <Field
+                label="Zone ID Cloudflare"
+                hint={
+                  <>
+                    Buka <ExtLink href="https://dash.cloudflare.com/">dashboard Cloudflare</ExtLink>, pilih domain, lalu salin Zone ID di halaman Overview
+                    (kolom kanan, bagian API).
+                  </>
+                }
+              >
+                <Input value={zoneId} onChange={(e) => setZoneId(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" />
+              </Field>
+              <Field
+                label="API token Cloudflare"
+                error={tokenNeeded ? "Zone ID berubah. Masukkan ulang API token." : null}
+                hint={
+                  tokenNeeded ? undefined : (
+                    <>
+                      Buat di <ExtLink href="https://dash.cloudflare.com/profile/api-tokens">Cloudflare → API Tokens</ExtLink> dengan izin Zone → DNS → Edit untuk
+                      domain ini. {settings.has_cloudflare_token ? "Kosongkan untuk tetap memakai token yang tersimpan." : "Belum ada token tersimpan."}
+                    </>
+                  )
+                }
+              >
+                <Input
+                  type="password"
+                  value={cfToken}
+                  onChange={(e) => setCfToken(e.target.value)}
+                  placeholder={settings.has_cloudflare_token ? settings.cloudflare_token_masked : "Tempel API token"}
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  className="font-mono"
+                />
+              </Field>
+            </div>
+            <p className="rounded-xl border border-line bg-subtle/60 px-3.5 py-2.5 text-[12.5px] text-fg-muted">
+              Atur mode SSL/TLS domain ini ke <span className="font-medium text-fg">Full</span> di Cloudflare (SSL/TLS → Overview). Mode Flexible membuat
+              redirect berulang, sedangkan Full (strict) gagal jika sertifikat node belum terbit.
+            </p>
+          </>
+        )}
+
+        {step === 2 && (
+          <StepIntro>
             Image dan batas yang dipakai tiap container pelanggan. Setelah menyimpan, buat satu instance uji dan cek bahwa password default{" "}
             <span className="font-mono text-fg">123456</span> ditolak.
           </StepIntro>
         )}
-        {step === 1 && (
+        {step === 2 && (
           <>
             <Field
               label="Image Docker"
@@ -954,9 +1038,9 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
           </>
         )}
 
-        {step === 2 && <RegionsEditor regions={regions} setRegions={setRegions} errors={regionErrors} />}
+        {step === 3 && <RegionsEditor regions={regions} setRegions={setRegions} errors={regionErrors} />}
 
-        {step === 3 && (
+        {step === 4 && (
           <NodesEditor
             nodes={nodes}
             setNodes={setNodes}
@@ -971,8 +1055,8 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
           />
         )}
 
-        {step === 4 && <StepIntro>Periksa kesiapan, isi kontak aktivasi, lalu buka pemesanan dan simpan.</StepIntro>}
-        {step === 4 && (
+        {step === 5 && <StepIntro>Periksa kesiapan, isi kontak aktivasi, lalu buka pemesanan dan simpan.</StepIntro>}
+        {step === 5 && (
           <>
             <ul className="space-y-1.5 text-[13px]" aria-label="Kesiapan">
               {ready.map((r) => (
@@ -1038,6 +1122,12 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
             Hapus API key
           </Button>
         )}
+        {step === 1 && settings.has_cloudflare_token && (
+          <Button type="button" variant="ghost" onClick={onClearToken} disabled={save.isPending}>
+            <Trash2 aria-hidden="true" />
+            Hapus token Cloudflare
+          </Button>
+        )}
         {step === 0 && (
           <Button
             type="button"
@@ -1100,6 +1190,7 @@ function SettingsStepper({ steps, step, onStep }: { steps: { title: string; shor
                 type="button"
                 onClick={() => onStep(i)}
                 aria-current={current ? "step" : undefined}
+                title={s.title}
                 className={cn(
                   "flex w-full min-w-0 flex-col items-center gap-1 rounded-lg px-1 py-1.5 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:flex-row sm:gap-2 sm:px-2 sm:text-left",
                   current ? "bg-subtle" : "hover:bg-subtle/60",
@@ -1115,8 +1206,7 @@ function SettingsStepper({ steps, step, onStep }: { steps: { title: string; shor
                   {s.error && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-bad ring-2 ring-surface" aria-hidden="true" />}
                 </span>
                 <span className={cn("truncate text-[12px] sm:text-[12.5px]", current ? "font-medium text-fg" : "text-fg-muted")}>
-                  <span className="sm:hidden">{s.short}</span>
-                  <span className="hidden sm:inline">{s.title}</span>
+                  {s.short}
                   {s.error && <span className="sr-only"> (ada isian yang perlu diperbaiki)</span>}
                 </span>
               </button>
@@ -1124,7 +1214,7 @@ function SettingsStepper({ steps, step, onStep }: { steps: { title: string; shor
           );
         })}
       </ol>
-      <p className="mt-2 text-[12px] text-fg-muted sm:hidden" aria-hidden="true">
+      <p className="mt-2 text-[12px] text-fg-muted" aria-hidden="true">
         Langkah {step + 1} dari {steps.length} · {steps[step].title}
       </p>
     </nav>
@@ -1138,7 +1228,7 @@ interface NodeDraft {
   id: string;
   name: string;
   serverId: string;
-  rootDomain: string;
+  publicIp: string;
   monitorTargetId: string;
   capacity: string;
   enabled: boolean;
@@ -1153,7 +1243,7 @@ const toNodeDraft = (n: HostingNode): NodeDraft => ({
   id: n.id,
   name: n.name,
   serverId: n.server_id ?? "",
-  rootDomain: n.root_domain,
+  publicIp: n.public_ip ?? "",
   monitorTargetId: n.monitor_target_id ?? "",
   capacity: String(n.capacity ?? 0),
   enabled: n.enabled,
@@ -1161,22 +1251,17 @@ const toNodeDraft = (n: HostingNode): NodeDraft => ({
   isNew: false,
 });
 
+const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+
 function nodeErrorsOf(nodes: NodeDraft[]) {
-  const domains = nodes.map((n) => normalizeDomain(n.rootDomain));
-  return nodes.map((n, i) => {
+  return nodes.map((n) => {
     const name = n.name.trim();
-    const domain = domains[i];
+    const ip = n.publicIp.trim();
     const capText = n.capacity.trim();
     const cap = Number(capText || "0");
     return {
       name: !name ? "Isi nama node." : name.length > 80 ? "Maksimal 80 karakter." : null,
-      domain: !domain
-        ? "Isi root domain node."
-        : !validDomain(domain)
-          ? "Domain tidak valid, misal n1.example.com."
-          : domains.indexOf(domain) !== i
-            ? "Domain ini sudah dipakai node lain."
-            : null,
+      ip: ip === "" ? (n.enabled ? "Isi IP publik node aktif." : null) : !IPV4.test(ip) ? "Isi alamat IPv4, misal 203.0.113.7." : null,
       capacity:
         !/^[0-9]*$/.test(capText) || !Number.isInteger(cap) || cap > MAX_NODE_CAPACITY ? `Isi angka bulat 0 sampai ${MAX_NODE_CAPACITY}.` : null,
     };
@@ -1293,7 +1378,7 @@ function NodesEditor({
       return [
         ...rs,
         {
-          key: id, id, name: `Node ${rs.length + 1}`, serverId: "", rootDomain: "", monitorTargetId: "", capacity: "0", enabled: true,
+          key: id, id, name: `Node ${rs.length + 1}`, serverId: "", publicIp: "", monitorTargetId: "", capacity: "0", enabled: true,
           region: regions[0]?.id ?? "", isNew: true,
         },
       ];
@@ -1325,9 +1410,8 @@ function NodesEditor({
           Node
         </p>
         <p className="text-[12px] text-fg-muted">
-          Server Dokploy yang menjalankan container pelanggan. Tiap node butuh DNS wildcard sendiri{" "}
-          <span className="font-mono text-fg">*.&lt;root domain&gt;</span> yang mengarah ke IP node itu. Tambahkan server remote khusus pelanggan di{" "}
-          {serversLink}, lalu salin Server ID-nya. Container di server utama Dokploy bisa menjangkau database dan Redis milik Dokploy. Region menentukan stok yang dijual di halaman hosting: jumlah slot kosong node aktif di region itu.
+          Server Dokploy yang menjalankan container pelanggan. Record DNS tiap instance mengarah ke IP publik node-nya. Tambahkan server remote khusus
+          pelanggan di {serversLink}, lalu salin Server ID dan IP-nya. Container di server utama Dokploy bisa menjangkau database dan Redis milik Dokploy. Region menentukan stok yang dijual di halaman hosting: jumlah slot kosong node aktif di region itu.
         </p>
       </div>
       {nodes.length === 0 && (
@@ -1340,7 +1424,6 @@ function NodesEditor({
         const load = loadOf(r.id);
         const cap = Number(r.capacity.trim() || "0");
         const full = load ? cap > 0 && load.used >= cap : false;
-        const domain = normalizeDomain(r.rootDomain);
         const unknownTarget = r.monitorTargetId !== "" && monitor.data && !targets.some((t) => t.id === r.monitorTargetId);
         const toggleId = `hosting-node-enabled-${r.key}`;
         return (
@@ -1374,18 +1457,15 @@ function NodesEditor({
               <Field label="Nama" error={err.name}>
                 <Input value={r.name} onChange={(e) => update(r.key, { name: e.target.value })} placeholder="Node 1" maxLength={80} autoComplete="off" />
               </Field>
-              <Field
-                label="Root domain"
-                error={err.domain}
-                hint={!err.domain && domain ? <>Arahkan <span className="font-mono">*.{domain}</span> ke IP node ini.</> : undefined}
-              >
+              <Field label="IP publik" error={err.ip} hint={err.ip ? undefined : <>IPv4 server node. Lihat di {serversLink}.</>}>
                 <Input
-                  value={r.rootDomain}
-                  onChange={(e) => update(r.key, { rootDomain: e.target.value })}
-                  placeholder="n1.example.com"
+                  inputMode="decimal"
+                  value={r.publicIp}
+                  onChange={(e) => update(r.key, { publicIp: e.target.value })}
+                  placeholder="203.0.113.7"
                   autoComplete="off"
                   spellCheck={false}
-                  className="font-mono"
+                  className="font-mono tabular-nums"
                 />
               </Field>
               <Field label="Server ID Dokploy" hint={<>Salin dari {serversLink}. Kosongkan untuk server utama Dokploy (tidak disarankan).</>}>

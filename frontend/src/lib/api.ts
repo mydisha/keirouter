@@ -2320,15 +2320,15 @@ export async function createPortalHostingOrder(input: {
   return data;
 }
 
-/** A Dokploy server that runs customer containers, with its own wildcard domain. */
+/** A Dokploy server that runs customer containers. */
 export interface HostingNode {
   /** ^[a-z0-9][a-z0-9-]{0,39}$, unique, never changed once saved. */
   id: string;
   name: string;
   /** Dokploy serverId; "" = the Dokploy host itself. */
   server_id: string;
-  /** Wildcard *.root_domain must point at this node's IP. */
-  root_domain: string;
+  /** IPv4 that each instance's Cloudflare A record points at. */
+  public_ip: string;
   /** Monitoring target id; "" falls back to the target flagged instances. */
   monitor_target_id: string;
   /** 0 = unlimited. */
@@ -2373,6 +2373,11 @@ export interface HostingSettings {
   api_key_masked: string;
   has_api_key: boolean;
   environment_id: string;
+  /** Main domain: instances live at <random>.<root_domain>. */
+  root_domain: string;
+  cloudflare_zone_id: string;
+  cloudflare_token_masked: string;
+  has_cloudflare_token: boolean;
   images: string[];
   container_port: number;
   env_template: string;
@@ -2395,6 +2400,11 @@ export interface HostingSettingsInput {
   api_key?: string;
   clear_api_key?: boolean;
   environment_id: string;
+  root_domain: string;
+  cloudflare_zone_id: string;
+  /** Omit or leave empty to keep the stored token. */
+  cloudflare_token?: string;
+  clear_cloudflare_token?: boolean;
   images: string[];
   container_port: number;
   env_template: string;
