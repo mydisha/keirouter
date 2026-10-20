@@ -1,10 +1,13 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
+  ArrowLeft,
+  ArrowRight,
   Check,
+  ChevronRight,
+  CircleDashed,
   ExternalLink,
-  ListChecks,
   Loader2,
   Play,
   PlugZap,
@@ -685,7 +688,7 @@ function OrdersModal({ inst, onClose }: { inst: HostingInstanceAdmin; onClose: (
 function SettingsTab({ query }: { query: { data?: HostingSettings; isLoading: boolean; isError: boolean; error: unknown } }) {
   return (
     <div className="space-y-6">
-      <Panel icon={Settings2} title="Pengaturan hosting" subtitle="Harga, koneksi Dokploy, dan template container 9router.">
+      <Panel icon={Settings2} title="Pengaturan hosting" subtitle="Ikuti langkahnya berurutan: Dokploy, image, region, node, lalu buka pemesanan.">
         {query.isLoading ? (
           <LoadingRegion label="Memuat pengaturan hosting" className="space-y-3 p-4">
             <Skeleton className="h-[320px] w-full rounded-xl" />
@@ -699,7 +702,6 @@ function SettingsTab({ query }: { query: { data?: HostingSettings; isLoading: bo
           <SettingsForm key={JSON.stringify(query.data)} settings={query.data} />
         )}
       </Panel>
-      <SetupChecklist nodes={query.data?.nodes} />
     </div>
   );
 }
@@ -722,6 +724,7 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const [dataPath, setDataPath] = useState(settings.data_path || "/data");
   const [supportUrl, setSupportUrl] = useState(settings.support_url || "https://t.me/damnwahhh");
   const [regions, setRegions] = useState<RegionDraft[]>(() => (settings.regions ?? []).map(toRegionDraft));
+  const [step, setStep] = useState(0);
 
   const portNum = Number(port);
   const portError = port.trim() === "" || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535 ? "Isi port 1 sampai 65535." : null;
@@ -814,120 +817,205 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
     save.mutate({ clearKey: true });
   };
 
+  const dokployBase = dokployUrl.trim().replace(/\/+$/, "");
+  const hasDokployBase = /^https:\/\/[^\s/]+/.test(dokployBase);
+  const anyRegionError = regionErrors.some((e) => e.name || e.price);
+  const anyNodeError = nodeErrors.some((e) => e.name || e.domain || e.capacity) || !!nodesError;
+  const steps: { title: string; short: string; error: boolean }[] = [
+    { title: "Koneksi Dokploy", short: "Dokploy", error: keyNeeded },
+    { title: "Image & container", short: "Image", error: !!(portError || memError || cpuError || envNameError || dataPathError) },
+    { title: "Region & harga", short: "Region", error: anyRegionError },
+    { title: "Node", short: "Node", error: anyNodeError },
+    { title: "Buka pemesanan", short: "Buka", error: !!supportUrlError || (enabled && !!nodesError) },
+  ];
+  const last = steps.length - 1;
+  const ready = [
+    { ok: !!dokployBase && (settings.has_api_key || !!apiKey.trim()) && !!environmentId.trim(), label: "URL, API key, dan Environment ID Dokploy terisi" },
+    { ok: imageList.length > 0, label: "Minimal satu image Docker" },
+    { ok: sellable, label: "Region aktif berharga dengan minimal satu node aktif" },
+  ];
+
   return (
     <form onSubmit={onSubmit} noValidate>
+      <SettingsStepper steps={steps} step={step} onStep={setStep} />
       <div className="space-y-5 px-4 py-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p id="hosting-enabled" className="text-[13px] font-medium text-fg">
-              Buka pemesanan di portal
-            </p>
-            <p className="text-[12px] text-fg-muted">Saat mati, user tidak bisa memesan atau memperpanjang. Instance yang ada tetap berjalan.</p>
+        {step === 0 && (
+          <StepIntro>Hubungkan dashboard ke panel Dokploy yang menjalankan container pelanggan. Simpan dulu, lalu klik Tes koneksi.</StepIntro>
+        )}
+        {step === 0 && (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Field label="URL Dokploy" hint="Alamat panel Dokploy, misal https://dokploy.example.com. Harus https://." className="sm:col-span-2">
+              <Input type="url" value={dokployUrl} onChange={(e) => setDokployUrl(e.target.value)} placeholder="https://dokploy.example.com" autoComplete="off" spellCheck={false} className="font-mono" />
+            </Field>
+            <Field
+              label="API key Dokploy"
+              hint={
+                keyNeeded ? undefined : (
+                  <>
+                    Buat di <DokployLink base={dokployBase} ok={hasDokployBase} path="/dashboard/settings/profile">Dokploy → Profile → API keys</DokployLink>.{" "}
+                    {settings.has_api_key ? "Kosongkan untuk tetap memakai key yang tersimpan." : "Belum ada key tersimpan."}
+                  </>
+                )
+              }
+              error={keyNeeded ? "URL Dokploy berubah. Masukkan ulang API key untuk URL baru." : null}
+            >
+              <Input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={settings.has_api_key ? settings.api_key_masked : "Tempel API key"}
+                autoComplete="new-password"
+                spellCheck={false}
+                className="font-mono"
+              />
+            </Field>
+            <Field
+              label="Environment ID"
+              hint={
+                <>
+                  Buka <DokployLink base={dokployBase} ok={hasDokployBase} path="/dashboard/projects">Projects di Dokploy</DokployLink>, pilih project dan
+                  environment khusus hosting, lalu salin ID setelah <span className="font-mono">/environment/</span> di alamat browser.
+                </>
+              }
+            >
+              <Input value={environmentId} onChange={(e) => setEnvironmentId(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" />
+            </Field>
           </div>
-          <Toggle checked={enabled} onChange={setEnabled} aria-labelledby="hosting-enabled" />
-        </div>
+        )}
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field label="Port container" hint="Diisi ke env PORT. Image luqmenul/9router-go memakai 20130." error={portError}>
-            <Input type="number" inputMode="numeric" min="1" max="65535" value={port} onChange={(e) => setPort(e.target.value)} className="tabular-nums" />
-          </Field>
-          <Field label="URL Dokploy" hint="Alamat panel Dokploy, misal https://dokploy.example.com.">
-            <Input type="url" value={dokployUrl} onChange={(e) => setDokployUrl(e.target.value)} placeholder="https://dokploy.example.com" autoComplete="off" spellCheck={false} className="font-mono" />
-          </Field>
-          <Field
-            label="API key Dokploy"
-            hint={
-              keyNeeded
-                ? undefined
-                : settings.has_api_key
-                  ? "Kosongkan untuk tetap memakai key yang tersimpan."
-                  : "Belum ada key tersimpan."
+        {step === 1 && (
+          <StepIntro>
+            Image dan batas yang dipakai tiap container pelanggan. Setelah menyimpan, buat satu instance uji dan cek bahwa password default{" "}
+            <span className="font-mono text-fg">123456</span> ditolak.
+          </StepIntro>
+        )}
+        {step === 1 && (
+          <>
+            <Field
+              label="Image Docker"
+              hint={
+                <>
+                  Satu image per baris. Image pertama jadi pilihan default saat membuat instance. Lihat versi di{" "}
+                  <ExtLink href="https://hub.docker.com/r/luqmenul/9router-go/tags">Docker Hub luqmenul/9router-go</ExtLink>. Versi di bawah 0.4.60 ditolak
+                  (CVE-2026-63732).
+                </>
+              }
+            >
+              <Textarea value={images} onChange={(e) => setImages(e.target.value)} rows={3} placeholder="luqmenul/9router-go:latest" spellCheck={false} className="font-mono text-[12.5px]" />
+            </Field>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Port container" hint="Diisi ke env PORT. Image luqmenul/9router-go memakai 20130." error={portError}>
+                <Input type="number" inputMode="numeric" min="1" max="65535" value={port} onChange={(e) => setPort(e.target.value)} className="tabular-nums" />
+              </Field>
+              <Field
+                label="Env password awal"
+                hint="Setiap instance mendapat password acak di variabel ini. Pastikan sesuai dengan yang dibaca image 9router."
+                error={envNameError}
+              >
+                <Input value={passwordEnv} onChange={(e) => setPasswordEnv(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" />
+              </Field>
+              <Field
+                label="Path data"
+                hint="Volume Docker per instance dipasang di sini dan diisi ke DATA_DIR, agar data pelanggan tidak hilang saat redeploy."
+                error={dataPathError}
+              >
+                <Input value={dataPath} onChange={(e) => setDataPath(e.target.value)} placeholder="/data" autoComplete="off" spellCheck={false} className="font-mono" />
+              </Field>
+              <Field label="Batas memori (byte)" hint="Contoh 536870912 untuk 512 MB. Kosongkan untuk tanpa batas." error={memError}>
+                <Input inputMode="numeric" value={memoryLimit} onChange={(e) => setMemoryLimit(e.target.value)} placeholder="536870912" className="font-mono tabular-nums" />
+              </Field>
+              <Field label="Batas CPU (nano-CPU)" hint="Contoh 1000000000 untuk 1 CPU. Kosongkan untuk tanpa batas." error={cpuError}>
+                <Input inputMode="numeric" value={cpuLimit} onChange={(e) => setCpuLimit(e.target.value)} placeholder="1000000000" className="font-mono tabular-nums" />
+              </Field>
+            </div>
+            <details className="group rounded-xl border border-line" open={envTemplate.trim() !== ""}>
+              <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-medium text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [&::-webkit-details-marker]:hidden">
+                <ChevronRight className="h-4 w-4 shrink-0 text-fg-muted transition-transform group-open:rotate-90" aria-hidden="true" />
+                Lanjutan: template environment
+              </summary>
+              <div className="border-t border-line px-3.5 py-3">
+                <Field
+                  label="Template environment"
+                  hint={
+                    <>
+                      Format KEY=value, satu per baris. Placeholder yang diganti otomatis: <code className="font-mono">{"{{SUBDOMAIN}}"}</code>,{" "}
+                      <code className="font-mono">{"{{FQDN}}"}</code>, <code className="font-mono">{"{{URL}}"}</code>,{" "}
+                      <code className="font-mono">{"{{INSTANCE_ID}}"}</code>, <code className="font-mono">{"{{PASSWORD}}"}</code>. Diatur otomatis dan tidak bisa
+                      ditimpa: variabel password awal, <code className="font-mono">PORT</code>, dan <code className="font-mono">DATA_DIR</code>.{" "}
+                      <code className="font-mono">STRICT_SSL=true</code> ditambahkan kecuali template mengaturnya. <code className="font-mono">JWT_SECRET</code>{" "}
+                      ditolak karena harus unik per instance.
+                    </>
+                  }
+                >
+                  <Textarea value={envTemplate} onChange={(e) => setEnvTemplate(e.target.value)} rows={6} spellCheck={false} className="font-mono text-[12.5px]" />
+                </Field>
+              </div>
+            </details>
+          </>
+        )}
+
+        {step === 2 && <RegionsEditor regions={regions} setRegions={setRegions} errors={regionErrors} />}
+
+        {step === 3 && (
+          <NodesEditor
+            nodes={nodes}
+            setNodes={setNodes}
+            regions={regions}
+            errors={nodeErrors}
+            listError={nodesError}
+            serversLink={
+              <DokployLink base={dokployBase} ok={hasDokployBase} path="/dashboard/settings/servers">
+                Servers di Dokploy
+              </DokployLink>
             }
-            error={keyNeeded ? "URL Dokploy berubah. Masukkan ulang API key untuk URL baru." : null}
-          >
-            <Input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={settings.has_api_key ? settings.api_key_masked : "Tempel API key"}
-              autoComplete="new-password"
-              spellCheck={false}
-              className="font-mono"
-            />
-          </Field>
-          <Field label="Environment ID" hint="environmentId dari project Dokploy tempat instance dibuat.">
-            <Input value={environmentId} onChange={(e) => setEnvironmentId(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" />
-          </Field>
-          <Field
-            label="Link kontak aktivasi"
-            hint="Tombol “Hubungi admin” untuk pelanggan yang sudah bayar dan menunggu aktivasi."
-            error={supportUrlError}
-          >
-            <Input type="url" value={supportUrl} onChange={(e) => setSupportUrl(e.target.value)} placeholder="https://t.me/damnwahhh" autoComplete="off" spellCheck={false} className="font-mono" />
-          </Field>
-        </div>
-
-        <RegionsEditor regions={regions} setRegions={setRegions} errors={regionErrors} />
-
-        <NodesEditor nodes={nodes} setNodes={setNodes} regions={regions} errors={nodeErrors} listError={nodesError} />
-
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <Field
-            label="Env password awal"
-            hint="Setiap instance mendapat password acak di variabel ini. Pastikan sesuai dengan yang dibaca image 9router."
-            error={envNameError}
-          >
-            <Input value={passwordEnv} onChange={(e) => setPasswordEnv(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" />
-          </Field>
-          <Field
-            label="Path data"
-            hint="Volume Docker per instance dipasang di sini dan diisi ke DATA_DIR, agar database, provider, dan API key pelanggan tidak hilang saat redeploy."
-            error={dataPathError}
-          >
-            <Input value={dataPath} onChange={(e) => setDataPath(e.target.value)} placeholder="/data" autoComplete="off" spellCheck={false} className="font-mono" />
-          </Field>
-          <Field label="Batas memori (byte)" hint="Contoh 536870912 untuk 512 MB. Kosongkan untuk tanpa batas." error={memError}>
-            <Input inputMode="numeric" value={memoryLimit} onChange={(e) => setMemoryLimit(e.target.value)} placeholder="536870912" className="font-mono tabular-nums" />
-          </Field>
-          <Field label="Batas CPU (nano-CPU)" hint="Contoh 1000000000 untuk 1 CPU. Kosongkan untuk tanpa batas." error={cpuError}>
-            <Input inputMode="numeric" value={cpuLimit} onChange={(e) => setCpuLimit(e.target.value)} placeholder="1000000000" className="font-mono tabular-nums" />
-          </Field>
-        </div>
-
-        <Field label="Image Docker" hint="Satu image per baris. Image pertama jadi pilihan default saat membuat instance. Versi 9router di bawah 0.4.60 ditolak (CVE-2026-63732).">
-          <Textarea
-            value={images}
-            onChange={(e) => setImages(e.target.value)}
-            rows={4}
-            placeholder="luqmenul/9router-go:latest"
-            spellCheck={false}
-            className="font-mono text-[12.5px]"
           />
-        </Field>
+        )}
 
-        <Field
-          label="Template environment"
-          hint={
-            <>
-              Format KEY=value, satu per baris. Placeholder yang diganti otomatis:{" "}
-              <code className="font-mono">{"{{SUBDOMAIN}}"}</code>, <code className="font-mono">{"{{FQDN}}"}</code>,{" "}
-              <code className="font-mono">{"{{URL}}"}</code>, <code className="font-mono">{"{{INSTANCE_ID}}"}</code>,{" "}
-              <code className="font-mono">{"{{PASSWORD}}"}</code>. Diatur otomatis dan tidak bisa ditimpa: variabel password awal (password acak per instance), <code className="font-mono">PORT</code>, dan{" "}
-              <code className="font-mono">DATA_DIR</code>. <code className="font-mono">STRICT_SSL=true</code> ditambahkan kecuali template mengaturnya.{" "}
-              <code className="font-mono">JWT_SECRET</code> ditolak karena harus unik per instance.
-            </>
-          }
-        >
-          <Textarea value={envTemplate} onChange={(e) => setEnvTemplate(e.target.value)} rows={6} spellCheck={false} className="font-mono text-[12.5px]" />
-        </Field>
-
-        <p className="text-[12px] text-fg-muted">
-          Versi ketentuan aktif: <span className="font-mono">{settings.terms_version}</span>
-        </p>
+        {step === 4 && <StepIntro>Periksa kesiapan, isi kontak aktivasi, lalu buka pemesanan dan simpan.</StepIntro>}
+        {step === 4 && (
+          <>
+            <ul className="space-y-1.5 text-[13px]" aria-label="Kesiapan">
+              {ready.map((r) => (
+                <li key={r.label} className="flex items-start gap-2">
+                  {r.ok ? (
+                    <Check className="mt-0.5 h-4 w-4 shrink-0 text-ok" aria-hidden="true" />
+                  ) : (
+                    <CircleDashed className="mt-0.5 h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
+                  )}
+                  <span className={r.ok ? "text-fg" : "text-fg-muted"}>
+                    <span className="sr-only">{r.ok ? "Sudah: " : "Belum: "}</span>
+                    {r.label}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <Field
+              label="Link kontak aktivasi"
+              hint="Tombol “Hubungi admin” untuk pelanggan yang sudah bayar dan menunggu aktivasi."
+              error={supportUrlError}
+            >
+              <Input type="url" value={supportUrl} onChange={(e) => setSupportUrl(e.target.value)} placeholder="https://t.me/damnwahhh" autoComplete="off" spellCheck={false} className="font-mono" />
+            </Field>
+            <div className="flex items-start justify-between gap-4 rounded-xl border border-line bg-subtle/60 p-3.5">
+              <div className="min-w-0">
+                <p id="hosting-enabled" className="text-[13px] font-medium text-fg">
+                  Buka pemesanan di portal
+                </p>
+                <p className="text-[12px] text-fg-muted">Saat mati, user tidak bisa memesan atau memperpanjang. Instance yang ada tetap berjalan.</p>
+              </div>
+              <Toggle checked={enabled} onChange={setEnabled} aria-labelledby="hosting-enabled" />
+            </div>
+            {enabled && nodesError && <ErrorBanner message={nodesError} />}
+            <p className="text-[12px] text-fg-muted">
+              Versi ketentuan aktif: <span className="font-mono">{settings.terms_version}</span>
+            </p>
+          </>
+        )}
 
         {save.isError && <ErrorBanner message={`Pengaturan gagal disimpan. ${errorText(save.error)}`} />}
-        {test.isError && <ErrorBanner message={`Tes koneksi gagal. ${errorText(test.error)}`} />}
-        {test.data &&
+        {step === 0 && test.isError && <ErrorBanner message={`Tes koneksi gagal. ${errorText(test.error)}`} />}
+        {step === 0 &&
+          test.data &&
           (test.data.ok ? (
             <p role="status" className="flex items-center gap-2 rounded-xl border border-ok/30 bg-ok/10 px-3.5 py-2.5 text-[13px] text-fg">
               <Check className="h-4 w-4 shrink-0 text-ok" aria-hidden="true" />
@@ -938,31 +1026,108 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
           ))}
       </div>
       <div className="flex flex-col gap-2 border-t border-line bg-subtle px-4 py-2.5 sm:flex-row sm:items-center sm:justify-end">
-        {settings.has_api_key && (
+        {step > 0 && (
+          <Button type="button" variant="ghost" className="sm:mr-auto" onClick={() => setStep(step - 1)}>
+            <ArrowLeft aria-hidden="true" />
+            Kembali
+          </Button>
+        )}
+        {step === 0 && settings.has_api_key && (
           <Button type="button" variant="ghost" className="sm:mr-auto" onClick={onClearKey} disabled={save.isPending}>
             <Trash2 aria-hidden="true" />
             Hapus API key
           </Button>
         )}
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={() => {
-            save.reset();
-            test.mutate();
-          }}
-          disabled={test.isPending}
-          title="Menguji pengaturan yang sudah tersimpan"
-        >
-          {test.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <PlugZap aria-hidden="true" />}
-          Tes koneksi
-        </Button>
-        <Button type="submit" disabled={!valid || keyNeeded || save.isPending}>
+        {step === 0 && (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              save.reset();
+              test.mutate();
+            }}
+            disabled={test.isPending}
+            title="Menguji pengaturan yang sudah tersimpan"
+          >
+            {test.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <PlugZap aria-hidden="true" />}
+            Tes koneksi
+          </Button>
+        )}
+        <Button type="submit" variant={step < last ? "ghost" : undefined} disabled={!valid || keyNeeded || save.isPending}>
           {save.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
           Simpan
         </Button>
+        {step < last && (
+          <Button type="button" onClick={() => setStep(step + 1)}>
+            Lanjut
+            <ArrowRight aria-hidden="true" />
+          </Button>
+        )}
       </div>
     </form>
+  );
+}
+
+function StepIntro({ children }: { children: ReactNode }) {
+  return <p className="text-[12.5px] text-fg-muted">{children}</p>;
+}
+
+function ExtLink({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-link hover:underline">
+      {children}
+      <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
+      <span className="sr-only"> (tab baru)</span>
+    </a>
+  );
+}
+
+/** Link into the Dokploy panel, or plain text until a valid URL is filled in. */
+function DokployLink({ base, ok, path, children }: { base: string; ok: boolean; path: string; children: ReactNode }) {
+  if (!ok) return <span className="text-fg">{children} (isi URL Dokploy dulu)</span>;
+  return <ExtLink href={base + path}>{children}</ExtLink>;
+}
+
+function SettingsStepper({ steps, step, onStep }: { steps: { title: string; short: string; error: boolean }[]; step: number; onStep: (i: number) => void }) {
+  return (
+    <nav aria-label="Langkah pengaturan" className="border-b border-line px-4 py-3">
+      <ol className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
+        {steps.map((s, i) => {
+          const current = i === step;
+          return (
+            <li key={s.title} className="min-w-0">
+              <button
+                type="button"
+                onClick={() => onStep(i)}
+                aria-current={current ? "step" : undefined}
+                className={cn(
+                  "flex w-full min-w-0 flex-col items-center gap-1 rounded-lg px-1 py-1.5 text-center focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:flex-row sm:gap-2 sm:px-2 sm:text-left",
+                  current ? "bg-subtle" : "hover:bg-subtle/60",
+                )}
+              >
+                <span
+                  className={cn(
+                    "relative flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[12px] font-semibold tabular-nums",
+                    current ? "border-accent-500 bg-accent-500 text-white" : "border-line-strong text-fg-muted",
+                  )}
+                >
+                  {i + 1}
+                  {s.error && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-bad ring-2 ring-surface" aria-hidden="true" />}
+                </span>
+                <span className={cn("truncate text-[12px] sm:text-[12.5px]", current ? "font-medium text-fg" : "text-fg-muted")}>
+                  <span className="sm:hidden">{s.short}</span>
+                  <span className="hidden sm:inline">{s.title}</span>
+                  {s.error && <span className="sr-only"> (ada isian yang perlu diperbaiki)</span>}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+      <p className="mt-2 text-[12px] text-fg-muted sm:hidden" aria-hidden="true">
+        Langkah {step + 1} dari {steps.length} · {steps[step].title}
+      </p>
+    </nav>
   );
 }
 
@@ -1106,12 +1271,14 @@ function NodesEditor({
   regions,
   errors,
   listError,
+  serversLink,
 }: {
   nodes: NodeDraft[];
   regions: RegionDraft[];
   setNodes: (fn: (rows: NodeDraft[]) => NodeDraft[]) => void;
   errors: ReturnType<typeof nodeErrorsOf>;
   listError: string | null;
+  serversLink: ReactNode;
 }) {
   const confirm = useConfirm();
   const loads = useQuery({ queryKey: QK_HOSTING.nodes, queryFn: api.listHostingNodes });
@@ -1159,8 +1326,8 @@ function NodesEditor({
         </p>
         <p className="text-[12px] text-fg-muted">
           Server Dokploy yang menjalankan container pelanggan. Tiap node butuh DNS wildcard sendiri{" "}
-          <span className="font-mono text-fg">*.&lt;root domain&gt;</span> yang mengarah ke IP node itu. Tambahkan server di Dokploy (Settings → Servers),
-          lalu salin Server ID-nya. Region menentukan stok yang dijual di halaman hosting: jumlah slot kosong node aktif di region itu.
+          <span className="font-mono text-fg">*.&lt;root domain&gt;</span> yang mengarah ke IP node itu. Tambahkan server remote khusus pelanggan di{" "}
+          {serversLink}, lalu salin Server ID-nya. Container di server utama Dokploy bisa menjangkau database dan Redis milik Dokploy. Region menentukan stok yang dijual di halaman hosting: jumlah slot kosong node aktif di region itu.
         </p>
       </div>
       {nodes.length === 0 && (
@@ -1221,7 +1388,7 @@ function NodesEditor({
                   className="font-mono"
                 />
               </Field>
-              <Field label="Server ID Dokploy" hint="Kosongkan untuk server utama Dokploy (tidak disarankan).">
+              <Field label="Server ID Dokploy" hint={<>Salin dari {serversLink}. Kosongkan untuk server utama Dokploy (tidak disarankan).</>}>
                 <Input value={r.serverId} onChange={(e) => update(r.key, { serverId: e.target.value })} autoComplete="off" spellCheck={false} className="font-mono" />
               </Field>
               <Field label="Server monitoring" hint={monitor.isError ? `Daftar server monitoring gagal dimuat. ${errorText(monitor.error)}` : undefined}>
@@ -1271,50 +1438,5 @@ function NodesEditor({
         Tambah node
       </Button>
     </section>
-  );
-}
-
-function SetupChecklist({ nodes }: { nodes?: HostingNode[] }) {
-  const domains = (nodes ?? []).map((n) => n.root_domain).filter(Boolean);
-  return (
-    <Panel icon={ListChecks} title="Persiapan Dokploy" subtitle="Lakukan sekali sebelum membuka pemesanan, dan ulangi langkah node setiap menambah server.">
-      <ol className="list-decimal space-y-2 px-4 py-4 pl-9 text-[13px] text-fg-muted">
-        <li>
-          Buat project dan environment di Dokploy khusus untuk hosting, lalu salin <span className="font-mono text-fg">environmentId</span>-nya ke kolom Environment ID.
-        </li>
-        <li>
-          Buat API key di Dokploy lewat menu <span className="text-fg">Settings → Profile → API</span>, lalu tempel di kolom API key Dokploy.
-        </li>
-        <li>
-          Tambahkan server remote khusus pelanggan di Dokploy (Settings → Servers), lalu daftarkan sebagai node dan isi <span className="font-mono text-fg">Server ID</span>-nya.
-          Container pelanggan di server utama bisa menjangkau database dan Redis milik Dokploy.
-        </li>
-        <li>
-          Beri tiap node root domain sendiri dan arahkan DNS wildcard-nya ke IP node itu, karena satu wildcard hanya bisa mengarah ke satu server
-          {domains.length > 0 ? (
-            <>
-              :{" "}
-              {domains.map((d, i) => (
-                <span key={d}>
-                  {i > 0 && ", "}
-                  <span className="font-mono text-fg">*.{d}</span>
-                </span>
-              ))}
-              .
-            </>
-          ) : (
-            <>
-              , misal <span className="font-mono text-fg">*.n1.example.com</span>.
-            </>
-          )}
-        </li>
-        <li>
-          Pakai image 9router versi 0.4.60 atau lebih baru, dan pastikan nama env password awal sesuai image tersebut. Buat satu instance uji, lalu cek bahwa
-          password default <span className="font-mono text-fg">123456</span> ditolak.
-        </li>
-        <li>Isi minimal satu image Docker 9router, simpan, lalu klik Tes koneksi sebelum menyalakan pemesanan.</li>
-        <li>Saat node mendekati penuh, tambah server baru di Dokploy lalu tambahkan sebagai node baru dengan domain wildcard sendiri.</li>
-      </ol>
-    </Panel>
   );
 }
