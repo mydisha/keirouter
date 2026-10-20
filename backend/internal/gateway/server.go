@@ -124,6 +124,8 @@ type Server struct {
 	paymentClient       *payment.Client
 	// dokployFactory overrides the Dokploy client in tests.
 	dokployFactory func(baseURL, apiKey string) dokployAPI
+	// dnsFactory overrides the Cloudflare DNS client in tests.
+	dnsFactory func(token string) dnsAPI
 	// monitorFactory overrides the Dokploy monitoring client in tests.
 	monitorFactory func(t hosting.MonitorTarget) monitorFetcher
 	// hostingOrderLocks serializes hosting checkouts per API key, so double

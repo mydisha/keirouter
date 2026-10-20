@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/mydisha/keirouter/backend/internal/cloudflare"
 	"github.com/mydisha/keirouter/backend/internal/dokploy"
 	"github.com/mydisha/keirouter/backend/internal/hosting"
 	"github.com/mydisha/keirouter/backend/internal/httputil"
@@ -30,6 +31,22 @@ type dokployAPI interface {
 	Start(ctx context.Context, applicationID string) error
 	Delete(ctx context.Context, applicationID string) error
 	CheckEnvironment(ctx context.Context, environmentID string) error
+}
+
+// dnsAPI is the slice of the Cloudflare API hosting uses; tests swap in a
+// fake through Server.dnsFactory.
+type dnsAPI interface {
+	Zone(ctx context.Context, zoneID string) (string, error)
+	FindA(ctx context.Context, zoneID, name string) (cloudflare.Record, bool, error)
+	CreateA(ctx context.Context, zoneID, name, ip, comment string) (cloudflare.Record, error)
+	Delete(ctx context.Context, zoneID, recordID string) error
+}
+
+func (s *Server) dnsClient(st hosting.Settings) dnsAPI {
+	if s.dnsFactory != nil {
+		return s.dnsFactory(st.CloudflareToken)
+	}
+	return cloudflare.NewClient(st.CloudflareToken)
 }
 
 func (s *Server) dokployClient(st hosting.Settings) dokployAPI {
@@ -67,24 +84,28 @@ func hostingSettingsView(st hosting.Settings) map[string]any {
 		images = []string{}
 	}
 	return map[string]any{
-		"enabled":        st.Enabled,
-		"dokploy_url":    st.DokployURL,
-		"api_key_masked": hosting.MaskAPIKey(st.APIKey),
-		"has_api_key":    st.APIKey != "",
-		"environment_id": st.EnvironmentID,
-		"nodes":          nodesOrEmpty(st.Nodes),
-		"images":         images,
-		"container_port": st.ContainerPort,
-		"env_template":   st.EnvTemplate,
-		"password_env":   st.PasswordEnv,
-		"memory_limit":   st.MemoryLimit,
-		"cpu_limit":      st.CPULimit,
-		"data_path":      st.DataPath,
-		"support_url":    st.SupportURL,
-		"regions":        regionsOrEmpty(st.Regions),
-		"grace_days":     hosting.GraceDays,
-		"terms_version":  hosting.TermsVersion,
-		"period_days":    hosting.PeriodDays,
+		"enabled":                 st.Enabled,
+		"dokploy_url":             st.DokployURL,
+		"api_key_masked":          hosting.MaskAPIKey(st.APIKey),
+		"has_api_key":             st.APIKey != "",
+		"environment_id":          st.EnvironmentID,
+		"root_domain":             st.RootDomain,
+		"cloudflare_zone_id":      st.CloudflareZoneID,
+		"cloudflare_token_masked": hosting.MaskAPIKey(st.CloudflareToken),
+		"has_cloudflare_token":    st.CloudflareToken != "",
+		"nodes":                   nodesOrEmpty(st.Nodes),
+		"images":                  images,
+		"container_port":          st.ContainerPort,
+		"env_template":            st.EnvTemplate,
+		"password_env":            st.PasswordEnv,
+		"memory_limit":            st.MemoryLimit,
+		"cpu_limit":               st.CPULimit,
+		"data_path":               st.DataPath,
+		"support_url":             st.SupportURL,
+		"regions":                 regionsOrEmpty(st.Regions),
+		"grace_days":              hosting.GraceDays,
+		"terms_version":           hosting.TermsVersion,
+		"period_days":             hosting.PeriodDays,
 	}
 }
 
@@ -105,6 +126,8 @@ type hostingSettingsRequest struct {
 	EnvironmentID    string           `json:"environment_id"`
 	RootDomain       string           `json:"root_domain"` // main domain of every instance
 	CloudflareZoneID string           `json:"cloudflare_zone_id"`
+	CloudflareToken  *string          `json:"cloudflare_token"` // nil or "" keeps the stored token
+	ClearCFToken     bool             `json:"clear_cloudflare_token"`
 	Nodes            []hosting.Node   `json:"nodes"`
 	Images           []string         `json:"images"`
 	ContainerPort    int              `json:"container_port"`
@@ -143,6 +166,13 @@ func (s *Server) adminPutHostingSettings(w http.ResponseWriter, r *http.Request)
 	if newKey {
 		st.APIKey = strings.TrimSpace(*body.APIKey)
 	}
+	newToken := body.CloudflareToken != nil && strings.TrimSpace(*body.CloudflareToken) != ""
+	if body.ClearCFToken {
+		st.CloudflareToken = ""
+	}
+	if newToken {
+		st.CloudflareToken = strings.TrimSpace(*body.CloudflareToken)
+	}
 	if err := st.Normalize(); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -152,6 +182,12 @@ func (s *Server) adminPutHostingSettings(w http.ResponseWriter, r *http.Request)
 	// dashboard session cannot redirect the sealed key to another host.
 	if st.APIKey != "" && !newKey && st.DokployURL != cur.DokployURL {
 		writeError(w, http.StatusBadRequest, "re-enter the Dokploy API key when changing the Dokploy URL")
+		return
+	}
+	// Same rule for the Cloudflare token: it stays with the zone it was
+	// entered for.
+	if st.CloudflareToken != "" && !newToken && st.CloudflareZoneID != cur.CloudflareZoneID {
+		writeError(w, http.StatusBadRequest, "re-enter the Cloudflare API token when changing the zone ID")
 		return
 	}
 	if st.DokployURL != "" {
@@ -186,8 +222,18 @@ func (s *Server) adminTestHostingSettings(w http.ResponseWriter, r *http.Request
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	if err := s.dokployClient(st).CheckEnvironment(ctx, st.EnvironmentID); err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": err.Error()})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "Dokploy: " + err.Error()})
 		return
+	}
+	if st.CloudflareZoneID != "" && st.CloudflareToken != "" {
+		zone, err := s.dnsClient(st).Zone(ctx, st.CloudflareZoneID)
+		if err == nil && !st.InZone(zone) {
+			err = fmt.Errorf("main domain %s is not in zone %s", st.RootDomain, zone)
+		}
+		if err != nil {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "Cloudflare: " + err.Error()})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -292,8 +338,9 @@ func (s *Server) loadReadyHostingSettings(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return hosting.Settings{}, false
 	}
-	if st.DokployURL == "" || st.APIKey == "" || st.EnvironmentID == "" || len(st.Nodes) == 0 {
-		writeError(w, http.StatusBadRequest, "hosting settings are incomplete: set the Dokploy URL, API key, environment ID and at least one node")
+	if st.DokployURL == "" || st.APIKey == "" || st.EnvironmentID == "" || len(st.Nodes) == 0 ||
+		st.RootDomain == "" || st.CloudflareZoneID == "" || st.CloudflareToken == "" {
+		writeError(w, http.StatusBadRequest, "hosting settings are incomplete: set the Dokploy URL, API key, environment ID, main domain, Cloudflare zone ID and token, and at least one node")
 		return hosting.Settings{}, false
 	}
 	return st, true

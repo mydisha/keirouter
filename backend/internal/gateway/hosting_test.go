@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/mydisha/keirouter/backend/internal/cloudflare"
 	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/dokploy"
 	"github.com/mydisha/keirouter/backend/internal/hosting"
@@ -67,9 +69,60 @@ func (f *fakeDokploy) Start(context.Context, string) error            { return n
 func (f *fakeDokploy) Delete(context.Context, string) error           { f.deletes++; return nil }
 func (f *fakeDokploy) CheckEnvironment(context.Context, string) error { return nil }
 
+// fakeDNS is an in-memory Cloudflare zone.
+type fakeDNS struct {
+	zoneName         string
+	failZone         error
+	failDelete       error
+	records          map[string]cloudflare.Record // by name
+	creates, deletes int
+	lastComment      string
+}
+
+func (f *fakeDNS) Zone(context.Context, string) (string, error) {
+	if f.failZone != nil {
+		return "", f.failZone
+	}
+	return f.zoneName, nil
+}
+
+func (f *fakeDNS) FindA(_ context.Context, _, name string) (cloudflare.Record, bool, error) {
+	r, ok := f.records[name]
+	return r, ok, nil
+}
+
+func (f *fakeDNS) CreateA(_ context.Context, _, name, ip, comment string) (cloudflare.Record, error) {
+	f.creates++
+	f.lastComment = comment
+	r := cloudflare.Record{ID: fmt.Sprintf("rec-%d", f.creates), Name: name, Content: ip}
+	f.records[name] = r
+	return r, nil
+}
+
+func (f *fakeDNS) Delete(_ context.Context, _, id string) error {
+	if f.failDelete != nil {
+		return f.failDelete
+	}
+	f.deletes++
+	for name, r := range f.records {
+		if r.ID == id {
+			delete(f.records, name)
+		}
+	}
+	return nil
+}
+
 // hostingTestServer is a portal server with payments, a sealer, enabled
 // hosting settings, a fake SumoPod and a fake Dokploy.
 func hostingTestServer(t *testing.T) (*Server, string, *fakeDokploy) {
+	t.Helper()
+	s, tok, fake, _ := hostingTestServerDNS(t)
+	return s, tok, fake
+}
+
+// hostingTestServerDNS is hostingTestServer that also returns the fake
+// Cloudflare zone (host.example.com).
+func hostingTestServerDNS(t *testing.T) (*Server, string, *fakeDokploy, *fakeDNS) {
 	t.Helper()
 	s, tok := paymentPortalTestServer(t)
 	s.settings = s.db.Settings()
@@ -91,6 +144,8 @@ func hostingTestServer(t *testing.T) (*Server, string, *fakeDokploy) {
 
 	fake := &fakeDokploy{}
 	s.dokployFactory = func(string, string) dokployAPI { return fake }
+	dns := &fakeDNS{zoneName: "host.example.com", records: map[string]cloudflare.Record{}}
+	s.dnsFactory = func(string) dnsAPI { return dns }
 	require.NoError(t, hosting.Save(t.Context(), s.settingsSet(), s.financeBox(), hosting.Settings{
 		Enabled: true, DokployURL: "https://dokploy.example.com",
 		APIKey: "dk", EnvironmentID: "env-1",
@@ -102,7 +157,7 @@ func hostingTestServer(t *testing.T) (*Server, string, *fakeDokploy) {
 		EnvTemplate: "BASE_URL={{URL}}\nINITIAL_PASSWORD=123456",
 		PasswordEnv: "INITIAL_PASSWORD", MemoryLimit: "536870912", CPULimit: "1000000000",
 	}))
-	return s, tok, fake
+	return s, tok, fake, dns
 }
 
 func postHostingOrder(t *testing.T, s *Server, tok, body string) *httptest.ResponseRecorder {
@@ -413,7 +468,7 @@ func TestHostingSettings_URLChangeNeedsKey(t *testing.T) {
 	s, _, _ := hostingTestServer(t)
 	r := chi.NewRouter()
 	s.mountHosting(r)
-	base := `"enabled":false,"environment_id":"env-1","root_domain":"host.example.com","images":["luqmenul/9router-go:latest"],"container_port":20130,"env_template":""`
+	base := `"enabled":false,"environment_id":"env-1","root_domain":"host.example.com","cloudflare_zone_id":"z1","images":["luqmenul/9router-go:latest"],"container_port":20130,"env_template":""`
 	rec := doJSON(t, r, http.MethodPut, "/hosting/settings", `{`+base+`,"dokploy_url":"https://attacker.example.net"}`)
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 	require.Contains(t, rec.Body.String(), "re-enter")
@@ -620,4 +675,62 @@ func TestHosting_MultiNodePlacement(t *testing.T) {
 	rec = prov("e", `{`+img+`}`)
 	require.Equal(t, http.StatusConflict, rec.Code)
 	require.Contains(t, rec.Body.String(), "full")
+}
+
+func TestHostingSettings_CloudflareToken(t *testing.T) {
+	s, _, _ := hostingTestServer(t)
+	r := chi.NewRouter()
+	s.mountHosting(r)
+	base := `"enabled":false,"dokploy_url":"https://dokploy.example.com","environment_id":"env-1","root_domain":"host.example.com","cloudflare_zone_id":"z1","images":["luqmenul/9router-go:latest"],"container_port":20130,"env_template":""`
+
+	rec := doJSON(t, r, http.MethodPut, "/hosting/settings", `{`+base+`,"cloudflare_token":"cf-new-token"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = doJSON(t, r, http.MethodGet, "/hosting/settings", "")
+	require.Contains(t, rec.Body.String(), `"has_cloudflare_token":true`)
+	require.Contains(t, rec.Body.String(), `"cloudflare_zone_id":"z1"`)
+	require.NotContains(t, rec.Body.String(), "cf-new-token")
+
+	rec = doJSON(t, r, http.MethodPut, "/hosting/settings", `{`+base+`}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	st, err := hosting.Load(t.Context(), s.settingsGet(), s.financeBox())
+	require.NoError(t, err)
+	require.Equal(t, "cf-new-token", st.CloudflareToken, "saving without a token keeps it")
+
+	rec = doJSON(t, r, http.MethodPut, "/hosting/settings", `{`+base+`,"clear_cloudflare_token":true}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), `"has_cloudflare_token":false`)
+}
+
+func TestHostingSettings_ZoneChangeNeedsToken(t *testing.T) {
+	s, _, _ := hostingTestServer(t)
+	r := chi.NewRouter()
+	s.mountHosting(r)
+	base := `"enabled":false,"dokploy_url":"https://dokploy.example.com","environment_id":"env-1","root_domain":"host.example.com","images":["luqmenul/9router-go:latest"],"container_port":20130,"env_template":""`
+	rec := doJSON(t, r, http.MethodPut, "/hosting/settings", `{`+base+`,"cloudflare_zone_id":"other-zone"}`)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "re-enter")
+
+	rec = doJSON(t, r, http.MethodPut, "/hosting/settings", `{`+base+`,"cloudflare_zone_id":"other-zone","cloudflare_token":"t2"}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+func TestHostingSettingsTest_Cloudflare(t *testing.T) {
+	s, _, _, dns := hostingTestServerDNS(t)
+	r := chi.NewRouter()
+	s.mountHosting(r)
+
+	rec := doJSON(t, r, http.MethodPost, "/hosting/settings/test", "")
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.JSONEq(t, `{"ok":true}`, rec.Body.String())
+
+	dns.zoneName = "tokenizer.ai.id"
+	rec = doJSON(t, r, http.MethodPost, "/hosting/settings/test", "")
+	require.Contains(t, rec.Body.String(), `"ok":false`)
+	require.Contains(t, rec.Body.String(), `"error":"Cloudflare: `)
+	require.Contains(t, rec.Body.String(), "not in zone")
+
+	dns.zoneName, dns.failZone = "host.example.com", errors.New("cloudflare: Authentication error")
+	rec = doJSON(t, r, http.MethodPost, "/hosting/settings/test", "")
+	require.Contains(t, rec.Body.String(), `"error":"Cloudflare: `)
+	require.Contains(t, rec.Body.String(), "Authentication error")
 }
