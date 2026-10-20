@@ -50,15 +50,16 @@ type Settings struct {
 	DokployURL    string `json:"dokploy_url"`
 	APIKey        string `json:"-"`
 	EnvironmentID string `json:"environment_id"`
-	// RootDomain and ServerID are the pre-multi-node single target. They are
-	// read once and folded into Nodes as the "default" node.
-	RootDomain    string   `json:"root_domain,omitempty"`
-	Images        []string `json:"images"`
-	ContainerPort int      `json:"container_port"`
-	EnvTemplate   string   `json:"env_template"`
-	// ServerID deploys customer apps to a separate Dokploy server so they
-	// cannot reach the Dokploy host's own services. Empty uses the host.
-	ServerID string `json:"server_id,omitempty"`
+	// RootDomain is the main domain: every instance lives at
+	// <random>.<RootDomain>, with its own DNS record in Cloudflare.
+	RootDomain string `json:"root_domain"`
+	// CloudflareZoneID is the zone that holds RootDomain; CloudflareToken
+	// may edit its DNS records.
+	CloudflareZoneID string   `json:"cloudflare_zone_id"`
+	CloudflareToken  string   `json:"-"`
+	Images           []string `json:"images"`
+	ContainerPort    int      `json:"container_port"`
+	EnvTemplate      string   `json:"env_template"`
 	// Nodes are the Dokploy servers that run customer instances.
 	Nodes []Node `json:"nodes"`
 	// PasswordEnv names the env var that receives each instance's random
@@ -79,7 +80,8 @@ type Settings struct {
 
 type storedSettings struct {
 	Settings
-	APIKeySealed *crypto.Sealed `json:"api_key,omitempty"`
+	APIKeySealed          *crypto.Sealed `json:"api_key,omitempty"`
+	CloudflareTokenSealed *crypto.Sealed `json:"cloudflare_token,omitempty"`
 }
 
 // DefaultPort is the listen port of the luqmenul/9router-go image.
@@ -111,7 +113,6 @@ func Load(ctx context.Context, get func(context.Context, string) (string, error)
 		return Settings{}, fmt.Errorf("hosting: decode settings: %w", err)
 	}
 	s := st.Settings
-	s.foldLegacyNode()
 	if st.APIKeySealed != nil {
 		if box == nil {
 			return Settings{}, errors.New("hosting: api key is sealed but no sealer is configured")
@@ -121,6 +122,16 @@ func Load(ctx context.Context, get func(context.Context, string) (string, error)
 			return Settings{}, errors.New("hosting: cannot open the sealed api key (master key mismatch?)")
 		}
 		s.APIKey = k
+	}
+	if st.CloudflareTokenSealed != nil {
+		if box == nil {
+			return Settings{}, errors.New("hosting: cloudflare token is sealed but no sealer is configured")
+		}
+		k, err := box.OpenString(*st.CloudflareTokenSealed)
+		if err != nil {
+			return Settings{}, errors.New("hosting: cannot open the sealed cloudflare token (master key mismatch?)")
+		}
+		s.CloudflareToken = k
 	}
 	if s.ContainerPort == 0 {
 		s.ContainerPort = DefaultPort
@@ -153,6 +164,16 @@ func Save(ctx context.Context, set func(context.Context, string, string) error, 
 		}
 		st.APIKeySealed = &sealed
 	}
+	if s.CloudflareToken != "" {
+		if box == nil {
+			return errors.New("hosting: cannot store the cloudflare token without a sealer")
+		}
+		sealed, err := box.SealString(s.CloudflareToken)
+		if err != nil {
+			return fmt.Errorf("hosting: seal cloudflare token: %w", err)
+		}
+		st.CloudflareTokenSealed = &sealed
+	}
 	raw, err := json.Marshal(st)
 	if err != nil {
 		return err
@@ -166,11 +187,10 @@ func (s *Settings) Normalize() error {
 	s.EnvironmentID = strings.TrimSpace(s.EnvironmentID)
 	s.RootDomain = strings.ToLower(strings.Trim(strings.TrimSpace(s.RootDomain), "."))
 	s.RootDomain = strings.TrimPrefix(s.RootDomain, "*.")
-	s.ServerID = strings.TrimSpace(s.ServerID)
+	s.CloudflareZoneID = strings.TrimSpace(s.CloudflareZoneID)
 	if s.RootDomain != "" && !validDomain(s.RootDomain) {
 		return fmt.Errorf("root_domain %q is not a valid domain", s.RootDomain)
 	}
-	s.foldLegacyNode()
 	if err := s.normalizeNodes(); err != nil {
 		return err
 	}
@@ -243,6 +263,8 @@ func (s *Settings) Normalize() error {
 		switch {
 		case s.DokployURL == "", s.APIKey == "", s.EnvironmentID == "":
 			return errors.New("set the Dokploy URL, API key and environment ID before enabling hosting")
+		case s.RootDomain == "", s.CloudflareZoneID == "", s.CloudflareToken == "":
+			return errors.New("set the main domain and the Cloudflare zone ID and API token before enabling hosting")
 		case !s.hasEnabledNode():
 			return errors.New("add at least one enabled node before enabling hosting")
 		case len(s.Images) == 0:
@@ -252,6 +274,12 @@ func (s *Settings) Normalize() error {
 		}
 	}
 	return nil
+}
+
+// InZone reports whether the main domain lies in the Cloudflare zone named
+// zoneName.
+func (s Settings) InZone(zoneName string) bool {
+	return s.RootDomain == zoneName || strings.HasSuffix(s.RootDomain, "."+zoneName)
 }
 
 // hasSellableRegion reports whether some enabled, priced region has an

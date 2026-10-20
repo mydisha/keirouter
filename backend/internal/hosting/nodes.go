@@ -3,24 +3,20 @@ package hosting
 import (
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 )
 
-// LegacyNodeID is the node that settings saved before multi-node support
-// (a single server_id + root_domain) become, and that instances created
-// back then are assigned to.
-const LegacyNodeID = "default"
-
-// Node is one Dokploy server that runs customer instances. Every node has its
-// own wildcard DNS (*.RootDomain → the node's IP), because one wildcard can
-// only point at one server.
+// Node is one Dokploy server that runs customer instances. Each instance on
+// it gets a Cloudflare A record pointing at PublicIP.
 type Node struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
 	ServerID string `json:"server_id"` // Dokploy serverId; empty = the Dokploy host itself
-	// RootDomain is where this node's random subdomains are created.
-	RootDomain string `json:"root_domain"`
+	// PublicIP is the node's IPv4 address, the target of its instances'
+	// DNS records.
+	PublicIP string `json:"public_ip"`
 	// MonitorTargetID is the monitoring server that reports this node's
 	// container metrics.
 	MonitorTargetID string `json:"monitor_target_id"`
@@ -34,23 +30,11 @@ type Node struct {
 
 var nodeIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
 
-// foldLegacyNode turns the pre-multi-node single server_id/root_domain into
-// the "default" node, then clears the legacy fields.
-func (s *Settings) foldLegacyNode() {
-	if len(s.Nodes) == 0 && (s.RootDomain != "" || s.ServerID != "") {
-		s.Nodes = []Node{{
-			ID: LegacyNodeID, Name: "Node 1", ServerID: s.ServerID,
-			RootDomain: s.RootDomain, Enabled: true,
-		}}
-	}
-	s.RootDomain, s.ServerID = "", ""
-}
-
 func (s *Settings) normalizeNodes() error {
 	if len(s.Nodes) > 50 {
 		return errors.New("at most 50 nodes")
 	}
-	ids, domains := map[string]bool{}, map[string]bool{}
+	ids := map[string]bool{}
 	for i := range s.Nodes {
 		n := &s.Nodes[i]
 		n.ID = strings.ToLower(strings.TrimSpace(n.ID))
@@ -58,7 +42,7 @@ func (s *Settings) normalizeNodes() error {
 		n.ServerID = strings.TrimSpace(n.ServerID)
 		n.MonitorTargetID = strings.TrimSpace(n.MonitorTargetID)
 		n.Region = strings.ToLower(strings.TrimSpace(n.Region))
-		n.RootDomain = strings.TrimPrefix(strings.ToLower(strings.Trim(strings.TrimSpace(n.RootDomain), ".")), "*.")
+		n.PublicIP = strings.TrimSpace(n.PublicIP)
 		switch {
 		case !nodeIDRe.MatchString(n.ID):
 			return fmt.Errorf("node id %q must be lowercase letters, digits and dashes", n.ID)
@@ -66,16 +50,19 @@ func (s *Settings) normalizeNodes() error {
 			return fmt.Errorf("node id %q is used twice", n.ID)
 		case n.Name == "" || len(n.Name) > 80:
 			return fmt.Errorf("node %s needs a name (max 80 characters)", n.ID)
-		case !validDomain(n.RootDomain):
-			return fmt.Errorf("node %s: root_domain %q is not a valid domain", n.Name, n.RootDomain)
-		case domains[n.RootDomain]:
-			return fmt.Errorf("root_domain %q is used by two nodes; each node needs its own wildcard domain", n.RootDomain)
+		case n.Enabled && !validIPv4(n.PublicIP):
+			return fmt.Errorf("node %s: public_ip %q must be an IPv4 address", n.Name, n.PublicIP)
 		case n.Capacity < 0 || n.Capacity > 10000:
 			return fmt.Errorf("node %s: capacity must be 0-10000", n.Name)
 		}
-		ids[n.ID], domains[n.RootDomain] = true, true
+		ids[n.ID] = true
 	}
 	return nil
+}
+
+func validIPv4(s string) bool {
+	ip := net.ParseIP(s)
+	return ip != nil && ip.To4() != nil && !strings.Contains(s, ":")
 }
 
 // Node returns the node with id.

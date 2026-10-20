@@ -94,11 +94,12 @@ func hostingTestServer(t *testing.T) (*Server, string, *fakeDokploy) {
 	require.NoError(t, hosting.Save(t.Context(), s.settingsSet(), s.financeBox(), hosting.Settings{
 		Enabled: true, DokployURL: "https://dokploy.example.com",
 		APIKey: "dk", EnvironmentID: "env-1",
-		Nodes: []hosting.Node{{ID: hosting.LegacyNodeID, Name: "Node 1", ServerID: "srv-1",
-			RootDomain: "host.example.com", Enabled: true, Region: "id"}},
+		RootDomain: "host.example.com", CloudflareZoneID: "z1", CloudflareToken: "cf",
+		Nodes: []hosting.Node{{ID: "default", Name: "Node 1", ServerID: "srv-1",
+			PublicIP: "203.0.113.7", Enabled: true, Region: "id"}},
 		Regions: []hosting.Region{{ID: "id", Name: "Indonesia", PriceIDR: 50000, Enabled: true}},
 		Images:  []string{"luqmenul/9router-go:latest"}, ContainerPort: 20130, DataPath: "/data",
-		EnvTemplate: "BASE_URL={{URL}}\nINITIAL_PASSWORD=123456", ServerID: "srv-1",
+		EnvTemplate: "BASE_URL={{URL}}\nINITIAL_PASSWORD=123456",
 		PasswordEnv: "INITIAL_PASSWORD", MemoryLimit: "536870912", CPULimit: "1000000000",
 	}))
 	return s, tok, fake
@@ -320,7 +321,8 @@ func TestHostingSettings_MasksKey(t *testing.T) {
 	// Saving without api_key keeps the stored key.
 	rec = doJSON(t, r, http.MethodPut, "/hosting/settings", `{"enabled":true,
 		"dokploy_url":"https://dokploy.example.com","environment_id":"env-1",
-		"nodes":[{"id":"default","name":"Node 1","root_domain":"host.example.com","enabled":true,"region":"id"}],
+		"root_domain":"host.example.com","cloudflare_zone_id":"z1",
+		"nodes":[{"id":"default","name":"Node 1","public_ip":"203.0.113.7","enabled":true,"region":"id"}],
 		"images":["luqmenul/9router-go:latest"],"container_port":20130,"env_template":""}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	st, err := hosting.Load(t.Context(), s.settingsGet(), s.financeBox())
@@ -554,13 +556,12 @@ func TestHosting_MultiNodePlacement(t *testing.T) {
 	ctx := t.Context()
 	st, err := s.loadHostingSettingsCtx(ctx)
 	require.NoError(t, err)
-	require.Len(t, st.Nodes, 1, "legacy settings fold into the default node")
-	require.Equal(t, hosting.LegacyNodeID, st.Nodes[0].ID)
+	require.Len(t, st.Nodes, 1)
 
 	st.Nodes = []hosting.Node{
-		{ID: "n1", Name: "Node 1", ServerID: "srv-1", RootDomain: "n1.example.com", Capacity: 1, Enabled: true},
-		{ID: "n2", Name: "Node 2", ServerID: "srv-2", RootDomain: "n2.example.com", Capacity: 3, Enabled: true},
-		{ID: "n3", Name: "Node 3", ServerID: "srv-3", RootDomain: "n3.example.com", Capacity: 10, Enabled: false},
+		{ID: "n1", Name: "Node 1", ServerID: "srv-1", PublicIP: "203.0.113.1", Capacity: 1, Enabled: true},
+		{ID: "n2", Name: "Node 2", ServerID: "srv-2", PublicIP: "203.0.113.2", Capacity: 3, Enabled: true},
+		{ID: "n3", Name: "Node 3", ServerID: "srv-3", PublicIP: "203.0.113.3", Capacity: 10, Enabled: false},
 	}
 	require.NoError(t, hosting.Save(ctx, s.settingsSet(), s.financeBox(), st))
 
@@ -580,7 +581,7 @@ func TestHosting_MultiNodePlacement(t *testing.T) {
 	require.Equal(t, http.StatusOK, prov("a", `{`+img+`}`).Code)
 	a, _ := s.db.Hosting().Get(ctx, "a")
 	require.Equal(t, "n2", a.NodeID)
-	require.Equal(t, a.Subdomain+".n2.example.com", a.FQDN)
+	require.Equal(t, a.Subdomain+".host.example.com", a.FQDN, "every node shares the main domain")
 	require.Equal(t, "srv-2", fake.lastServer)
 
 	// Explicit node.

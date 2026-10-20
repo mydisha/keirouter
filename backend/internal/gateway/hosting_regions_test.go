@@ -24,8 +24,8 @@ func regionTestServer(t *testing.T) (*Server, string) {
 		{ID: "eu", Name: "Europe", PriceIDR: 10000, Enabled: true},
 	}
 	st.Nodes = []hosting.Node{
-		{ID: "jkt", Name: "Jakarta", RootDomain: "jkt.example.com", Capacity: 1, Enabled: true, Region: "id"},
-		{ID: "fra", Name: "Frankfurt", RootDomain: "fra.example.com", Enabled: true, Region: "eu"},
+		{ID: "jkt", Name: "Jakarta", PublicIP: "203.0.113.10", Capacity: 1, Enabled: true, Region: "id"},
+		{ID: "fra", Name: "Frankfurt", PublicIP: "203.0.113.20", Enabled: true, Region: "eu"},
 	}
 	require.NoError(t, hosting.Save(t.Context(), s.settingsSet(), s.financeBox(), st))
 	return s, tok

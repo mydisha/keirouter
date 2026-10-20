@@ -5,16 +5,14 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNormalize(t *testing.T) {
-	s := Settings{RootDomain: " *.Host.Example.com. ", Images: []string{" a:1 ", "a:1", ""}, DokployURL: "https://d.example.com/"}
+	s := Settings{Images: []string{" a:1 ", "a:1", ""}, DokployURL: "https://d.example.com/",
+		Nodes: []Node{{ID: "n1", Name: "Node 1", PublicIP: "203.0.113.7", Enabled: true}}}
 	require.NoError(t, s.Normalize())
-	require.Len(t, s.Nodes, 1, "legacy root_domain becomes the default node")
-	require.Equal(t, LegacyNodeID, s.Nodes[0].ID)
-	require.Equal(t, "host.example.com", s.Nodes[0].RootDomain)
-	require.Empty(t, s.RootDomain)
 	require.Equal(t, []string{"a:1"}, s.Images)
 	require.Equal(t, DefaultPort, s.ContainerPort)
 	require.Equal(t, "https://d.example.com", s.DokployURL)
@@ -24,14 +22,12 @@ func TestNormalize(t *testing.T) {
 	s.Enabled = true
 	require.ErrorContains(t, s.Normalize(), "API key")
 	s.APIKey, s.EnvironmentID = "k", "env"
+	s.RootDomain, s.CloudflareZoneID, s.CloudflareToken = "tokenizer.ai.id", "z1", "cf"
 	require.ErrorContains(t, s.Normalize(), "region", "the node is not in a region yet")
 	s.Nodes[0].Region = "id"
 	require.NoError(t, s.Normalize())
 	s.Nodes[0].Region = "mars"
 	require.ErrorContains(t, s.Normalize(), "unknown region")
-
-	bad := Settings{RootDomain: "bad_domain.com"}
-	require.Error(t, bad.Normalize())
 
 	plain := Settings{DokployURL: "http://d.example.com"}
 	require.ErrorContains(t, plain.Normalize(), "https")
@@ -41,6 +37,60 @@ func TestNormalize(t *testing.T) {
 
 	mem := Settings{MemoryLimit: "512m"}
 	require.Error(t, mem.Normalize())
+}
+
+func TestNormalizeMainDomain(t *testing.T) {
+	s := Settings{RootDomain: " *.Tokenizer.ai.id. "}
+	require.NoError(t, s.Normalize())
+	require.Equal(t, "tokenizer.ai.id", s.RootDomain)
+
+	bad := Settings{RootDomain: "bad domain"}
+	require.Error(t, bad.Normalize())
+}
+
+func enableable() Settings {
+	return Settings{Enabled: true, DokployURL: "https://d.example.com", APIKey: "k", EnvironmentID: "e",
+		RootDomain: "tokenizer.ai.id", CloudflareZoneID: "z1", CloudflareToken: "cf",
+		Images: []string{"x:1"}, Regions: DefaultRegions(),
+		Nodes: []Node{{ID: "a", Name: "A", PublicIP: "203.0.113.7", Enabled: true, Region: "id"}}}
+}
+
+func TestEnableNeedsCloudflare(t *testing.T) {
+	ok := enableable()
+	require.NoError(t, ok.Normalize())
+	for name, mut := range map[string]func(*Settings){
+		"zone":   func(s *Settings) { s.CloudflareZoneID = "" },
+		"token":  func(s *Settings) { s.CloudflareToken = "" },
+		"domain": func(s *Settings) { s.RootDomain = "" },
+	} {
+		s := enableable()
+		mut(&s)
+		require.ErrorContains(t, s.Normalize(), "Cloudflare", name)
+	}
+}
+
+func TestCloudflareTokenSealed(t *testing.T) {
+	mk, err := crypto.GenerateMasterKey()
+	require.NoError(t, err)
+	box, err := crypto.NewSealer(mk)
+	require.NoError(t, err)
+	var raw string
+	set := func(_ context.Context, _, v string) error { raw = v; return nil }
+	get := func(context.Context, string) (string, error) { return raw, nil }
+	require.NoError(t, Save(context.Background(), set, box, Settings{CloudflareZoneID: "z1", CloudflareToken: "cf-secret-token"}))
+	require.NotContains(t, raw, "cf-secret-token")
+	got, err := Load(context.Background(), get, box)
+	require.NoError(t, err)
+	require.Equal(t, "cf-secret-token", got.CloudflareToken)
+	require.Equal(t, "z1", got.CloudflareZoneID)
+}
+
+func TestInZone(t *testing.T) {
+	s := Settings{RootDomain: "tokenizer.ai.id"}
+	require.True(t, s.InZone("tokenizer.ai.id"))
+	require.True(t, s.InZone("ai.id"))
+	require.False(t, s.InZone("tokenizer.com"))
+	require.False(t, s.InZone("kenizer.ai.id"))
 }
 
 func TestCheckImageVersion(t *testing.T) {

@@ -8,27 +8,35 @@ import (
 
 func TestNormalizeNodes(t *testing.T) {
 	s := Settings{Nodes: []Node{
-		{ID: "n1", Name: "Node 1", RootDomain: "*.N1.Example.com", Enabled: true},
-		{ID: "n2", Name: "Node 2", RootDomain: "n2.example.com", Capacity: 20},
+		{ID: "n1", Name: "Node 1", PublicIP: " 203.0.113.7 ", Enabled: true},
+		{ID: "n2", Name: "Node 2", PublicIP: "203.0.113.7", Capacity: 20, Enabled: true},
+		{ID: "n3", Name: "Node 3"},
 	}}
-	require.NoError(t, s.Normalize())
-	require.Equal(t, "n1.example.com", s.Nodes[0].RootDomain)
+	require.NoError(t, s.Normalize(), "nodes may share an IP; a disabled node may have none")
+	require.Equal(t, "203.0.113.7", s.Nodes[0].PublicIP)
 
 	for name, bad := range map[string][]Node{
-		"dup id":     {{ID: "a", Name: "A", RootDomain: "a.example.com"}, {ID: "a", Name: "B", RootDomain: "b.example.com"}},
-		"dup domain": {{ID: "a", Name: "A", RootDomain: "x.example.com"}, {ID: "b", Name: "B", RootDomain: "x.example.com"}},
-		"bad id":     {{ID: "Bad ID", Name: "A", RootDomain: "a.example.com"}},
-		"no name":    {{ID: "a", RootDomain: "a.example.com"}},
-		"bad domain": {{ID: "a", Name: "A", RootDomain: "nodot"}},
-		"capacity":   {{ID: "a", Name: "A", RootDomain: "a.example.com", Capacity: -1}},
+		"dup id":   {{ID: "a", Name: "A"}, {ID: "a", Name: "B"}},
+		"bad id":   {{ID: "Bad ID", Name: "A"}},
+		"no name":  {{ID: "a"}},
+		"capacity": {{ID: "a", Name: "A", Capacity: -1}},
 	} {
 		st := Settings{Nodes: bad}
 		require.Error(t, st.Normalize(), name)
 	}
 
-	off := Settings{Enabled: true, DokployURL: "https://d.example.com", APIKey: "k", EnvironmentID: "e",
-		Images: []string{"x:1"}, Nodes: []Node{{ID: "a", Name: "A", RootDomain: "a.example.com"}}}
+	off := enableable()
+	off.Nodes[0].Enabled = false
 	require.ErrorContains(t, off.Normalize(), "enabled node")
+}
+
+func TestNodePublicIP(t *testing.T) {
+	for _, ip := range []string{"", "10.0.0", "::1", "203.0.113.300"} {
+		s := Settings{Nodes: []Node{{ID: "a", Name: "Node A", PublicIP: ip, Enabled: true}}}
+		require.ErrorContains(t, s.Normalize(), "Node A", ip)
+	}
+	s := Settings{Nodes: []Node{{ID: "a", Name: "Node A", PublicIP: "203.0.113.7", Enabled: true}}}
+	require.NoError(t, s.Normalize())
 }
 
 func TestPickNode(t *testing.T) {

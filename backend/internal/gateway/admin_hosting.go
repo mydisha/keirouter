@@ -98,23 +98,23 @@ func (s *Server) adminGetHostingSettings(w http.ResponseWriter, r *http.Request)
 }
 
 type hostingSettingsRequest struct {
-	Enabled       bool             `json:"enabled"`
-	DokployURL    string           `json:"dokploy_url"`
-	APIKey        *string          `json:"api_key"` // nil or "" keeps the stored key
-	ClearAPIKey   bool             `json:"clear_api_key"`
-	EnvironmentID string           `json:"environment_id"`
-	RootDomain    string           `json:"root_domain"` // legacy single node; folded into nodes
-	Nodes         []hosting.Node   `json:"nodes"`
-	Images        []string         `json:"images"`
-	ContainerPort int              `json:"container_port"`
-	EnvTemplate   string           `json:"env_template"`
-	ServerID      string           `json:"server_id"`
-	PasswordEnv   string           `json:"password_env"`
-	MemoryLimit   string           `json:"memory_limit"`
-	CPULimit      string           `json:"cpu_limit"`
-	DataPath      string           `json:"data_path"`
-	SupportURL    string           `json:"support_url"`
-	Regions       []hosting.Region `json:"regions"`
+	Enabled          bool             `json:"enabled"`
+	DokployURL       string           `json:"dokploy_url"`
+	APIKey           *string          `json:"api_key"` // nil or "" keeps the stored key
+	ClearAPIKey      bool             `json:"clear_api_key"`
+	EnvironmentID    string           `json:"environment_id"`
+	RootDomain       string           `json:"root_domain"` // main domain of every instance
+	CloudflareZoneID string           `json:"cloudflare_zone_id"`
+	Nodes            []hosting.Node   `json:"nodes"`
+	Images           []string         `json:"images"`
+	ContainerPort    int              `json:"container_port"`
+	EnvTemplate      string           `json:"env_template"`
+	PasswordEnv      string           `json:"password_env"`
+	MemoryLimit      string           `json:"memory_limit"`
+	CPULimit         string           `json:"cpu_limit"`
+	DataPath         string           `json:"data_path"`
+	SupportURL       string           `json:"support_url"`
+	Regions          []hosting.Region `json:"regions"`
 }
 
 func (s *Server) adminPutHostingSettings(w http.ResponseWriter, r *http.Request) {
@@ -130,8 +130,9 @@ func (s *Server) adminPutHostingSettings(w http.ResponseWriter, r *http.Request)
 	st := hosting.Settings{
 		Enabled:    body.Enabled,
 		DokployURL: body.DokployURL, APIKey: cur.APIKey, EnvironmentID: body.EnvironmentID,
-		RootDomain: body.RootDomain, Images: body.Images, ContainerPort: body.ContainerPort,
-		EnvTemplate: body.EnvTemplate, ServerID: body.ServerID, PasswordEnv: body.PasswordEnv, Nodes: body.Nodes,
+		RootDomain: body.RootDomain, CloudflareZoneID: body.CloudflareZoneID, CloudflareToken: cur.CloudflareToken,
+		Images: body.Images, ContainerPort: body.ContainerPort,
+		EnvTemplate: body.EnvTemplate, PasswordEnv: body.PasswordEnv, Nodes: body.Nodes,
 		MemoryLimit: body.MemoryLimit, CPULimit: body.CPULimit, DataPath: body.DataPath,
 		SupportURL: body.SupportURL, Regions: body.Regions,
 	}
@@ -506,7 +507,7 @@ func (s *Server) provisionOnDokploy(ctx context.Context, st hosting.Settings, no
 			return errors.New("could not pick a free subdomain")
 		}
 		h.NodeID = node.ID
-		h.FQDN = h.Subdomain + "." + node.RootDomain
+		h.FQDN = h.Subdomain + "." + st.RootDomain
 		if err := repo.SetDokploy(ctx, *h); err != nil {
 			return err
 		}
