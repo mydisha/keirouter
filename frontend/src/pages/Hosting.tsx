@@ -844,7 +844,7 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const dokployBase = dokployUrl.trim().replace(/\/+$/, "");
   const hasDokployBase = /^https:\/\/[^\s/]+/.test(dokployBase);
   const anyRegionError = regionErrors.some((e) => e.name || e.price);
-  const anyNodeError = nodeErrors.some((e) => e.name || e.domain || e.capacity) || !!nodesError;
+  const anyNodeError = nodeErrors.some((e) => e.name || e.ip || e.capacity) || !!nodesError;
   const steps: { title: string; short: string; error: boolean }[] = [
     { title: "Koneksi Dokploy", short: "Dokploy", error: keyNeeded },
     { title: "Domain & Cloudflare", short: "Domain", error: !!rootDomainError || tokenNeeded },
