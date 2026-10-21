@@ -46,7 +46,7 @@ func (s *Server) handlePortalDiscounts(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load key")
 		return
 	}
-	chains, err := s.portalKeyChains(r, key, u.PlanID)
+	chains, err := s.keyChains(r, key, u.PlanID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load models")
 		return
@@ -123,7 +123,7 @@ func (s *Server) portalDiscountTarget(w http.ResponseWriter, r *http.Request) (s
 		writeError(w, http.StatusInternalServerError, "failed to load key")
 		return store.PortalUser{}, "", false
 	}
-	chains, err := s.portalKeyChains(r, key, u.PlanID)
+	chains, err := s.keyChains(r, key, u.PlanID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load models")
 		return store.PortalUser{}, "", false
@@ -137,8 +137,9 @@ func (s *Server) portalDiscountTarget(w http.ResponseWriter, r *http.Request) (s
 	return store.PortalUser{}, "", false
 }
 
-// portalKeyChains lists the chains the key may call, sorted by name.
-func (s *Server) portalKeyChains(r *http.Request, key store.APIKey, planID string) ([]store.Chain, error) {
+// keyChains lists the chains the key may call (its own or its plan's model
+// access), sorted by name.
+func (s *Server) keyChains(r *http.Request, key store.APIKey, planID string) ([]store.Chain, error) {
 	ctx := r.Context()
 	chains, err := s.chains.ListByTenant(ctx, tenantOf(key))
 	if err != nil {

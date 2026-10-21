@@ -62,49 +62,51 @@ type turnstileVerifier interface {
 
 // Server holds the gateway's dependencies and HTTP routes.
 type Server struct {
-	cfg                 config.Config
-	log                 *slog.Logger
-	db                  *store.DB
-	identity            *identity.Service
-	auth                *auth.Service
-	audit               *audit.Recorder
-	pipeline            *pipeline.Pipeline
-	conns               *connectors.Registry
-	chains              *store.ChainRepo
-	aliases             *store.AliasRepo
-	accounts            *store.AccountRepo
-	pools               *store.ProxyPoolRepo
-	budgets             *store.BudgetRepo
-	budgetEngine        *budget.Engine
-	usage               *store.UsageRepo
-	resources           *store.ResourceRepo
-	settings            *store.SettingsRepo
-	currencySvc         *currency.Service
-	vault               *vault.Vault
-	codecs              *transform.Registry
-	metrics             *observ.Metrics
-	consoleLog          *consolelog.Buffer
-	cliTools            *clitools.Registry
-	cliToolHome         string
-	frontendDir         string
-	dataDir             string
-	oauthSessions       *oauth.SessionStore
-	cfManager           *cloudflare.Manager
-	tsManager           *tailscale.Manager
-	usageHub            *usagehub.Hub
-	timeoutNotifier     *TimeoutNotifier
-	proxyNotifier       *ProxyNotifier
-	rateLimiter         RateLimitController
-	authFailures        *ipLimiter
-	loginLimiter        *ipLimiter
-	refresher           dispatch.TokenRefresher
-	reloadPricing       func(context.Context) error
-	syncMarketPrices    func(context.Context) (int, error)
-	marketCache         *market.SnapshotCache
-	references          *market.ReferenceCache
-	version             string
-	updates             *update.Checker
-	insightsCache       *ttlCache
+	cfg              config.Config
+	log              *slog.Logger
+	db               *store.DB
+	identity         *identity.Service
+	auth             *auth.Service
+	audit            *audit.Recorder
+	pipeline         *pipeline.Pipeline
+	conns            *connectors.Registry
+	chains           *store.ChainRepo
+	aliases          *store.AliasRepo
+	accounts         *store.AccountRepo
+	pools            *store.ProxyPoolRepo
+	budgets          *store.BudgetRepo
+	budgetEngine     *budget.Engine
+	usage            *store.UsageRepo
+	resources        *store.ResourceRepo
+	settings         *store.SettingsRepo
+	currencySvc      *currency.Service
+	vault            *vault.Vault
+	codecs           *transform.Registry
+	metrics          *observ.Metrics
+	consoleLog       *consolelog.Buffer
+	cliTools         *clitools.Registry
+	cliToolHome      string
+	frontendDir      string
+	dataDir          string
+	oauthSessions    *oauth.SessionStore
+	cfManager        *cloudflare.Manager
+	tsManager        *tailscale.Manager
+	usageHub         *usagehub.Hub
+	timeoutNotifier  *TimeoutNotifier
+	proxyNotifier    *ProxyNotifier
+	rateLimiter      RateLimitController
+	authFailures     *ipLimiter
+	loginLimiter     *ipLimiter
+	refresher        dispatch.TokenRefresher
+	reloadPricing    func(context.Context) error
+	syncMarketPrices func(context.Context) (int, error)
+	marketCache      *market.SnapshotCache
+	references       *market.ReferenceCache
+	version          string
+	updates          *update.Checker
+	insightsCache    *ttlCache
+	// pricing caches the live Surplus price list behind /v1/pricing.
+	pricing             pricingCache
 	liveModels          *liveModelCache
 	guardrails          *guardrails.Engine
 	guardrailRepo       *store.GuardrailRepo
@@ -330,6 +332,7 @@ func (s *Server) routes() chi.Router {
 				"/v1/messages",
 				"/v1/responses",
 				"/v1/models",
+				"/v1/pricing",
 				"/v1/embeddings",
 				"/v1/images/generations",
 				"/v1/images/understanding",
@@ -397,6 +400,9 @@ func (s *Server) routes() chi.Router {
 
 		// Self-service key usage (token budget + cost trace).
 		r.Get("/v1/keys/me/usage", s.handleKeyUsage)
+
+		// Live Surplus prices for the chains this key may call.
+		r.With(s.pricingRateLimiter).Get("/v1/pricing", s.handlePricing)
 	})
 
 	// Public portal endpoints (no auth required)
@@ -438,7 +444,6 @@ func (s *Server) routes() chi.Router {
 		r.Use(s.publicRateLimiter)
 		r.Get("/v1/public/overview", s.publicOverview)
 		r.Get("/v1/public/models", s.publicModels)
-		r.Get("/v1/public/pricing", s.publicPricing)
 		r.Get("/v1/public/notifications", s.publicNotifications)
 		r.Get("/v1/public/bansos", s.publicBansos)
 		r.Get("/v1/public/bansos/key", s.publicBansosKey)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -158,7 +159,7 @@ func extractIP(r *http.Request) string {
 // (limits.login_attempts_per_minute, overridable from the dashboard).
 func (s *Server) loginRateLimiter(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := extractIP(r)
+		ip := s.clientIP(r)
 		if !s.loginLimiter.Allow(ip) {
 			writeError(w, http.StatusTooManyRequests, "rate limit exceeded: too many login attempts, please try again later")
 			return
@@ -167,21 +168,73 @@ func (s *Server) loginRateLimiter(next http.Handler) http.Handler {
 	})
 }
 
-// authFailureIP returns the IP that invalid API keys are counted against, or
-// false for loopback clients: those are the operator's own tools (or a
-// reverse proxy on the same host, which would merge every client into one
-// bucket), not a remote key-guessing client.
-func authFailureIP(r *http.Request) (string, bool) {
-	ip := extractIP(r)
-	if addr, err := netip.ParseAddr(ip); err == nil && addr.IsLoopback() {
+// clientIP is the key per-IP limits count a client against: its address
+// (see clientAddr), with IPv6 grouped per /64 since one host can rotate
+// through a whole /64 at no cost.
+func (s *Server) clientIP(r *http.Request) string {
+	if addr, ok := s.clientAddr(r); ok {
+		return limitKey(addr)
+	}
+	return extractIP(r)
+}
+
+// clientAddr is the client's address. Behind a reverse proxy on the same host
+// or private network (the deploy/Caddyfile setup), RemoteAddr is the proxy
+// for every visitor, so when forwarded headers are trusted it takes the
+// right-most X-Forwarded-For entry: the one the proxy appended, which the
+// client cannot forge.
+func (s *Server) clientAddr(r *http.Request) (netip.Addr, bool) {
+	peer, err := netip.ParseAddr(extractIP(r))
+	if err != nil {
+		return netip.Addr{}, false
+	}
+	peer = peer.Unmap()
+	if s.cfg.Security.TrustForwardedHeaders && (peer.IsLoopback() || peer.IsPrivate()) {
+		if fwd := rightmostForwardedIP(r); fwd.IsValid() {
+			return fwd, true
+		}
+	}
+	return peer, true
+}
+
+// rightmostForwardedIP returns the last valid address in X-Forwarded-For.
+func rightmostForwardedIP(r *http.Request) netip.Addr {
+	values := r.Header.Values("X-Forwarded-For")
+	for i := len(values) - 1; i >= 0; i-- {
+		parts := strings.Split(values[i], ",")
+		for j := len(parts) - 1; j >= 0; j-- {
+			if addr, err := netip.ParseAddr(strings.TrimSpace(parts[j])); err == nil {
+				return addr.Unmap()
+			}
+		}
+	}
+	return netip.Addr{}
+}
+
+// limitKey groups IPv6 addresses by /64 and leaves IPv4 as is.
+func limitKey(addr netip.Addr) string {
+	addr = addr.Unmap()
+	if addr.Is6() {
+		if p, err := addr.Prefix(64); err == nil {
+			return p.String()
+		}
+	}
+	return addr.String()
+}
+
+// authFailureIP returns the client that invalid API keys are counted
+// against, or false for a genuinely local client (the operator's own tools).
+// Clients behind a local reverse proxy are counted by their forwarded IP.
+func (s *Server) authFailureIP(r *http.Request) (string, bool) {
+	if addr, ok := s.clientAddr(r); ok && addr.IsLoopback() {
 		return "", false
 	}
-	return ip, true
+	return s.clientIP(r), true
 }
 
 // recordAuthFailure counts an invalid API key against the client IP.
 func (s *Server) recordAuthFailure(r *http.Request) {
-	if ip, ok := authFailureIP(r); ok {
+	if ip, ok := s.authFailureIP(r); ok {
 		s.authFailures.Record(ip)
 	}
 }
@@ -191,7 +244,7 @@ func (s *Server) recordAuthFailure(r *http.Request) {
 // slowed down. Callers check it only after a key fails verification; valid
 // keys are never refused here. It reports whether the request was rejected.
 func (s *Server) authFailureBlocked(w http.ResponseWriter, r *http.Request) bool {
-	ip, ok := authFailureIP(r)
+	ip, ok := s.authFailureIP(r)
 	if !ok {
 		return false
 	}
@@ -210,7 +263,7 @@ func (s *Server) authFailureBlocked(w http.ResponseWriter, r *http.Request) bool
 func (s *Server) publicRateLimiter(next http.Handler) http.Handler {
 	limiter := newIPLimiter(60, time.Minute)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !limiter.Allow(extractIP(r)) {
+		if !limiter.Allow(s.clientIP(r)) {
 			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
 		}
