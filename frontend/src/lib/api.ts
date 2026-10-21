@@ -2047,8 +2047,51 @@ export async function setPortalDiscountFloor(minDiscountPct: number): Promise<{ 
     body: JSON.stringify({ min_discount_pct: minDiscountPct }),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to save discount floor");
+  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to save minimum discount");
   return data;
+}
+
+/** One model row on the portal's Discount Settings page. */
+export interface PortalDiscountModel {
+  model: string;
+  /** False when no step of the chain can guarantee a discount. */
+  supported: boolean;
+  /** The model's own minimum; null follows the key default. */
+  override_pct: number | null;
+  /** What requests for this model must meet. */
+  effective_pct: number;
+}
+
+export interface PortalDiscounts {
+  default_pct: number;
+  max_pct: number;
+  models: PortalDiscountModel[];
+}
+
+/** The key's default minimum discount and its per-model overrides. */
+export async function fetchPortalDiscounts(): Promise<PortalDiscounts> {
+  const resp = await fetch("/portal/api/discounts");
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to load discount settings");
+  return data;
+}
+
+/** Set one model's minimum discount, overriding the key default. */
+export async function setPortalModelDiscount(model: string, minDiscountPct: number): Promise<void> {
+  const resp = await fetch(`/portal/api/discounts/models/${encodeURIComponent(model)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ min_discount_pct: minDiscountPct }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to save minimum discount");
+}
+
+/** Remove a model's override so it follows the key default again. */
+export async function resetPortalModelDiscount(model: string): Promise<void> {
+  const resp = await fetch(`/portal/api/discounts/models/${encodeURIComponent(model)}`, { method: "DELETE" });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to reset minimum discount");
 }
 
 /** Read-only topup ledger + balance for the signed-in portal user. */

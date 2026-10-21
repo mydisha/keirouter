@@ -36,6 +36,7 @@ const PortalKeyPageRoute = lazy(routeLoaders["/portal-key"]);
 const PortalUsageRoute = lazy(routeLoaders["/portal-usage"]);
 const PortalModelsRoute = lazy(routeLoaders["/portal-models"]);
 const PortalTopupRoute = lazy(routeLoaders["/portal-topup"]);
+const PortalDiscountsRoute = lazy(routeLoaders["/portal-discounts"]);
 const PortalDocsRoute = lazy(routeLoaders["/portal-docs"]);
 const KeyDetailPage = lazy(routeLoaders["/key-detail"]);
 const GuardrailsPage = lazy(routeLoaders["/guardrails"]);
@@ -78,6 +79,7 @@ export function App() {
             <Route path="key" element={<PortalKeyPageRoute />} />
             <Route path="usage" element={<PortalUsageRoute />} />
             <Route path="models" element={<PortalModelsRoute />} />
+            <Route path="discounts" element={<PortalDiscountsRoute />} />
             <Route path="topup" element={<PortalTopupRoute />} />
             <Route path="docs" element={<PortalDocsRoute />} />
           </Route>

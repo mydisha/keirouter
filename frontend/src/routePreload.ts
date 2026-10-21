@@ -34,6 +34,7 @@ export const routeLoaders = {
   "/portal-usage": () => named(import("./pages/portal/PortalUsage"), "PortalUsagePage"),
   "/portal-models": () => named(import("./pages/portal/PortalModels"), "PortalModelsPage"),
   "/portal-topup": () => named(import("./pages/portal/PortalTopup"), "PortalTopupPage"),
+  "/portal-discounts": () => named(import("./pages/portal/PortalDiscounts"), "PortalDiscountsPage"),
   "/portal-docs": () => named(import("./pages/portal/PortalDocs"), "PortalDocsPage"),
   "/guardrails": () => named(import("./pages/Guardrails"), "GuardrailsPage"),
   "/audit": () => named(import("./pages/Audit"), "AuditPage"),

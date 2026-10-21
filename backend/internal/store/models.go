@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/crypto"
@@ -59,6 +60,27 @@ type APIKey struct {
 	// unless the price they pay is at least this many percent below the
 	// official list price. Zero means no floor.
 	MinDiscountPct int
+	// ModelDiscounts holds per-model overrides of MinDiscountPct, keyed by
+	// lower-cased model (chain) name. Only filled on authentication; a value
+	// of 0 turns the minimum off for that model.
+	ModelDiscounts map[string]int
+}
+
+// EffectiveMinDiscount returns the minimum discount that applies to a request
+// for model: the model's override when one exists, else the key default.
+func (k APIKey) EffectiveMinDiscount(model string) int {
+	if pct, ok := k.ModelDiscounts[NormalizeDiscountModel(model)]; ok {
+		return pct
+	}
+	return k.MinDiscountPct
+}
+
+// NormalizeDiscountModel maps a requested model to the key used for
+// per-model discounts: "chain:Name" and "name" address the same chain.
+func NormalizeDiscountModel(model string) string {
+	model = strings.TrimSpace(model)
+	model = strings.TrimPrefix(model, "chain:")
+	return strings.ToLower(model)
 }
 
 // Plan is a reusable template for budget limits and model restrictions.

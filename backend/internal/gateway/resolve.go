@@ -75,12 +75,13 @@ func (s *Server) resolveTargets(ctx context.Context, tenantID, model string) (re
 	if err != nil {
 		return res, err
 	}
-	// The customer's discount floor narrows the route to steps that can
-	// guarantee it.
-	if key, ok := authedKey(ctx); ok && key.MinDiscountPct > 0 {
-		res.Targets, err = applyDiscountFloor(res.Targets, key.MinDiscountPct, model)
-		if err != nil {
-			return resolveResult{}, err
+	// The customer's minimum discount (per model, else the key default)
+	// narrows the route to steps that can guarantee it.
+	if key, ok := authedKey(ctx); ok {
+		if pct := key.EffectiveMinDiscount(model); pct > 0 {
+			if res.Targets, err = applyDiscountFloor(res.Targets, pct, model); err != nil {
+				return resolveResult{}, err
+			}
 		}
 	}
 	return res, nil

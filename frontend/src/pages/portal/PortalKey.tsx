@@ -1,11 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgePercent, Eye, EyeOff, Globe, KeyRound, RefreshCw } from "lucide-react";
+import { Eye, EyeOff, Globe, KeyRound, RefreshCw } from "lucide-react";
 import {
-  fetchPortalKey, fetchPortalStatus, createPortalKey, revealPortalKey, setPortalDiscountFloor,
+  fetchPortalKey, fetchPortalStatus, createPortalKey, revealPortalKey,
   type PortalKeyInfo,
 } from "../../lib/api";
-import { Badge, Button, ErrorCard, Input, Spinner } from "../../components/ui";
+import { Badge, Button, ErrorCard, Spinner } from "../../components/ui";
 import {
   ClaimForm, IdField, PageHeader, PanelCard, RevealPanel, SetupCard, formatDateTime,
 } from "./components";
@@ -20,88 +20,6 @@ function BaseUrlCard() {
       <div className="p-4 sm:p-5">
         <IdField value={baseURL} />
       </div>
-    </PanelCard>
-  );
-}
-
-const MAX_DISCOUNT_FLOOR = 95;
-const EXAMPLE_LIST_PRICE = 10;
-
-// DiscountFloorCard sets the minimum discount every request must meet. The
-// server refuses requests no route can serve at that price, before any charge.
-function DiscountFloorCard({ current }: { current: number }) {
-  const queryClient = useQueryClient();
-  const [value, setValue] = useState(String(current));
-  const save = useMutation({
-    mutationFn: setPortalDiscountFloor,
-    onSuccess: (res) => {
-      setValue(String(res.min_discount_pct));
-      queryClient.invalidateQueries({ queryKey: ["portal-key"] });
-    },
-  });
-
-  const parsed = Number(value);
-  const valid = value.trim() !== "" && Number.isInteger(parsed) && parsed >= 0 && parsed <= MAX_DISCOUNT_FLOOR;
-  const dirty = valid && parsed !== current;
-  // Worked example on a round list price, so the percentage reads as money.
-  const examplePct = valid && parsed > 0 ? parsed : 30;
-  const examplePays = (EXAMPLE_LIST_PRICE * (100 - examplePct)) / 100;
-
-  return (
-    <PanelCard
-      icon={BadgePercent}
-      title="Minimum discount"
-      subtitle="The smallest discount, off the model's official price, that a request must get. Requests that can't get it are refused and not charged."
-      action={current > 0 ? <Badge tone="success">At least {current}% off</Badge> : <Badge>Off</Badge>}
-    >
-      <form
-        className="space-y-2 p-4 sm:p-5"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (dirty) save.mutate(parsed);
-        }}
-      >
-        <label htmlFor="discount-floor" className="block text-[12.5px] font-medium text-fg">
-          Minimum discount (%)
-        </label>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Input
-            id="discount-floor"
-            type="number"
-            inputMode="numeric"
-            min={0}
-            max={MAX_DISCOUNT_FLOOR}
-            step={1}
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            aria-invalid={!valid}
-            aria-describedby="discount-floor-help"
-            className="tabular-nums sm:w-32"
-          />
-          <Button type="submit" disabled={!dirty || save.isPending}>
-            {save.isPending ? "Saving…" : "Save"}
-          </Button>
-        </div>
-        <p id="discount-floor-help" className="text-[12px] text-fg-muted">
-          {valid ? `0 turns it off. Whole numbers from 0 to ${MAX_DISCOUNT_FLOOR}.` : `Enter a whole number from 0 to ${MAX_DISCOUNT_FLOOR}.`}
-        </p>
-        {save.isError && <p role="alert" className="text-[12.5px] text-bad">{(save.error as Error).message}</p>}
-        {save.isSuccess && !dirty && <p role="status" className="text-[12.5px] text-fg-muted">Saved.</p>}
-        <div className="mt-3 space-y-1.5 rounded-md border border-line bg-subtle p-3 text-[12.5px] text-fg-muted">
-          <p className="font-medium text-fg">How it works</p>
-          <p>
-            Example: a model's official price is ${EXAMPLE_LIST_PRICE.toFixed(2)} per 1M tokens. With a{" "}
-            {examplePct}% minimum discount you pay at most{" "}
-            <span className="font-medium text-fg tabular-nums">${examplePays.toFixed(2)}</span> per 1M tokens.
-            That is your final price, fees included.
-          </p>
-          <p>
-            Prices change with the market. When no seller offers the model that cheaply right now, the request is
-            refused with a 422 and you are not charged. Retry after 15 seconds or lower the percentage.
-          </p>
-          <p>The higher the percentage, the cheaper each request and the more often requests are refused.</p>
-        </div>
-      </form>
     </PanelCard>
   );
 }
@@ -282,7 +200,6 @@ export function PortalKeyPage() {
         creating={create.isPending}
         createError={create.error instanceof Error ? create.error.message : ""}
       />
-      <DiscountFloorCard key={keyQuery.data.key_id} current={keyQuery.data.min_discount_pct ?? 0} />
     </div>
   );
 }

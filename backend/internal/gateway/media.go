@@ -92,10 +92,11 @@ func (s *Server) handleEmbeddings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "model is required")
 		return
 	}
-	// Surplus applies no discount floor to embeddings, so a floor on the key
-	// cannot be guaranteed there.
-	if key, _ := authedKey(r.Context()); key.MinDiscountPct > 0 {
-		writeError(w, http.StatusUnprocessableEntity, errDiscountFloor(body.Model, key.MinDiscountPct).Error())
+	// Surplus applies no minimum discount to embeddings, so one set on the
+	// key (or for this model) cannot be guaranteed there.
+	if key, _ := authedKey(r.Context()); key.EffectiveMinDiscount(body.Model) > 0 {
+		pct := key.EffectiveMinDiscount(body.Model)
+		writeError(w, http.StatusUnprocessableEntity, errDiscountFloor(body.Model, pct).Error())
 		return
 	}
 	inputs, err := decodeEmbeddingInput(body.Input)

@@ -189,6 +189,48 @@ func (r *APIKeyRepo) SetMinDiscountPct(ctx context.Context, id string, pct int) 
 	return nil
 }
 
+// ModelDiscounts returns a key's per-model minimum discount overrides, keyed
+// by normalized model name.
+func (r *APIKeyRepo) ModelDiscounts(ctx context.Context, keyID string) (map[string]int, error) {
+	q := r.db.rebind(`SELECT model, min_discount_pct FROM api_key_model_discounts WHERE api_key_id = ?`)
+	rows, err := r.db.sql.QueryContext(ctx, q, keyID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list model discounts: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var model string
+		var pct int
+		if err := rows.Scan(&model, &pct); err != nil {
+			return nil, fmt.Errorf("store: scan model discount: %w", err)
+		}
+		out[NormalizeDiscountModel(model)] = pct
+	}
+	return out, rows.Err()
+}
+
+// SetModelDiscount stores a per-model override of the key's minimum discount.
+func (r *APIKeyRepo) SetModelDiscount(ctx context.Context, keyID, model string, pct int) error {
+	q := r.db.rebind(`INSERT INTO api_key_model_discounts (api_key_id, model, min_discount_pct, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT (api_key_id, model) DO UPDATE SET min_discount_pct = excluded.min_discount_pct, updated_at = excluded.updated_at`)
+	if _, err := r.db.sql.ExecContext(ctx, q, keyID, NormalizeDiscountModel(model), pct, formatTime(time.Now())); err != nil {
+		return fmt.Errorf("store: set model discount: %w", err)
+	}
+	return nil
+}
+
+// DeleteModelDiscount removes a per-model override so the key default applies
+// again. Removing a missing override is not an error.
+func (r *APIKeyRepo) DeleteModelDiscount(ctx context.Context, keyID, model string) error {
+	q := r.db.rebind(`DELETE FROM api_key_model_discounts WHERE api_key_id = ? AND model = ?`)
+	if _, err := r.db.sql.ExecContext(ctx, q, keyID, NormalizeDiscountModel(model)); err != nil {
+		return fmt.Errorf("store: delete model discount: %w", err)
+	}
+	return nil
+}
+
 // SetPlanID updates the plan assignment for a key.
 func (r *APIKeyRepo) SetPlanID(ctx context.Context, id string, planID string) error {
 	q := r.db.rebind(`UPDATE api_keys SET plan_id = ? WHERE id = ?`)

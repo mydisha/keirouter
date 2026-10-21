@@ -128,3 +128,36 @@ func TestServerResolveTargetsAppliesKeyDiscountFloor(t *testing.T) {
 	require.Equal(t, 42, res.Targets[0].MinDiscountPct)
 	require.InDelta(t, 1.2, res.Targets[0].UpstreamCostMult, 1e-9, "bill stays upstream cost × markup")
 }
+
+func TestServerResolveTargetsUsesPerModelDiscount(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	markup := 20.0
+	require.NoError(t, db.Chains().Create(ctx, store.Chain{
+		ID: "glm", TenantID: store.DefaultTenantID, Name: "glm", Strategy: "priority", MarkupPercent: &markup,
+		Steps: []store.ChainStep{
+			{ID: "s1", Provider: "custom-openai-surplus", Model: "glm-5.3", MarketSlug: "surplus-trusted:glm-5.3", Position: 0},
+			{ID: "s2", Provider: "openai", Model: "gpt-4o", Position: 1},
+		},
+		CreatedAt: now, UpdatedAt: now,
+	}))
+	cache := market.NewSnapshotCache()
+	cache.Replace([]market.Model{market.TrustedQuote{
+		Found: true, BestIn: 1, BestOut: 2, CapIn: 3, CapOut: 4, MinDiscountPct: 10, Providers: []string{"zai"},
+	}.Model("glm-5.3")})
+	gw.marketCache = cache
+
+	// The model override (30%) wins over the key default (60%).
+	key := store.APIKey{ID: "k", MinDiscountPct: 60, ModelDiscounts: map[string]int{"glm": 30}}
+	res, err := gw.resolveTargets(context.WithValue(ctx, apiKeyCtxKey, key), store.DefaultTenantID, "chain:glm")
+	require.NoError(t, err)
+	require.Len(t, res.Targets, 1)
+	require.Equal(t, 42, res.Targets[0].MinDiscountPct)
+
+	// An override of 0 turns the default off: the full chain routes again.
+	key.ModelDiscounts = map[string]int{"glm": 0}
+	res, err = gw.resolveTargets(context.WithValue(ctx, apiKeyCtxKey, key), store.DefaultTenantID, "glm")
+	require.NoError(t, err)
+	require.Len(t, res.Targets, 2)
+}

@@ -187,6 +187,12 @@ func (s *Service) Authenticate(ctx context.Context, plaintext string) (store.API
 	if err != nil || !ok {
 		return store.APIKey{}, ErrUnauthorized
 	}
+	// Per-model minimum discounts ride on the cached record so routing needs
+	// no extra query per request. Failing here fails the request: running
+	// without them could charge more than the customer allowed.
+	if rec.ModelDiscounts, err = s.keys.ModelDiscounts(ctx, rec.ID); err != nil {
+		return store.APIKey{}, err
+	}
 
 	// Cache the positive result for subsequent requests.
 	s.cacheAuthResult(lookup, rec)

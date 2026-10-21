@@ -6,10 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -739,32 +736,12 @@ func (s *Server) handlePortalKey(w http.ResponseWriter, r *http.Request) {
 // handlePortalSetDiscountFloor sets the signed-in user's discount floor: a
 // whole percent from 0 (off) to maxDiscountFloorPct.
 func (s *Server) handlePortalSetDiscountFloor(w http.ResponseWriter, r *http.Request) {
-	sub, ok := s.portalSubject(r)
+	u, ok := s.portalUserOrError(w, r)
 	if !ok {
-		writeError(w, http.StatusUnauthorized, "portal session required")
 		return
 	}
-	var body struct {
-		MinDiscountPct json.Number `json:"min_discount_pct"`
-	}
-	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<10))
-	dec.UseNumber()
-	if err := dec.Decode(&body); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	pct, err := strconv.Atoi(body.MinDiscountPct.String())
-	if err != nil || pct < 0 || pct > maxDiscountFloorPct {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("min_discount_pct must be a whole number from 0 to %d", maxDiscountFloorPct))
-		return
-	}
-	u, err := s.db.PortalUsers().GetBySub(r.Context(), portalGoogleSub(sub))
-	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "no api key claimed")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load portal user")
+	pct, ok := decodeDiscountPct(w, r)
+	if !ok {
 		return
 	}
 	if err := s.db.APIKeys().SetMinDiscountPct(r.Context(), u.KeyID, pct); err != nil {
