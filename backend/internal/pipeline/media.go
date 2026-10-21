@@ -461,6 +461,7 @@ func (p *Pipeline) noteMediaFailure(ctx context.Context, a dispatch.Attempt, err
 	if pe.Model == "" {
 		pe.Model = a.Target.Model
 	}
+	pe.MarketRouted = isMarketRouted(a.Target)
 	p.dispatcher.NoteFailure(ctx, a.Account.ID, pe)
 	if p.metrics != nil {
 		p.metrics.RecordUpstreamError(a.Target.Provider, string(pe.Kind))

@@ -703,6 +703,15 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 	if err.Kind == core.ErrClientCanceled || scope == core.FailureScopeRequest {
 		return
 	}
+	// A marketplace seller failed, not our account: cooling the account or
+	// model would block every chain on it while other sellers are fine.
+	// Rate limits, auth and quota still cool down; they are about our key.
+	if err.MarketRouted {
+		switch err.Kind {
+		case core.ErrUpstream, core.ErrTimeout, core.ErrModelUnavailable:
+			return
+		}
+	}
 	// The request did not fit this model (or tripped its safety filter). The
 	// account and model are healthy for every other request: never cool
 	// them down, just let the chain advance.

@@ -100,6 +100,11 @@ type ProviderError struct {
 	// recovers on its own — the user must top up — so the dispatcher parks
 	// the account for a long horizon and flags it for the dashboard.
 	CreditsExhausted bool
+	// MarketRouted marks a failure on a marketplace route (Surplus trusted)
+	// where the marketplace picks a seller per request. A 5xx, timeout or
+	// model-unavailable answer there reflects that seller, which every buyer
+	// key shares, so the dispatcher cools nothing down for it.
+	MarketRouted bool
 	// RetrySystemInstruction requests one centrally routed retry with an
 	// additional system instruction. Connectors use this for completed
 	// responses that are structurally invalid or clearly incomplete.

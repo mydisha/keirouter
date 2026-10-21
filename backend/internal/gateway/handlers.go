@@ -1114,7 +1114,8 @@ func (s *Server) writeProviderErrorAs(w http.ResponseWriter, dialect core.Dialec
 	// how long to back off. It is meaningful for throttling and for upstream
 	// faults where the provider or the dispatcher knows the recovery window.
 	if pe.RetryAfter > 0 && (status == http.StatusTooManyRequests || status == http.StatusBadGateway ||
-		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout) {
+		status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout ||
+		pe.Kind == core.ErrMinDiscountNotMet) {
 		w.Header().Set("Retry-After", fmt.Sprintf("%.0f", math.Ceil(pe.RetryAfter.Seconds())))
 	}
 

@@ -909,6 +909,7 @@ func httpStatusError(provider, model string, resp *http.Response, body []byte) e
 	// request. Prices move, so the next request may pass.
 	case resp.StatusCode == http.StatusNotFound && strings.Contains(string(body), "minimum_discount_not_met"):
 		kind, scope = core.ErrMinDiscountNotMet, core.FailureScopeRequest
+		retryAfter = core.ModelOutOfStockRetryAfter
 	case resp.StatusCode == http.StatusTooManyRequests:
 		// Classify 429 into transient rate-limit vs hard quota exhaustion vs
 		// depleted paid balance. Quota exhaustion gets a much longer cooldown

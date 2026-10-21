@@ -41,18 +41,20 @@ func TestWriteProviderError_ModelOutOfStock(t *testing.T) {
 	}
 }
 
-// An unmet discount floor is a 422 telling the client why, without upstream
-// names or the raw Surplus message.
+// An unmet discount floor is a 422 telling the client why and when to retry,
+// without upstream names or the raw Surplus message.
 func TestWriteProviderError_MinDiscountNotMet(t *testing.T) {
 	pe := &core.ProviderError{
 		Kind: core.ErrMinDiscountNotMet, Scope: core.FailureScopeRequest, Provider: "surplus",
 		StatusCode: http.StatusNotFound,
 		Message:    `{"error":{"code":"minimum_discount_not_met","message":"No marketplace sellers ..."}}`,
+		RetryAfter: core.ModelOutOfStockRetryAfter,
 	}
 	rec := httptest.NewRecorder()
 	(&Server{}).writeProviderErrorAs(rec, core.DialectOpenAI, pe)
 
 	require.Equal(t, http.StatusUnprocessableEntity, rec.Code)
+	require.Equal(t, "15", rec.Header().Get("Retry-After"))
 	body := rec.Body.String()
 	require.Contains(t, body, "minimum discount")
 	require.NotContains(t, strings.ToLower(body), "surplus")

@@ -380,6 +380,7 @@ func TestHTTPStatusError_SurplusMinimumDiscountNotMet(t *testing.T) {
 
 	require.Equal(t, core.ErrMinDiscountNotMet, pe.Kind)
 	require.Equal(t, core.FailureScopeRequest, pe.EffectiveScope())
+	require.Equal(t, core.ModelOutOfStockRetryAfter, pe.RetryAfter)
 	require.True(t, pe.Fallbackable())
 	require.False(t, pe.Retryable())
 }

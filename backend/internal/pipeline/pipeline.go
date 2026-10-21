@@ -34,6 +34,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/health"
 	"github.com/mydisha/keirouter/backend/internal/inflight"
 	"github.com/mydisha/keirouter/backend/internal/limits"
+	"github.com/mydisha/keirouter/backend/internal/market"
 	"github.com/mydisha/keirouter/backend/internal/meter"
 	"github.com/mydisha/keirouter/backend/internal/normalizer"
 	"github.com/mydisha/keirouter/backend/internal/observ"
@@ -1933,7 +1934,14 @@ func providerErrorForAttempt(err error, attempt dispatch.Attempt) *core.Provider
 	if pe.Model == "" {
 		pe.Model = attempt.Target.Model
 	}
+	pe.MarketRouted = isMarketRouted(attempt.Target)
 	return pe
+}
+
+// isMarketRouted reports whether the marketplace, not this account, picks the
+// seller that serves the target.
+func isMarketRouted(t dispatch.Target) bool {
+	return strings.HasPrefix(t.MarketSlug, market.SurplusTrustedPrefix)
 }
 
 func attemptForTargets(targets []dispatch.Target) dispatch.Attempt {

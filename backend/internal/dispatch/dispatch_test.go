@@ -694,3 +694,55 @@ func TestNoteFailureMinDiscountNotMetCoolsNothing(t *testing.T) {
 	require.Len(t, attempts, 1)
 	require.Equal(t, "acc-floor", attempts[0].Account.ID)
 }
+
+// On a marketplace route a 5xx, timeout or model-unavailable answer comes from
+// the seller the marketplace picked, which every buyer key shares. Repeating
+// them must cool neither the account, the model nor the provider circuit, or
+// one bad seller would block every chain on the account with a local 429.
+func TestNoteFailureMarketRoutedSellerFaultsCoolNothing(t *testing.T) {
+	ctx := context.Background()
+	d, db := newDispatchTest(t, testAccount("acc-market", 10))
+
+	for _, kind := range []core.ErrorKind{core.ErrUpstream, core.ErrTimeout, core.ErrModelUnavailable} {
+		for range 5 {
+			d.NoteFailure(ctx, "acc-market", &core.ProviderError{
+				Kind:         kind,
+				Provider:     "openai",
+				Model:        "gemini-3.8-flash",
+				StatusCode:   503,
+				MarketRouted: true,
+			})
+		}
+	}
+
+	account, err := db.Accounts().Get(ctx, "acc-market")
+	require.NoError(t, err)
+	require.Nil(t, account.CooldownUntil)
+	require.Equal(t, 0, account.BackoffLevel)
+	require.Equal(t, time.Duration(0), d.providerCircuitRemaining("openai", time.Now()))
+
+	attempts, err := d.PlanWith(ctx, store.DefaultTenantID,
+		[]Target{{Provider: "openai", Model: "gemini-3.8-flash"}}, core.CapabilitySet{}, PlanOptions{})
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	require.Equal(t, "acc-market", attempts[0].Account.ID)
+}
+
+// A rate limit is about our key even on a marketplace route, so it still
+// cools the account down.
+func TestNoteFailureMarketRoutedRateLimitStillCools(t *testing.T) {
+	ctx := context.Background()
+	d, db := newDispatchTest(t, testAccount("acc-market-rl", 10))
+
+	d.NoteFailure(ctx, "acc-market-rl", &core.ProviderError{
+		Kind:         core.ErrRateLimit,
+		Provider:     "openai",
+		Model:        "gemini-3.8-flash",
+		StatusCode:   429,
+		MarketRouted: true,
+	})
+
+	account, err := db.Accounts().Get(ctx, "acc-market-rl")
+	require.NoError(t, err)
+	require.NotNil(t, account.CooldownUntil)
+}
