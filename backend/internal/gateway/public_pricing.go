@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -133,7 +134,7 @@ func (s *Server) chainPublicPrice(c store.Chain, settings market.Settings) publi
 		}
 		in, out, cached, write = rate.InputPerM, rate.OutputPerM, rate.CachedInputPerM, rate.CacheWritePerM
 		if maxIn, maxOut, ok := chainMaxRate(models, markup); ok {
-			p.MaxInputPerM, p.MaxOutputPerM = ptr(atLeast(maxIn, in)), ptr(atLeast(maxOut, out))
+			p.MaxInputPerM, p.MaxOutputPerM = price(atLeast(maxIn, in)), price(atLeast(maxOut, out))
 		}
 	} else {
 		in, out, cached, write = c.InputPerM, c.OutputPerM, c.CacheReadPerM, c.CacheWritePerM
@@ -142,9 +143,9 @@ func (s *Server) chainPublicPrice(c store.Chain, settings market.Settings) publi
 			in, out, cached, write = price.InputPerM, price.OutputPerM, price.CachedInputPerM, price.CacheWritePerM
 		}
 	}
-	p.InputPerM, p.OutputPerM, p.CachedPerM, p.CacheWritePerM = ptr(in), ptr(out), ptr(cached), ptr(write)
+	p.InputPerM, p.OutputPerM, p.CachedPerM, p.CacheWritePerM = price(in), price(out), price(cached), price(write)
 	if ref, ok := s.chainOfficialPrice(c); ok {
-		p.OfficialInputPerM, p.OfficialOutputPerM = ptr(ref.InputPerM), ptr(ref.OutputPerM)
+		p.OfficialInputPerM, p.OfficialOutputPerM = price(ref.InputPerM), price(ref.OutputPerM)
 		if d := discountPercent(in, out, ref); d > 0 {
 			p.DiscountPct = &d
 		}
@@ -191,7 +192,12 @@ func pricingModelFilter(r *http.Request) ([]string, error) {
 
 var errTooManyPricingModels = badModelError{msg: "at most 50 models per request", status: http.StatusBadRequest}
 
-func ptr[T any](v T) *T { return &v }
+// price rounds a per-1M rate to 9 decimals (a thousandth of a micro-dollar)
+// so float noise such as 0.0013574000000000001 never reaches clients.
+func price(v float64) *float64 {
+	r := math.Round(v*1e9) / 1e9
+	return &r
+}
 
 // atLeast keeps a max price from reading below the current price when float
 // rounding or a safety floor lifts the current one.
