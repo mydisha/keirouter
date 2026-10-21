@@ -52,7 +52,16 @@ type pricingCache struct {
 	mu      sync.Mutex
 	builtAt time.Time
 	byName  map[string]keyPrice
-	asOf    time.Time
+	// idToName maps each priced chain's ID to its lower-cased name.
+	idToName map[string]string
+	asOf     time.Time
+}
+
+// invalidate forces the next read to rebuild the price list.
+func (c *pricingCache) invalidate() {
+	c.mu.Lock()
+	c.builtAt = time.Time{}
+	c.mu.Unlock()
 }
 
 // handlePricing serves GET /v1/pricing[?model=a,b] for an API key: the live
@@ -68,7 +77,7 @@ func (s *Server) handlePricing(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	prices, asOf, err := s.surplusPrices(r.Context())
+	prices, err := s.surplusPrices(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "pricing unavailable")
 		return
@@ -80,11 +89,17 @@ func (s *Server) handlePricing(w http.ResponseWriter, r *http.Request) {
 	}
 	allowed := make(map[string]keyPrice, len(chains))
 	for _, c := range chains {
-		if p, ok := prices[strings.ToLower(c.Name)]; ok {
+		if p, ok := prices.byName[strings.ToLower(c.Name)]; ok {
 			allowed[strings.ToLower(c.Name)] = p
 		}
 	}
+	writePriceList(w, allowed, wanted, prices.asOf)
+}
 
+// writePriceList answers with the allowed prices, narrowed to wanted when
+// it is set. Wanted names outside allowed are listed under "unknown"; when
+// none of them is allowed the answer is a 404.
+func writePriceList(w http.ResponseWriter, allowed map[string]keyPrice, wanted []string, asOf time.Time) {
 	selected := make([]keyPrice, 0, len(allowed))
 	unknown := []string{}
 	if len(wanted) == 0 {
@@ -128,37 +143,47 @@ func (s *Server) handlePricing(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// surplusPrices returns every Surplus-priced chain keyed by lower-cased name,
-// rebuilt at most once per pricingCacheTTL.
-func (s *Server) surplusPrices(ctx context.Context) (map[string]keyPrice, time.Time, error) {
+// priceList is one build of the Surplus price list.
+type priceList struct {
+	byName   map[string]keyPrice // lower-cased chain name -> price
+	idToName map[string]string   // chain ID -> lower-cased chain name
+	asOf     time.Time
+}
+
+// surplusPrices returns every Surplus-priced chain, rebuilt at most once per
+// pricingCacheTTL.
+func (s *Server) surplusPrices(ctx context.Context) (priceList, error) {
 	c := &s.pricing
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.byName != nil && time.Since(c.builtAt) < pricingCacheTTL {
-		return c.byName, c.asOf, nil
+		return priceList{byName: c.byName, idToName: c.idToName, asOf: c.asOf}, nil
 	}
 	chains, err := s.chains.ListByTenant(ctx, adminTenant)
 	if err != nil {
-		return nil, time.Time{}, err
+		return priceList{}, err
 	}
 	settings := market.DefaultSettings()
 	if s.settings != nil {
 		settings = market.LoadSettings(ctx, s.settings.Get)
 	}
 	byName := make(map[string]keyPrice, len(chains))
+	idToName := make(map[string]string, len(chains))
 	for _, ch := range chains {
 		slugs := surplusSlugs(ch)
 		if len(ch.Steps) == 0 || len(slugs) == 0 {
 			continue
 		}
-		byName[strings.ToLower(ch.Name)] = s.surplusChainPrice(ch, slugs, settings)
+		name := strings.ToLower(ch.Name)
+		byName[name] = s.surplusChainPrice(ch, slugs, settings)
+		idToName[ch.ID] = name
 	}
 	var asOf time.Time
 	if s.marketCache != nil {
 		asOf = s.marketCache.FetchedAt()
 	}
-	c.byName, c.asOf, c.builtAt = byName, asOf, time.Now()
-	return byName, asOf, nil
+	c.byName, c.idToName, c.asOf, c.builtAt = byName, idToName, asOf, time.Now()
+	return priceList{byName: byName, idToName: idToName, asOf: asOf}, nil
 }
 
 // surplusSlugs lists the chain's Surplus market slugs (chain-level and per

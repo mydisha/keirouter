@@ -158,6 +158,8 @@ func (s *Server) mountAdmin(r chi.Router) {
 	r.Get("/market-pricing/settings", s.adminGetMarketPricingSettings)
 	r.Patch("/market-pricing/settings", s.adminUpdateMarketPricingSettings)
 	r.Post("/market-pricing/refresh", s.adminRefreshMarketPrices)
+	r.Get("/public-pricing", s.adminGetPublicPricing)
+	r.Put("/public-pricing", s.adminUpdatePublicPricing)
 
 	// Update check (queries GitHub for the latest release + changelog).
 	r.Get("/update/check", s.adminUpdateCheck)

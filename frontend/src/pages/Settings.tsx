@@ -13,9 +13,10 @@ import { ImportExportTab } from "./settings/DataTab";
 import { SystemTab } from "./settings/SystemTab";
 import { NotificationTab } from "./settings/NotificationTab";
 import { CurrencyTab } from "./settings/CurrencyTab";
+import { PublicPricingTab } from "./settings/PublicPricingTab";
 
 // ── Tab definitions ─────────────────────────────────────────────────
-type SettingsTab = "saving" | "routing" | "network" | "branding" | "import-export" | "system" | "notifications" | "currency";
+type SettingsTab = "saving" | "routing" | "network" | "branding" | "import-export" | "system" | "notifications" | "currency" | "public-pricing";
 
 const DEFAULT_TAB: SettingsTab = "saving";
 
@@ -28,6 +29,7 @@ const settingsTabs: { value: SettingsTab; label: string }[] = [
   { value: "system", label: "System" },
   { value: "notifications", label: "Notification" },
   { value: "currency", label: "Currency" },
+  { value: "public-pricing", label: "Public pricing" },
 ];
 
 const validTabs = settingsTabs.map((t) => t.value);
@@ -270,6 +272,7 @@ export function SettingsPage() {
         {tab === "system" && <SystemTab />}
         {tab === "notifications" && <NotificationTab />}
         {tab === "currency" && <CurrencyTab />}
+        {tab === "public-pricing" && <PublicPricingTab />}
       </div>
     </>
   );

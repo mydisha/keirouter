@@ -449,6 +449,10 @@ func (s *Server) routes() chi.Router {
 		r.Get("/v1/public/bansos/key", s.publicBansosKey)
 	})
 
+	// Public live prices for the chains an admin published (off by default).
+	// Its own per-IP budget, separate from the landing page's.
+	r.With(s.publicPricingRateLimiter).Get("/v1/public/pricing", s.publicPricing)
+
 	// Dashboard auth endpoints (login/logout/status) are loopback-guarded but
 	// do not require a session — they are how a session is obtained.
 	// Login has rate limiting to prevent brute force attacks.

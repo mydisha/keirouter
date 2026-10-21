@@ -206,6 +206,27 @@ export interface CurrencyStatus {
   last_error: string;
 }
 
+/** One Surplus-priced chain in the admin Public pricing tab. */
+export interface PublicPricingModel {
+  chain_id: string;
+  model: string;
+  published: boolean;
+  available: boolean;
+  input_per_m: number | null;
+  output_per_m: number | null;
+  max_input_per_m: number | null;
+  max_output_per_m: number | null;
+  discount_pct: number | null;
+}
+
+/** Which chains GET /v1/public/pricing shows. */
+export interface PublicPricingSettings {
+  enabled: boolean;
+  chain_ids: string[];
+  models: PublicPricingModel[];
+  path: string;
+}
+
 export interface MarketPricingSettings {
   auto_refresh: boolean;
   refresh_interval_seconds: number;
@@ -2426,6 +2447,9 @@ export const api = {
   updateMarketPricingSettings: (patch: Partial<Pick<MarketPricingSettings, "auto_refresh" | "refresh_interval_seconds" | "markup_percent" | "safety_margin_enabled" | "safety_margin_percent" | "surplus_fallback_depth">>) =>
     request<MarketPricingSettings>("PATCH", "/market-pricing/settings", patch),
   refreshMarketPrices: () => request<{ synced: number; last_fetched_at: string }>("POST", "/market-pricing/refresh", {}),
+  publicPricing: () => request<PublicPricingSettings>("GET", "/public-pricing"),
+  updatePublicPricing: (body: { enabled: boolean; chain_ids: string[] }) =>
+    request<PublicPricingSettings>("PUT", "/public-pricing", body),
 
   testHeadroom: (body?: { url?: string; timeout_ms?: number }) =>
     request<HeadroomTestResult>("POST", "/settings/headroom-test", body ?? {}),
