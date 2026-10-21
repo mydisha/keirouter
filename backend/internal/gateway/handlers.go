@@ -181,6 +181,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 				title = fmt.Sprintf("Rejected · model %q is sold out", req.Model)
 				hint = "No market offer currently clears this chain's price floor. It becomes available again once one does."
 			}
+			if status == http.StatusUnprocessableEntity {
+				title = fmt.Sprintf("Rejected · model %q cannot meet the key's discount floor", req.Model)
+				hint = "The key has a minimum discount set in the portal, and no step of this chain can guarantee it (only surplus-trusted steps can)."
+			}
 			tr.reject(status, title, bad.Error(), hint)
 			writeError(w, status, bad.Error())
 			return
@@ -1219,6 +1223,8 @@ func providerErrorStatus(pe *core.ProviderError) int {
 		return http.StatusNotFound
 	case core.ErrModelOutOfStock:
 		return http.StatusServiceUnavailable
+	case core.ErrMinDiscountNotMet:
+		return http.StatusUnprocessableEntity
 	case core.ErrAuth:
 		return http.StatusUnauthorized
 	case core.ErrRateLimit:

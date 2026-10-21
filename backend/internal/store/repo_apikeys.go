@@ -60,7 +60,7 @@ func (r *APIKeyRepo) insert(ctx context.Context, ex sqlExec, k APIKey) error {
 // caller still verifies the argon2 hash against the presented plaintext.
 func (r *APIKeyRepo) FindByLookup(ctx context.Context, lookup string) (APIKey, error) {
 	q := r.db.rebind(`
-		SELECT id, tenant_id, project_id, plan_id, name, key_hash, lookup_hash, display, scopes, disabled, last_used_at, created_at
+		SELECT id, tenant_id, project_id, plan_id, name, key_hash, lookup_hash, display, scopes, disabled, last_used_at, created_at, min_discount_pct
 		FROM api_keys WHERE lookup_hash = ?`)
 	return r.scanOne(r.db.sql.QueryRowContext(ctx, q, lookup))
 }
@@ -68,7 +68,7 @@ func (r *APIKeyRepo) FindByLookup(ctx context.Context, lookup string) (APIKey, e
 // Get returns a single API key by id.
 func (r *APIKeyRepo) Get(ctx context.Context, id string) (APIKey, error) {
 	q := r.db.rebind(`
-		SELECT id, tenant_id, project_id, plan_id, name, key_hash, lookup_hash, display, scopes, disabled, last_used_at, created_at
+		SELECT id, tenant_id, project_id, plan_id, name, key_hash, lookup_hash, display, scopes, disabled, last_used_at, created_at, min_discount_pct
 		FROM api_keys WHERE id = ?`)
 	return r.scanOne(r.db.sql.QueryRowContext(ctx, q, id))
 }
@@ -76,7 +76,7 @@ func (r *APIKeyRepo) Get(ctx context.Context, id string) (APIKey, error) {
 // List returns all keys for a tenant, newest first.
 func (r *APIKeyRepo) List(ctx context.Context, tenantID string) ([]APIKey, error) {
 	q := r.db.rebind(`
-		SELECT id, tenant_id, project_id, plan_id, name, key_hash, lookup_hash, display, scopes, disabled, last_used_at, created_at
+		SELECT id, tenant_id, project_id, plan_id, name, key_hash, lookup_hash, display, scopes, disabled, last_used_at, created_at, min_discount_pct
 		FROM api_keys WHERE tenant_id = ? ORDER BY created_at DESC`)
 	rows, err := r.db.sql.QueryContext(ctx, q, tenantID)
 	if err != nil {
@@ -133,7 +133,7 @@ func (r *APIKeyRepo) scanOne(row *sql.Row) (APIKey, error) {
 		createdRaw string
 	)
 	err := row.Scan(&k.ID, &k.TenantID, &projectID, &planID, &k.Name, &k.KeyHash, &k.LookupHash,
-		&k.Display, &k.Scopes, &disabled, &lastUsed, &createdRaw)
+		&k.Display, &k.Scopes, &disabled, &lastUsed, &createdRaw, &k.MinDiscountPct)
 	if errors.Is(err, sql.ErrNoRows) {
 		return APIKey{}, ErrNotFound
 	}
@@ -161,7 +161,7 @@ func (r *APIKeyRepo) scanRows(rows *sql.Rows) (APIKey, error) {
 		createdRaw string
 	)
 	err := rows.Scan(&k.ID, &k.TenantID, &projectID, &planID, &k.Name, &k.KeyHash, &k.LookupHash,
-		&k.Display, &k.Scopes, &disabled, &lastUsed, &createdRaw)
+		&k.Display, &k.Scopes, &disabled, &lastUsed, &createdRaw, &k.MinDiscountPct)
 	if err != nil {
 		return APIKey{}, fmt.Errorf("store: scan api key: %w", err)
 	}
@@ -174,6 +174,19 @@ func (r *APIKeyRepo) scanRows(rows *sql.Rows) (APIKey, error) {
 		k.LastUsedAt = &t
 	}
 	return k, nil
+}
+
+// SetMinDiscountPct sets a key's discount floor (0 = none).
+func (r *APIKeyRepo) SetMinDiscountPct(ctx context.Context, id string, pct int) error {
+	q := r.db.rebind(`UPDATE api_keys SET min_discount_pct = ? WHERE id = ?`)
+	res, err := r.db.sql.ExecContext(ctx, q, pct, id)
+	if err != nil {
+		return fmt.Errorf("store: set min discount: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // SetPlanID updates the plan assignment for a key.

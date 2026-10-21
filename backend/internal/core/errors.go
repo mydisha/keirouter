@@ -42,6 +42,11 @@ const (
 	// stock is shared by every buyer key, so nothing is cooled down: the chain
 	// advances and the client is told to retry after ModelOutOfStockRetryAfter.
 	ErrModelOutOfStock ErrorKind = "model_out_of_stock"
+	// ErrMinDiscountNotMet: a marketplace refused the request because no
+	// seller met the X-Min-Discount floor (Surplus minimum_discount_not_met).
+	// Nothing was charged and nothing is at fault on our side: the chain
+	// advances with nothing cooled down.
+	ErrMinDiscountNotMet ErrorKind = "min_discount_not_met"
 	// ErrCapability: chosen model lacks a required capability. Skip, no surface.
 	ErrCapability ErrorKind = "capability"
 	// ErrBudgetBlocked: KeiRouter budget guard rejected before dispatch.

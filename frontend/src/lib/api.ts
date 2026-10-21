@@ -1860,6 +1860,8 @@ export interface PortalKeyInfo {
   plan_name?: string;
   /** True when the server stored a sealed plaintext and reveal is possible. */
   revealable?: boolean;
+  /** Requests must be at least this % below the official price; 0 = off. */
+  min_discount_pct?: number;
 }
 
 export interface PortalTopup {
@@ -2035,6 +2037,18 @@ export async function revealPortalKey(): Promise<string> {
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to reveal key");
   return data.key;
+}
+
+/** Set the signed-in portal user's discount floor (0 turns it off). */
+export async function setPortalDiscountFloor(minDiscountPct: number): Promise<{ min_discount_pct: number }> {
+  const resp = await fetch("/portal/api/key/discount-floor", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ min_discount_pct: minDiscountPct }),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(data.error?.message || data.error || "Failed to save discount floor");
+  return data;
 }
 
 /** Read-only topup ledger + balance for the signed-in portal user. */

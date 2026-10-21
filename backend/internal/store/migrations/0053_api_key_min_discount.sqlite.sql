@@ -1,0 +1,1 @@
+ALTER TABLE api_keys ADD COLUMN min_discount_pct INTEGER NOT NULL DEFAULT 0;

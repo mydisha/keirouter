@@ -368,3 +368,18 @@ func TestHTTPStatusError_Plain503StaysUpstream(t *testing.T) {
 	require.Equal(t, core.ErrUpstream, pe.Kind)
 	require.Equal(t, core.FailureScopeProvider, pe.EffectiveScope())
 }
+
+// Surplus answers 404 minimum_discount_not_met when the X-Min-Discount floor
+// excluded every seller. Nothing was charged and nothing on our side is at
+// fault, so nothing cools down and the chain advances.
+func TestHTTPStatusError_SurplusMinimumDiscountNotMet(t *testing.T) {
+	resp := &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{}}
+	body := `{"error":{"type":"invalid_request_error","code":"minimum_discount_not_met","message":"No marketplace sellers currently meet the minimum 42% estimated discount for 'glm-5.3'. Best otherwise-eligible estimated discount is 18.4%."}}`
+
+	pe := core.AsProviderError(httpStatusError("surplus", "glm-5.3", resp, []byte(body)))
+
+	require.Equal(t, core.ErrMinDiscountNotMet, pe.Kind)
+	require.Equal(t, core.FailureScopeRequest, pe.EffectiveScope())
+	require.True(t, pe.Fallbackable())
+	require.False(t, pe.Retryable())
+}

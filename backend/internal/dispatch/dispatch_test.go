@@ -663,3 +663,34 @@ func TestNoteFailureModelOutOfStockCoolsNothing(t *testing.T) {
 	require.Len(t, attempts, 1)
 	require.Equal(t, "acc-stock", attempts[0].Account.ID)
 }
+
+// A request refused by the discount floor says nothing about our key either:
+// repeating it 20 times must leave the account, the model and the provider
+// circuit untouched, so the next request still reaches the upstream and the
+// client keeps getting the same floor message instead of a local 429.
+func TestNoteFailureMinDiscountNotMetCoolsNothing(t *testing.T) {
+	ctx := context.Background()
+	d, db := newDispatchTest(t, testAccount("acc-floor", 10))
+
+	for range 20 {
+		d.NoteFailure(ctx, "acc-floor", &core.ProviderError{
+			Kind:       core.ErrMinDiscountNotMet,
+			Scope:      core.FailureScopeRequest,
+			Provider:   "openai",
+			Model:      "gemini-3-6-flash",
+			StatusCode: 404,
+		})
+	}
+
+	account, err := db.Accounts().Get(ctx, "acc-floor")
+	require.NoError(t, err)
+	require.Nil(t, account.CooldownUntil)
+	require.Equal(t, 0, account.BackoffLevel)
+	require.Equal(t, time.Duration(0), d.providerCircuitRemaining("openai", time.Now()))
+
+	attempts, err := d.PlanWith(ctx, store.DefaultTenantID,
+		[]Target{{Provider: "openai", Model: "gemini-3-6-flash"}}, core.CapabilitySet{}, PlanOptions{})
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	require.Equal(t, "acc-floor", attempts[0].Account.ID)
+}

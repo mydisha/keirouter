@@ -71,7 +71,19 @@ func (s *Server) resolveTargets(ctx context.Context, tenantID, model string) (re
 	if s.settings != nil {
 		markup = market.LoadSettings(ctx, s.settings.Get).MarkupPercent
 	}
-	return resolveTargetsWith(ctx, s.chains, s.aliases, s.latencyReader(), s.marketCache, markup, tenantID, model)
+	res, err := resolveTargetsWith(ctx, s.chains, s.aliases, s.latencyReader(), s.marketCache, markup, tenantID, model)
+	if err != nil {
+		return res, err
+	}
+	// The customer's discount floor narrows the route to steps that can
+	// guarantee it.
+	if key, ok := authedKey(ctx); ok && key.MinDiscountPct > 0 {
+		res.Targets, err = applyDiscountFloor(res.Targets, key.MinDiscountPct, model)
+		if err != nil {
+			return resolveResult{}, err
+		}
+	}
+	return res, nil
 }
 
 func resolveTargetsWith(ctx context.Context, chains ChainSource, aliases AliasSource, latency LatencyReader, cache *market.SnapshotCache, markupPercent float64, tenantID, model string) (resolveResult, error) {

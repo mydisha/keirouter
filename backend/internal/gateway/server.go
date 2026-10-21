@@ -419,6 +419,7 @@ func (s *Server) routes() chi.Router {
 		r.Get("/portal/api/usage", s.handlePortalUsage)
 		r.Get("/portal/api/key", s.handlePortalKey)
 		r.Get("/portal/api/key/reveal", s.handlePortalKeyReveal)
+		r.Put("/portal/api/key/discount-floor", s.handlePortalSetDiscountFloor)
 		r.Get("/portal/api/topups", s.handlePortalTopups)
 		r.Post("/portal/api/topup/orders", s.handlePortalCreateOrder)
 		r.Get("/portal/api/topup/orders", s.handlePortalListOrders)

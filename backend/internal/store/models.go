@@ -55,6 +55,10 @@ type APIKey struct {
 	Disabled   bool
 	LastUsedAt *time.Time
 	CreatedAt  time.Time
+	// MinDiscountPct is the customer's discount floor: requests are refused
+	// unless the price they pay is at least this many percent below the
+	// official list price. Zero means no floor.
+	MinDiscountPct int
 }
 
 // Plan is a reusable template for budget limits and model restrictions.

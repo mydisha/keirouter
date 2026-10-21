@@ -1,11 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, Globe, KeyRound, RefreshCw } from "lucide-react";
+import { BadgePercent, Eye, EyeOff, Globe, KeyRound, RefreshCw } from "lucide-react";
 import {
-  fetchPortalKey, fetchPortalStatus, createPortalKey, revealPortalKey,
+  fetchPortalKey, fetchPortalStatus, createPortalKey, revealPortalKey, setPortalDiscountFloor,
   type PortalKeyInfo,
 } from "../../lib/api";
-import { Badge, Button, ErrorCard, Spinner } from "../../components/ui";
+import { Badge, Button, ErrorCard, Input, Spinner } from "../../components/ui";
 import {
   ClaimForm, IdField, PageHeader, PanelCard, RevealPanel, SetupCard, formatDateTime,
 } from "./components";
@@ -20,6 +20,70 @@ function BaseUrlCard() {
       <div className="p-4 sm:p-5">
         <IdField value={baseURL} />
       </div>
+    </PanelCard>
+  );
+}
+
+const MAX_DISCOUNT_FLOOR = 95;
+
+// DiscountFloorCard sets the minimum discount every request must meet. The
+// server refuses requests no route can serve at that price, before any charge.
+function DiscountFloorCard({ current }: { current: number }) {
+  const queryClient = useQueryClient();
+  const [value, setValue] = useState(String(current));
+  const save = useMutation({
+    mutationFn: setPortalDiscountFloor,
+    onSuccess: (res) => {
+      setValue(String(res.min_discount_pct));
+      queryClient.invalidateQueries({ queryKey: ["portal-key"] });
+    },
+  });
+
+  const parsed = Number(value);
+  const valid = value.trim() !== "" && Number.isInteger(parsed) && parsed >= 0 && parsed <= MAX_DISCOUNT_FLOOR;
+  const dirty = valid && parsed !== current;
+
+  return (
+    <PanelCard
+      icon={BadgePercent}
+      title="Minimum discount"
+      subtitle="Only run requests that cost at least this much less than the model's official price. Requests that can't meet it are refused and not charged."
+      action={current > 0 ? <Badge tone="success">{current}% floor</Badge> : <Badge>Off</Badge>}
+    >
+      <form
+        className="space-y-2 p-4 sm:p-5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (dirty) save.mutate(parsed);
+        }}
+      >
+        <label htmlFor="discount-floor" className="block text-[12.5px] font-medium text-fg">
+          Minimum discount (%)
+        </label>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <Input
+            id="discount-floor"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={MAX_DISCOUNT_FLOOR}
+            step={1}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            aria-invalid={!valid}
+            aria-describedby="discount-floor-help"
+            className="tabular-nums sm:w-32"
+          />
+          <Button type="submit" disabled={!dirty || save.isPending}>
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
+        <p id="discount-floor-help" className="text-[12px] text-fg-muted">
+          {valid ? `0 turns it off. Whole numbers from 0 to ${MAX_DISCOUNT_FLOOR}.` : `Enter a whole number from 0 to ${MAX_DISCOUNT_FLOOR}.`}
+        </p>
+        {save.isError && <p role="alert" className="text-[12.5px] text-bad">{(save.error as Error).message}</p>}
+        {save.isSuccess && !dirty && <p role="status" className="text-[12.5px] text-fg-muted">Saved.</p>}
+      </form>
     </PanelCard>
   );
 }
@@ -200,6 +264,7 @@ export function PortalKeyPage() {
         creating={create.isPending}
         createError={create.error instanceof Error ? create.error.message : ""}
       />
+      <DiscountFloorCard key={keyQuery.data.key_id} current={keyQuery.data.min_discount_pct ?? 0} />
     </div>
   );
 }

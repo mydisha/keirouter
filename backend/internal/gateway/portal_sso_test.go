@@ -739,3 +739,58 @@ func TestPortalUsageRecentCostKeepsNanoPrecision(t *testing.T) {
 	require.Len(t, recent, 1)
 	require.InDelta(t, 0.00000125, recent[0]["cost_usd"], 1e-15)
 }
+
+// The signed-in user reads and sets their key's discount floor; values outside
+// 0..95 are refused.
+func TestPortalDiscountFloor(t *testing.T) {
+	srv := newPortalTestServer(t)
+	ctx := context.Background()
+	issued, err := srv.identity.Create(ctx, store.DefaultTenantID, "", "portal-key")
+	require.NoError(t, err)
+	tok, err := srv.auth.IssuePortalSession("portal:sub-floor", "f@example.com")
+	require.NoError(t, err)
+	claimReq := httptest.NewRequest(http.MethodPost, "/portal/auth/claim",
+		strings.NewReader(`{"api_key":"`+issued.Plaintext+`"}`))
+	claimReq.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+	claimRec := httptest.NewRecorder()
+	srv.handlePortalClaim(claimRec, claimReq)
+	require.Equal(t, http.StatusOK, claimRec.Code)
+
+	put := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPut, "/portal/api/key/discount-floor", strings.NewReader(body))
+		req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+		rec := httptest.NewRecorder()
+		srv.handlePortalSetDiscountFloor(rec, req)
+		return rec
+	}
+	readFloor := func() any {
+		req := httptest.NewRequest(http.MethodGet, "/portal/api/key", nil)
+		req.AddCookie(&http.Cookie{Name: portalSessionCookie, Value: tok})
+		rec := httptest.NewRecorder()
+		srv.handlePortalKey(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code)
+		var meta map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &meta))
+		return meta["min_discount_pct"]
+	}
+
+	require.Equal(t, float64(0), readFloor())
+	rec := put(`{"min_discount_pct":30}`)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, float64(30), readFloor())
+	key, err := srv.identity.Get(ctx, issued.Record.ID)
+	require.NoError(t, err)
+	require.Equal(t, 30, key.MinDiscountPct)
+
+	for _, bad := range []string{`{"min_discount_pct":96}`, `{"min_discount_pct":-1}`, `{"min_discount_pct":12.5}`, `nope`} {
+		require.Equal(t, http.StatusBadRequest, put(bad).Code, bad)
+	}
+	require.Equal(t, http.StatusOK, put(`{"min_discount_pct":0}`).Code)
+	require.Equal(t, float64(0), readFloor())
+
+	// Without a session nothing changes.
+	req := httptest.NewRequest(http.MethodPut, "/portal/api/key/discount-floor", strings.NewReader(`{"min_discount_pct":10}`))
+	rec = httptest.NewRecorder()
+	srv.handlePortalSetDiscountFloor(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+}

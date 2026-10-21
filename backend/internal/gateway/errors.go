@@ -137,6 +137,8 @@ func sanitizeUpstreamError(err error) string {
 		return "requested upstream model is unavailable"
 	case core.ErrModelOutOfStock:
 		return "model is temporarily out of stock, please retry in 30 seconds"
+	case core.ErrMinDiscountNotMet:
+		return "no offer for this model currently meets the minimum discount; retry later or lower your discount floor"
 	case core.ErrBudgetBlocked:
 		return "request blocked by budget policy"
 	case core.ErrPolicyBlocked:

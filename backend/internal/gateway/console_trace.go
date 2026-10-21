@@ -321,6 +321,8 @@ func failureReason(pe *core.ProviderError, provider string) string {
 		return "model unavailable" + status
 	case core.ErrModelOutOfStock:
 		return "model out of stock (no seller right now)" + status
+	case core.ErrMinDiscountNotMet:
+		return "no offer meets the minimum discount" + status
 	case core.ErrCapability:
 		return "no target supports this request"
 	case core.ErrBudgetBlocked:
@@ -368,6 +370,8 @@ func failureHint(pe *core.ProviderError) string {
 		h = "The model is not served by any active account. Check the model name, the account's model list, or whether the provider retired it."
 	case core.ErrModelOutOfStock:
 		h = "The marketplace has no healthy seller for this model right now. Nothing was cooled down: the chain moved on, and the client was told to retry in 30 seconds. Add a fallback model to the chain to cover these gaps."
+	case core.ErrMinDiscountNotMet:
+		h = "No seller met the X-Min-Discount floor (the chain's fallback depth, or the key's discount floor from the portal). Nothing was charged or cooled down."
 	case core.ErrCapability:
 		h = "The request needs a feature (tools, vision, audio, ...) that none of the target models supports."
 	case core.ErrBudgetBlocked:
