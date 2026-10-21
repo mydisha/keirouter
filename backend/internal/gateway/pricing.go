@@ -57,18 +57,11 @@ type pricingCache struct {
 	asOf     time.Time
 }
 
-// invalidate forces the next read to rebuild the price list.
-func (c *pricingCache) invalidate() {
-	c.mu.Lock()
-	c.builtAt = time.Time{}
-	c.mu.Unlock()
-}
-
 // handlePricing serves GET /v1/pricing[?model=a,b] for an API key: the live
 // Surplus price of each chain the key may call (or only the named ones),
 // from the in-memory market snapshot, so it is as fresh as the last market
 // sync (as_of). Chains not priced by Surplus and chains the key may not call
-// are left out; names asked for but not listed come back under "unknown",
+// are left out; names asked for but not listed are skipped,
 // and naming only such models is a 404.
 func (s *Server) handlePricing(w http.ResponseWriter, r *http.Request) {
 	key, _ := authedKey(r.Context())
@@ -97,7 +90,7 @@ func (s *Server) handlePricing(w http.ResponseWriter, r *http.Request) {
 }
 
 // writePriceList answers with the allowed prices, narrowed to wanted when
-// it is set. Wanted names outside allowed are listed under "unknown"; when
+// it is set. Wanted names outside allowed are skipped; when
 // none of them is allowed the answer is a 404.
 func writePriceList(w http.ResponseWriter, allowed map[string]keyPrice, wanted []string, asOf time.Time) {
 	selected := make([]keyPrice, 0, len(allowed))
@@ -121,7 +114,7 @@ func writePriceList(w http.ResponseWriter, allowed map[string]keyPrice, wanted [
 			}
 		}
 		if len(selected) == 0 {
-			writeError(w, http.StatusNotFound, "no Surplus price for model: "+strings.Join(unknown, ", "))
+			writeError(w, http.StatusNotFound, "model not available: "+strings.Join(unknown, ", "))
 			return
 		}
 	}
@@ -134,12 +127,10 @@ func writePriceList(w http.ResponseWriter, allowed map[string]keyPrice, wanted [
 	// Prices move with every market sync; never let a proxy hold them.
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, map[string]any{
-		"source":   "surplus",
 		"currency": "USD",
 		"unit":     "per_1m_tokens",
 		"as_of":    asOfJSON,
 		"models":   selected,
-		"unknown":  unknown,
 	})
 }
 

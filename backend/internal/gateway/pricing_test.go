@@ -18,10 +18,8 @@ import (
 )
 
 type pricingResp struct {
-	Source  string           `json:"source"`
 	AsOf    *string          `json:"as_of"`
 	Models  []map[string]any `json:"models"`
-	Unknown []string         `json:"unknown"`
 }
 
 // pricingFixture is a gateway with three chains, a live Surplus snapshot and
@@ -89,7 +87,8 @@ func TestPricingSurplusOnlyAndKeyScoped(t *testing.T) {
 	rec, out := getPricing(t, h, key, "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, "no-store", rec.Header().Get("Cache-Control"))
-	require.Equal(t, "surplus", out.Source)
+	require.NotContains(t, rec.Body.String(), `"source"`)
+	require.NotContains(t, rec.Body.String(), `"unknown"`)
 	require.NotNil(t, out.AsOf)
 	require.Len(t, out.Models, 1, "fixed is not Surplus-priced; luna is not allowed for this key")
 
@@ -105,11 +104,11 @@ func TestPricingSurplusOnlyAndKeyScoped(t *testing.T) {
 		require.NotContains(t, glm, hidden)
 	}
 
-	// Asking for models outside the key's Surplus chains lists them as unknown.
+	// Models outside the key's Surplus chains are skipped.
 	rec, out = getPricing(t, h, key, "?model=chain:GLM-trusted,luna-trusted,fixed")
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Len(t, out.Models, 1)
-	require.Equal(t, []string{"luna-trusted", "fixed"}, out.Unknown)
+	require.Equal(t, "glm-trusted", out.Models[0]["model"], "unlisted names are skipped")
 	rec, _ = getPricing(t, h, key, "?model=luna-trusted")
 	require.Equal(t, http.StatusNotFound, rec.Code)
 

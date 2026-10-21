@@ -67,15 +67,16 @@ func TestPublicPricingOnlyPublishedChains(t *testing.T) {
 
 	rec, out := getPublicPricing(t, h, "203.0.113.1", "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-	require.Equal(t, "surplus", out.Source)
+	require.NotContains(t, rec.Body.String(), `"source"`)
+	require.NotContains(t, rec.Body.String(), `"unknown"`)
 	require.Len(t, out.Models, 1)
 	require.Equal(t, "glm-trusted", out.Models[0]["model"])
 	require.InDelta(t, 0.25, out.Models[0]["input_per_m"], 1e-9)
 
-	// Unpublished chains are unknown, whatever the caller asks for.
+	// Unpublished chains are skipped, whatever the caller asks for.
 	rec, out = getPublicPricing(t, h, "203.0.113.1", "?model=glm-trusted,luna-trusted,fixed")
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Equal(t, []string{"luna-trusted", "fixed"}, out.Unknown)
+	require.Equal(t, "glm-trusted", out.Models[0]["model"], "unlisted names are skipped")
 	rec, _ = getPublicPricing(t, h, "203.0.113.1", "?model=luna-trusted")
 	require.Equal(t, http.StatusNotFound, rec.Code)
 
