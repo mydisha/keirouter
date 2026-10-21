@@ -161,3 +161,36 @@ func TestServerResolveTargetsUsesPerModelDiscount(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, res.Targets, 2)
 }
+
+// A chain with no step that can guarantee a discount is exempt from the
+// customer's minimum: it routes at its set price instead of being refused.
+// A trusted chain whose quote is momentarily missing still enforces it.
+func TestServerResolveTargetsExemptsChainsWithoutDiscountGuarantee(t *testing.T) {
+	db, gw := newPublicTestGatewayWithDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	require.NoError(t, db.Chains().Create(ctx, store.Chain{
+		ID: "plain", TenantID: store.DefaultTenantID, Name: "plain", Strategy: "priority", InputPerM: 1, OutputPerM: 2,
+		Steps:     []store.ChainStep{{ID: "p1", Provider: "openai", Model: "gpt-4o", Position: 0}},
+		CreatedAt: now, UpdatedAt: now,
+	}))
+	require.NoError(t, db.Chains().Create(ctx, store.Chain{
+		ID: "glm", TenantID: store.DefaultTenantID, Name: "glm", Strategy: "priority",
+		FallbackProvider: "openai", FallbackModel: "gpt-4o",
+		Steps:     []store.ChainStep{{ID: "g1", Provider: "custom-openai-surplus", Model: "glm-5.3", MarketSlug: "surplus-trusted:glm-5.3", Position: 0}},
+		CreatedAt: now, UpdatedAt: now,
+	}))
+	gw.marketCache = market.NewSnapshotCache() // no live quotes at all
+
+	keyed := context.WithValue(ctx, apiKeyCtxKey, store.APIKey{ID: "k", MinDiscountPct: 50})
+	res, err := gw.resolveTargets(keyed, store.DefaultTenantID, "plain")
+	require.NoError(t, err, "no guarantee: the minimum does not apply")
+	require.Len(t, res.Targets, 1)
+	require.Equal(t, 0, res.Targets[0].MinDiscountPct)
+
+	_, err = gw.resolveTargets(keyed, store.DefaultTenantID, "glm")
+	require.Error(t, err, "trusted chain with no live quote must not fall through to its fallback")
+	bad, ok := err.(badModelError)
+	require.True(t, ok)
+	require.Equal(t, http.StatusUnprocessableEntity, bad.status)
+}

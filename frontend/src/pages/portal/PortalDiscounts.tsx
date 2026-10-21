@@ -41,7 +41,7 @@ function DefaultDiscountCard({ current, max }: { current: number; max: number })
     <PanelCard
       icon={BadgePercent}
       title="Default minimum discount"
-      subtitle="The smallest discount, off the model's official price, that a request must get. It applies to every model below that has no setting of its own."
+      subtitle="The smallest discount, off the model's official price, that a request must get. It applies to every model below that has no setting of its own, except models without a discount guarantee."
       action={current > 0 ? <Badge tone="success">At least {current}% off</Badge> : <Badge>Off</Badge>}
     >
       <form
@@ -114,8 +114,31 @@ function ModelDiscountRow({ row, defaultPct, max }: { row: PortalDiscountModel; 
   const dirty = parsed !== null && (own ? parsed !== row.override_pct : parsed !== defaultPct);
   const inputId = `discount-${row.model}`;
   const helpId = `${inputId}-help`;
-  const blocked = !row.supported && row.effective_pct > 0;
   const error = save.error ?? reset.error;
+
+  if (!row.supported) {
+    // No discount guarantee: the model always runs at its set price, so it
+    // takes no minimum and the default never reaches it.
+    return (
+      <li className="flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-start sm:justify-between sm:px-5">
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor={inputId} className="break-all font-mono text-[13px] font-medium text-fg">{row.model}</label>
+            <Badge tone="warning">No discount guarantee</Badge>
+          </div>
+          <p id={helpId} className="text-[12px] text-fg-muted">
+            Runs at its set price. A minimum discount doesn't apply to this model.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <div className="w-24 shrink-0">
+            <Input id={inputId} type="number" value="0" disabled readOnly aria-describedby={helpId} className="tabular-nums" />
+          </div>
+          <span className="text-[12.5px] text-fg-muted" aria-hidden="true">%</span>
+        </div>
+      </li>
+    );
+  }
 
   return (
     <li className="flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-start sm:justify-between sm:px-5">
@@ -123,14 +146,10 @@ function ModelDiscountRow({ row, defaultPct, max }: { row: PortalDiscountModel; 
         <div className="flex flex-wrap items-center gap-2">
           <label htmlFor={inputId} className="break-all font-mono text-[13px] font-medium text-fg">{row.model}</label>
           {own ? <Badge tone="accent">Own setting</Badge> : <Badge>Default</Badge>}
-          {!row.supported && <Badge tone="warning">No discount guarantee</Badge>}
         </div>
         <p id={helpId} className="text-[12px] text-fg-muted">
           {row.effective_pct > 0 ? `At least ${row.effective_pct}% off` : "No minimum"}
           {own ? "" : ` (follows the default)`}.
-          {!row.supported && (blocked
-            ? " This model can't guarantee a discount, so every request to it is refused. Set 0 to keep using it."
-            : " This model can't guarantee a discount; keep it at 0.")}
         </p>
         {error && <p role="alert" className="text-[12.5px] text-bad">{(error as Error).message}</p>}
       </div>

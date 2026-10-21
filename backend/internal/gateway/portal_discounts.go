@@ -20,8 +20,8 @@ import (
 type portalDiscountModel struct {
 	Model string `json:"model"`
 	// Supported is true when the chain has a step that can guarantee a
-	// discount (a surplus-trusted step). Elsewhere any minimum refuses every
-	// request.
+	// discount (a surplus-trusted step). Other models are exempt from the
+	// minimum and cannot be given one.
 	Supported bool `json:"supported"`
 	// OverridePct is the model's own minimum; nil follows the key default.
 	OverridePct *int `json:"override_pct"`
@@ -60,7 +60,13 @@ func (s *Server) handlePortalDiscounts(w http.ResponseWriter, r *http.Request) {
 
 	models := make([]portalDiscountModel, 0, len(chains))
 	for _, c := range chains {
-		row := portalDiscountModel{Model: c.Name, Supported: chainCanGuaranteeDiscount(c), EffectivePct: key.EffectiveMinDiscount(c.Name)}
+		row := portalDiscountModel{Model: c.Name, Supported: chainCanGuaranteeDiscount(c)}
+		if !row.Supported {
+			// No minimum ever applies here: the model runs at its set price.
+			models = append(models, row)
+			continue
+		}
+		row.EffectivePct = key.EffectiveMinDiscount(c.Name)
 		if pct, ok := overrides[store.NormalizeDiscountModel(c.Name)]; ok {
 			row.OverridePct = &pct
 		}
@@ -75,8 +81,13 @@ func (s *Server) handlePortalDiscounts(w http.ResponseWriter, r *http.Request) {
 
 // handlePortalSetModelDiscount serves PUT /portal/api/discounts/models/{model}.
 func (s *Server) handlePortalSetModelDiscount(w http.ResponseWriter, r *http.Request) {
-	u, model, ok := s.portalDiscountTarget(w, r)
+	u, chain, ok := s.portalDiscountTarget(w, r)
 	if !ok {
+		return
+	}
+	model := chain.Name
+	if !chainCanGuaranteeDiscount(chain) {
+		writeError(w, http.StatusBadRequest, "model "+model+" has no discount guarantee, so it takes no minimum discount")
 		return
 	}
 	pct, ok := decodeDiscountPct(w, r)
@@ -94,10 +105,11 @@ func (s *Server) handlePortalSetModelDiscount(w http.ResponseWriter, r *http.Req
 // handlePortalDeleteModelDiscount serves DELETE
 // /portal/api/discounts/models/{model}: the model follows the default again.
 func (s *Server) handlePortalDeleteModelDiscount(w http.ResponseWriter, r *http.Request) {
-	u, model, ok := s.portalDiscountTarget(w, r)
+	u, chain, ok := s.portalDiscountTarget(w, r)
 	if !ok {
 		return
 	}
+	model := chain.Name
 	if err := s.identity.Keys().DeleteModelDiscount(r.Context(), u.KeyID, model); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to reset minimum discount")
 		return
@@ -108,33 +120,33 @@ func (s *Server) handlePortalDeleteModelDiscount(w http.ResponseWriter, r *http.
 
 // portalDiscountTarget resolves the signed-in user and the {model} path
 // parameter, which must be a chain the key may call.
-func (s *Server) portalDiscountTarget(w http.ResponseWriter, r *http.Request) (store.PortalUser, string, bool) {
+func (s *Server) portalDiscountTarget(w http.ResponseWriter, r *http.Request) (store.PortalUser, store.Chain, bool) {
 	u, ok := s.portalUserOrError(w, r)
 	if !ok {
-		return store.PortalUser{}, "", false
+		return store.PortalUser{}, store.Chain{}, false
 	}
 	model := strings.TrimSpace(chi.URLParam(r, "model"))
 	key, err := s.identity.Get(r.Context(), u.KeyID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "key no longer exists")
-			return store.PortalUser{}, "", false
+			return store.PortalUser{}, store.Chain{}, false
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load key")
-		return store.PortalUser{}, "", false
+		return store.PortalUser{}, store.Chain{}, false
 	}
 	chains, err := s.keyChains(r, key, u.PlanID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load models")
-		return store.PortalUser{}, "", false
+		return store.PortalUser{}, store.Chain{}, false
 	}
 	for _, c := range chains {
 		if store.NormalizeDiscountModel(c.Name) == store.NormalizeDiscountModel(model) {
-			return u, c.Name, true
+			return u, c, true
 		}
 	}
 	writeError(w, http.StatusNotFound, "model not available to this key: "+model)
-	return store.PortalUser{}, "", false
+	return store.PortalUser{}, store.Chain{}, false
 }
 
 // keyChains lists the chains the key may call (its own or its plan's model

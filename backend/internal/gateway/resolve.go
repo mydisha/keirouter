@@ -26,6 +26,11 @@ const (
 type resolveResult struct {
 	Targets  []dispatch.Target
 	PlanOpts dispatch.PlanOptions
+	// DiscountCapable is true for a chain with a step that can guarantee a
+	// discount (surplus-trusted). It comes from the chain definition, not the
+	// live market, so a trusted chain whose quote is momentarily missing still
+	// enforces the customer's minimum instead of routing without it.
+	DiscountCapable bool
 }
 
 // ChainSource resolves a named chain for a tenant.
@@ -76,8 +81,10 @@ func (s *Server) resolveTargets(ctx context.Context, tenantID, model string) (re
 		return res, err
 	}
 	// The customer's minimum discount (per model, else the key default)
-	// narrows the route to steps that can guarantee it.
-	if key, ok := authedKey(ctx); ok {
+	// narrows the route to steps that can guarantee it. Models that cannot
+	// guarantee any discount are exempt: they run at their set price, so a
+	// minimum never blocks them.
+	if key, ok := authedKey(ctx); ok && res.DiscountCapable {
 		if pct := key.EffectiveMinDiscount(model); pct > 0 {
 			if res.Targets, err = applyDiscountFloor(res.Targets, pct, model); err != nil {
 				return resolveResult{}, err
@@ -195,7 +202,7 @@ func chainResultWith(ctx context.Context, chains ChainSource, latency LatencyRea
 				})
 				opts.PinnedTail = 1
 			}
-			return resolveResult{Targets: targets, PlanOpts: opts}, nil
+			return resolveResult{Targets: targets, PlanOpts: opts, DiscountCapable: chainCanGuaranteeDiscount(c)}, nil
 		}
 	}
 	return resolveResult{}, errBadModel("no chain named " + name)

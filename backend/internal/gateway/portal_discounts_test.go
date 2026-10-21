@@ -82,10 +82,10 @@ func TestPortalDiscountSettings(t *testing.T) {
 	def, rows := list()
 	require.Equal(t, 30, def)
 	require.Equal(t, []row{
-		{Model: "ds-flash-ordered", Supported: false, EffectivePct: 30},
+		{Model: "ds-flash-ordered", Supported: false, EffectivePct: 0},
 		{Model: "gemini-trusted", Supported: true, EffectivePct: 30},
 		{Model: "glm-trusted", Supported: true, EffectivePct: 30},
-	}, rows, "sorted by name; trusted steps (per step or chain-level slug) are supported")
+	}, rows, "sorted by name; trusted steps (per step or chain-level slug) are supported; the rest take no minimum")
 
 	// Warm the auth cache, then override: the next request sees it at once.
 	_, err = srv.identity.Authenticate(ctx, issued.Plaintext)
@@ -93,17 +93,17 @@ func TestPortalDiscountSettings(t *testing.T) {
 	rec := call(http.MethodPut, "gemini-trusted", `{"min_discount_pct":50}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	rec = call(http.MethodPut, "ds-flash-ordered", `{"min_discount_pct":0}`)
-	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, http.StatusBadRequest, rec.Code, "a model without a discount guarantee takes no minimum")
 	authed, err := srv.identity.Authenticate(ctx, issued.Plaintext)
 	require.NoError(t, err)
 	require.Equal(t, 50, authed.EffectiveMinDiscount("gemini-trusted"))
-	require.Equal(t, 0, authed.EffectiveMinDiscount("ds-flash-ordered"))
 	require.Equal(t, 30, authed.EffectiveMinDiscount("glm-trusted"))
 
 	_, rows = list()
 	require.Equal(t, 50, *rows[1].OverridePct)
 	require.Equal(t, 50, rows[1].EffectivePct)
-	require.Equal(t, 0, *rows[0].OverridePct)
+	require.Nil(t, rows[0].OverridePct)
+	require.Equal(t, 0, rows[0].EffectivePct, "the default never reaches a model without a guarantee")
 	require.Nil(t, rows[2].OverridePct)
 
 	// Reset returns the model to the default.
@@ -120,7 +120,7 @@ func TestPortalDiscountSettings(t *testing.T) {
 	}
 	overrides, err := srv.identity.Keys().ModelDiscounts(ctx, issued.Record.ID)
 	require.NoError(t, err)
-	require.Equal(t, map[string]int{"ds-flash-ordered": 0}, overrides)
+	require.Empty(t, overrides)
 }
 
 func TestPortalDiscountSettingsRequiresSession(t *testing.T) {
