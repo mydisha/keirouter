@@ -109,7 +109,7 @@ export function PublicPricingTab() {
             <ul className="divide-y divide-line rounded-lg border border-line">
               {data.models.map((m) => (
                 <li key={m.chain_id}>
-                  <label className="flex cursor-pointer flex-wrap items-center justify-between gap-x-4 gap-y-1 px-3 py-2.5 transition-colors hover:bg-hover">
+                  <label className="flex cursor-pointer flex-col gap-1 px-3 py-2.5 transition-colors hover:bg-hover sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                     <span className="flex min-w-0 items-center gap-2.5">
                       <input
                         type="checkbox"
@@ -119,7 +119,9 @@ export function PublicPricingTab() {
                       />
                       <span className="break-all font-mono text-[13px] text-fg">{m.model}</span>
                     </span>
-                    <PriceCell m={m} />
+                    <span className="pl-[26px] sm:pl-0">
+                      <PriceCell m={m} />
+                    </span>
                   </label>
                 </li>
               ))}
