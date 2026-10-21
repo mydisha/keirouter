@@ -775,12 +775,20 @@ func TestPortalDiscountFloor(t *testing.T) {
 	}
 
 	require.Equal(t, float64(0), readFloor())
+	// Warm the auth cache, as a request just before the change would.
+	cached, err := srv.identity.Authenticate(ctx, issued.Plaintext)
+	require.NoError(t, err)
+	require.Equal(t, 0, cached.MinDiscountPct)
 	rec := put(`{"min_discount_pct":30}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, float64(30), readFloor())
 	key, err := srv.identity.Get(ctx, issued.Record.ID)
 	require.NoError(t, err)
 	require.Equal(t, 30, key.MinDiscountPct)
+	// The new floor applies to the next request, not after the cache TTL.
+	authed, err := srv.identity.Authenticate(ctx, issued.Plaintext)
+	require.NoError(t, err)
+	require.Equal(t, 30, authed.MinDiscountPct)
 
 	for _, bad := range []string{`{"min_discount_pct":96}`, `{"min_discount_pct":-1}`, `{"min_discount_pct":12.5}`, `nope`} {
 		require.Equal(t, http.StatusBadRequest, put(bad).Code, bad)
