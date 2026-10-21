@@ -60,7 +60,7 @@ func applyDiscountFloor(targets []dispatch.Target, floorPct int, model string) (
 func errDiscountFloor(model string, floorPct int) error {
 	return badModelError{
 		msg: fmt.Sprintf("model %s cannot meet your %d%% minimum discount: no route for it can guarantee that price. "+
-			"Lower the discount floor in the portal or use another model", model, floorPct),
+			"Lower your minimum discount in the portal or use another model", model, floorPct),
 		status: http.StatusUnprocessableEntity,
 	}
 }

@@ -25,6 +25,7 @@ function BaseUrlCard() {
 }
 
 const MAX_DISCOUNT_FLOOR = 95;
+const EXAMPLE_LIST_PRICE = 10;
 
 // DiscountFloorCard sets the minimum discount every request must meet. The
 // server refuses requests no route can serve at that price, before any charge.
@@ -42,13 +43,16 @@ function DiscountFloorCard({ current }: { current: number }) {
   const parsed = Number(value);
   const valid = value.trim() !== "" && Number.isInteger(parsed) && parsed >= 0 && parsed <= MAX_DISCOUNT_FLOOR;
   const dirty = valid && parsed !== current;
+  // Worked example on a round list price, so the percentage reads as money.
+  const examplePct = valid && parsed > 0 ? parsed : 30;
+  const examplePays = (EXAMPLE_LIST_PRICE * (100 - examplePct)) / 100;
 
   return (
     <PanelCard
       icon={BadgePercent}
       title="Minimum discount"
-      subtitle="Only run requests that cost at least this much less than the model's official price. Requests that can't meet it are refused and not charged."
-      action={current > 0 ? <Badge tone="success">{current}% floor</Badge> : <Badge>Off</Badge>}
+      subtitle="The smallest discount, off the model's official price, that a request must get. Requests that can't get it are refused and not charged."
+      action={current > 0 ? <Badge tone="success">At least {current}% off</Badge> : <Badge>Off</Badge>}
     >
       <form
         className="space-y-2 p-4 sm:p-5"
@@ -83,6 +87,20 @@ function DiscountFloorCard({ current }: { current: number }) {
         </p>
         {save.isError && <p role="alert" className="text-[12.5px] text-bad">{(save.error as Error).message}</p>}
         {save.isSuccess && !dirty && <p role="status" className="text-[12.5px] text-fg-muted">Saved.</p>}
+        <div className="mt-3 space-y-1.5 rounded-md border border-line bg-subtle p-3 text-[12.5px] text-fg-muted">
+          <p className="font-medium text-fg">How it works</p>
+          <p>
+            Example: a model's official price is ${EXAMPLE_LIST_PRICE.toFixed(2)} per 1M tokens. With a{" "}
+            {examplePct}% minimum discount you pay at most{" "}
+            <span className="font-medium text-fg tabular-nums">${examplePays.toFixed(2)}</span> per 1M tokens.
+            That is your final price, fees included.
+          </p>
+          <p>
+            Prices change with the market. When no seller offers the model that cheaply right now, the request is
+            refused with a 422 and you are not charged. Retry after 15 seconds or lower the percentage.
+          </p>
+          <p>The higher the percentage, the cheaper each request and the more often requests are refused.</p>
+        </div>
       </form>
     </PanelCard>
   );

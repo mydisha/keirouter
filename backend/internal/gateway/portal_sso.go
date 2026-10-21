@@ -772,7 +772,7 @@ func (s *Server) handlePortalSetDiscountFloor(w http.ResponseWriter, r *http.Req
 			writeError(w, http.StatusNotFound, "key no longer exists")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to save discount floor")
+		writeError(w, http.StatusInternalServerError, "failed to save minimum discount")
 		return
 	}
 	// Drop the cached auth record so the very next request uses the new floor.
