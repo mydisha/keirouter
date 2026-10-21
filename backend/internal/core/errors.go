@@ -65,7 +65,7 @@ const (
 // ModelOutOfStockRetryAfter is the retry hint sent to clients for
 // ErrModelOutOfStock. It replaces the upstream Retry-After, which tracks the
 // marketplace's own seller re-probe schedule (minutes).
-const ModelOutOfStockRetryAfter = 30 * time.Second
+const ModelOutOfStockRetryAfter = 15 * time.Second
 
 // FailureScope identifies the narrowest resource affected by a provider error.
 // Cooldowns and circuit breakers use this to avoid disabling healthy siblings.

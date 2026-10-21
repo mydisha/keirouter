@@ -12,7 +12,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/core"
 )
 
-// The client sees the real condition (503, out of stock, retry in 30s) with no
+// The client sees the real condition (503, out of stock, retry in 15s) with no
 // upstream provider name, support address or raw upstream text.
 func TestWriteProviderError_ModelOutOfStock(t *testing.T) {
 	pe := &core.ProviderError{
@@ -31,7 +31,7 @@ func TestWriteProviderError_ModelOutOfStock(t *testing.T) {
 			(&Server{}).writeProviderErrorAs(rec, dialect, pe)
 
 			require.Equal(t, http.StatusServiceUnavailable, rec.Code)
-			require.Equal(t, "30", rec.Header().Get("Retry-After"))
+			require.Equal(t, "15", rec.Header().Get("Retry-After"))
 			body := rec.Body.String()
 			require.True(t, json.Valid([]byte(body)))
 			require.Contains(t, body, "temporarily out of stock")
