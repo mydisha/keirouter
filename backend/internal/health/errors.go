@@ -55,6 +55,8 @@ func ClassifyError(pe *core.ProviderError) ProviderErrorType {
 			return ProviderErrorNetwork
 		}
 		return ProviderErrorProvider5xx
+	case core.ErrModelOutOfStock:
+		return ProviderErrorUnsupported
 	case core.ErrModelUnavailable, core.ErrCapability:
 		if isAccountRoutingMessage(pe.Message) {
 			return ProviderErrorAuth

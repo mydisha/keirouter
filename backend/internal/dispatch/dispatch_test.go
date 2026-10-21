@@ -633,3 +633,33 @@ func TestProviderCircuitHalfOpenAdmitsSingleProbe(t *testing.T) {
 	d.recordProviderSuccess("openai")
 	require.Equal(t, time.Duration(0), d.providerCircuitRemaining("openai", later.Add(time.Hour)))
 }
+
+// A model out of stock at the marketplace says nothing about our key: repeated
+// failures must not cool the account or the model, so the next request goes
+// straight back to the upstream instead of being answered with a local 429.
+func TestNoteFailureModelOutOfStockCoolsNothing(t *testing.T) {
+	ctx := context.Background()
+	d, db := newDispatchTest(t, testAccount("acc-stock", 10))
+
+	for range 5 {
+		d.NoteFailure(ctx, "acc-stock", &core.ProviderError{
+			Kind:       core.ErrModelOutOfStock,
+			Scope:      core.FailureScopeRequest,
+			Provider:   "openai",
+			Model:      "gemini-3.8-flash",
+			StatusCode: 503,
+			RetryAfter: core.ModelOutOfStockRetryAfter,
+		})
+	}
+
+	account, err := db.Accounts().Get(ctx, "acc-stock")
+	require.NoError(t, err)
+	require.Nil(t, account.CooldownUntil)
+	require.Equal(t, 0, account.BackoffLevel)
+
+	attempts, err := d.PlanWith(ctx, store.DefaultTenantID,
+		[]Target{{Provider: "openai", Model: "gemini-3.8-flash"}}, core.CapabilitySet{}, PlanOptions{})
+	require.NoError(t, err)
+	require.Len(t, attempts, 1)
+	require.Equal(t, "acc-stock", attempts[0].Account.ID)
+}

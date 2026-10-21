@@ -319,6 +319,8 @@ func failureReason(pe *core.ProviderError, provider string) string {
 		return "blocked by " + provider + " content filter"
 	case core.ErrModelUnavailable:
 		return "model unavailable" + status
+	case core.ErrModelOutOfStock:
+		return "model out of stock (no seller right now)" + status
 	case core.ErrCapability:
 		return "no target supports this request"
 	case core.ErrBudgetBlocked:
@@ -364,6 +366,8 @@ func failureHint(pe *core.ProviderError) string {
 		h = "The provider's safety system rejected the prompt or the output."
 	case core.ErrModelUnavailable:
 		h = "The model is not served by any active account. Check the model name, the account's model list, or whether the provider retired it."
+	case core.ErrModelOutOfStock:
+		h = "The marketplace has no healthy seller for this model right now. Nothing was cooled down: the chain moved on, and the client was told to retry in 30 seconds. Add a fallback model to the chain to cover these gaps."
 	case core.ErrCapability:
 		h = "The request needs a feature (tools, vision, audio, ...) that none of the target models supports."
 	case core.ErrBudgetBlocked:

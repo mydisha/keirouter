@@ -37,6 +37,11 @@ const (
 	// ErrModelUnavailable: the selected model or endpoint is unavailable. Skip
 	// the model without disabling credentials that may still serve other models.
 	ErrModelUnavailable ErrorKind = "model_unavailable"
+	// ErrModelOutOfStock: a marketplace has no seller able to serve the model
+	// right now (Surplus no_healthy_sellers / no_sellers_for_model). Seller
+	// stock is shared by every buyer key, so nothing is cooled down: the chain
+	// advances and the client is told to retry after ModelOutOfStockRetryAfter.
+	ErrModelOutOfStock ErrorKind = "model_out_of_stock"
 	// ErrCapability: chosen model lacks a required capability. Skip, no surface.
 	ErrCapability ErrorKind = "capability"
 	// ErrBudgetBlocked: KeiRouter budget guard rejected before dispatch.
@@ -51,6 +56,11 @@ const (
 	// failure — must not trigger cooldowns or health penalties.
 	ErrClientCanceled ErrorKind = "client_canceled"
 )
+
+// ModelOutOfStockRetryAfter is the retry hint sent to clients for
+// ErrModelOutOfStock. It replaces the upstream Retry-After, which tracks the
+// marketplace's own seller re-probe schedule (minutes).
+const ModelOutOfStockRetryAfter = 30 * time.Second
 
 // FailureScope identifies the narrowest resource affected by a provider error.
 // Cooldowns and circuit breakers use this to avoid disabling healthy siblings.

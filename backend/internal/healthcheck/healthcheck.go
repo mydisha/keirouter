@@ -289,7 +289,7 @@ func neutralProbeError(err error) bool {
 		return true
 	case core.ErrTimeout:
 		return true
-	case core.ErrModelUnavailable, core.ErrCapability, core.ErrBadRequest:
+	case core.ErrModelUnavailable, core.ErrModelOutOfStock, core.ErrCapability, core.ErrBadRequest:
 		// A model this account cannot serve, or a probe payload the model
 		// rejects, says nothing about the credential's health. The dispatcher
 		// handles model availability per request.

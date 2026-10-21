@@ -1217,6 +1217,8 @@ func providerErrorStatus(pe *core.ProviderError) int {
 		return http.StatusBadRequest
 	case core.ErrModelUnavailable:
 		return http.StatusNotFound
+	case core.ErrModelOutOfStock:
+		return http.StatusServiceUnavailable
 	case core.ErrAuth:
 		return http.StatusUnauthorized
 	case core.ErrRateLimit:

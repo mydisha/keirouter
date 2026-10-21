@@ -327,3 +327,44 @@ func TestHTTPStatusError_402NoProviderUnderBid(t *testing.T) {
 	require.False(t, pe.CreditsExhausted)
 	require.True(t, pe.Fallbackable())
 }
+
+// Surplus answers 503 no_healthy_sellers when every seller for a model is
+// down, and 404 no_sellers_for_model when nobody serves it. Both are seller
+// stock for this model, shared by every buyer key: nothing on our side should
+// cool down, and the client gets a short, fixed retry hint instead of the
+// upstream Retry-After.
+func TestHTTPStatusError_SurplusModelOutOfStock(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"503 no_healthy_sellers", http.StatusServiceUnavailable,
+			`{"error":{"code":"no_healthy_sellers","message":"No healthy sellers. Contact support@surplusintelligence.ai","type":"service_unavailable"}}`},
+		{"404 no_sellers_for_model", http.StatusNotFound,
+			`{"error":{"code":"no_sellers_for_model","message":"nobody is serving gemini-3.8-flash"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &http.Response{StatusCode: tc.status, Header: http.Header{"Retry-After": []string{"180"}}}
+
+			pe := core.AsProviderError(httpStatusError("surplus", "gemini-3.8-flash", resp, []byte(tc.body)))
+
+			require.Equal(t, core.ErrModelOutOfStock, pe.Kind)
+			require.Equal(t, core.FailureScopeRequest, pe.EffectiveScope())
+			require.Equal(t, core.ModelOutOfStockRetryAfter, pe.RetryAfter)
+			require.Equal(t, tc.status, pe.StatusCode)
+			require.True(t, pe.Fallbackable())
+		})
+	}
+}
+
+// A plain 503 without the Surplus code keeps the existing upstream handling.
+func TestHTTPStatusError_Plain503StaysUpstream(t *testing.T) {
+	resp := &http.Response{StatusCode: http.StatusServiceUnavailable, Header: http.Header{}}
+
+	pe := core.AsProviderError(httpStatusError("openai", "gpt-4o", resp, []byte(`{"error":{"message":"overloaded"}}`)))
+
+	require.Equal(t, core.ErrUpstream, pe.Kind)
+	require.Equal(t, core.FailureScopeProvider, pe.EffectiveScope())
+}

@@ -898,6 +898,13 @@ func httpStatusError(provider, model string, resp *http.Response, body []byte) e
 	// the chain advances with nothing parked or cooled.
 	case resp.StatusCode == http.StatusPaymentRequired && strings.Contains(string(body), "no_provider_under_bid"):
 		kind, scope = core.ErrModelUnavailable, core.FailureScopeRequest
+	// Surplus: no seller can serve this model right now. Seller stock is the
+	// same for every buyer key, so another key would fail identically and
+	// cooling ours only turns the upstream answer into a long local 429.
+	case resp.StatusCode == http.StatusServiceUnavailable && strings.Contains(string(body), "no_healthy_sellers"),
+		resp.StatusCode == http.StatusNotFound && strings.Contains(string(body), "no_sellers_for_model"):
+		kind, scope = core.ErrModelOutOfStock, core.FailureScopeRequest
+		retryAfter = core.ModelOutOfStockRetryAfter
 	case resp.StatusCode == http.StatusTooManyRequests:
 		// Classify 429 into transient rate-limit vs hard quota exhaustion vs
 		// depleted paid balance. Quota exhaustion gets a much longer cooldown
