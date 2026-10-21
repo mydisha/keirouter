@@ -136,25 +136,27 @@ function ModelDiscountRow({ row, defaultPct, max }: { row: PortalDiscountModel; 
         {error && <p role="alert" className="text-[12.5px] text-bad">{(error as Error).message}</p>}
       </div>
       <form
-        className="flex shrink-0 flex-wrap items-center gap-2"
+        className="flex shrink-0 flex-wrap items-center gap-2 sm:flex-nowrap"
         onSubmit={(e) => {
           e.preventDefault();
           if (dirty && parsed !== null) save.mutate(parsed);
         }}
       >
-        <Input
-          id={inputId}
-          type="number"
-          inputMode="numeric"
-          min={0}
-          max={max}
-          step={1}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          aria-invalid={parsed === null}
-          aria-describedby={helpId}
-          className="w-24 tabular-nums"
-        />
+        <div className="w-24 shrink-0">
+          <Input
+            id={inputId}
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={max}
+            step={1}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            aria-invalid={parsed === null}
+            aria-describedby={helpId}
+            className="tabular-nums"
+          />
+        </div>
         <span className="text-[12.5px] text-fg-muted" aria-hidden="true">%</span>
         <Button type="submit" disabled={!dirty || save.isPending}>
           {save.isPending ? "Saving…" : "Save"}
