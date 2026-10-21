@@ -27,27 +27,41 @@ func (a *App) MarketCache() *market.SnapshotCache { return a.marketCache }
 // whatever succeeded. A single-source outage leaves the other source usable; if
 // both fail an error is returned and the caller keeps the previous snapshot.
 func (a *App) fetchMergedModels(ctx context.Context) ([]market.Model, error) {
-	var out []market.Model
-	var firstErr error
+	// The three sources are independent, so fetch them concurrently: a sync
+	// then takes as long as the slowest source instead of their sum.
+	var (
+		wg                 sync.WaitGroup
+		inferhub, surplus  []market.Model
+		trusted            []market.Model
+		inferErr, surplErr error
+	)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		inferhub, inferErr = market.Fetch(ctx, a.marketURL)
+	}()
+	go func() {
+		defer wg.Done()
+		surplus, surplErr = market.FetchSurplus(ctx, a.surplusURL)
+	}()
+	go func() {
+		defer wg.Done()
+		trusted = a.fetchSurplusTrusted(ctx)
+	}()
+	wg.Wait()
 
-	if models, err := market.Fetch(ctx, a.marketURL); err != nil {
-		firstErr = err
-	} else {
-		out = append(out, models...)
+	if surplErr != nil {
+		a.log.Debug("surplus fetch failed", "err", surplErr)
 	}
-	if models, err := market.FetchSurplus(ctx, a.surplusURL); err != nil {
-		a.log.Debug("surplus fetch failed", "err", err)
-		if firstErr == nil {
-			firstErr = err
-		}
-	} else {
-		out = append(out, models...)
-	}
-
-	out = append(out, a.fetchSurplusTrusted(ctx)...)
-
+	out := make([]market.Model, 0, len(inferhub)+len(surplus)+len(trusted))
+	out = append(out, inferhub...)
+	out = append(out, surplus...)
+	out = append(out, trusted...)
 	if len(out) == 0 {
-		return nil, firstErr
+		if inferErr != nil {
+			return nil, inferErr
+		}
+		return nil, surplErr
 	}
 	return out, nil
 }

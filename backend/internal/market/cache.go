@@ -68,3 +68,23 @@ func (c *SnapshotCache) Lookup(slug string) (Model, bool) {
 	c.mu.RUnlock()
 	return m, ok
 }
+
+// FetchedAt is when the current snapshot was installed; zero before the first.
+func (c *SnapshotCache) FetchedAt() time.Time {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.fetched
+}
+
+// Models returns the snapshot entries for slugs, skipping absent ones.
+func (c *SnapshotCache) Models(slugs []string) []Model {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]Model, 0, len(slugs))
+	for _, slug := range slugs {
+		if m, ok := c.bySlug[slug]; ok {
+			out = append(out, m)
+		}
+	}
+	return out
+}

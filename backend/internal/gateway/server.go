@@ -438,6 +438,7 @@ func (s *Server) routes() chi.Router {
 		r.Use(s.publicRateLimiter)
 		r.Get("/v1/public/overview", s.publicOverview)
 		r.Get("/v1/public/models", s.publicModels)
+		r.Get("/v1/public/pricing", s.publicPricing)
 		r.Get("/v1/public/notifications", s.publicNotifications)
 		r.Get("/v1/public/bansos", s.publicBansos)
 		r.Get("/v1/public/bansos/key", s.publicBansosKey)
