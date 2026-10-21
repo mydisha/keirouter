@@ -83,7 +83,6 @@ function DefaultDiscountCard({ current, max }: { current: number; max: number })
             Example: a model's official price is ${EXAMPLE_LIST_PRICE.toFixed(2)} per 1M tokens. With a{" "}
             {examplePct}% minimum discount you pay at most{" "}
             <span className="font-medium tabular-nums text-fg">${examplePays.toFixed(2)}</span> per 1M tokens.
-            That is your final price, fees included.
           </p>
           <p>
             Prices change with the market. When no seller offers the model that cheaply right now, the request is

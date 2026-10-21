@@ -18,8 +18,8 @@ import (
 )
 
 type pricingResp struct {
-	AsOf    *string          `json:"as_of"`
-	Models  []map[string]any `json:"models"`
+	AsOf   *string          `json:"as_of"`
+	Models []map[string]any `json:"models"`
 }
 
 // pricingFixture is a gateway with three chains, a live Surplus snapshot and
