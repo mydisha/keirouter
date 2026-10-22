@@ -38,8 +38,8 @@ export default function PublicModels() {
           </p>
         </div>
         <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-[var(--muted)]">
-          Semua model yang bisa kamu pakai, diurutkan dari yang paling sering dipakai. Harga dalam USD per 1 juta token
-          dan bisa berubah mengikuti pasar. Klik ID model untuk menyalinnya.
+          Semua model yang bisa kamu pakai, diurutkan dari yang paling sering dipakai. Harga dalam USD per 1 juta token,
+          sesuai harga pasar terbaru. Klik ID model untuk menyalinnya.
         </p>
         <ModelBrowser models={modelList} loading={models.isLoading} />
       </section>
