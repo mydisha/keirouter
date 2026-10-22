@@ -5,7 +5,7 @@
 import { useEffect, type ReactNode } from "react";
 import { PublicLayout, TELEGRAM_URL } from "../components/PublicLayout";
 
-const EFFECTIVE_DATE = "15 Oktober 2026";
+const EFFECTIVE_DATE = "22 Oktober 2026";
 
 const LINK = "text-[var(--link)] underline underline-offset-2 hover:opacity-80";
 
@@ -31,14 +31,12 @@ const SECTIONS: Section[] = [
     body: (
       <>
         <p>
-          Tokenizer adalah gateway AI pay-as-you-go. Satu API key yang kompatibel dengan format OpenAI dan Anthropic
-          dipakai untuk mengakses model dari berbagai penyedia pihak ketiga. Biaya dihitung dari jumlah token yang diproses.
+          Tokenizer adalah layanan untuk mengakses model AI dari berbagai penyedia pihak ketiga dengan satu API key. Key
+          ini mendukung format API OpenAI dan Anthropic. Anda membayar sesuai jumlah token yang diproses, tanpa biaya
+          bulanan.
         </p>
         <p>
-          Daftar model dan harganya ada di halaman{" "}
-          <a href="/model" className={LINK}>Model &amp; harga</a>. Harga model dapat berubah sewaktu-waktu mengikuti
-          ketersediaan dan biaya dari penyedia. Batas pemakaian juga dapat berubah, dan model bisa berstatus habis jika
-          tidak ada penyedia yang dapat melayaninya.
+          Batas pemakaian dapat berubah. Model bisa berstatus habis jika tidak ada penyedia yang dapat melayaninya.
         </p>
         <p>
           Token yang sudah diproses penyedia tetap ditagih walaupun koneksi Anda terputus sebelum respons diterima, baik
@@ -46,6 +44,30 @@ const SECTIONS: Section[] = [
           tetap menyelesaikan jawabannya dan seluruh tokennya ditagih. Untuk permintaan streaming, yang ditagih adalah token
           yang sudah dihasilkan sampai koneksi terputus. Untuk prompt besar atau jawaban panjang, kami sarankan memakai
           mode streaming (<code className="font-mono text-[13px]">stream: true</code>) agar koneksi tidak terputus karena timeout.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "harga",
+    title: "Harga dan pemilihan penyedia",
+    body: (
+      <>
+        <p>
+          Harga tiap model mengikuti pasar dan dapat naik atau turun kapan saja, tergantung ketersediaan dan biaya dari
+          penyedia. Harga di halaman{" "}
+          <a href="/model" className={LINK}>Model &amp; harga</a> adalah harga saat halaman itu Anda buka. Saldo dipotong
+          dengan harga yang berlaku saat permintaan diproses, jadi biaya akhirnya bisa berbeda dari harga yang Anda lihat
+          sebelumnya.
+        </p>
+        <p>
+          Kami berupaya mengirim setiap permintaan ke penyedia termurah yang tersedia saat itu. Jika penyedia tersebut penuh
+          atau gagal melayani, kami mengalihkan permintaan ke penyedia berikutnya, yang harganya bisa lebih tinggi.
+        </p>
+        <p>
+          Untuk membatasi harga, Anda dapat mengatur diskon minimum per model di portal. Diskon dihitung dari harga resmi
+          model. Jika tidak ada penyedia yang dapat memberi diskon sebesar itu, permintaan ditolak dan saldo tidak dipotong.
+          Pengaturan ini hanya berlaku untuk model yang mendukungnya. Portal menandai model yang belum mendukung.
         </p>
       </>
     ),
