@@ -41,7 +41,7 @@ function DefaultDiscountCard({ current, max }: { current: number; max: number })
     <PanelCard
       icon={BadgePercent}
       title="Default minimum discount"
-      subtitle="The smallest discount, off the model's official price, that a request must get. It applies to every model below that has no setting of its own, except models without a discount guarantee."
+      subtitle="Used for every model below that doesn't have its own number. Models marked No discount guarantee are skipped."
       action={current > 0 ? <Badge tone="success">At least {current}% off</Badge> : <Badge>Off</Badge>}
     >
       <form
@@ -80,15 +80,15 @@ function DefaultDiscountCard({ current, max }: { current: number; max: number })
         <div className="mt-3 space-y-1.5 rounded-md border border-line bg-subtle p-3 text-[12.5px] text-fg-muted">
           <p className="font-medium text-fg">How it works</p>
           <p>
-            Example: a model's official price is ${EXAMPLE_LIST_PRICE.toFixed(2)} per 1M tokens. With a{" "}
-            {examplePct}% minimum discount you pay at most{" "}
+            Pick how much cheaper than the official price a request must be. Example: the official price is{" "}
+            ${EXAMPLE_LIST_PRICE.toFixed(2)} per 1M tokens. At {examplePct}%, you never pay more than{" "}
             <span className="font-medium tabular-nums text-fg">${examplePays.toFixed(2)}</span> per 1M tokens.
           </p>
           <p>
-            Prices change with the market. When no seller offers the model that cheaply right now, the request is
-            refused with a 422 and you are not charged. Retry after 15 seconds or lower the percentage.
+            If no one sells the model that cheaply right now, we stop the request (error 422) and you pay nothing. Try
+            again in 15 seconds, or lower the number.
           </p>
-          <p>The higher the percentage, the cheaper each request and the more often requests are refused.</p>
+          <p>A higher number means you pay less, but more requests get stopped. Set 0 to turn it off.</p>
         </div>
       </form>
     </PanelCard>
