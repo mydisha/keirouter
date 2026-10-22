@@ -329,9 +329,28 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 		return
 	}
 
+	// NDJSON has no comment syntax for heartbeats, so Ollama clients keep
+	// waiting for headers until the first chunk.
+	var early *earlyCommit
+	if req.Metadata.SourceDialect != core.DialectOllama {
+		hb := s.cfg.Server.StreamHeartbeatInterval
+		early = startEarlyCommit(w, flusher.Flush, hb, hb)
+	}
 	result, err := s.pipeline.Stream(r.Context(), req, opts)
+	headersSent := early.finish()
 	if err != nil {
 		tr.complete(outcome{fallbacks: req.Metadata.FallbackCount, err: err})
+		if headersSent {
+			pe := core.AsProviderError(err)
+			if s.log != nil {
+				s.log.Error("provider request failed after stream headers were sent",
+					"kind", pe.Kind, "provider", pe.Provider, "model", pe.Model,
+					"upstream_status", pe.StatusCode, "error", err)
+			}
+			_, _ = w.Write(committedStreamErrorEvent(req.Metadata.SourceDialect, pe))
+			flusher.Flush()
+			return
+		}
 		s.writeProviderError(w, err)
 		return
 	}
@@ -343,17 +362,19 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 		fmt.Sprintf("Streaming from %s/%s · first response after %s", result.Provider, result.Model, humanDuration(tr.elapsedMs())),
 		fmt.Sprintf("Provider: %s\nModel: %s\nAccount: %s\nPath: %s", result.Provider, result.Model, result.AccountID, streamPath))
 
-	if req.Metadata.SourceDialect == core.DialectOllama {
-		w.Header().Set("Content-Type", "application/x-ndjson")
-	} else {
-		w.Header().Set("Content-Type", "text/event-stream")
+	// Once headers went out early, X-KeiRouter-Provider/Model can no longer be
+	// added; the trace still records which target served the request.
+	if !headersSent {
+		if req.Metadata.SourceDialect == core.DialectOllama {
+			setStreamHeaders(w, "application/x-ndjson")
+		} else {
+			setStreamHeaders(w, "text/event-stream")
+		}
+		w.Header().Set("X-KeiRouter-Provider", result.Provider)
+		w.Header().Set("X-KeiRouter-Model", result.Model)
+		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
 	}
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-KeiRouter-Provider", result.Provider)
-	w.Header().Set("X-KeiRouter-Model", result.Model)
-	w.WriteHeader(http.StatusOK)
-	flusher.Flush()
 
 	// Heartbeats keep intermediate proxies from dropping the client connection
 	// as idle while the upstream model is silent (long thinking phases produce
