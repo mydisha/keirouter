@@ -137,18 +137,18 @@ function QuickStart({ model }: { model: string }) {
 }
 
 const STEPS: { icon: LucideIcon; title: string; body: string }[] = [
-  { icon: LogIn, title: "Login dengan Google", body: "Masuk ke portal pakai akun Google. API key-mu langsung dibuatkan di sana." },
-  { icon: Wallet, title: "Isi saldo lewat QRIS", body: "Mulai dari Rp10.000. Saldo berkurang sebanyak token yang kamu pakai dan tidak hangus." },
-  { icon: Plug, title: "Pasang di tools-mu", body: "Masukkan base URL dan API key di Claude Code, Cursor, Cline, SDK OpenAI, atau aplikasi lain yang memakai format OpenAI." },
+  { icon: LogIn, title: "Login dengan Google", body: "Masuk ke portal dengan akun Google. API key-mu langsung tersedia di sana." },
+  { icon: Wallet, title: "Isi saldo lewat QRIS", body: "Mulai dari Rp10.000. Saldo tidak hangus dan hanya berkurang saat kamu memakai model." },
+  { icon: Plug, title: "Pasang di tools-mu", body: "Masukkan base URL dan API key ke Claude Code, Cursor, Cline, SDK OpenAI, atau aplikasi lain yang mendukung format OpenAI." },
 ];
 
 const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
-  { icon: Receipt, title: "Bayar per token", body: "Tidak ada biaya bulanan. Harga per 1 juta token mengikuti pasar, jadi bisa naik atau turun. Saldo dipotong dengan harga saat request diproses." },
-  { icon: Route, title: "Dikirim ke yang termurah", body: "Tiap request dikirim ke penawaran termurah yang tersedia saat itu. Kalau penawaran itu sedang penuh, request pindah ke penawaran berikutnya supaya tetap jalan." },
-  { icon: SlidersHorizontal, title: "Atur batas harga sendiri", body: "Pasang diskon minimum per model di portal. Request yang tidak bisa mendapat diskon itu ditolak dan tidak ditagih. Berlaku untuk model yang mendukung jaminan diskon." },
-  { icon: KeyRound, title: "Satu key, banyak model", body: "Endpoint format OpenAI dan Anthropic sama-sama didukung. Mau ganti model, cukup ubah nama model di request." },
-  { icon: Gauge, title: "Pemakaian terlihat jelas", body: "Sisa saldo, token yang terpakai, dan riwayat request bisa kamu cek sendiri di portal." },
-  { icon: ShieldCheck, title: "Key terikat ke akunmu", body: "Portal memakai Google Sign-In. Kalau key bocor, buat key baru dari portal." },
+  { icon: Receipt, title: "Harga bisa berubah", body: "Harga tiap model naik atau turun mengikuti pasar. Saldo dipotong dengan harga saat request diproses, bukan harga saat kamu membuka katalog." },
+  { icon: Route, title: "Otomatis ke yang termurah", body: "Kami mengirim request-mu ke penyedia termurah saat itu. Kalau penyedia itu sedang penuh, kami alihkan ke penyedia termurah berikutnya." },
+  { icon: SlidersHorizontal, title: "Pasang batas harga", body: "Di portal, atur diskon minimum dari harga resmi untuk tiap model. Kalau tidak ada harga semurah itu, request ditolak dan saldo tidak terpotong. Portal menandai model yang belum mendukungnya." },
+  { icon: KeyRound, title: "Satu key, banyak model", body: "Bisa dipakai dengan format API OpenAI maupun Anthropic. Untuk ganti model, cukup ubah nama model di request." },
+  { icon: Gauge, title: "Cek pemakaian sendiri", body: "Sisa saldo, jumlah token yang terpakai, dan riwayat request ada di portal." },
+  { icon: ShieldCheck, title: "Key terikat ke akunmu", body: "Kamu masuk ke portal dengan akun Google. Kalau key bocor, buat key baru dari portal." },
 ];
 
 export default function PublicLanding() {
@@ -201,8 +201,8 @@ export default function PublicLanding() {
               <span className="text-[var(--green)]">bayar per token.</span>
             </h1>
             <p className="mx-auto mt-5 max-w-xl text-[16px] leading-relaxed text-[var(--muted)] sm:text-[17px] lg:mx-0">
-              Kompatibel dengan API OpenAI dan Anthropic, cukup ganti base URL dan API key. Tanpa langganan bulanan,
-              kamu hanya bayar sesuai token yang dipakai.
+              Bisa dipakai di aplikasi yang mendukung API OpenAI atau Anthropic. Cukup ganti base URL, API key, dan
+              nama model. Tidak ada biaya bulanan.
             </p>
             <div className="mt-7 flex flex-col items-center gap-3 sm:flex-row sm:justify-center lg:justify-start">
               <a
@@ -229,19 +229,19 @@ export default function PublicLanding() {
       <section aria-label="Statistik layanan" className="mt-6">
         <div className="mb-3 flex items-center gap-2 text-[12px] text-[var(--muted)]">
           <span className="landing-live-dot h-1.5 w-1.5 rounded-full bg-[var(--ok)]" aria-hidden="true" />
-          Angka langsung dari gateway, diperbarui otomatis
+          Data langsung dari server kami, diperbarui otomatis
         </div>
         <div className="grid gap-px overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--line)] sm:grid-cols-3">
           <Metric icon={Activity} label="Total request" value={fmtCount(Math.round(requestsCount))} hint="Sepanjang waktu" />
           <Metric icon={Coins} label="Token diproses" value={fmtCount(Math.round(tokensCount))} hint="Sepanjang waktu" />
-          <Metric icon={Boxes} label="Model tersedia" value={fmtCount(overviewData?.model_count ?? 0)} hint="Semua bisa dipanggil dengan key yang sama" />
+          <Metric icon={Boxes} label="Model tersedia" value={fmtCount(overviewData?.model_count ?? 0)} hint="Semuanya bisa dipakai dengan satu key" />
         </div>
       </section>
 
       {/* How it works */}
       <section className="mt-20">
-        <SectionHeading eyebrow="Cara kerja" title="Tiga langkah sampai request pertama">
-          Tidak perlu kartu kredit. Saldo diisi lewat QRIS dari aplikasi bank atau e-wallet.
+        <SectionHeading eyebrow="Cara kerja" title="Mulai dalam tiga langkah">
+          Tidak perlu kartu kredit. Isi saldo lewat QRIS dari aplikasi bank atau e-wallet.
         </SectionHeading>
         <ol className="mt-8 grid gap-4 md:grid-cols-3">
           {STEPS.map((step, i) => (
@@ -261,7 +261,7 @@ export default function PublicLanding() {
 
       {/* Features */}
       <section className="mt-20">
-        <SectionHeading eyebrow="Kenapa Tokenizer" title="Tanpa langganan, bayar sesuai pemakaian" />
+        <SectionHeading eyebrow="Kenapa Tokenizer" title="Satu saldo untuk semua model, tanpa biaya bulanan" />
         <div className="mt-8 grid gap-px overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--line)] sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map((f) => (
             <div key={f.title} className="bg-[var(--paper)] p-5">
@@ -277,7 +277,7 @@ export default function PublicLanding() {
       <section id="models" className="mt-20 scroll-mt-20">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <SectionHeading eyebrow="Model & harga" title="Model yang paling sering dipakai">
-            Harga dalam USD per 1 juta token dan mengikuti pasar, jadi bisa berubah sewaktu-waktu. Daftar lengkap ada di katalog.
+            Harga dalam USD per 1 juta token dan bisa berubah mengikuti pasar. Daftar lengkap ada di katalog.
           </SectionHeading>
         </div>
         {models.isLoading ? (
@@ -309,9 +309,9 @@ export default function PublicLanding() {
         <div className="relative overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--paper)] p-6 sm:p-10">
           <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div className="max-w-xl">
-              <h2 className="text-[24px] font-semibold tracking-[-0.5px] text-[var(--ink)] sm:text-[28px]">Coba mulai dari Rp10.000</h2>
+              <h2 className="text-[24px] font-semibold tracking-[-0.5px] text-[var(--ink)] sm:text-[28px]">Mulai dengan saldo Rp10.000</h2>
               <p className="mt-2 text-[15px] leading-relaxed text-[var(--muted)]">
-                Login dengan Google, isi saldo lewat QRIS, lalu pakai API key-mu. Kalau ada kendala, tanya langsung di
+                Login dengan Google, isi saldo lewat QRIS, lalu pasang API key-mu. Kalau ada kendala, tanya langsung di
                 grup Telegram.
               </p>
             </div>
