@@ -11,7 +11,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Activity, ArrowRight, Boxes, Check, Coins, Copy, Gauge, KeyRound, LogIn, Plug, Receipt, Send, ShieldCheck, Wallet,
+  Activity, ArrowRight, Boxes, Check, Coins, Copy, Gauge, KeyRound, LogIn, Plug, Receipt, Route, Send, ShieldCheck,
+  SlidersHorizontal, Wallet,
   type LucideIcon,
 } from "lucide-react";
 import { fetchPublicOverview, fetchPublicModels } from "../lib/publicApi";
@@ -142,7 +143,9 @@ const STEPS: { icon: LucideIcon; title: string; body: string }[] = [
 ];
 
 const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
-  { icon: Receipt, title: "Bayar per token", body: "Tidak ada biaya bulanan. Harga tiap model per 1 juta token tertulis di katalog, jadi biaya bisa dihitung sebelum dipakai." },
+  { icon: Receipt, title: "Bayar per token", body: "Tidak ada biaya bulanan. Harga per 1 juta token mengikuti pasar, jadi bisa naik atau turun. Saldo dipotong dengan harga saat request diproses." },
+  { icon: Route, title: "Dikirim ke yang termurah", body: "Tiap request dikirim ke penawaran termurah yang tersedia saat itu. Kalau penawaran itu sedang penuh, request pindah ke penawaran berikutnya supaya tetap jalan." },
+  { icon: SlidersHorizontal, title: "Atur batas harga sendiri", body: "Pasang diskon minimum per model di portal. Request yang tidak bisa mendapat diskon itu ditolak dan tidak ditagih. Berlaku untuk model yang mendukung jaminan diskon." },
   { icon: KeyRound, title: "Satu key, banyak model", body: "Endpoint format OpenAI dan Anthropic sama-sama didukung. Mau ganti model, cukup ubah nama model di request." },
   { icon: Gauge, title: "Pemakaian terlihat jelas", body: "Sisa saldo, token yang terpakai, dan riwayat request bisa kamu cek sendiri di portal." },
   { icon: ShieldCheck, title: "Key terikat ke akunmu", body: "Portal memakai Google Sign-In. Kalau key bocor, buat key baru dari portal." },
@@ -258,8 +261,8 @@ export default function PublicLanding() {
 
       {/* Features */}
       <section className="mt-20">
-        <SectionHeading eyebrow="Kenapa Tokenizer" title="Tanpa langganan, tanpa tagihan kejutan" />
-        <div className="mt-8 grid gap-px overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--line)] sm:grid-cols-2 lg:grid-cols-4">
+        <SectionHeading eyebrow="Kenapa Tokenizer" title="Tanpa langganan, bayar sesuai pemakaian" />
+        <div className="mt-8 grid gap-px overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--line)] sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map((f) => (
             <div key={f.title} className="bg-[var(--paper)] p-5">
               <f.icon className="h-5 w-5 text-[var(--green)]" strokeWidth={1.75} aria-hidden="true" />
@@ -274,7 +277,7 @@ export default function PublicLanding() {
       <section id="models" className="mt-20 scroll-mt-20">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <SectionHeading eyebrow="Model & harga" title="Model yang paling sering dipakai">
-            Harga dalam USD per 1 juta token. Daftar lengkap ada di katalog.
+            Harga dalam USD per 1 juta token dan mengikuti pasar, jadi bisa berubah sewaktu-waktu. Daftar lengkap ada di katalog.
           </SectionHeading>
         </div>
         {models.isLoading ? (
