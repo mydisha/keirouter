@@ -143,10 +143,10 @@ const STEPS: { icon: LucideIcon; title: string; body: string }[] = [
 ];
 
 const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
-  { icon: Route, title: "Otomatis ke yang termurah", body: "Kami mengirim request-mu ke penyedia termurah saat itu, jadi kamu tidak perlu membandingkan harga sendiri. Kalau penyedia itu penuh, kami alihkan ke penyedia termurah berikutnya." },
-  { icon: SlidersHorizontal, title: "Batas harga kamu yang atur", body: "Harga ikut pasar. Supaya tetap sesuai anggaranmu, pasang diskon minimum di portal. Kalau tidak ada harga semurah itu, request ditolak dan saldo tidak terpotong. Belum tersedia untuk semua model." },
-  { icon: KeyRound, title: "Satu key, banyak model", body: "Bisa dipakai dengan format API OpenAI maupun Anthropic. Untuk ganti model, cukup ubah nama model di request." },
-  { icon: Gauge, title: "Pantau dari portal", body: "Sisa saldo, token yang terpakai, dan riwayat request ada di portal. Kalau key bocor, buat key baru dari sana." },
+  { icon: Route, title: "Otomatis ke yang termurah", body: "Request-mu dikirim ke penyedia termurah yang sedang tersedia." },
+  { icon: SlidersHorizontal, title: "Batas harga kamu yang atur", body: "Pasang diskon minimum di portal. Kalau tidak ada yang semurah itu, request ditolak dan saldo tidak terpotong." },
+  { icon: KeyRound, title: "Satu key, banyak model", body: "Format OpenAI dan Anthropic. Ganti model cukup dengan ganti namanya." },
+  { icon: Gauge, title: "Pantau dari portal", body: "Cek saldo, token, dan riwayat request. Key bocor? Buat yang baru." },
 ];
 
 export default function PublicLanding() {
