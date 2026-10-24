@@ -5,7 +5,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import {
-  ArrowRight, Clock3, CreditCard, Database, Globe2, KeyRound, LockKeyhole, MapPin, Server, ShieldCheck,
+  ArrowRight, Clock3, CreditCard, KeyRound, MapPin,
   type LucideIcon,
 } from "lucide-react";
 import { PublicLayout, TELEGRAM_URL } from "../components/PublicLayout";
@@ -24,17 +24,11 @@ function stockLabel(r: PublicHostingRegion, open: boolean): string {
   return `Sisa ${r.stock} slot`;
 }
 
-const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
-  { icon: Globe2, title: "Subdomain HTTPS sendiri", body: "Setiap instance mendapat subdomain acak dengan sertifikat HTTPS, siap dipakai tanpa atur DNS." },
-  { icon: Database, title: "Data tidak hilang", body: "Database, provider, dan API key di 9router tersimpan di volume sendiri dan tetap ada saat instance di-restart." },
-  { icon: LockKeyhole, title: "Password hanya untukmu", body: "Password awal dashboard tersimpan terenkripsi dan hanya bisa dilihat dari portal akunmu." },
-  { icon: ShieldCheck, title: "Container terpisah", body: "Satu pelanggan satu container. Instance lain tidak bisa membaca data milikmu." },
-];
 
 const STEPS: { icon: LucideIcon; title: string; body: string }[] = [
-  { icon: MapPin, title: "Pilih region", body: "Pilih negara server yang paling dekat dengan penggunamu. Harga bisa berbeda tiap negara." },
-  { icon: CreditCard, title: "Bayar lewat QRIS", body: "Login portal dengan Google, setujui ketentuan, lalu bayar dari aplikasi bank atau e-wallet." },
-  { icon: Clock3, title: "Instance diaktifkan", body: "Admin membuat instance paling lambat 1x24 jam pada hari kerja. URL dan password muncul di portal." },
+  { icon: MapPin, title: "Pilih region", body: "Pilih negara server. Harga tiap negara bisa berbeda." },
+  { icon: CreditCard, title: "Bayar dengan QRIS", body: "Masuk dengan Google, lalu bayar dari aplikasi bank atau e-wallet." },
+  { icon: Clock3, title: "Tunggu instance dibuat", body: "Paling lambat 1x24 jam di hari kerja. Alamat dan password muncul di portal." },
 ];
 
 export default function PublicHosting() {
@@ -49,25 +43,20 @@ export default function PublicHosting() {
   return (
     <PublicLayout>
       <section className="mx-auto max-w-3xl text-center">
-        <span className="inline-flex items-center gap-2 rounded-full border border-[var(--line)] bg-[var(--paper)] px-3 py-1 text-[12px] text-[var(--muted)]">
-          <Server className="h-3.5 w-3.5 text-[var(--green)]" strokeWidth={1.75} aria-hidden="true" />
-          Hosting 9router
-        </span>
-        <h1 className="mt-5 text-[34px] font-semibold leading-[1.08] tracking-[-1.2px] text-[var(--ink)] sm:text-[46px]">
-          9router siap pakai,{" "}
-          <span className="text-[var(--green)]">tanpa urus server.</span>
+        <h1 className="text-[34px] font-semibold leading-[1.08] tracking-[-1.2px] text-[var(--ink)] sm:text-[46px]">
+          Hosting 9router Siap Pakai
         </h1>
-        <p className="mx-auto mt-5 max-w-xl text-[16px] leading-relaxed text-[var(--muted)]">
-          Kami jalankan 9router di server kami dengan subdomain HTTPS milikmu sendiri.
-          {cheapest !== null ? ` Mulai ${formatIDR(cheapest)} per ${periodDays} hari.` : ""}
+        <p className="mx-auto mt-5 max-w-2xl text-balance text-[16px] leading-relaxed text-[var(--muted)]">
+          Layanan 9router untuk kebutuhan AI kamu
+          {cheapest !== null ? `, mulai dari ${formatIDR(cheapest)} per ${periodDays === 30 ? "bulan" : `${periodDays} hari`}.` : "."}
         </p>
       </section>
 
       <section className="mt-12" aria-labelledby="regions-title">
         <h2 id="regions-title" className="sr-only">Pilih region</h2>
         {q.isLoading ? (
-          <div className="mx-auto grid max-w-3xl gap-4 sm:grid-cols-2" aria-busy="true" aria-label="Memuat region">
-            {[0, 1].map((i) => (
+          <div className="mx-auto grid max-w-5xl gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Memuat region">
+            {[0, 1, 2].map((i) => (
               <div key={i} className="h-[248px] animate-pulse rounded-xl border border-[var(--line)] bg-[var(--paper)]" />
             ))}
           </div>
@@ -76,14 +65,14 @@ export default function PublicHosting() {
             {q.isError ? "Data region gagal dimuat. Coba muat ulang halaman." : "Pemesanan hosting sedang ditutup. Pantau pengumuman di Telegram."}
           </p>
         ) : (
-          <ul className="mx-auto grid max-w-3xl gap-4 sm:grid-cols-2">
+          <ul className="mx-auto grid max-w-5xl gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {regions.map((r) => (
               <RegionCard key={r.id} region={r} open={open} periodDays={periodDays} />
             ))}
           </ul>
         )}
         <p className="mx-auto mt-4 max-w-3xl text-center text-[12.5px] text-[var(--muted)]">
-          Stok diperbarui otomatis. Dengan memesan, kamu menyetujui{" "}
+          Sisa slot diperbarui tiap menit. Dengan memesan, kamu menyetujui{" "}
           <a href={termsUrl} className="text-[var(--ink)] underline underline-offset-2 hover:opacity-80">
             Ketentuan Layanan Hosting 9router
           </a>
@@ -92,7 +81,7 @@ export default function PublicHosting() {
       </section>
 
       <section className="mt-20">
-        <SectionTitle eyebrow="Cara pesan" title="Tiga langkah sampai 9router-mu aktif" />
+        <SectionTitle title="Cara memesan" />
         <ol className="mt-8 grid gap-4 md:grid-cols-3">
           {STEPS.map((s, i) => (
             <li key={s.title} className="rounded-xl border border-[var(--line)] bg-[var(--paper)] p-5">
@@ -109,24 +98,12 @@ export default function PublicHosting() {
         </ol>
       </section>
 
-      <section className="mt-20">
-        <SectionTitle eyebrow="Yang kamu dapat" title="Satu container 9router, lengkap" />
-        <div className="mt-8 grid gap-px overflow-hidden rounded-xl border border-[var(--line)] bg-[var(--line)] sm:grid-cols-2 lg:grid-cols-4">
-          {FEATURES.map((f) => (
-            <div key={f.title} className="bg-[var(--paper)] p-5">
-              <f.icon className="h-5 w-5 text-[var(--green)]" strokeWidth={1.75} aria-hidden="true" />
-              <h3 className="mt-3 text-[15px] font-semibold text-[var(--ink)]">{f.title}</h3>
-              <p className="mt-1.5 text-[14px] leading-relaxed text-[var(--muted)]">{f.body}</p>
-            </div>
-          ))}
-        </div>
-      </section>
 
       <section className="mt-20 rounded-xl border border-[var(--line)] bg-[var(--paper)] p-6 text-center sm:p-8">
         <KeyRound className="mx-auto h-6 w-6 text-[var(--green)]" strokeWidth={1.75} aria-hidden="true" />
-        <h2 className="mt-3 text-[20px] font-semibold tracking-[-0.3px] text-[var(--ink)]">Ada pertanyaan sebelum memesan?</h2>
+        <h2 className="mt-3 text-[20px] font-semibold tracking-[-0.3px] text-[var(--ink)]">Masa aktif dan perpanjangan</h2>
         <p className="mx-auto mt-2 max-w-md text-[14px] leading-relaxed text-[var(--muted)]">
-          Tanyakan di komunitas Telegram. Masa aktif {periodDays} hari dihitung sejak instance aktif, dan tidak ada perpanjangan otomatis.
+          Masa aktif {periodDays} hari sejak instance aktif. Perpanjang sendiri lewat portal. Ada pertanyaan? Tanya di Telegram.
         </p>
         <a
           href={TELEGRAM_URL}
@@ -134,7 +111,7 @@ export default function PublicHosting() {
           rel="noopener noreferrer"
           className={`mt-5 inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--bg)] px-4 text-[14px] font-medium text-[var(--ink)] no-underline transition-colors hover:border-[var(--line-strong)] ${FOCUS}`}
         >
-          Gabung Telegram
+          Buka grup Telegram
           <ArrowRight className="h-4 w-4" aria-hidden="true" />
         </a>
       </section>
@@ -142,11 +119,10 @@ export default function PublicHosting() {
   );
 }
 
-function SectionTitle({ eyebrow, title }: { eyebrow: string; title: string }) {
+function SectionTitle({ title }: { title: string }) {
   return (
     <div className="max-w-2xl">
-      <p className="font-mono text-[11px] uppercase tracking-[1.2px] text-[var(--green)]">{eyebrow}</p>
-      <h2 className="mt-2 text-[24px] font-semibold tracking-[-0.5px] text-[var(--ink)] sm:text-[28px]">{title}</h2>
+      <h2 className="text-[24px] font-semibold tracking-[-0.5px] text-[var(--ink)] sm:text-[28px]">{title}</h2>
     </div>
   );
 }
@@ -182,7 +158,7 @@ function RegionCard({ region: r, open, periodDays }: { region: PublicHostingRegi
       <ul className="mt-5 space-y-1.5 text-[13.5px] text-[var(--muted)]">
         <li>1 container 9router</li>
         <li>Subdomain HTTPS acak</li>
-        <li>Volume data persisten</li>
+        <li>Data disimpan di volume sendiri</li>
       </ul>
       <div className="mt-auto pt-6">
         {orderable ? (
@@ -198,7 +174,7 @@ function RegionCard({ region: r, open, periodDays }: { region: PublicHostingRegi
             aria-disabled="true"
             className="inline-flex h-11 w-full cursor-not-allowed items-center justify-center rounded-lg border border-[var(--line)] bg-[var(--soft)] px-5 text-[14px] font-medium text-[var(--muted)]"
           >
-            {open ? "Sold out" : "Belum dibuka"}
+            {open ? "Stok habis" : "Belum dibuka"}
           </span>
         )}
       </div>
