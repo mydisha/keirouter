@@ -549,7 +549,7 @@ function ExtendModal({ ids, onClose, onDone }: { ids: string[]; onClose: () => v
       title="Add days"
       subtitle={`${ids.length} ${ids.length === 1 ? "instance" : "instances"} selected`}
       footer={
-        <ModalFooter>
+        <>
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
@@ -557,34 +557,55 @@ function ExtendModal({ ids, onClose, onDone }: { ids: string[]; onClose: () => v
             {extend.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <CalendarPlus aria-hidden="true" />}
             {valid ? `Add ${n} ${n === 1 ? "day" : "days"}` : "Add days"}
           </Button>
-        </ModalFooter>
+        </>
       }
     >
-      <form id="hosting-extend-form" onSubmit={submit} className="space-y-4">
-        <Field label="Days to add" required error={days !== "" && !valid ? `Enter a whole number from 1 to ${MAX_EXTEND_DAYS}.` : undefined}>
-          <Input
-            type="number"
-            inputMode="numeric"
-            min={1}
-            max={MAX_EXTEND_DAYS}
-            step={1}
-            value={days}
-            onChange={(e) => setDays(e.target.value)}
-            autoFocus
-          />
+      <form id="hosting-extend-form" onSubmit={submit} className="space-y-5 px-5 py-5">
+        <Field label="Days to add" error={days !== "" && !valid ? `Enter a whole number from 1 to ${MAX_EXTEND_DAYS}.` : undefined}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <div className="relative sm:w-32">
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={MAX_EXTEND_DAYS}
+                step={1}
+                value={days}
+                onChange={(e) => setDays(e.target.value)}
+                autoFocus
+                className="pr-12 font-mono tabular-nums [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12px] font-medium text-fg-muted" aria-hidden="true">
+                {n === 1 ? "day" : "days"}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label="Common amounts">
+              {EXTEND_PRESETS.map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  aria-pressed={n === p}
+                  aria-label={`${p} ${p === 1 ? "day" : "days"}`}
+                  onClick={() => setDays(String(p))}
+                  className={cn(
+                    "h-9 rounded-lg border px-3 text-[12.5px] font-medium tabular-nums transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                    n === p ? "border-accent-500 bg-accent-500/10 text-fg" : "border-line text-fg-muted hover:border-fg-faint hover:text-fg",
+                  )}
+                >
+                  {p}d
+                </button>
+              ))}
+            </div>
+          </div>
         </Field>
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Common amounts">
-          {EXTEND_PRESETS.map((p) => (
-            <Button key={p} type="button" variant={n === p ? "secondary" : "ghost"} aria-pressed={n === p} onClick={() => setDays(String(p))}>
-              {p} {p === 1 ? "day" : "days"}
-            </Button>
-          ))}
+        <div className="rounded-lg border border-line bg-subtle px-4 py-3">
+          <p className="text-[12.5px] font-medium text-fg">How the days apply</p>
+          <ul className="mt-2 list-disc space-y-1.5 pl-4 text-[12.5px] leading-relaxed text-fg-muted">
+            <li>Running or expired: added to the current end date.</li>
+            <li>Paid but not created yet: added to the prepaid days, which start once the instance is created.</li>
+            <li>Expired with a new end date in the future: becomes active again. If the system stopped it, it starts within 5 minutes. If you stopped it, it stays stopped.</li>
+          </ul>
         </div>
-        <ul className="list-disc space-y-1 pl-5 text-[12.5px] text-fg-muted">
-          <li>Running and expired instances: the days go on top of the current end date.</li>
-          <li>Paid but not created yet: the days are added to the prepaid days and start when the instance is created.</li>
-          <li>An expired instance whose new end date is in the future becomes active. One the system stopped for lapsing starts again within 5 minutes; one you stopped yourself stays stopped.</li>
-        </ul>
       </form>
     </Modal>
   );
