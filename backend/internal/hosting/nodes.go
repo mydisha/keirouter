@@ -17,9 +17,6 @@ type Node struct {
 	// PublicIP is the node's IPv4 address, the target of its instances'
 	// DNS records.
 	PublicIP string `json:"public_ip"`
-	// MonitorTargetID is the monitoring server that reports this node's
-	// container metrics.
-	MonitorTargetID string `json:"monitor_target_id"`
 	// Capacity is the most instances the node takes; 0 means no limit.
 	Capacity int  `json:"capacity"`
 	Enabled  bool `json:"enabled"`
@@ -40,7 +37,6 @@ func (s *Settings) normalizeNodes() error {
 		n.ID = strings.ToLower(strings.TrimSpace(n.ID))
 		n.Name = strings.TrimSpace(n.Name)
 		n.ServerID = strings.TrimSpace(n.ServerID)
-		n.MonitorTargetID = strings.TrimSpace(n.MonitorTargetID)
 		n.Region = strings.ToLower(strings.TrimSpace(n.Region))
 		n.PublicIP = strings.TrimSpace(n.PublicIP)
 		switch {

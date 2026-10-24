@@ -6,9 +6,6 @@ export const QK_HOSTING = {
   finance: ["hosting-finance"] as const,
   coupons: ["hosting-coupons"] as const,
   nodes: ["hosting-nodes"] as const,
-  monitorSettings: ["hosting-monitor-settings"] as const,
-  monitorServers: ["hosting-monitor-servers"] as const,
-  monitorContainers: ["hosting-monitor-containers"] as const,
 };
 
 export const STATUS_LABEL: Record<HostingStatus, string> = {
@@ -103,13 +100,3 @@ export function num(n: number, digits = 1): string {
   return n.toLocaleString("en-US", { maximumFractionDigits: digits });
 }
 
-/** Seconds → "3 hari 4 jam" / "5 jam 12 menit" / "8 menit". */
-export function uptimeID(seconds: number): string {
-  if (!(seconds > 0)) return "-";
-  const d = Math.floor(seconds / 86400);
-  const h = Math.floor((seconds % 86400) / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`;
-  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
-  return `${Math.max(1, m)}m`;
-}

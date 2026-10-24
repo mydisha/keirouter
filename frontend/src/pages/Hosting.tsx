@@ -25,7 +25,6 @@ import { cn } from "@/lib/utils";
 import {
   api,
   type HostingInstanceAdmin,
-  type HostingMonitorTarget,
   type HostingNode,
   type HostingNodeLoad,
   type HostingRegion,
@@ -55,7 +54,6 @@ import {
 } from "../components/ui";
 import { Panel, REFETCH_MS, TH, THEAD, dateID, errorText, idr } from "./payments/shared";
 import { FinanceTab } from "./hosting/HostingFinance";
-import { MonitoringTab } from "./hosting/HostingMonitoring";
 import { CouponsTab } from "./hosting/HostingCoupons";
 import {
   QK_HOSTING,
@@ -69,7 +67,7 @@ import {
   validDomain,
 } from "./hosting/shared";
 
-const SECTIONS = ["instances", "coupons", "finance", "monitoring", "settings"] as const;
+const SECTIONS = ["instances", "coupons", "finance", "settings"] as const;
 type Section = (typeof SECTIONS)[number];
 
 const ORDER_STATUS_LABEL: Record<string, string> = {
@@ -112,8 +110,6 @@ export function HostingPage() {
         <CouponsTab />
       ) : section === "finance" ? (
         <FinanceTab />
-      ) : section === "monitoring" ? (
-        <MonitoringTab />
       ) : (
         <SettingsTab query={settings} />
       )}
@@ -774,7 +770,6 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
             name: n.name.trim(),
             server_id: n.serverId.trim(),
             public_ip: n.publicIp.trim(),
-            monitor_target_id: n.monitorTargetId,
             capacity: Number(n.capacity.trim() || "0"),
             enabled: n.enabled,
             region: n.region,
@@ -1219,7 +1214,6 @@ interface NodeDraft {
   name: string;
   serverId: string;
   publicIp: string;
-  monitorTargetId: string;
   capacity: string;
   enabled: boolean;
   region: string;
@@ -1234,7 +1228,6 @@ const toNodeDraft = (n: HostingNode): NodeDraft => ({
   name: n.name,
   serverId: n.server_id ?? "",
   publicIp: n.public_ip ?? "",
-  monitorTargetId: n.monitor_target_id ?? "",
   capacity: String(n.capacity ?? 0),
   enabled: n.enabled,
   region: n.region ?? "",
@@ -1357,8 +1350,6 @@ function NodesEditor({
 }) {
   const confirm = useConfirm();
   const loads = useQuery({ queryKey: QK_HOSTING.nodes, queryFn: api.listHostingNodes });
-  const monitor = useQuery({ queryKey: QK_HOSTING.monitorSettings, queryFn: api.getHostingMonitoring });
-  const targets: HostingMonitorTarget[] = monitor.data?.targets ?? [];
   const loadOf = (id: string) => loads.data?.nodes.find((n) => n.id === id);
 
   const update = (key: string, patch: Partial<NodeDraft>) => setNodes((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -1368,7 +1359,7 @@ function NodesEditor({
       return [
         ...rs,
         {
-          key: id, id, name: `Node ${rs.length + 1}`, serverId: "", publicIp: "", monitorTargetId: "", capacity: "0", enabled: true,
+          key: id, id, name: `Node ${rs.length + 1}`, serverId: "", publicIp: "", capacity: "0", enabled: true,
           region: regions[0]?.id ?? "", isNew: true,
         },
       ];
@@ -1414,7 +1405,6 @@ function NodesEditor({
         const load = loadOf(r.id);
         const cap = Number(r.capacity.trim() || "0");
         const full = load ? cap > 0 && load.used >= cap : false;
-        const unknownTarget = r.monitorTargetId !== "" && monitor.data && !targets.some((t) => t.id === r.monitorTargetId);
         const toggleId = `hosting-node-enabled-${r.key}`;
         return (
           <fieldset key={r.key} className="rounded-xl border border-line bg-subtle/60 p-3.5">
@@ -1460,17 +1450,6 @@ function NodesEditor({
               </Field>
               <Field label="Dokploy Server ID" hint={<>Copy it from {serversLink}. Leave empty for the main Dokploy server (not recommended).</>}>
                 <Input value={r.serverId} onChange={(e) => update(r.key, { serverId: e.target.value })} autoComplete="off" spellCheck={false} className="font-mono" />
-              </Field>
-              <Field label="Server monitoring" hint={monitor.isError ? `Couldn't load monitoring servers. ${errorText(monitor.error)}` : undefined}>
-                <Select value={r.monitorTargetId} onChange={(e) => update(r.key, { monitorTargetId: e.target.value })}>
-                  <option value="">Automatic (customer server)</option>
-                  {targets.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                  {unknownTarget && <option value={r.monitorTargetId}>(server not found)</option>}
-                </Select>
               </Field>
               <Field label="Region" hint={r.region ? undefined : "A node without a region adds no stock for sale."}>
                 <Select value={r.region} onChange={(e) => update(r.key, { region: e.target.value })}>

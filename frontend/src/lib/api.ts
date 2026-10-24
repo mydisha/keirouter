@@ -2329,8 +2329,6 @@ export interface HostingNode {
   server_id: string;
   /** IPv4 that each instance's Cloudflare A record points at. */
   public_ip: string;
-  /** Monitoring target id; "" falls back to the target flagged instances. */
-  monitor_target_id: string;
   /** 0 = unlimited. */
   capacity: number;
   enabled: boolean;
@@ -2557,78 +2555,6 @@ export interface HostingFinance {
   note: string;
 }
 
-// Hosting monitoring (admin): Dokploy monitoring targets and their metrics.
-export interface HostingMonitorTarget {
-  id: string;
-  name: string;
-  url: string;
-  instances: boolean;
-  has_token: boolean;
-  token_masked: string;
-}
-
-export interface HostingMonitorTargetInput {
-  /** Omit for a new target. */
-  id?: string;
-  name: string;
-  url: string;
-  /** Omit or "" keeps the stored token; required again when the URL changes. */
-  token?: string;
-  instances: boolean;
-}
-
-export interface HostingServerMetric {
-  timestamp: string;
-  cpu: number;
-  cpuModel: string;
-  cpuCores: number;
-  os: string;
-  distro: string;
-  /** Percent. */
-  memUsed: number;
-  memUsedGB: number;
-  /** GB. */
-  memTotal: number;
-  /** Seconds. */
-  uptime: number;
-  /** Percent. */
-  diskUsed: number;
-  /** GB. */
-  totalDisk: number;
-  /** MB, cumulative. */
-  networkIn: number;
-  networkOut: number;
-}
-
-export interface HostingServerMetrics {
-  id: string;
-  name: string;
-  instances: boolean;
-  samples: HostingServerMetric[];
-  error?: string;
-}
-
-export interface HostingContainerMetric {
-  timestamp: string;
-  CPU: number;
-  Memory: { percentage: number; used: number; total: number; usedUnit: string; totalUnit: string };
-  Network: { input: number; output: number; inputUnit: string; outputUnit: string };
-  BlockIO: { read: number; write: number; readUnit: string; writeUnit: string };
-  Name: string;
-}
-
-export interface HostingContainerMetrics {
-  instance_id: string;
-  app_name: string;
-  fqdn: string;
-  status: HostingStatus;
-  node_id: string;
-  /** Monitoring target name the metrics came from. */
-  server?: string;
-  samples: HostingContainerMetric[];
-  error?: string;
-}
-
 export const api = {
   // Auth (no session required for status/login/logout).
   authStatus: () => request<AuthStatus>("GET", "/auth/status"),
@@ -2771,12 +2697,6 @@ export const api = {
   createHostingCost: (body: HostingCostInput) => request<HostingCost>("POST", "/hosting/costs", body),
   updateHostingCost: (id: string, body: HostingCostInput) => request<HostingCost>("PUT", `/hosting/costs/${encodeURIComponent(id)}`, body),
   deleteHostingCost: (id: string) => request<void>("DELETE", `/hosting/costs/${encodeURIComponent(id)}`),
-  getHostingMonitoring: () => request<{ targets: HostingMonitorTarget[] }>("GET", "/hosting/monitoring/settings"),
-  putHostingMonitoring: (targets: HostingMonitorTargetInput[]) =>
-    request<{ targets: HostingMonitorTarget[] }>("PUT", "/hosting/monitoring/settings", { targets }),
-  hostingServerMetrics: (limit = 60) => request<{ servers: HostingServerMetrics[] }>("GET", `/hosting/monitoring/servers?limit=${limit}`),
-  hostingContainerMetrics: (limit = 30) =>
-    request<{ containers: HostingContainerMetrics[]; error?: string }>("GET", `/hosting/monitoring/containers?limit=${limit}`),
 
   // Finance monitor (admin): profit, upstream balances, top-ups, alerts.
   financeReport: (range: FinanceRange) =>

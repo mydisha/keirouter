@@ -34,7 +34,6 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/guardrails"
 	"github.com/mydisha/keirouter/backend/internal/health"
 	"github.com/mydisha/keirouter/backend/internal/healthcheck"
-	"github.com/mydisha/keirouter/backend/internal/hosting"
 	"github.com/mydisha/keirouter/backend/internal/identity"
 	"github.com/mydisha/keirouter/backend/internal/inflight"
 	"github.com/mydisha/keirouter/backend/internal/market"
@@ -126,8 +125,6 @@ type Server struct {
 	dokployFactory func(baseURL, apiKey string) dokployAPI
 	// dnsFactory overrides the Cloudflare DNS client in tests.
 	dnsFactory func(token string) dnsAPI
-	// monitorFactory overrides the Dokploy monitoring client in tests.
-	monitorFactory func(t hosting.MonitorTarget) monitorFetcher
 	// hostingOrderLocks serializes hosting checkouts per API key, so double
 	// clicks cannot create two unpaid instances or two coupon holds.
 	hostingOrderLocks sync.Map // key id -> *sync.Mutex
