@@ -1020,7 +1020,7 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
           </>
         )}
 
-        {step === 3 && <RegionsEditor regions={regions} setRegions={setRegions} errors={regionErrors} />}
+        {step === 3 && <RegionsEditor regions={regions} setRegions={setRegions} nodes={nodes} setNodes={setNodes} errors={regionErrors} />}
 
         {step === 4 && (
           <NodesEditor
@@ -1269,16 +1269,68 @@ function regionErrorsOf(regions: RegionDraft[]) {
   });
 }
 
+// regionIdFor turns a country name into a stable id ("Malaysia" -> "malaysia"),
+// unique among taken ids and within the 20-character limit the API allows.
+function regionIdFor(name: string, taken: string[]): string {
+  const base =
+    name
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 20)
+      .replace(/-+$/, "") || "region";
+  let id = base;
+  for (let n = 2; taken.includes(id); n++) id = `${base.slice(0, 20 - String(n).length - 1)}-${n}`;
+  return id;
+}
+
+const MAX_REGIONS = 20;
+
 function RegionsEditor({
   regions,
   setRegions,
+  nodes,
+  setNodes,
   errors,
 }: {
   regions: RegionDraft[];
   setRegions: (fn: (rows: RegionDraft[]) => RegionDraft[]) => void;
+  nodes: NodeDraft[];
+  setNodes: (fn: (rows: NodeDraft[]) => NodeDraft[]) => void;
   errors: ReturnType<typeof regionErrorsOf>;
 }) {
+  const confirm = useConfirm();
+  const [newName, setNewName] = useState("");
   const update = (id: string, patch: Partial<RegionDraft>) => setRegions((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const trimmed = newName.trim();
+  const duplicate = regions.some((r) => r.name.trim().toLowerCase() === trimmed.toLowerCase());
+  const full = regions.length >= MAX_REGIONS;
+
+  // Not a <form>: this editor already sits inside the settings form.
+  const add = () => {
+    if (!trimmed || duplicate || full) return;
+    setRegions((rs) => [...rs, { id: regionIdFor(trimmed, rs.map((r) => r.id)), name: trimmed.slice(0, 60), price: "", enabled: true }]);
+    setNewName("");
+  };
+  const remove = async (r: RegionDraft) => {
+    const onNodes = nodes.filter((n) => n.region === r.id).length;
+    const ok = await confirm({
+      title: `Delete ${r.name.trim() || r.id}?`,
+      description:
+        onNodes > 0
+          ? `${onNodes} node(s) are in this region and will have no region, so they add no stock until you pick a new one. Saving fails if instances still belong to it; turn off For sale instead.`
+          : "Saving fails if instances still belong to this region; turn off For sale instead.",
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      tone: "danger",
+    });
+    if (!ok) return;
+    setRegions((rs) => rs.filter((x) => x.id !== r.id));
+    if (onNodes > 0) setNodes((ns) => ns.map((n) => (n.region === r.id ? { ...n, region: "" } : n)));
+  };
+
   return (
     <section aria-labelledby="hosting-regions-title" className="space-y-3">
       <div>
@@ -1286,7 +1338,8 @@ function RegionsEditor({
           Region
         </p>
         <p className="text-[12px] text-fg-muted">
-          Locations offered on the hosting page and in the portal, each with a price per 30 days. A disabled region, or one with no nodes, shows as sold out.
+          The countries your servers are in, each with its own price per 30 days. Customers pick one on the hosting page and in the portal. A
+          region with no active node, or with For sale off, shows as sold out.
         </p>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1304,10 +1357,20 @@ function RegionsEditor({
                     For sale
                   </span>
                   <Toggle checked={r.enabled} onChange={(v) => update(r.id, { enabled: v })} aria-labelledby={toggleId} />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => remove(r)}
+                    disabled={regions.length <= 1}
+                    aria-label={`Delete ${r.name.trim() || r.id}`}
+                    title={regions.length <= 1 ? "Keep at least one region" : "Delete region"}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </Button>
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Field label="Name" error={err.name}>
+                <Field label="Country" error={err.name}>
                   <Input value={r.name} onChange={(e) => update(r.id, { name: e.target.value })} maxLength={60} autoComplete="off" />
                 </Field>
                 <Field label="Price (IDR)" error={err.price} hint={!err.price && priceNum > 0 ? idr(priceNum) : undefined}>
@@ -1325,6 +1388,33 @@ function RegionsEditor({
             </fieldset>
           );
         })}
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+        <Field
+          label="Add a country"
+          className="flex-1"
+          error={duplicate ? "That country is already in the list." : undefined}
+          hint={full ? `${MAX_REGIONS} regions at most.` : "Any name works, e.g. Malaysia or Australia. Set its price after adding it."}
+        >
+          <Input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                add();
+              }
+            }}
+            placeholder="Malaysia"
+            maxLength={60}
+            autoComplete="off"
+            disabled={full}
+          />
+        </Field>
+        <Button type="button" variant="ghost" onClick={add} disabled={!trimmed || duplicate || full} className="sm:mt-[26px]">
+          <Plus aria-hidden="true" />
+          Add region
+        </Button>
       </div>
     </section>
   );
@@ -1348,11 +1438,21 @@ function NodesEditor({
   const confirm = useConfirm();
   const loads = useQuery({ queryKey: QK_HOSTING.nodes, queryFn: api.listHostingNodes });
   const loadOf = (id: string) => loads.data?.nodes.find((n) => n.id === id);
+  // Saved nodes start folded so the step reads as a list; new nodes open.
+  const [openKeys, setOpenKeys] = useState<Set<string>>(() => new Set());
+  const toggleOpen = (key: string) =>
+    setOpenKeys((ks) => {
+      const next = new Set(ks);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const update = (key: string, patch: Partial<NodeDraft>) => setNodes((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
-  const add = () =>
+  const add = () => {
+    const id = newNodeId();
+    setOpenKeys((ks) => new Set(ks).add(id));
     setNodes((rs) => {
-      const id = newNodeId();
       return [
         ...rs,
         {
@@ -1361,6 +1461,7 @@ function NodesEditor({
         },
       ];
     });
+  };
   const remove = async (r: NodeDraft) => {
     const used = loadOf(r.id)?.used ?? 0;
     if (used > 0) {
@@ -1403,78 +1504,100 @@ function NodesEditor({
         const cap = Number(r.capacity.trim() || "0");
         const full = load ? cap > 0 && load.used >= cap : false;
         const toggleId = `hosting-node-enabled-${r.key}`;
+        const panelId = `hosting-node-panel-${r.key}`;
+        const label = r.name.trim() || `Node ${i + 1}`;
+        const hasError = !!(err.name || err.ip || err.capacity);
+        // A node with an error stays open so the message is never hidden.
+        const open = openKeys.has(r.key) || hasError;
+        const regionName = regions.find((rg) => rg.id === r.region)?.name.trim() || r.region;
         return (
-          <fieldset key={r.key} className="rounded-xl border border-line bg-subtle/60 p-3.5">
-            <legend className="sr-only">{r.name.trim() || `Node ${i + 1}`}</legend>
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <span className="text-[12.5px] font-medium text-fg">{r.name.trim() || `Node ${i + 1}`}</span>
-                <span className="font-mono text-[11px] text-fg-faint">{r.id}</span>
-                {r.isNew ? (
-                  <Badge tone="accent">New</Badge>
-                ) : load ? (
-                  <Badge tone={!r.enabled ? "neutral" : full ? "danger" : "neutral"} title="Instances on this node / capacity">
-                    <span className="tabular-nums">{load.used}/{cap > 0 ? cap : "∞"}</span> instance{full && r.enabled ? " · full" : ""}
-                  </Badge>
-                ) : null}
-                {!r.enabled && <Badge tone="neutral">Disabled</Badge>}
-                {!r.region && <Badge tone="warning">No region</Badge>}
-              </div>
-              <div className="flex items-center gap-2">
+          <fieldset key={r.key} className="rounded-xl border border-line bg-subtle/60">
+            <legend className="sr-only">{label}</legend>
+            <div className="flex flex-wrap items-center justify-between gap-2 p-2 pl-1.5">
+              <button
+                type="button"
+                onClick={() => toggleOpen(r.key)}
+                aria-expanded={open}
+                aria-controls={panelId}
+                disabled={hasError}
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-default disabled:hover:bg-transparent"
+              >
+                <ChevronRight className={cn("h-4 w-4 shrink-0 text-fg-muted transition-transform", open && "rotate-90")} aria-hidden="true" />
+                <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-[12.5px] font-medium text-fg">{label}</span>
+                  <span className="font-mono text-[11.5px] tabular-nums text-fg-muted">{r.publicIp.trim() || "no IP"}</span>
+                  {regionName ? <span className="text-[12px] text-fg-muted">{regionName}</span> : <Badge tone="warning">No region</Badge>}
+                  {r.isNew ? (
+                    <Badge tone="accent">New</Badge>
+                  ) : load ? (
+                    <Badge tone={!r.enabled ? "neutral" : full ? "danger" : "neutral"} title="Instances on this node / capacity">
+                      <span className="tabular-nums">{load.used}/{cap > 0 ? cap : "∞"}</span> instance{full && r.enabled ? " · full" : ""}
+                    </Badge>
+                  ) : null}
+                  {!r.enabled && <Badge tone="neutral">Disabled</Badge>}
+                  {hasError && <Badge tone="danger">Needs a fix</Badge>}
+                </span>
+              </button>
+              <div className="flex items-center gap-2 pr-1.5">
                 <span id={toggleId} className="text-[12px] text-fg-muted">
                   Active
                 </span>
                 <Toggle checked={r.enabled} onChange={(v) => update(r.key, { enabled: v })} aria-labelledby={toggleId} />
-                <Button type="button" variant="ghost" onClick={() => remove(r)} aria-label={`Delete ${r.name.trim() || `node ${i + 1}`}`} title="Delete node">
+                <Button type="button" variant="ghost" onClick={() => remove(r)} aria-label={`Delete ${label}`} title="Delete node">
                   <Trash2 aria-hidden="true" />
                 </Button>
               </div>
             </div>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <Field label="Name" error={err.name}>
-                <Input value={r.name} onChange={(e) => update(r.key, { name: e.target.value })} placeholder="Node 1" maxLength={80} autoComplete="off" />
-              </Field>
-              <Field label="Public IP" error={err.ip} hint={err.ip ? undefined : <>IPv4 of the node server. Find it in {serversLink}.</>}>
-                <Input
-                  inputMode="decimal"
-                  value={r.publicIp}
-                  onChange={(e) => update(r.key, { publicIp: e.target.value })}
-                  placeholder="203.0.113.7"
-                  autoComplete="off"
-                  spellCheck={false}
-                  className="font-mono tabular-nums"
-                />
-              </Field>
-              <Field label="Dokploy Server ID" hint={<>Copy it from {serversLink}. Leave empty for the main Dokploy server (not recommended).</>}>
-                <Input value={r.serverId} onChange={(e) => update(r.key, { serverId: e.target.value })} autoComplete="off" spellCheck={false} className="font-mono" />
-              </Field>
-              <Field label="Region" hint={r.region ? undefined : "A node without a region adds no stock for sale."}>
-                <Select value={r.region} onChange={(e) => update(r.key, { region: e.target.value })}>
-                  <option value="">No region (not for sale)</option>
-                  {regions.map((rg) => (
-                    <option key={rg.id} value={rg.id}>
-                      {rg.name.trim() || rg.id}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field
-                label="Container capacity"
-                hint={err.capacity ? undefined : "Slots sold on this node. 0 = no limit. Overcommit can go past it when creating an instance."}
-                error={err.capacity}
-              >
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  min="0"
-                  max={MAX_NODE_CAPACITY}
-                  step="1"
-                  value={r.capacity}
-                  onChange={(e) => update(r.key, { capacity: e.target.value })}
-                  className="tabular-nums"
-                />
-              </Field>
-            </div>
+            {open && (
+              <div id={panelId} className="grid grid-cols-1 gap-3 border-t border-line p-3.5 sm:grid-cols-2 lg:grid-cols-3">
+                <Field label="Name" error={err.name}>
+                  <Input value={r.name} onChange={(e) => update(r.key, { name: e.target.value })} placeholder="Node 1" maxLength={80} autoComplete="off" />
+                </Field>
+                <Field label="Public IP" error={err.ip} hint={err.ip ? undefined : <>IPv4 of the node server. Find it in {serversLink}.</>}>
+                  <Input
+                    inputMode="decimal"
+                    value={r.publicIp}
+                    onChange={(e) => update(r.key, { publicIp: e.target.value })}
+                    placeholder="203.0.113.7"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="font-mono tabular-nums"
+                  />
+                </Field>
+                <Field label="Dokploy Server ID" hint={<>Copy it from {serversLink}. Leave empty for the main Dokploy server (not recommended).</>}>
+                  <Input value={r.serverId} onChange={(e) => update(r.key, { serverId: e.target.value })} autoComplete="off" spellCheck={false} className="font-mono" />
+                </Field>
+                <Field
+                  label="Region"
+                  hint={r.region ? "Missing a country? Add it in the Region step." : "A node without a region adds no stock for sale. Add countries in the Region step."}
+                >
+                  <Select value={r.region} onChange={(e) => update(r.key, { region: e.target.value })}>
+                    <option value="">No region (not for sale)</option>
+                    {regions.map((rg) => (
+                      <option key={rg.id} value={rg.id}>
+                        {rg.name.trim() || rg.id}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field
+                  label="Container capacity"
+                  hint={err.capacity ? undefined : "Slots sold on this node. 0 = no limit. Overcommit can go past it when creating an instance."}
+                  error={err.capacity}
+                >
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min="0"
+                    max={MAX_NODE_CAPACITY}
+                    step="1"
+                    value={r.capacity}
+                    onChange={(e) => update(r.key, { capacity: e.target.value })}
+                    className="tabular-nums"
+                  />
+                </Field>
+              </div>
+            )}
           </fieldset>
         );
       })}

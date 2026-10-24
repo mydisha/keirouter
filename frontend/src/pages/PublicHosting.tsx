@@ -32,7 +32,7 @@ const FEATURES: { icon: LucideIcon; title: string; body: string }[] = [
 ];
 
 const STEPS: { icon: LucideIcon; title: string; body: string }[] = [
-  { icon: MapPin, title: "Pilih region", body: "Indonesia untuk latensi rendah dari dalam negeri, Europe untuk harga lebih hemat." },
+  { icon: MapPin, title: "Pilih region", body: "Pilih negara server yang paling dekat dengan penggunamu. Harga bisa berbeda tiap negara." },
   { icon: CreditCard, title: "Bayar lewat QRIS", body: "Login portal dengan Google, setujui ketentuan, lalu bayar dari aplikasi bank atau e-wallet." },
   { icon: Clock3, title: "Instance diaktifkan", body: "Admin membuat instance paling lambat 1x24 jam pada hari kerja. URL dan password muncul di portal." },
 ];

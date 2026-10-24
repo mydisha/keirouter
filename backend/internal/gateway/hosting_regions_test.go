@@ -134,3 +134,29 @@ func TestHostingRegions_ProvisionStaysInRegionAndOvercommits(t *testing.T) {
 	require.Equal(t, "jkt", b.NodeID)
 	require.Equal(t, store.HostingActive, b.Status)
 }
+
+// A region with live instances cannot be deleted: its customers could no
+// longer renew. An unused region, or one whose instances are all deleted, can.
+func TestHostingRegions_DeleteOnlyWhenUnused(t *testing.T) {
+	s, tok := regionTestServer(t)
+	ctx := t.Context()
+	cur, err := hosting.Load(ctx, s.settingsGet(), s.financeBox())
+	require.NoError(t, err)
+	withoutEU := cur
+	withoutEU.Regions = []hosting.Region{cur.Regions[0]}
+	withoutEU.Nodes = []hosting.Node{cur.Nodes[0]}
+
+	require.NoError(t, s.checkRemovedRegions(ctx, cur, withoutEU))
+
+	rec := postHostingOrder(t, s, tok, regionOrder("eu"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	err = s.checkRemovedRegions(ctx, cur, withoutEU)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Europe")
+
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	_, err = s.db.Hosting().Transition(ctx, out["instance_id"].(string), []store.HostingStatus{store.HostingAwaitingPayment}, store.HostingDeleted, "")
+	require.NoError(t, err)
+	require.NoError(t, s.checkRemovedRegions(ctx, cur, withoutEU))
+}

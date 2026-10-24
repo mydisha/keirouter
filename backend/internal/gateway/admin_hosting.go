@@ -177,6 +177,15 @@ func (s *Server) adminPutHostingSettings(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := s.checkRemovedRegions(r.Context(), cur, st); err != nil {
+		var inUse regionInUseError
+		if errors.As(err, &inUse) {
+			writeError(w, http.StatusBadRequest, inUse.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
 	// The stored key only ever goes to the URL it was entered for. Pointing
 	// the settings at a new URL requires typing the key again, so a stolen
 	// dashboard session cannot redirect the sealed key to another host.
@@ -803,4 +812,46 @@ func (s *Server) adminDeleteHosting(w http.ResponseWriter, r *http.Request) {
 		store.HostingActive, store.HostingExpired, store.HostingStopped,
 	}, store.HostingDeleted,
 		func(ctx context.Context, api dokployAPI, id string) error { return api.Delete(ctx, id) })
+}
+
+// checkRemovedRegions refuses to drop a region that live instances still
+// belong to: their owners could no longer renew. Deleted instances don't count.
+func (s *Server) checkRemovedRegions(ctx context.Context, cur, next hosting.Settings) error {
+	removed := map[string]string{}
+	for _, rg := range cur.Regions {
+		if _, ok := next.Region(rg.ID); !ok {
+			removed[rg.ID] = rg.Name
+		}
+	}
+	if len(removed) == 0 {
+		return nil
+	}
+	list, err := s.db.Hosting().ListAll(ctx, "")
+	if err != nil {
+		return err
+	}
+	used := map[string]int{}
+	for _, h := range list {
+		if h.Status == store.HostingDeleted {
+			continue
+		}
+		if id := cur.InstanceRegion(h.Region, h.NodeID); removed[id] != "" {
+			used[id]++
+		}
+	}
+	for _, rg := range cur.Regions {
+		if n := used[rg.ID]; n > 0 {
+			return regionInUseError{name: rg.Name, count: n}
+		}
+	}
+	return nil
+}
+
+type regionInUseError struct {
+	name  string
+	count int
+}
+
+func (e regionInUseError) Error() string {
+	return fmt.Sprintf("region %s still has %d instance(s); turn off For sale instead of deleting it", e.name, e.count)
 }
