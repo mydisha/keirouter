@@ -402,9 +402,16 @@ func (s *Server) adminListPortalUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
+	apps, err := s.hostingAppsByKey(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
 	out := make([]map[string]any, 0, len(users))
 	for _, u := range users {
-		out = append(out, s.portalUserView(r.Context(), u))
+		v := s.portalUserView(r.Context(), u)
+		v["hosting_apps"] = apps[u.KeyID]
+		out = append(out, v)
 	}
 	defaultPlan, _ := s.portalDefaultPlanID(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{"users": out, "default_plan_id": defaultPlan})
@@ -941,4 +948,23 @@ func randomState() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// hostingAppsByKey groups the Dokploy applications by owning key: instances
+// created in Dokploy and not deleted. The name matches the one in Dokploy.
+func (s *Server) hostingAppsByKey(ctx context.Context) (map[string][]map[string]any, error) {
+	list, err := s.db.Hosting().ListAll(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]map[string]any{}
+	for _, h := range list {
+		if h.DokployAppID == "" || h.Status == store.HostingDeleted {
+			continue
+		}
+		out[h.KeyID] = append(out[h.KeyID], map[string]any{
+			"id": h.ID, "name": "9router-" + h.Subdomain, "fqdn": h.FQDN, "status": string(h.Status),
+		})
+	}
+	return out, nil
 }

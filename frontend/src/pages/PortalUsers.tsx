@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Users, KeyRound, RefreshCw, Power, Trash2, Copy, Check, ShieldCheck } from "lucide-react";
-import { api, type Plan, type PortalUserRecord } from "../lib/api";
+import { api, type Plan, type PortalUserHostingApp, type PortalUserRecord } from "../lib/api";
 import { microsToUSD, formatTokens } from "../lib/format";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
 import { Card, Button, Select, Badge, Spinner, ErrorBanner, EmptyState } from "../components/ui";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
+import { STATUS_LABEL } from "./hosting/shared";
 
 export function PortalUsersPage() {
   const qc = useQueryClient();
@@ -117,6 +119,7 @@ export function PortalUsersPage() {
                   <th className="px-5 py-3 text-left font-semibold">Key</th>
                   <th className="px-5 py-3 text-left font-semibold">Plan</th>
                   <th className="px-5 py-3 text-left font-semibold">Budget</th>
+                  <th className="px-5 py-3 text-left font-semibold">Applications</th>
                   <th className="px-5 py-3 text-right font-semibold">Actions</th>
                 </tr>
               </thead>
@@ -212,6 +215,9 @@ function UserRow({
         )}
       </td>
       <td className="px-5 py-4">
+        <AppsCell apps={u.hosting_apps ?? []} />
+      </td>
+      <td className="px-5 py-4">
         <div className="flex items-center justify-end gap-1.5">
           <Button variant="ghost" disabled={busy} onClick={onRotate} title="Rotate key">
             <RefreshCw size={15} />
@@ -252,4 +258,55 @@ function RevealedKey({ value }: { value: string }) {
 
 function planName(plans: Plan[], id: string): string {
   return plans.find((p) => p.id === id)?.name ?? id;
+}
+
+// AppsCell shows how many Dokploy applications a user owns; hovering,
+// focusing or tapping the count lists them. The list is also the button's
+// description, so screen readers get it without opening the tooltip.
+function AppsCell({ apps }: { apps: PortalUserHostingApp[] }) {
+  const [open, setOpen] = useState(false);
+  const openAtPointerDown = useRef<boolean | null>(null);
+  const descId = useId();
+  if (apps.length === 0) return <span className="text-[13px] text-[var(--text-muted)]">None</span>;
+  const list = (
+    <ul className="space-y-1 py-0.5">
+      {apps.map((a) => (
+        <li key={a.id}>
+          <span className="font-mono">{a.name}</span>
+          <span className="opacity-80"> · {STATUS_LABEL[a.status] ?? a.status}</span>
+          {a.fqdn && <div className="font-mono text-[11px] opacity-80">{a.fqdn}</div>}
+        </li>
+      ))}
+    </ul>
+  );
+  return (
+    <>
+      <Tooltip open={open} onOpenChange={setOpen}>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-describedby={descId}
+            className="rounded-md px-1.5 py-0.5 text-[13px] font-medium tabular-nums text-[var(--text)] underline decoration-dotted underline-offset-4 hover:bg-[var(--bg-subtle)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            onPointerDown={() => {
+              openAtPointerDown.current = open;
+            }}
+            onClick={(e) => {
+              e.preventDefault();
+              const wasOpen = openAtPointerDown.current ?? open;
+              openAtPointerDown.current = null;
+              setOpen(!wasOpen);
+            }}
+          >
+            {apps.length} {apps.length === 1 ? "app" : "apps"}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-sm">
+          {list}
+        </TooltipContent>
+      </Tooltip>
+      <span id={descId} hidden>
+        {apps.map((a) => `${a.name}, ${STATUS_LABEL[a.status] ?? a.status}${a.fqdn ? `, ${a.fqdn}` : ""}`).join("; ")}
+      </span>
+    </>
+  );
 }

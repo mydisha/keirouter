@@ -26,6 +26,7 @@ type fakeDokploy struct {
 	creates, domains, deploys, stops, deletes int
 	failDomainOnce                            bool
 	lastImage, lastHost, lastEnv, lastServer  string
+	lastDesc                                  string
 	lastMem, lastCPU, lastMount               string
 	mounts                                    int
 }
@@ -41,9 +42,10 @@ func (f *fakeDokploy) SetResources(_ context.Context, _, mem, cpu string) error 
 	return nil
 }
 
-func (f *fakeDokploy) CreateApplication(_ context.Context, name, appName, env, server string) (dokploy.Application, error) {
+func (f *fakeDokploy) CreateApplication(_ context.Context, name, appName, desc, env, server string) (dokploy.Application, error) {
 	f.creates++
 	f.lastServer = server
+	f.lastDesc = desc
 	return dokploy.Application{ApplicationID: "app-1", AppName: appName}, nil
 }
 func (f *fakeDokploy) SaveDockerProvider(_ context.Context, _, image string) error {
@@ -272,6 +274,7 @@ func TestHosting_PayProvisionRenew(t *testing.T) {
 	require.Equal(t, store.HostingFailed, inst.Status)
 	require.Contains(t, inst.LastError, "create domain")
 	require.Equal(t, "app-1", inst.DokployAppID)
+	require.Equal(t, "9router for u@example.com (keirouter)", fake.lastDesc, "the Dokploy app names its owner")
 
 	// Retry resumes without creating a second application.
 	rec = prov()

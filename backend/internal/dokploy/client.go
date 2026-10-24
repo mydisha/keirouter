@@ -54,12 +54,12 @@ type Domain struct {
 
 // CreateApplication creates an empty application in an environment. A
 // non-empty serverID places it on that remote Dokploy server.
-func (c *Client) CreateApplication(ctx context.Context, name, appName, environmentID, serverID string) (Application, error) {
+func (c *Client) CreateApplication(ctx context.Context, name, appName, description, environmentID, serverID string) (Application, error) {
 	var out Application
 	body := map[string]any{
 		"name":          name,
 		"appName":       appName,
-		"description":   "Hosted 9router (keirouter)",
+		"description":   description,
 		"environmentId": environmentID,
 	}
 	if serverID != "" {

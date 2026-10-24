@@ -20,7 +20,7 @@ import (
 // dokployAPI is the Dokploy surface the hosting admin uses. Tests swap in a
 // fake through Server.dokployFactory.
 type dokployAPI interface {
-	CreateApplication(ctx context.Context, name, appName, environmentID, serverID string) (dokploy.Application, error)
+	CreateApplication(ctx context.Context, name, appName, description, environmentID, serverID string) (dokploy.Application, error)
 	SetResources(ctx context.Context, applicationID, memoryLimit, cpuLimit string) error
 	CreateVolumeMount(ctx context.Context, applicationID, volumeName, mountPath string) error
 	SaveDockerProvider(ctx context.Context, applicationID, image string) error
@@ -620,7 +620,7 @@ func (s *Server) provisionOnDokploy(ctx context.Context, st hosting.Settings, no
 	}
 
 	if h.DokployAppID == "" {
-		app, err := api.CreateApplication(ctx, "9router-"+h.Subdomain, "nr-"+h.Subdomain, st.EnvironmentID, node.ServerID)
+		app, err := api.CreateApplication(ctx, "9router-"+h.Subdomain, "nr-"+h.Subdomain, s.hostingAppDescription(ctx, h.KeyID), st.EnvironmentID, node.ServerID)
 		if err != nil {
 			return fmt.Errorf("create application: %w", err)
 		}
@@ -882,4 +882,13 @@ type regionInUseError struct {
 
 func (e regionInUseError) Error() string {
 	return fmt.Sprintf("region %s still has %d instance(s); turn off For sale instead of deleting it", e.name, e.count)
+}
+
+// hostingAppDescription names the customer in the Dokploy application's
+// description, so an app found in Dokploy can be traced back to its owner.
+func (s *Server) hostingAppDescription(ctx context.Context, keyID string) string {
+	if u, err := s.db.PortalUsers().GetByKey(ctx, keyID); err == nil && u.Email != "" {
+		return "9router for " + u.Email + " (keirouter)"
+	}
+	return "9router for API key " + keyID + " (keirouter)"
 }

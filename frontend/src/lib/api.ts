@@ -1799,6 +1799,16 @@ export interface PortalUserRecord {
     period: string;
     hard_cutoff: boolean;
   } | null;
+  /** Hosting instances of this user that exist in Dokploy (not deleted). */
+  hosting_apps?: PortalUserHostingApp[] | null;
+}
+
+export interface PortalUserHostingApp {
+  id: string;
+  /** The application name shown in Dokploy, e.g. 9router-tydxibji. */
+  name: string;
+  fqdn: string;
+  status: HostingStatus;
 }
 
 /**

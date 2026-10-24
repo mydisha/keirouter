@@ -21,13 +21,14 @@ func TestClientSendsKeyAndDecodes(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(srv.URL+"/api/", "secret")
-	app, err := c.CreateApplication(context.Background(), "9router abc", "nr-abc", "env-1", "srv-1")
+	app, err := c.CreateApplication(context.Background(), "9router abc", "nr-abc", "Owner: a@example.com", "env-1", "srv-1")
 	require.NoError(t, err)
 	require.Equal(t, "app-1", app.ApplicationID)
 	require.Equal(t, "/api/application.create", gotPath)
 	require.Equal(t, "secret", gotKey)
 	require.Equal(t, "env-1", gotBody["environmentId"])
 	require.Equal(t, "srv-1", gotBody["serverId"])
+	require.Equal(t, "Owner: a@example.com", gotBody["description"])
 }
 
 func TestClientDoesNotFollowRedirects(t *testing.T) {
