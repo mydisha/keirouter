@@ -129,6 +129,7 @@ export function App() {
                 <Route path="portal-users" element={<PortalUsersPage />} />
                 <Route path="payments" element={<PaymentsPage />} />
                 <Route path="hosting" element={<HostingPage />} />
+                <Route path="hosting/:section" element={<HostingPage />} />
                 <Route path="system" element={<SystemPage />} />
                 <Route path="settings" element={<SettingsPage />} />
               </Route>

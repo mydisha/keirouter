@@ -156,7 +156,7 @@ function CurrentMonth({ f }: { f: HostingFinance }) {
           tone={c.price_idr > 0 && c.cost_idr > 0 ? (gap <= 0 ? "ok" : "warn") : "section"}
           hint={
             c.price_idr <= 0
-              ? "Isi harga di tab Pengaturan"
+              ? "Isi harga di Pengaturan hosting"
               : c.cost_idr <= 0
                 ? "Belum ada biaya bulan ini"
                 : gap <= 0

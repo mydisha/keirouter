@@ -1,7 +1,8 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
+import { dashboard } from "../lib/dashboardRoutes";
 import {
-  Activity,
   ArrowLeft,
   ArrowRight,
   Check,
@@ -18,9 +19,7 @@ import {
   Server,
   Settings2,
   Square,
-  Ticket,
   Trash2,
-  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -49,8 +48,6 @@ import {
   ModalFooter,
   Select,
   Skeleton,
-  TabBar,
-  TabPanel,
   TablePagination,
   Textarea,
   Toggle,
@@ -72,8 +69,8 @@ import {
   validDomain,
 } from "./hosting/shared";
 
-type Tab = "instances" | "coupons" | "finance" | "monitoring" | "settings";
-const TABS_ID = "hosting-tabs";
+const SECTIONS = ["instances", "coupons", "finance", "monitoring", "settings"] as const;
+type Section = (typeof SECTIONS)[number];
 
 const ORDER_STATUS_LABEL: Record<string, string> = {
   completed: "Lunas",
@@ -91,9 +88,17 @@ const ORDER_STATUS_TONE: Record<string, "success" | "warning" | "danger" | "neut
   expired: "neutral",
 };
 
+// Each section has its own URL so the sidebar can link to it directly;
+// /hosting itself is the instance list.
 export function HostingPage() {
-  const [tab, setTab] = useState<Tab>("instances");
+  const params = useParams();
+  const section = (params.section ?? "instances") as Section;
+  const navigate = useNavigate();
   const settings = useQuery({ queryKey: QK_HOSTING.settings, queryFn: api.getHostingSettings });
+
+  if (params.section === "instances" || !SECTIONS.includes(section)) {
+    return <Navigate to={dashboard("/hosting")} replace />;
+  }
 
   return (
     <div className="space-y-6">
@@ -101,32 +106,17 @@ export function HostingPage() {
         title="Hosting"
         description="Instance 9router yang dipesan user portal. Buat instance di Dokploy setelah pembayaran lunas."
       />
-      <TabBar
-        idPrefix={TABS_ID}
-        label="Bagian hosting"
-        active={tab}
-        onChange={setTab}
-        tabs={[
-          { value: "instances", label: "Instance", icon: Server },
-          { value: "coupons", label: "Kupon", icon: Ticket },
-          { value: "finance", label: "Keuangan", icon: Wallet },
-          { value: "monitoring", label: "Monitoring", icon: Activity },
-          { value: "settings", label: "Pengaturan", icon: Settings2 },
-        ]}
-      />
-      <TabPanel idPrefix={TABS_ID} value={tab}>
-        {tab === "instances" ? (
-          <InstancesTab settings={settings.data} onOpenSettings={() => setTab("settings")} />
-        ) : tab === "coupons" ? (
-          <CouponsTab />
-        ) : tab === "finance" ? (
-          <FinanceTab />
-        ) : tab === "monitoring" ? (
-          <MonitoringTab />
-        ) : (
-          <SettingsTab query={settings} />
-        )}
-      </TabPanel>
+      {section === "instances" ? (
+        <InstancesTab settings={settings.data} onOpenSettings={() => navigate(dashboard("/hosting/settings"))} />
+      ) : section === "coupons" ? (
+        <CouponsTab />
+      ) : section === "finance" ? (
+        <FinanceTab />
+      ) : section === "monitoring" ? (
+        <MonitoringTab />
+      ) : (
+        <SettingsTab query={settings} />
+      )}
     </div>
   );
 }
@@ -392,7 +382,7 @@ function NodeUsageStrip({ nodes, onOpenSettings }: { nodes: HostingNodeLoad[]; o
   if (nodes.length === 0) {
     return (
       <div className="border-b border-line px-4 py-3">
-        <ErrorBanner message="Belum ada node. Tambahkan node di tab Pengaturan sebelum membuat instance." />
+        <ErrorBanner message="Belum ada node. Tambahkan node di Pengaturan hosting sebelum membuat instance." />
         <Button variant="ghost" className="mt-2" onClick={onOpenSettings}>
           <Settings2 aria-hidden="true" />
           Buka Pengaturan
@@ -505,7 +495,7 @@ function ProvisionModal({
         </p>
         {retry && inst.last_error && <ErrorBanner message={`Percobaan terakhir gagal: ${inst.last_error}`} />}
         {images.length === 0 ? (
-          <ErrorBanner message="Belum ada image. Tambahkan image Docker di tab Pengaturan dulu." />
+          <ErrorBanner message="Belum ada image. Tambahkan image Docker di Pengaturan hosting dulu." />
         ) : (
           <Field label="Image Docker">
             <Select value={image} onChange={(e) => setImage(e.target.value)} className="font-mono">
@@ -540,8 +530,8 @@ function ProvisionModal({
             <ErrorBanner
               message={
                 candidates.length === 0
-                  ? "Belum ada node. Tambahkan node di tab Pengaturan dulu."
-                  : "Semua node di region ini nonaktif. Aktifkan node atau tambah node baru di tab Pengaturan."
+                  ? "Belum ada node. Tambahkan node di Pengaturan hosting dulu."
+                  : "Semua node di region ini nonaktif. Aktifkan node atau tambah node baru di Pengaturan hosting."
               }
             />
             <Button variant="ghost" onClick={onOpenSettings}>

@@ -192,7 +192,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: "nav-quota", label: "Quota", icon: ICONS.quota, tone: "teal", section: "Go to", run: go("/quota"), keywords: ["limits", "remaining", "upstream"] },
       { id: "nav-proxy-pools", label: "Proxy pools", icon: ICONS.proxyPools, tone: "teal", section: "Go to", run: go("/proxy-pools"), keywords: ["proxy", "egress"] },
       { id: "nav-keys", label: "API keys", icon: ICONS.keys, tone: "orange", section: "Go to", run: go("/keys"), keywords: ["auth", "token", "bearer"] },
-      { id: "nav-plans", label: "Plans & budgets", icon: ICONS.plans, tone: "orange", section: "Go to", run: go("/plans"), keywords: ["budget", "limit", "rate limit"] },
+      { id: "nav-plans", label: "Plans & budgets", icon: ICONS.plans, tone: "blue", section: "Go to", run: go("/plans"), keywords: ["budget", "limit", "rate limit"] },
       { id: "nav-guardrails", label: "Guardrails", icon: ICONS.guardrails, tone: "orange", section: "Go to", run: go("/guardrails"), keywords: ["pii", "injection", "moderation"] },
       { id: "nav-audit", label: "Audit log", icon: ICONS.audit, tone: "orange", section: "Go to", run: go("/audit"), keywords: ["audit", "history", "who changed", "compliance", "otel", "siem"] },
       { id: "nav-cli-tools", label: "CLI tools", icon: ICONS.cliTools, tone: "slate", section: "Go to", run: go("/cli-tools"), keywords: ["claude code", "codex", "cursor", "configure"] },
