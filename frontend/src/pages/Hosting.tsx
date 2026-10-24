@@ -147,8 +147,8 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
   const [ordersOf, setOrdersOf] = useState<HostingInstanceAdmin | null>(null);
 
   const list = useQuery({
-    queryKey: [...QK_HOSTING.instances, status],
-    queryFn: () => api.listHostingInstances(status || undefined),
+    queryKey: QK_HOSTING.instances,
+    queryFn: () => api.listHostingInstances(),
     refetchInterval: REFETCH_MS,
   });
   const nodesQ = useQuery({ queryKey: QK_HOSTING.nodes, queryFn: api.listHostingNodes, refetchInterval: REFETCH_MS });
@@ -158,11 +158,21 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
   const query = search.trim().toLowerCase();
   const instances = useMemo(() => {
     let rows = all ?? [];
+    if (status) rows = rows.filter((h) => h.status === status);
     if (nodeFilter) rows = rows.filter((h) => (nodeFilter === NO_NODE ? !h.node_id : h.node_id === nodeFilter));
     if (regionFilter) rows = rows.filter((h) => (regionFilter === NO_REGION ? !h.region : h.region === regionFilter));
     if (query) rows = rows.filter((h) => instanceSearchText(h).includes(query));
     return rows;
-  }, [all, nodeFilter, regionFilter, query]);
+  }, [all, status, nodeFilter, regionFilter, query]);
+  const filtered = !!(status || nodeFilter || regionFilter || query);
+  const clearFilters = () => {
+    setSearch("");
+    setStatus("");
+    setNodeFilter("");
+    setRegionFilter("");
+    setPage(1);
+    setSelected(new Set());
+  };
   const { paged, page, pages, setPage, total } = useClientPagination(instances, 10);
   // A new filter starts from the first page so results are not hidden behind a later one.
   const filterBy = <T,>(set: (v: T) => void) => (v: T) => {
@@ -223,54 +233,66 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
       icon={Server}
       title="Instances"
       subtitle="Status, address and paid period of each instance. Refreshes every 15 seconds."
-      action={
-        <div className="flex flex-wrap gap-2">
-          <label className="relative w-full sm:w-[220px]">
+    >
+      {nodesQ.data && <RegionStockStrip regions={nodesQ.data.regions ?? []} />}
+      {nodesQ.data && <NodeUsageStrip nodes={nodesQ.data.nodes} onOpenSettings={onOpenSettings} />}
+      {(all?.length ?? 0) > 0 && (
+        <div className="flex flex-col gap-2 border-b border-line px-4 py-3 xl:flex-row xl:items-center" role="search" aria-label="Filter instances">
+          <label className="relative min-w-0 xl:w-80">
             <span className="sr-only">Search instances</span>
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
             <Input
               type="search"
               value={search}
               onChange={(e) => filterBy(setSearch)(e.target.value)}
-              placeholder="Email, key or subdomain"
+              placeholder="Search email, key or subdomain"
               className="pl-8"
             />
           </label>
-          {regionList.length > 0 && (
-            <Select value={regionFilter} onChange={(e) => filterBy(setRegionFilter)(e.target.value)} aria-label="Filter region" className="w-auto min-w-[150px]">
-              <option value="">All regions</option>
-              {regionList.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name || r.id}
+          <div className="flex flex-1 flex-wrap items-center gap-2">
+            {regionList.length > 0 && (
+              <FilterSelect label="Region" value={regionFilter} onChange={filterBy(setRegionFilter)}>
+                <option value="">All regions</option>
+                {regionList.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name || r.id}
+                  </option>
+                ))}
+                <option value={NO_REGION}>No region</option>
+              </FilterSelect>
+            )}
+            {nodeList.length > 1 && (
+              <FilterSelect label="Node" value={nodeFilter} onChange={filterBy(setNodeFilter)}>
+                <option value="">All nodes</option>
+                {nodeList.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.name || n.id}
+                  </option>
+                ))}
+                <option value={NO_NODE}>No node yet</option>
+              </FilterSelect>
+            )}
+            <FilterSelect label="Status" value={status} onChange={filterBy(setStatus)}>
+              <option value="">All statuses</option>
+              {(Object.keys(STATUS_LABEL) as HostingStatus[]).map((s) => (
+                <option key={s} value={s}>
+                  {STATUS_LABEL[s]}
                 </option>
               ))}
-              <option value={NO_REGION}>No region</option>
-            </Select>
-          )}
-          {nodeList.length > 1 && (
-            <Select value={nodeFilter} onChange={(e) => filterBy(setNodeFilter)(e.target.value)} aria-label="Filter node" className="w-auto min-w-[150px]">
-              <option value="">All nodes</option>
-              {nodeList.map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.name || n.id}
-                </option>
-              ))}
-              <option value={NO_NODE}>No node yet</option>
-            </Select>
-          )}
-          <Select value={status} onChange={(e) => filterBy(setStatus)(e.target.value)} aria-label="Filter status" className="w-auto min-w-[180px]">
-            <option value="">All statuses</option>
-            {(Object.keys(STATUS_LABEL) as HostingStatus[]).map((s) => (
-              <option key={s} value={s}>
-                {STATUS_LABEL[s]}
-              </option>
-            ))}
-          </Select>
+            </FilterSelect>
+            <div className="flex w-full items-center justify-between gap-3 text-[12.5px] text-fg-muted sm:ml-auto sm:w-auto sm:justify-end">
+              <span className="tabular-nums" aria-live="polite">
+                {filtered ? `${instances.length} of ${all?.length ?? 0} instances` : `${all?.length ?? 0} instances`}
+              </span>
+              {filtered && (
+                <Button variant="ghost" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              )}
+            </div>
+          </div>
         </div>
-      }
-    >
-      {nodesQ.data && <RegionStockStrip regions={nodesQ.data.regions ?? []} />}
-      {nodesQ.data && <NodeUsageStrip nodes={nodesQ.data.nodes} onOpenSettings={onOpenSettings} />}
+      )}
       {list.isLoading ? (
         <LoadingRegion label="Loading instances" className="space-y-2 p-4">
           {[0, 1, 2].map((i) => (
@@ -285,10 +307,10 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
         <EmptyState
           icon={Server}
           size="sm"
-          title={status || nodeFilter || regionFilter || query ? "No instances match the filter" : "No instances yet"}
+          title={filtered ? "No instances match the filter" : "No instances yet"}
           hint={
-            status || nodeFilter || regionFilter || query
-              ? "Clear the search or pick another filter."
+            filtered
+              ? "Try another search, or use Clear filters above."
               : "Hosting orders from the portal show up here as soon as a customer starts paying."
           }
         />
@@ -1334,6 +1356,17 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
         )}
       </div>
     </form>
+  );
+}
+
+/** A compact labelled dropdown for the instances toolbar. */
+function FilterSelect({ label, value, onChange, children }: { label: string; value: string; onChange: (v: string) => void; children: ReactNode }) {
+  return (
+    <div className="min-w-[140px] flex-1 sm:w-44 sm:flex-none">
+      <Select value={value} onChange={(e) => onChange(e.target.value)} aria-label={`Filter by ${label.toLowerCase()}`}>
+        {children}
+      </Select>
+    </div>
   );
 }
 
