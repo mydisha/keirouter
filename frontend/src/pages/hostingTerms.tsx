@@ -56,7 +56,13 @@ export const HOSTING_SECTIONS: TermsSection[] = [
           Instance dibuat manual oleh admin setelah pembayaran berhasil, paling lambat 1x24 jam pada hari kerja. Masa
           aktif 30 hari mulai dihitung saat instance aktif, bukan saat pembayaran.
         </p>
-        <p>Image dan versi 9router yang dipasang kami pilih, dan dapat kami perbarui sewaktu-waktu.</p>
+        <p>
+          Instance memakai image 9router-go dari{" "}
+          <a href="https://github.com/luqman-v1/9router-go" target="_blank" rel="noopener noreferrer" className={LINK}>
+            github.com/luqman-v1/9router-go
+          </a>
+          . Versi yang dipasang kami pilih, dan dapat kami perbarui sewaktu-waktu.
+        </p>
       </>
     ),
   },
