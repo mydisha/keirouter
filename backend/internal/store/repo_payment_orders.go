@@ -140,9 +140,9 @@ func (r *PaymentOrderRepo) TransitionFromOnTx(ctx context.Context, tx *sql.Tx, i
 // a key. Used when re-basing a portal plan so paid balance is preserved.
 func (r *PaymentOrderRepo) SumCompletedCreditByKey(ctx context.Context, keyID string) (int64, error) {
 	q := r.db.rebind(`SELECT COALESCE(SUM(credit_micros), 0) FROM payment_orders
-		WHERE key_id = ? AND status IN (?, ?)`)
+		WHERE key_id = ? AND product = ? AND status IN (?, ?)`)
 	var sum int64
-	if err := r.db.sql.QueryRowContext(ctx, q, keyID, string(PaymentCompleted), string(PaymentManual)).Scan(&sum); err != nil {
+	if err := r.db.sql.QueryRowContext(ctx, q, keyID, ProductCredit, string(PaymentCompleted), string(PaymentManual)).Scan(&sum); err != nil {
 		return 0, fmt.Errorf("store: sum payment credit: %w", err)
 	}
 	return sum, nil
@@ -188,14 +188,15 @@ func scanPaymentOrder(scan func(dest ...any) error) (PaymentOrder, error) {
 // PaidOrderTotals aggregates settled orders.
 type PaidOrderTotals struct{ Count, AmountIDR, CreditMicros int64 }
 
-// PaidTotalsSince totals completed and manual orders paid at or after since.
-// Orders with an empty paid_at fall back to created_at.
+// PaidTotalsSince totals completed and manual credit top-ups paid at or after
+// since. Hosting orders are left out: they buy a service, not credit. Orders
+// with an empty paid_at fall back to created_at.
 func (r *PaymentOrderRepo) PaidTotalsSince(ctx context.Context, since time.Time) (PaidOrderTotals, error) {
 	q := r.db.rebind(`SELECT COUNT(*), COALESCE(SUM(amount_idr), 0), COALESCE(SUM(credit_micros), 0)
 		FROM payment_orders
-		WHERE status IN (?, ?) AND COALESCE(NULLIF(paid_at, ''), created_at) >= ?`)
+		WHERE product = ? AND status IN (?, ?) AND COALESCE(NULLIF(paid_at, ''), created_at) >= ?`)
 	var t PaidOrderTotals
-	if err := r.db.sql.QueryRowContext(ctx, q, string(PaymentCompleted), string(PaymentManual), formatTime(since)).
+	if err := r.db.sql.QueryRowContext(ctx, q, ProductCredit, string(PaymentCompleted), string(PaymentManual), formatTime(since)).
 		Scan(&t.Count, &t.AmountIDR, &t.CreditMicros); err != nil {
 		return PaidOrderTotals{}, fmt.Errorf("store: paid totals: %w", err)
 	}
@@ -212,9 +213,9 @@ type KeyPaidTotals struct {
 func (r *PaymentOrderRepo) PaidTotalsByKeySince(ctx context.Context, since time.Time) ([]KeyPaidTotals, error) {
 	q := r.db.rebind(`SELECT key_id, COUNT(*), COALESCE(SUM(amount_idr), 0), COALESCE(SUM(credit_micros), 0)
 		FROM payment_orders
-		WHERE status IN (?, ?) AND COALESCE(NULLIF(paid_at, ''), created_at) >= ?
+		WHERE product = ? AND status IN (?, ?) AND COALESCE(NULLIF(paid_at, ''), created_at) >= ?
 		GROUP BY key_id`)
-	rows, err := r.db.sql.QueryContext(ctx, q, string(PaymentCompleted), string(PaymentManual), formatTime(since))
+	rows, err := r.db.sql.QueryContext(ctx, q, ProductCredit, string(PaymentCompleted), string(PaymentManual), formatTime(since))
 	if err != nil {
 		return nil, fmt.Errorf("store: paid totals by key: %w", err)
 	}

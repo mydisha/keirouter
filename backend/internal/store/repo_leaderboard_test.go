@@ -48,6 +48,9 @@ func TestPaidTotalsByKeySince(t *testing.T) {
 	mk("o3", "kb", PaymentPending, now)
 	mk("o4", "kb", PaymentCompleted, now.Add(-48*time.Hour))
 	mk("o5", "kc", PaymentCompleted, now)
+	h := sampleOrder("o6")
+	h.KeyID, h.Status, h.Product, h.CreditMicros, h.CreatedAt, h.UpdatedAt = "ka", PaymentCompleted, ProductHosting, 0, now, now
+	require.NoError(t, db.PaymentOrders().Create(ctx, h))
 	got, err := db.PaymentOrders().PaidTotalsByKeySince(ctx, now.Add(-time.Hour))
 	require.NoError(t, err)
 	sort.Slice(got, func(i, j int) bool { return got[i].KeyID < got[j].KeyID })

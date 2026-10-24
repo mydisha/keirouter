@@ -51,6 +51,9 @@ func (s *Server) adminPaymentSummary(w http.ResponseWriter, r *http.Request) {
 	var totalIDR, totalCredit int64
 	counts := map[string]int{}
 	for _, o := range orders {
+		if productOrCredit(o.Product) != store.ProductCredit {
+			continue // hosting revenue is reported on the Hosting finance page
+		}
 		counts[string(o.Status)]++
 		if o.Status == store.PaymentCompleted || o.Status == store.PaymentManual {
 			totalIDR += o.AmountIDR

@@ -80,6 +80,11 @@ func TestPaidTotalsSince(t *testing.T) {
 	mk("o2", PaymentManual, "", now)
 	mk("o3", PaymentPending, "", now)
 	mk("o4", PaymentCompleted, formatTime(old), old)
+	// A paid hosting order buys a service, not credit, so it is not counted.
+	h := sampleOrder("o5")
+	h.Status, h.PaidAt, h.Product, h.CreditMicros = PaymentCompleted, formatTime(now), ProductHosting, 0
+	h.CreatedAt, h.UpdatedAt = now, now
+	require.NoError(t, db.PaymentOrders().Create(ctx, h))
 	got, err := db.PaymentOrders().PaidTotalsSince(ctx, now.Add(-time.Hour))
 	require.NoError(t, err)
 	require.Equal(t, PaidOrderTotals{Count: 2, AmountIDR: 100000, CreditMicros: 6_200_000}, got)
