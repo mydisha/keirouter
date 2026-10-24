@@ -2,8 +2,10 @@ import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { dashboard } from "../lib/dashboardRoutes";
+import { bytesToMemory, cpuToNano, memoryToBytes, nanoToCpu } from "../lib/containerLimits";
 import {
   ArrowLeft,
+  CalendarPlus,
   ArrowRight,
   Check,
   ChevronRight,
@@ -17,6 +19,7 @@ import {
   RefreshCw,
   Rocket,
   RotateCcw,
+  Search,
   Server,
   Settings2,
   Square,
@@ -119,6 +122,16 @@ export function HostingPage() {
 
 /** Node filter value for instances that have no node yet. */
 const NO_NODE = "__none";
+/** Region filter value for instances bought before regions existed. */
+const NO_REGION = "__none";
+
+/** Statuses whose paid period an admin can extend; the server checks again. */
+const EXTENDABLE: ReadonlySet<HostingStatus> = new Set<HostingStatus>(["paid", "failed", "active", "expired", "stopped"]);
+
+/** Fields the instance search box matches against. */
+function instanceSearchText(h: HostingInstanceAdmin): string {
+  return [h.user_email, h.key_id, h.id, h.subdomain, h.fqdn, h.dokploy_app_name].join(" ").toLowerCase();
+}
 
 function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings; onOpenSettings: () => void }) {
   const qc = useQueryClient();
@@ -126,6 +139,10 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
   const confirm = useConfirm();
   const [status, setStatus] = useState("");
   const [nodeFilter, setNodeFilter] = useState("");
+  const [regionFilter, setRegionFilter] = useState("");
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [extending, setExtending] = useState(false);
   const [provisioning, setProvisioning] = useState<HostingInstanceAdmin | null>(null);
   const [ordersOf, setOrdersOf] = useState<HostingInstanceAdmin | null>(null);
 
@@ -137,12 +154,33 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
   const nodesQ = useQuery({ queryKey: QK_HOSTING.nodes, queryFn: api.listHostingNodes, refetchInterval: REFETCH_MS });
   const nodeList: { id: string; name: string }[] = nodesQ.data?.nodes ?? settings?.nodes ?? [];
   const all = list.data?.instances;
+  const regionList = settings?.regions ?? [];
+  const query = search.trim().toLowerCase();
   const instances = useMemo(() => {
-    const rows = all ?? [];
-    if (!nodeFilter) return rows;
-    return rows.filter((h) => (nodeFilter === NO_NODE ? !h.node_id : h.node_id === nodeFilter));
-  }, [all, nodeFilter]);
+    let rows = all ?? [];
+    if (nodeFilter) rows = rows.filter((h) => (nodeFilter === NO_NODE ? !h.node_id : h.node_id === nodeFilter));
+    if (regionFilter) rows = rows.filter((h) => (regionFilter === NO_REGION ? !h.region : h.region === regionFilter));
+    if (query) rows = rows.filter((h) => instanceSearchText(h).includes(query));
+    return rows;
+  }, [all, nodeFilter, regionFilter, query]);
   const { paged, page, pages, setPage, total } = useClientPagination(instances, 10);
+  // A new filter starts from the first page so results are not hidden behind a later one.
+  const filterBy = <T,>(set: (v: T) => void) => (v: T) => {
+    set(v);
+    setPage(1);
+    setSelected(new Set());
+  };
+  const selectable = useMemo(() => instances.filter((h) => EXTENDABLE.has(h.status)), [instances]);
+  const allSelected = selectable.length > 0 && selectable.every((h) => selected.has(h.id));
+  const someSelected = selectable.some((h) => selected.has(h.id));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(selectable.map((h) => h.id)));
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: QK_HOSTING.instances });
@@ -187,8 +225,30 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
       subtitle="Status, address and paid period of each instance. Refreshes every 15 seconds."
       action={
         <div className="flex flex-wrap gap-2">
+          <label className="relative w-full sm:w-[220px]">
+            <span className="sr-only">Search instances</span>
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            <Input
+              type="search"
+              value={search}
+              onChange={(e) => filterBy(setSearch)(e.target.value)}
+              placeholder="Email, key or subdomain"
+              className="pl-8"
+            />
+          </label>
+          {regionList.length > 0 && (
+            <Select value={regionFilter} onChange={(e) => filterBy(setRegionFilter)(e.target.value)} aria-label="Filter region" className="w-auto min-w-[150px]">
+              <option value="">All regions</option>
+              {regionList.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name || r.id}
+                </option>
+              ))}
+              <option value={NO_REGION}>No region</option>
+            </Select>
+          )}
           {nodeList.length > 1 && (
-            <Select value={nodeFilter} onChange={(e) => setNodeFilter(e.target.value)} aria-label="Filter node" className="w-auto min-w-[150px]">
+            <Select value={nodeFilter} onChange={(e) => filterBy(setNodeFilter)(e.target.value)} aria-label="Filter node" className="w-auto min-w-[150px]">
               <option value="">All nodes</option>
               {nodeList.map((n) => (
                 <option key={n.id} value={n.id}>
@@ -198,7 +258,7 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
               <option value={NO_NODE}>No node yet</option>
             </Select>
           )}
-          <Select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter status" className="w-auto min-w-[180px]">
+          <Select value={status} onChange={(e) => filterBy(setStatus)(e.target.value)} aria-label="Filter status" className="w-auto min-w-[180px]">
             <option value="">All statuses</option>
             {(Object.keys(STATUS_LABEL) as HostingStatus[]).map((s) => (
               <option key={s} value={s}>
@@ -225,15 +285,45 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
         <EmptyState
           icon={Server}
           size="sm"
-          title={status || nodeFilter ? "No instances match the filter" : "No instances yet"}
-          hint="Hosting orders from the portal show up here as soon as a customer starts paying."
+          title={status || nodeFilter || regionFilter || query ? "No instances match the filter" : "No instances yet"}
+          hint={
+            status || nodeFilter || regionFilter || query
+              ? "Clear the search or pick another filter."
+              : "Hosting orders from the portal show up here as soon as a customer starts paying."
+          }
         />
       ) : (
         <>
+          {selected.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-b border-line bg-subtle px-4 py-2 text-[12.5px]" role="status">
+              <span className="font-medium text-fg tabular-nums">{selected.size} selected</span>
+              <Button variant="primary" onClick={() => setExtending(true)}>
+                <CalendarPlus aria-hidden="true" />
+                Add days
+              </Button>
+              <Button variant="ghost" onClick={() => setSelected(new Set())}>
+                Clear selection
+              </Button>
+            </div>
+          )}
           <div className="overflow-x-auto" role="region" aria-label="Hosting instances table" tabIndex={0}>
-            <table className="w-full min-w-[1140px] text-[13px]">
+            <table className="w-full min-w-[1180px] text-[13px]">
               <thead>
                 <tr className={THEAD}>
+                  <th scope="col" className="w-10 px-4 py-2">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      disabled={selectable.length === 0}
+                      ref={(el) => {
+                        if (el) el.indeterminate = someSelected && !allSelected;
+                      }}
+                      onChange={toggleAll}
+                      className="h-4 w-4 rounded border-input accent-accent-500 disabled:opacity-40"
+                      aria-label={`Select all ${selectable.length} matching instances`}
+                      title={`Select all ${selectable.length} matching instances, on every page`}
+                    />
+                  </th>
                   <th scope="col" className={TH}>User</th>
                   <th scope="col" className={TH}>Status</th>
                   <th scope="col" className={TH}>Node / region</th>
@@ -248,7 +338,18 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
               </thead>
               <tbody className="divide-y divide-line">
                 {paged.map((h) => (
-                  <tr key={h.id} className="align-top transition-colors hover:bg-hover">
+                  <tr key={h.id} className={cn("align-top transition-colors hover:bg-hover", selected.has(h.id) && "bg-accent-500/5")}>
+                    <td className="px-4 py-2.5">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(h.id)}
+                        disabled={!EXTENDABLE.has(h.status)}
+                        onChange={() => toggleOne(h.id)}
+                        className="mt-0.5 h-4 w-4 rounded border-input accent-accent-500 disabled:opacity-40"
+                        aria-label={`Select ${h.user_email || h.key_id}`}
+                        title={EXTENDABLE.has(h.status) ? undefined : `Days can't be added while the instance is ${STATUS_LABEL[h.status] ?? h.status}`}
+                      />
+                    </td>
                     <td className="px-4 py-2.5">
                       <p className="text-fg">{h.user_email || "-"}</p>
                       <p className="font-mono text-[11px] text-fg-muted">{h.key_id}</p>
@@ -344,7 +445,93 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
         />
       )}
       {ordersOf && <OrdersModal inst={ordersOf} onClose={() => setOrdersOf(null)} />}
+      {extending && (
+        <ExtendModal
+          ids={[...selected]}
+          onClose={() => setExtending(false)}
+          onDone={() => {
+            setExtending(false);
+            setSelected(new Set());
+            invalidate();
+          }}
+        />
+      )}
     </Panel>
+  );
+}
+
+const EXTEND_PRESETS = [1, 3, 7, 30];
+const MAX_EXTEND_DAYS = 365;
+
+/** Adds days to the paid period of the selected instances, e.g. as compensation. */
+function ExtendModal({ ids, onClose, onDone }: { ids: string[]; onClose: () => void; onDone: () => void }) {
+  const toast = useToast();
+  const [days, setDays] = useState("1");
+  const n = Number(days);
+  const valid = Number.isInteger(n) && n >= 1 && n <= MAX_EXTEND_DAYS;
+  const extend = useMutation({
+    mutationFn: () => api.extendHosting(ids, n),
+    onSuccess: (res) => {
+      const done = res.updated.length;
+      if (res.skipped.length === 0) {
+        toast.success(`Added ${n} ${n === 1 ? "day" : "days"} to ${done} ${done === 1 ? "instance" : "instances"}`);
+      } else {
+        const reasons = [...new Set(res.skipped.map((s) => s.reason))].join("; ");
+        toast.info(`Added days to ${done} of ${ids.length} instances`, `${res.skipped.length} skipped: ${reasons}`);
+      }
+      onDone();
+    },
+    onError: (e) => toast.error("Couldn't add days", errorText(e)),
+  });
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (valid && !extend.isPending) extend.mutate();
+  };
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Add days"
+      subtitle={`${ids.length} ${ids.length === 1 ? "instance" : "instances"} selected`}
+      footer={
+        <ModalFooter>
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" type="submit" form="hosting-extend-form" disabled={!valid || extend.isPending}>
+            {extend.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <CalendarPlus aria-hidden="true" />}
+            {valid ? `Add ${n} ${n === 1 ? "day" : "days"}` : "Add days"}
+          </Button>
+        </ModalFooter>
+      }
+    >
+      <form id="hosting-extend-form" onSubmit={submit} className="space-y-4">
+        <Field label="Days to add" required error={days !== "" && !valid ? `Enter a whole number from 1 to ${MAX_EXTEND_DAYS}.` : undefined}>
+          <Input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={MAX_EXTEND_DAYS}
+            step={1}
+            value={days}
+            onChange={(e) => setDays(e.target.value)}
+            autoFocus
+          />
+        </Field>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Common amounts">
+          {EXTEND_PRESETS.map((p) => (
+            <Button key={p} type="button" variant={n === p ? "secondary" : "ghost"} aria-pressed={n === p} onClick={() => setDays(String(p))}>
+              {p} {p === 1 ? "day" : "days"}
+            </Button>
+          ))}
+        </div>
+        <ul className="list-disc space-y-1 pl-5 text-[12.5px] text-fg-muted">
+          <li>Running and expired instances: the days go on top of the current end date.</li>
+          <li>Paid but not created yet: the days are added to the prepaid days and start when the instance is created.</li>
+          <li>An expired instance whose new end date is in the future becomes active. One the system stopped for lapsing starts again within 5 minutes; one you stopped yourself stays stopped.</li>
+        </ul>
+      </form>
+    </Modal>
   );
 }
 
@@ -706,8 +893,8 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const [envTemplate, setEnvTemplate] = useState(settings.env_template);
   const [nodes, setNodes] = useState<NodeDraft[]>(() => (settings.nodes ?? []).map(toNodeDraft));
   const [passwordEnv, setPasswordEnv] = useState(settings.password_env || "INITIAL_PASSWORD");
-  const [memoryLimit, setMemoryLimit] = useState(settings.memory_limit ?? "");
-  const [cpuLimit, setCpuLimit] = useState(settings.cpu_limit ?? "");
+  const [memoryLimit, setMemoryLimit] = useState(() => bytesToMemory(settings.memory_limit));
+  const [cpuLimit, setCpuLimit] = useState(() => nanoToCpu(settings.cpu_limit));
   const [dataPath, setDataPath] = useState(settings.data_path || "/data");
   const [supportUrl, setSupportUrl] = useState(settings.support_url || "https://t.me/damnwahhh");
   const [regions, setRegions] = useState<RegionDraft[]>(() => (settings.regions ?? []).map(toRegionDraft));
@@ -719,9 +906,10 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
-  const digits = /^[0-9]*$/;
-  const memError = !digits.test(memoryLimit.trim()) ? "Enter a whole number of bytes, or leave empty." : null;
-  const cpuError = !digits.test(cpuLimit.trim()) ? "Enter a whole number of nano-CPUs, or leave empty." : null;
+  const memoryBytes = memoryToBytes(memoryLimit);
+  const cpuNano = cpuToNano(cpuLimit);
+  const memError = memoryBytes === null ? "Enter a size in MB, such as 512 or 128, or leave empty." : null;
+  const cpuError = cpuNano === null ? "Enter CPUs, such as 0.5 or 1, or leave empty." : null;
   const dataPathError = !dataPath.trim().startsWith("/") || dataPath.includes("..") ? "Enter an absolute path inside the container, e.g. /data." : null;
   const envNameError = !/^[A-Za-z_][A-Za-z0-9_]*$/.test(passwordEnv.trim()) ? "Invalid variable name." : null;
   const supportUrlError = !/^https:\/\/[^\s/]+/.test(supportUrl.trim()) ? "Enter an https:// link, e.g. https://t.me/username." : null;
@@ -774,8 +962,8 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
           }),
         ),
         password_env: passwordEnv.trim(),
-        memory_limit: memoryLimit.trim(),
-        cpu_limit: cpuLimit.trim(),
+        memory_limit: memoryBytes ?? "",
+        cpu_limit: cpuNano ?? "",
         data_path: dataPath.trim(),
         support_url: supportUrl.trim(),
         regions: regions.map((rg): HostingRegion => ({ id: rg.id, name: rg.name.trim(), price_idr: Number(rg.price), enabled: rg.enabled })),
@@ -988,11 +1176,19 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
               >
                 <Input value={dataPath} onChange={(e) => setDataPath(e.target.value)} placeholder="/data" autoComplete="off" spellCheck={false} className="font-mono" />
               </Field>
-              <Field label="Memory limit (bytes)" hint="For example 536870912 for 512 MB. Leave empty for no limit." error={memError}>
-                <Input inputMode="numeric" value={memoryLimit} onChange={(e) => setMemoryLimit(e.target.value)} placeholder="536870912" className="font-mono tabular-nums" />
+              <Field
+                label="Memory limit (MB)"
+                hint={memoryBytes ? `Sent to Dokploy as ${Number(memoryBytes).toLocaleString("en-US")} bytes.` : "For example 512 or 128. Leave empty for no limit."}
+                error={memError}
+              >
+                <UnitInput unit="MB" inputMode="decimal" value={memoryLimit} onChange={setMemoryLimit} placeholder="512" />
               </Field>
-              <Field label="CPU limit (nano-CPUs)" hint="For example 1000000000 for 1 CPU. Leave empty for no limit." error={cpuError}>
-                <Input inputMode="numeric" value={cpuLimit} onChange={(e) => setCpuLimit(e.target.value)} placeholder="1000000000" className="font-mono tabular-nums" />
+              <Field
+                label="CPU limit (CPUs)"
+                hint={cpuNano ? `Sent to Dokploy as ${Number(cpuNano).toLocaleString("en-US")} nano-CPUs.` : "For example 0.5 or 1. Leave empty for no limit."}
+                error={cpuError}
+              >
+                <UnitInput unit="CPU" inputMode="decimal" value={cpuLimit} onChange={setCpuLimit} placeholder="1" />
               </Field>
             </div>
             <details className="group rounded-xl border border-line" open={envTemplate.trim() !== ""}>
@@ -1138,6 +1334,30 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
         )}
       </div>
     </form>
+  );
+}
+
+/** A number input with its unit shown inside the right edge. */
+function UnitInput({
+  unit,
+  value,
+  onChange,
+  placeholder,
+  inputMode,
+}: {
+  unit: string;
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  inputMode: "decimal" | "numeric";
+}) {
+  return (
+    <div className="relative">
+      <Input inputMode={inputMode} value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} className="pr-12 font-mono tabular-nums" />
+      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[12px] font-medium text-fg-muted" aria-hidden="true">
+        {unit}
+      </span>
+    </div>
   );
 }
 

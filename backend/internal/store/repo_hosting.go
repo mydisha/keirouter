@@ -240,6 +240,49 @@ func (r *HostingRepo) ApplyPaymentOnTx(ctx context.Context, tx *sql.Tx, h Hostin
 	return nil
 }
 
+// AddDays grants extra days outside a payment, such as compensation. An
+// instance that was never provisioned banks them in prepaid_days, so they
+// start at provisioning; a provisioned one moves paid_until forward from its
+// current end date. An expired instance whose new end date is after now
+// becomes active again. Like ApplyPaymentOnTx, the update only applies to the
+// row as it was read and returns ErrHostingConflict otherwise.
+func (r *HostingRepo) AddDays(ctx context.Context, h HostingInstance, days int, now time.Time) error {
+	var (
+		res sql.Result
+		err error
+	)
+	if h.ProvisionedAt.IsZero() {
+		q := r.db.rebind(`UPDATE hosting_instances SET prepaid_days = prepaid_days + ?, updated_at = ?
+			WHERE id = ? AND prepaid_days = ? AND status = ?`)
+		res, err = r.db.sql.ExecContext(ctx, q, days, formatTime(now), h.ID, h.PrepaidDays, string(h.Status))
+	} else {
+		until := h.PaidUntil
+		if until.IsZero() {
+			until = now
+		}
+		until = until.AddDate(0, 0, days)
+		status := h.Status
+		if status == HostingExpired && until.After(now) {
+			status = HostingActive
+		}
+		q := r.db.rebind(`UPDATE hosting_instances SET paid_until = ?, status = ?, updated_at = ?
+			WHERE id = ? AND paid_until = ? AND status = ?`)
+		res, err = r.db.sql.ExecContext(ctx, q, formatTime(until), string(status), formatTime(now),
+			h.ID, formatTime(h.PaidUntil), string(h.Status))
+	}
+	if err != nil {
+		return fmt.Errorf("store: add hosting days: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return ErrHostingConflict
+	}
+	return nil
+}
+
 // CountByNode returns how many instances occupy each node: every status that
 // holds (or may hold) a container there.
 func (r *HostingRepo) CountByNode(ctx context.Context) (map[string]int, error) {

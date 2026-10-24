@@ -73,6 +73,7 @@ func (s *Server) mountHosting(r chi.Router) {
 	r.Get("/hosting/dokploy/servers", s.adminListDokployServers)
 	r.Get("/hosting/nodes", s.adminListHostingNodes)
 	r.Get("/hosting/instances", s.adminListHostingInstances)
+	r.Post("/hosting/instances/extend", s.adminExtendHosting)
 	r.Post("/hosting/instances/{id}/provision", s.adminProvisionHosting)
 	r.Post("/hosting/instances/{id}/stop", s.adminStopHosting)
 	r.Post("/hosting/instances/{id}/start", s.adminStartHosting)
@@ -840,6 +841,106 @@ func (s *Server) adminDeleteHosting(w http.ResponseWriter, r *http.Request) {
 		store.HostingActive, store.HostingExpired, store.HostingStopped,
 	}, store.HostingDeleted,
 		func(ctx context.Context, api dokployAPI, id string) error { return api.Delete(ctx, id) })
+}
+
+// Limits on one extend request.
+const (
+	maxExtendDays      = 365
+	maxExtendInstances = 500
+)
+
+// extendableHosting is every status whose paid period can still matter.
+// Unpaid orders are left out so compensation never turns into a free
+// purchase, and provisioning is left out because it settles its days itself.
+var extendableHosting = map[store.HostingStatus]bool{
+	store.HostingPaid: true, store.HostingFailed: true, store.HostingActive: true,
+	store.HostingExpired: true, store.HostingStopped: true,
+}
+
+// adminExtendHosting adds days to the paid period of one or more instances,
+// for compensation or goodwill. Each instance is handled on its own: one
+// that can't be extended is reported as skipped and the rest still apply.
+// Instances the expiry job stopped start again on its next pass once their
+// end date is in the future; ones an admin stopped stay stopped.
+func (s *Server) adminExtendHosting(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs  []string `json:"ids"`
+		Days int      `json:"days"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Days < 1 || body.Days > maxExtendDays {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("days must be between 1 and %d", maxExtendDays))
+		return
+	}
+	seen := map[string]bool{}
+	ids := make([]string, 0, len(body.IDs))
+	for _, id := range body.IDs {
+		id = strings.TrimSpace(id)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		writeError(w, http.StatusBadRequest, "choose at least one instance")
+		return
+	}
+	if len(ids) > maxExtendInstances {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("at most %d instances at once", maxExtendInstances))
+		return
+	}
+	type skip struct {
+		ID     string `json:"id"`
+		Reason string `json:"reason"`
+	}
+	ctx := r.Context()
+	repo := s.db.Hosting()
+	updated := []map[string]any{}
+	skipped := []skip{}
+	for _, id := range ids {
+		var reason string
+		for attempt := 0; ; attempt++ {
+			h, err := repo.Get(ctx, id)
+			if errors.Is(err, store.ErrNotFound) {
+				reason = "not found"
+				break
+			}
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+				return
+			}
+			if !extendableHosting[h.Status] {
+				reason = "instance is " + string(h.Status)
+				break
+			}
+			err = repo.AddDays(ctx, h, body.Days, time.Now())
+			if errors.Is(err, store.ErrHostingConflict) && attempt < 2 {
+				continue
+			}
+			if errors.Is(err, store.ErrHostingConflict) {
+				reason = "instance changed while extending; retry"
+				break
+			}
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+				return
+			}
+			fresh, err := repo.Get(ctx, id)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+				return
+			}
+			updated = append(updated, s.adminHostingView(fresh, nil, nil))
+			break
+		}
+		if reason != "" {
+			skipped = append(skipped, skip{ID: id, Reason: reason})
+		}
+	}
+	s.log.Info("hosting: paid period extended by admin", "days", body.Days, "updated", len(updated), "skipped", len(skipped))
+	writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "skipped": skipped})
 }
 
 // checkRemovedRegions refuses to drop a region that live instances still

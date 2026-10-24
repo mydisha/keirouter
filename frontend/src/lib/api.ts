@@ -2704,6 +2704,9 @@ export const api = {
       ...(nodeId ? { node_id: nodeId } : {}),
       ...(overcommit ? { overcommit: true } : {}),
     }),
+  /** Adds days to the paid period of each instance; ones that can't take them come back in skipped. */
+  extendHosting: (ids: string[], days: number) =>
+    request<{ updated: HostingInstanceAdmin[]; skipped: { id: string; reason: string }[] }>("POST", "/hosting/instances/extend", { ids, days }),
   stopHosting: (id: string) => request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/stop`),
   startHosting: (id: string) => request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/start`),
   deleteHosting: (id: string) => request<HostingInstanceAdmin>("POST", `/hosting/instances/${encodeURIComponent(id)}/delete`),
