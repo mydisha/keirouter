@@ -92,7 +92,8 @@ func (s *Server) adminUsageEconomics(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// adminApprovePaymentOrder manually credits a pending order.
+// adminApprovePaymentOrder manually settles an order that is pending, or
+// that the gateway marked expired or failed before the money arrived.
 func (s *Server) adminApprovePaymentOrder(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var body struct {
@@ -115,7 +116,7 @@ func (s *Server) adminApprovePaymentOrder(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
-	if order.Status != store.PaymentPending {
+	if !order.Status.Settleable() {
 		writeError(w, http.StatusConflict, "order is already "+string(order.Status))
 		return
 	}

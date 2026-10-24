@@ -441,14 +441,15 @@ func (s *Server) writeHostingOrderResponse(w http.ResponseWriter, status int, o 
 }
 
 // markHostingOrderPaid settles a hosting order exactly once: the guarded
-// pending transition must win, then the instance gains one period. An
+// transition out of a settleable status must win, then the instance gains one period. An
 // instance that is not created yet banks the days in prepaid_days so its
 // clock starts when the admin creates it. A payment for a deleted instance
 // is recorded with reason refund_required and grants nothing.
 func (s *Server) markHostingOrderPaid(ctx context.Context, order store.PaymentOrder, to store.PaymentOrderStatus, actor, reason string) (bool, error) {
-	if order.Status != store.PaymentPending {
+	if !order.Status.Settleable() {
 		return false, nil
 	}
+	reason = latePaymentReason(order.Status, reason)
 	if order.HostingInstanceID == "" {
 		return false, errors.New("hosting: order has no instance")
 	}
@@ -478,7 +479,7 @@ func (s *Server) markHostingOrderPaidOnce(ctx context.Context, order store.Payme
 		s.log.Error("hosting: payment for a deleted instance; refund it", "order", order.ID, "instance", inst.ID)
 	}
 	now := time.Now()
-	applied, err := s.db.PaymentOrders().TransitionOnTx(ctx, tx, order.ID, store.PaymentPending, to, actor, reason, now.UTC().Format(time.RFC3339))
+	applied, err := s.db.PaymentOrders().TransitionFromOnTx(ctx, tx, order.ID, store.PaymentSettleable, to, actor, reason, now.UTC().Format(time.RFC3339))
 	if err != nil || !applied {
 		return false, err
 	}

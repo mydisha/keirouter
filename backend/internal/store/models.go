@@ -372,6 +372,21 @@ const (
 	PaymentExpired   PaymentOrderStatus = "expired"
 )
 
+// PaymentSettleable lists the statuses a confirmed payment may still settle.
+// The gateway can report success after it already reported expiry or failure
+// (a customer paying as the link expires), and that money must still count.
+var PaymentSettleable = []PaymentOrderStatus{PaymentPending, PaymentExpired, PaymentFailed}
+
+// Settleable reports whether a confirmed payment can still settle the order.
+func (s PaymentOrderStatus) Settleable() bool {
+	for _, v := range PaymentSettleable {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
 // PaymentOrder is one payment-gateway top-up. AmountIDR is whole rupiah,
 // CreditMicros and FxRateMicros are integer micros (credit in micro-USD, rate
 // in IDR-per-USD x 1e6). The rate and credit are locked at creation.

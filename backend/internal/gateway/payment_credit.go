@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,16 +17,18 @@ var ErrKeyDisabled = errors.New("payment: key is disabled")
 
 // creditPaymentOrder applies an order's stored credit to its key exactly once.
 // It is the single guarded path used by both the webhook and admin manual
-// approval: it conditionally transitions the order away from pending and
+// approval: it conditionally transitions the order out of a settleable status
+// (pending, or expired/failed when the payment arrived late) and
 // requires that transition to win, then atomically raises the key's budget and
 // writes a key_topups ledger row in the same transaction. If the transition
 // does not apply (order already handled) no credit is given.
 //
 // Fail closed: a missing or disabled key returns an error without crediting.
 func (s *Server) creditPaymentOrder(ctx context.Context, order store.PaymentOrder, to store.PaymentOrderStatus, actor, reason string) (store.PaymentOrder, store.Budget, bool, error) {
-	if order.Status != store.PaymentPending {
+	if !order.Status.Settleable() {
 		return order, store.Budget{}, false, nil
 	}
+	reason = latePaymentReason(order.Status, reason)
 	if order.Product == store.ProductHosting {
 		return store.PaymentOrder{}, store.Budget{}, false, fmt.Errorf("payment: order %s is a hosting order, not credit", order.ID)
 	}
@@ -82,7 +85,7 @@ func (s *Server) creditPaymentOrder(ctx context.Context, order store.PaymentOrde
 	}
 
 	paidAt := time.Now().UTC().Format(time.RFC3339)
-	ok, err := s.db.PaymentOrders().TransitionOnTx(ctx, tx, order.ID, store.PaymentPending, to, actor, reason, paidAt)
+	ok, err := s.db.PaymentOrders().TransitionFromOnTx(ctx, tx, order.ID, store.PaymentSettleable, to, actor, reason, paidAt)
 	if err != nil {
 		return store.PaymentOrder{}, store.Budget{}, false, err
 	}
@@ -121,4 +124,13 @@ func nonEmpty(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// latePaymentReason notes on the order when a payment settled it after the
+// gateway had already marked it expired or failed.
+func latePaymentReason(from store.PaymentOrderStatus, reason string) string {
+	if from == store.PaymentPending {
+		return reason
+	}
+	return strings.TrimSpace("paid after the order was marked " + string(from) + ". " + reason)
 }

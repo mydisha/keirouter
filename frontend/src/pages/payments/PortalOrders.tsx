@@ -23,6 +23,10 @@ const STATUS_LABEL: Record<string, string> = {
   expired: "Expired",
 };
 
+// Statuses an admin can still approve: the gateway may mark an order expired
+// or failed even though the customer's payment went through.
+const SETTLEABLE = new Set(["pending", "expired", "failed"]);
+
 export function PortalOrders() {
   const qc = useQueryClient();
   const toast = useToast();
@@ -113,7 +117,7 @@ export function PortalOrders() {
                     <td className="whitespace-nowrap px-4 py-2.5 tabular-nums text-fg-muted">{dateID(o.created_at, true)}</td>
                     <td className="whitespace-nowrap px-4 py-2.5 tabular-nums">{o.paid_at ? dateID(o.paid_at, true) : "-"}</td>
                     <td className="px-4 py-2.5 text-right">
-                      {o.status === "pending" && (
+                      {SETTLEABLE.has(o.status) && (
                         <Button variant="ghost" onClick={() => setApproving(o)} title="Approve manually">
                           <Check aria-hidden="true" /> Approve
                         </Button>
@@ -137,6 +141,11 @@ export function PortalOrders() {
                 : `Add ${usd(approving.credit_usd)} credit to ${approving.user_email || approving.key_id}.`}{" "}
               This can't be reversed automatically.
             </p>
+            {approving.status !== "pending" && (
+              <p className="text-[13px] text-fg">
+                The gateway marked this order {STATUS_LABEL[approving.status]?.toLowerCase() ?? approving.status}. Approve it only after you find the payment in SumoPod.
+              </p>
+            )}
             <Textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}

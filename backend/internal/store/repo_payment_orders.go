@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -108,9 +109,23 @@ func (r *PaymentOrderRepo) ListByStatus(ctx context.Context, status PaymentOrder
 // returns whether the transition applied (RowsAffected == 1). Callers use the
 // false return to detect an already-handled order and avoid double-crediting.
 func (r *PaymentOrderRepo) TransitionOnTx(ctx context.Context, tx *sql.Tx, id string, from, to PaymentOrderStatus, actor, reason, paidAt string) (bool, error) {
+	return r.TransitionFromOnTx(ctx, tx, id, []PaymentOrderStatus{from}, to, actor, reason, paidAt)
+}
+
+// TransitionFromOnTx is TransitionOnTx accepting any of several current
+// statuses.
+func (r *PaymentOrderRepo) TransitionFromOnTx(ctx context.Context, tx *sql.Tx, id string, from []PaymentOrderStatus, to PaymentOrderStatus, actor, reason, paidAt string) (bool, error) {
+	if len(from) == 0 {
+		return false, nil
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?, ", len(from)), ", ")
 	q := r.db.rebind(`UPDATE payment_orders SET status = ?, actor = ?, reason = ?, paid_at = ?, updated_at = ?
-		WHERE id = ? AND status = ?`)
-	res, err := tx.ExecContext(ctx, q, string(to), actor, reason, paidAt, formatTime(time.Now()), id, string(from))
+		WHERE id = ? AND status IN (` + marks + `)`)
+	args := []any{string(to), actor, reason, paidAt, formatTime(time.Now()), id}
+	for _, f := range from {
+		args = append(args, string(f))
+	}
+	res, err := tx.ExecContext(ctx, q, args...)
 	if err != nil {
 		return false, fmt.Errorf("store: transition payment order: %w", err)
 	}
