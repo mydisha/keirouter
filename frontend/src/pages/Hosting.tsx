@@ -14,6 +14,7 @@ import {
   PlugZap,
   Plus,
   ReceiptText,
+  RefreshCw,
   Rocket,
   RotateCcw,
   Server,
@@ -1215,6 +1216,8 @@ interface NodeDraft {
   enabled: boolean;
   region: string;
   isNew: boolean;
+  /** Admin chose to type the public IP instead of using the Dokploy one. */
+  ipOverride: boolean;
 }
 
 const MAX_NODE_CAPACITY = 10000;
@@ -1229,9 +1232,18 @@ const toNodeDraft = (n: HostingNode): NodeDraft => ({
   enabled: n.enabled,
   region: n.region ?? "",
   isNew: false,
+  ipOverride: false,
 });
 
 const IPV4 = /^(25[0-5]|2[0-4]\d|1?\d?\d)(\.(25[0-5]|2[0-4]\d|1?\d?\d)){3}$/;
+
+// Dokploy stores the address it SSHes to, which can be a private or VPN
+// address. DNS needs a public one, so those never fill in the public IP.
+function isPrivateIPv4(ip: string): boolean {
+  const [a, b] = ip.split(".").map(Number);
+  return a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254);
+}
+const usableServerIp = (ip: string | undefined): ip is string => !!ip && IPV4.test(ip) && !isPrivateIPv4(ip);
 
 function nodeErrorsOf(nodes: NodeDraft[]) {
   return nodes.map((n) => {
@@ -1438,6 +1450,22 @@ function NodesEditor({
   const confirm = useConfirm();
   const loads = useQuery({ queryKey: QK_HOSTING.nodes, queryFn: api.listHostingNodes });
   const loadOf = (id: string) => loads.data?.nodes.find((n) => n.id === id);
+  const servers = useQuery({ queryKey: QK_HOSTING.dokployServers, queryFn: api.listDokployServers, retry: false, staleTime: 60_000 });
+  const serverList = servers.data?.servers ?? [];
+  // Picking a server takes its IP as the public IP (unless the admin chose
+  // their own), and names a fresh node after it unless it was renamed.
+  const pickServer = (r: NodeDraft, id: string) => {
+    const prev = serverList.find((sv) => sv.id === r.serverId);
+    const next = serverList.find((sv) => sv.id === id);
+    const patch: Partial<NodeDraft> = { serverId: id };
+    if (!r.ipOverride) {
+      if (next && usableServerIp(next.ip)) patch.publicIp = next.ip;
+      // Don't carry the previous server's IP over to one that can't supply its own.
+      else if (prev && r.publicIp.trim() === prev.ip) patch.publicIp = "";
+    }
+    if (next && r.isNew && (/^Node \d+$/.test(r.name.trim()) || r.name.trim() === prev?.name)) patch.name = next.name;
+    update(r.key, patch);
+  };
   // Saved nodes start folded so the step reads as a list; new nodes open.
   const [openKeys, setOpenKeys] = useState<Set<string>>(() => new Set());
   const toggleOpen = (key: string) =>
@@ -1457,7 +1485,7 @@ function NodesEditor({
         ...rs,
         {
           key: id, id, name: `Node ${rs.length + 1}`, serverId: "", publicIp: "", capacity: "0", enabled: true,
-          region: regions[0]?.id ?? "", isNew: true,
+          region: regions[0]?.id ?? "", isNew: true, ipOverride: false,
         },
       ];
     });
@@ -1490,7 +1518,7 @@ function NodesEditor({
         </p>
         <p className="text-[12px] text-fg-muted">
           Dokploy servers that run customer containers. Each instance's DNS record points to its node's public IP. Add remote servers just for
-          customers in {serversLink}, then copy their Server ID and IP. Containers on the main Dokploy server can reach Dokploy's own database and Redis. The region sets the stock sold on the hosting page: the free slots of active nodes in that region.
+          customers in {serversLink}, then pick them here. Containers on the main Dokploy server can reach Dokploy's own database and Redis. The region sets the stock sold on the hosting page: the free slots of active nodes in that region.
         </p>
       </div>
       {nodes.length === 0 && (
@@ -1510,6 +1538,10 @@ function NodesEditor({
         // A node with an error stays open so the message is never hidden.
         const open = openKeys.has(r.key) || hasError;
         const regionName = regions.find((rg) => rg.id === r.region)?.name.trim() || r.region;
+        const server = serverList.find((sv) => sv.id === r.serverId);
+        // The public IP field only shows when the Dokploy server can't supply it.
+        const ipFromServer =
+          !!server && usableServerIp(server.ip) && !r.ipOverride && (r.publicIp.trim() === "" || r.publicIp.trim() === server.ip);
         return (
           <fieldset key={r.key} className="rounded-xl border border-line bg-subtle/60">
             <legend className="sr-only">{label}</legend>
@@ -1553,20 +1585,82 @@ function NodesEditor({
                 <Field label="Name" error={err.name}>
                   <Input value={r.name} onChange={(e) => update(r.key, { name: e.target.value })} placeholder="Node 1" maxLength={80} autoComplete="off" />
                 </Field>
-                <Field label="Public IP" error={err.ip} hint={err.ip ? undefined : <>IPv4 of the node server. Find it in {serversLink}.</>}>
-                  <Input
-                    inputMode="decimal"
-                    value={r.publicIp}
-                    onChange={(e) => update(r.key, { publicIp: e.target.value })}
-                    placeholder="203.0.113.7"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="font-mono tabular-nums"
-                  />
-                </Field>
-                <Field label="Dokploy Server ID" hint={<>Copy it from {serversLink}. Leave empty for the main Dokploy server (not recommended).</>}>
-                  <Input value={r.serverId} onChange={(e) => update(r.key, { serverId: e.target.value })} autoComplete="off" spellCheck={false} className="font-mono" />
-                </Field>
+                {servers.data ? (
+                  <Field
+                    label="Dokploy server"
+                    hint={
+                      serverList.length === 0 ? (
+                        <>No remote servers in Dokploy yet. Add one in {serversLink}, then reload the list.</>
+                      ) : ipFromServer ? (
+                        <>
+                          DNS records point to {server.ip}.{" "}
+                          <button type="button" className="text-link hover:underline" onClick={() => update(r.key, { ipOverride: true })}>
+                            Use a different IP
+                          </button>
+                        </>
+                      ) : (
+                        "The main Dokploy server is not recommended for customers."
+                      )
+                    }
+                  >
+                    <Select value={r.serverId} onChange={(e) => pickServer(r, e.target.value)}>
+                      <option value="">Main Dokploy server</option>
+                      {serverList.map((sv) => (
+                        <option key={sv.id} value={sv.id}>
+                          {sv.name} · {sv.ip}
+                          {sv.status && sv.status !== "active" ? ` (${sv.status})` : ""}
+                        </option>
+                      ))}
+                      {r.serverId && !serverList.some((sv) => sv.id === r.serverId) && (
+                        <option value={r.serverId}>{r.serverId} (not found in Dokploy)</option>
+                      )}
+                    </Select>
+                  </Field>
+                ) : (
+                  <Field
+                    label="Dokploy Server ID"
+                    hint={
+                      servers.isLoading
+                        ? "Loading servers from Dokploy..."
+                        : `Couldn't load servers from Dokploy${servers.error ? `: ${errorText(servers.error)}` : ""}. Paste the Server ID instead, or leave it empty for the main Dokploy server.`
+                    }
+                  >
+                    <Input value={r.serverId} onChange={(e) => update(r.key, { serverId: e.target.value })} autoComplete="off" spellCheck={false} className="font-mono" />
+                  </Field>
+                )}
+                {!ipFromServer && (
+                  <Field
+                    label="Public IP"
+                    error={
+                      err.ip && server && !usableServerIp(server.ip) && r.publicIp.trim() === ""
+                        ? `Dokploy reaches this server at ${server.ip}, which is not a public address. Enter the IP customers' DNS should point to.`
+                        : err.ip
+                    }
+                    hint={
+                      err.ip ? undefined : server && !usableServerIp(server.ip) ? (
+                        `Dokploy reaches this server at ${server.ip}, which is not a public address. Enter the IP customers' DNS should point to.`
+                      ) : server && usableServerIp(server.ip) ? (
+                        <button type="button" className="text-link hover:underline" onClick={() => update(r.key, { ipOverride: false, publicIp: server.ip })}>
+                          Use the Dokploy IP ({server.ip})
+                        </button>
+                      ) : servers.data ? (
+                        "IPv4 that customers' DNS records point to."
+                      ) : (
+                        <>IPv4 of the node server. Find it in {serversLink}.</>
+                      )
+                    }
+                  >
+                    <Input
+                      inputMode="decimal"
+                      value={r.publicIp}
+                      onChange={(e) => update(r.key, { publicIp: e.target.value, ipOverride: !!server })}
+                      placeholder="203.0.113.7"
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="font-mono tabular-nums"
+                    />
+                  </Field>
+                )}
                 <Field
                   label="Region"
                   hint={r.region ? "Missing a country? Add it in the Region step." : "A node without a region adds no stock for sale. Add countries in the Region step."}
@@ -1602,10 +1696,16 @@ function NodesEditor({
         );
       })}
       {listError && <ErrorBanner message={listError} />}
-      <Button type="button" variant="ghost" onClick={add}>
-        <Plus aria-hidden="true" />
-        Add node
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="ghost" onClick={add}>
+          <Plus aria-hidden="true" />
+          Add node
+        </Button>
+        <Button type="button" variant="ghost" onClick={() => servers.refetch()} disabled={servers.isFetching}>
+          {servers.isFetching ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw aria-hidden="true" />}
+          Reload Dokploy servers
+        </Button>
+      </div>
     </section>
   );
 }

@@ -165,6 +165,38 @@ func (c *Client) Delete(ctx context.Context, applicationID string) error {
 	return c.post(ctx, "application.delete", map[string]any{"applicationId": applicationID}, nil)
 }
 
+// Server is a remote Dokploy server that can run applications.
+type Server struct {
+	ServerID  string `json:"serverId"`
+	Name      string `json:"name"`
+	IPAddress string `json:"ipAddress"`
+	Status    string `json:"serverStatus"`
+}
+
+// ListServers returns the remote servers the key can see, minus build-only
+// servers, which cannot run applications.
+func (c *Client) ListServers(ctx context.Context) ([]Server, error) {
+	data, err := c.do(ctx, http.MethodGet, "server.all", nil)
+	if err != nil {
+		return nil, err
+	}
+	var rows []struct {
+		Server
+		Type string `json:"serverType"`
+	}
+	if err := json.Unmarshal(data, &rows); err != nil {
+		return nil, fmt.Errorf("dokploy: decode server.all: %w", err)
+	}
+	out := make([]Server, 0, len(rows))
+	for _, r := range rows {
+		if r.Type == "build" {
+			continue
+		}
+		out = append(out, r.Server)
+	}
+	return out, nil
+}
+
 // CheckEnvironment confirms the API key works and that environmentID exists
 // in some project the key can see.
 func (c *Client) CheckEnvironment(ctx context.Context, environmentID string) error {

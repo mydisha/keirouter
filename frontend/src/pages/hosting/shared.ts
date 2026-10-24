@@ -6,6 +6,7 @@ export const QK_HOSTING = {
   finance: ["hosting-finance"] as const,
   coupons: ["hosting-coupons"] as const,
   nodes: ["hosting-nodes"] as const,
+  dokployServers: ["hosting-dokploy-servers"] as const,
 };
 
 export const STATUS_LABEL: Record<HostingStatus, string> = {

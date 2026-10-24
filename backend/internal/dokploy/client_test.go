@@ -64,3 +64,25 @@ func TestCheckEnvironment(t *testing.T) {
 	require.NoError(t, c.CheckEnvironment(context.Background(), "env-1"))
 	require.ErrorContains(t, c.CheckEnvironment(context.Background(), "env-2"), "not found")
 }
+
+func TestListServersSkipsBuildServers(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		_, _ = w.Write([]byte(`[
+			{"serverId":"srv-my","name":"KL 1","ipAddress":"203.0.113.30","serverStatus":"active","serverType":"deploy","sshKeyId":"k"},
+			{"serverId":"srv-b","name":"Builder","ipAddress":"203.0.113.40","serverStatus":"active","serverType":"build"},
+			{"serverId":"srv-old","name":"Old","ipAddress":"203.0.113.50","serverStatus":"inactive"}
+		]`))
+	}))
+	defer srv.Close()
+
+	servers, err := NewClient(srv.URL, "k").ListServers(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "/api/server.all", gotPath)
+	require.Equal(t, http.MethodGet, gotMethod)
+	require.Equal(t, []Server{
+		{ServerID: "srv-my", Name: "KL 1", IPAddress: "203.0.113.30", Status: "active"},
+		{ServerID: "srv-old", Name: "Old", IPAddress: "203.0.113.50", Status: "inactive"},
+	}, servers)
+}

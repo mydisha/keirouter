@@ -69,6 +69,10 @@ func (f *fakeDokploy) Start(context.Context, string) error            { return n
 func (f *fakeDokploy) Delete(context.Context, string) error           { f.deletes++; return nil }
 func (f *fakeDokploy) CheckEnvironment(context.Context, string) error { return nil }
 
+func (f *fakeDokploy) ListServers(context.Context) ([]dokploy.Server, error) {
+	return []dokploy.Server{{ServerID: "srv-1", Name: "Jakarta 1", IPAddress: "203.0.113.10", Status: "active"}}, nil
+}
+
 // fakeDNS is an in-memory Cloudflare zone.
 type fakeDNS struct {
 	zoneName         string
@@ -801,4 +805,21 @@ func TestHostingProvision_RepairsMissingRecord(t *testing.T) {
 	h, err = s.db.Hosting().Get(t.Context(), "r1")
 	require.NoError(t, err)
 	require.Equal(t, dns.records[h.FQDN].ID, h.DNSRecordID)
+}
+
+func TestHostingDokployServers(t *testing.T) {
+	s, _, _ := hostingTestServer(t)
+	r := chi.NewRouter()
+	s.mountHosting(r)
+
+	rec := doJSON(t, r, http.MethodGet, "/hosting/dokploy/servers", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.JSONEq(t, `{"servers":[{"id":"srv-1","name":"Jakarta 1","ip":"203.0.113.10","status":"active"}]}`, rec.Body.String())
+
+	st, err := hosting.Load(t.Context(), s.settingsGet(), s.financeBox())
+	require.NoError(t, err)
+	st.APIKey = ""
+	require.NoError(t, hosting.Save(t.Context(), s.settingsSet(), s.financeBox(), st))
+	rec = doJSON(t, r, http.MethodGet, "/hosting/dokploy/servers", "")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 }

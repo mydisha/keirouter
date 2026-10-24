@@ -31,6 +31,7 @@ type dokployAPI interface {
 	Start(ctx context.Context, applicationID string) error
 	Delete(ctx context.Context, applicationID string) error
 	CheckEnvironment(ctx context.Context, environmentID string) error
+	ListServers(ctx context.Context) ([]dokploy.Server, error)
 }
 
 // dnsAPI is the slice of the Cloudflare API hosting uses; tests swap in a
@@ -69,6 +70,7 @@ func (s *Server) mountHosting(r chi.Router) {
 	r.Get("/hosting/settings", s.adminGetHostingSettings)
 	r.Put("/hosting/settings", s.adminPutHostingSettings)
 	r.Post("/hosting/settings/test", s.adminTestHostingSettings)
+	r.Get("/hosting/dokploy/servers", s.adminListDokployServers)
 	r.Get("/hosting/nodes", s.adminListHostingNodes)
 	r.Get("/hosting/instances", s.adminListHostingInstances)
 	r.Post("/hosting/instances/{id}/provision", s.adminProvisionHosting)
@@ -245,6 +247,32 @@ func (s *Server) adminTestHostingSettings(w http.ResponseWriter, r *http.Request
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// adminListDokployServers lists the remote Dokploy servers so the admin can
+// pick a node's server instead of hunting for its id in Dokploy.
+func (s *Server) adminListDokployServers(w http.ResponseWriter, r *http.Request) {
+	st, err := s.loadHostingSettings(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	if st.DokployURL == "" || st.APIKey == "" {
+		writeError(w, http.StatusBadRequest, "save the Dokploy URL and API key first")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	servers, err := s.dokployClient(st).ListServers(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "Dokploy: "+err.Error())
+		return
+	}
+	out := make([]map[string]any, 0, len(servers))
+	for _, sv := range servers {
+		out = append(out, map[string]any{"id": sv.ServerID, "name": sv.Name, "ip": sv.IPAddress, "status": sv.Status})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"servers": out})
 }
 
 // adminHostingView renders one instance for the admin. orders must be this

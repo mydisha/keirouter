@@ -2357,6 +2357,14 @@ export interface HostingRegionStock extends HostingRegion {
   nodes: number;
 }
 
+/** A remote Dokploy server a node can run on. */
+export interface DokployServer {
+  id: string;
+  name: string;
+  ip: string;
+  status: string;
+}
+
 export interface HostingNodeLoad extends HostingNode {
   used: number;
   /** Open slots, or -1 when unlimited. */
@@ -2674,6 +2682,7 @@ export const api = {
   getHostingSettings: () => request<HostingSettings>("GET", "/hosting/settings"),
   putHostingSettings: (input: HostingSettingsInput) => request<HostingSettings>("PUT", "/hosting/settings", input),
   testHostingSettings: () => request<{ ok: boolean; error?: string }>("POST", "/hosting/settings/test"),
+  listDokployServers: () => request<{ servers: DokployServer[] }>("GET", "/hosting/dokploy/servers"),
   listHostingInstances: (status?: string) =>
     request<{ instances: HostingInstanceAdmin[] }>("GET", `/hosting/instances${status ? `?status=${encodeURIComponent(status)}` : ""}`),
   listHostingNodes: () =>
