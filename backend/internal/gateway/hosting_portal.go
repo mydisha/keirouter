@@ -15,6 +15,9 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
+// maxIdempotencyKeyLen caps a client idempotency key; clients send a UUID.
+const maxIdempotencyKeyLen = 128
+
 // hostingTermsPath is the public page users accept at checkout.
 const hostingTermsPath = "/ketentuan#hosting"
 
@@ -268,6 +271,10 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 	if idem == "" {
 		idem = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	}
+	if len(idem) > maxIdempotencyKeyLen {
+		writeError(w, http.StatusBadRequest, "idempotency key is too long")
+		return
+	}
 	if idem != "" {
 		if existing, gerr := s.db.PaymentOrders().GetByIdempotencyKey(r.Context(), idem); gerr == nil {
 			if existing.KeyID != keyID || existing.Product != store.ProductHosting {
@@ -405,7 +412,15 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 	if coupon.ID != "" {
 		o.BaseAmountIDR = quote.BaseIDR
 	}
-	if err := s.createHostingOrder(r, inst, newInstance, o, couponHoldUntil(expires)); err != nil {
+	slot := ""
+	if inst.Status == store.HostingAwaitingPayment {
+		slot = region
+	}
+	if err := s.createHostingOrder(r, st, inst, newInstance, o, couponHoldUntil(expires), slot); err != nil {
+		if errors.Is(err, errRegionSoldOut) {
+			writeHostingRegionError(w, http.StatusConflict, "region_sold_out", "Stok region ini sedang habis.")
+			return
+		}
 		if reject := couponReserveRejection(err); reject != "" {
 			writeCouponRejection(w, reject)
 			return
@@ -422,14 +437,27 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 	s.writeHostingOrderResponse(w, http.StatusCreated, o)
 }
 
+// errRegionSoldOut means another checkout took the region's last slot
+// between the stock check and this order.
+var errRegionSoldOut = errors.New("hosting: region sold out")
+
 // createHostingOrder stores the order (and a new instance) and, for a coupon
-// order, takes one coupon use until holdUntil, all in one transaction.
-func (s *Server) createHostingOrder(r *http.Request, inst store.HostingInstance, newInstance bool, o store.PaymentOrder, holdUntil time.Time) error {
-	tx, err := s.db.SQL().BeginTx(r.Context(), nil)
+// order, takes one coupon use until holdUntil, all in one transaction. When
+// slotRegion is set the order holds a slot there: the stock is counted again
+// inside the transaction, after the write, so two buyers racing for the last
+// slot cannot both get it.
+func (s *Server) createHostingOrder(r *http.Request, st hosting.Settings, inst store.HostingInstance, newInstance bool, o store.PaymentOrder, holdUntil time.Time, slotRegion string) error {
+	ctx := r.Context()
+	tx, err := s.db.SQL().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if slotRegion != "" {
+		if err := s.db.Hosting().LockRegionOnTx(ctx, tx, slotRegion); err != nil {
+			return err
+		}
+	}
 	if newInstance {
 		if err := s.db.Hosting().CreateOnTx(r.Context(), tx, inst); err != nil {
 			return err
@@ -437,6 +465,17 @@ func (s *Server) createHostingOrder(r *http.Request, inst store.HostingInstance,
 	}
 	if err := s.db.PaymentOrders().CreateOnTx(r.Context(), tx, o); err != nil {
 		return err
+	}
+	if slotRegion != "" {
+		used, waiting, err := s.db.Hosting().SlotCountsOnTx(ctx, tx, time.Now().Add(-hosting.CheckoutWindow), inst.ID)
+		if err != nil {
+			return err
+		}
+		for _, rs := range st.RegionStocks(used, waiting) {
+			if rs.ID == slotRegion && rs.SoldOut {
+				return errRegionSoldOut
+			}
+		}
 	}
 	if o.CouponID != "" {
 		if err := s.db.HostingCoupons().ReserveOnTx(r.Context(), tx, o.CouponID, o.KeyID, o.ID, holdUntil, o.CreatedAt); err != nil {

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -138,11 +140,11 @@ func hostingTestServerDNS(t *testing.T) (*Server, string, *fakeDokploy, *fakeDNS
 	require.NoError(t, err)
 	s.vault = vault.New(sealer)
 
-	n := 0
+	var n atomic.Int64 // checkouts may run concurrently
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n++
+		id := n.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"payment_id": "pay-" + string(rune('a'+n)), "payment_link_url": "https://pay.example/x",
+			"payment_id": "pay-" + strconv.FormatInt(id, 10), "payment_link_url": "https://pay.example/x",
 		})
 	}))
 	t.Cleanup(gw.Close)

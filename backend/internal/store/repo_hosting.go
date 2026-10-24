@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"time"
@@ -283,16 +285,51 @@ func (r *HostingRepo) AddDays(ctx context.Context, h HostingInstance, days int, 
 	return nil
 }
 
-// CountByNode returns how many instances occupy each node: every status that
-// holds (or may hold) a container there.
+// queryer is what the count helpers need from a *sql.DB or *sql.Tx.
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// CountByNode counts the instances that occupy a slot on each node.
 func (r *HostingRepo) CountByNode(ctx context.Context) (map[string]int, error) {
-	q := r.db.rebind(`SELECT node_id, COUNT(*) FROM hosting_instances
+	return r.countByNode(ctx, r.db.sql)
+}
+
+func (r *HostingRepo) countByNode(ctx context.Context, q queryer) (map[string]int, error) {
+	sq := r.db.rebind(`SELECT node_id, COUNT(*) FROM hosting_instances
 		WHERE node_id <> '' AND status IN (?, ?, ?, ?, ?) GROUP BY node_id`)
-	rows, err := r.db.sql.QueryContext(ctx, q, string(HostingProvisioning), string(HostingActive),
+	rows, err := q.QueryContext(ctx, sq, string(HostingProvisioning), string(HostingActive),
 		string(HostingExpired), string(HostingStopped), string(HostingFailed))
 	if err != nil {
 		return nil, fmt.Errorf("store: count hosting by node: %w", err)
 	}
+	return scanCounts(rows)
+}
+
+// CountWaitingByRegion counts, per region, instances not placed on a node
+// yet that will take a slot there: paid ones, and unpaid ones whose hosting
+// order was created at or after holdSince and is still pending (a checkout
+// in progress holds its slot).
+func (r *HostingRepo) CountWaitingByRegion(ctx context.Context, holdSince time.Time) (map[string]int, error) {
+	return r.countWaitingByRegion(ctx, r.db.sql, holdSince, "")
+}
+
+func (r *HostingRepo) countWaitingByRegion(ctx context.Context, q queryer, holdSince time.Time, exclude string) (map[string]int, error) {
+	sq := r.db.rebind(`SELECT h.region, COUNT(*) FROM hosting_instances h
+		WHERE h.node_id = '' AND h.region <> '' AND h.id <> ? AND (
+			h.status IN (?, ?, ?)
+			OR (h.status = ? AND EXISTS (SELECT 1 FROM payment_orders o
+				WHERE o.hosting_instance_id = h.id AND o.product = ? AND o.status = ? AND o.created_at >= ?))
+		) GROUP BY h.region`)
+	rows, err := q.QueryContext(ctx, sq, exclude, string(HostingPaid), string(HostingProvisioning), string(HostingFailed),
+		string(HostingAwaitingPayment), ProductHosting, string(PaymentPending), formatTime(holdSince))
+	if err != nil {
+		return nil, fmt.Errorf("store: count waiting hosting by region: %w", err)
+	}
+	return scanCounts(rows)
+}
+
+func scanCounts(rows *sql.Rows) (map[string]int, error) {
 	defer rows.Close()
 	out := map[string]int{}
 	for rows.Next() {
@@ -306,33 +343,32 @@ func (r *HostingRepo) CountByNode(ctx context.Context) (map[string]int, error) {
 	return out, rows.Err()
 }
 
-// CountWaitingByRegion counts, per region, instances not placed on a node
-// yet that will take a slot there: paid ones, and unpaid ones whose hosting
-// order was created at or after holdSince and is still pending (a checkout
-// in progress holds its slot).
-func (r *HostingRepo) CountWaitingByRegion(ctx context.Context, holdSince time.Time) (map[string]int, error) {
-	q := r.db.rebind(`SELECT h.region, COUNT(*) FROM hosting_instances h
-		WHERE h.node_id = '' AND h.region <> '' AND (
-			h.status IN (?, ?, ?)
-			OR (h.status = ? AND EXISTS (SELECT 1 FROM payment_orders o
-				WHERE o.hosting_instance_id = h.id AND o.product = ? AND o.status = ? AND o.created_at >= ?))
-		) GROUP BY h.region`)
-	rows, err := r.db.sql.QueryContext(ctx, q, string(HostingPaid), string(HostingProvisioning), string(HostingFailed),
-		string(HostingAwaitingPayment), ProductHosting, string(PaymentPending), formatTime(holdSince))
-	if err != nil {
-		return nil, fmt.Errorf("store: count waiting hosting by region: %w", err)
+// SlotCountsOnTx is CountByNode and CountWaitingByRegion read inside tx,
+// leaving out the instance exclude. Checkout calls it after writing its
+// order, so the counts include every checkout that committed before it.
+func (r *HostingRepo) SlotCountsOnTx(ctx context.Context, tx *sql.Tx, holdSince time.Time, exclude string) (used, waiting map[string]int, err error) {
+	if used, err = r.countByNode(ctx, tx); err != nil {
+		return nil, nil, err
 	}
-	defer rows.Close()
-	out := map[string]int{}
-	for rows.Next() {
-		var region string
-		var n int
-		if err := rows.Scan(&region, &n); err != nil {
-			return nil, err
-		}
-		out[region] = n
+	if waiting, err = r.countWaitingByRegion(ctx, tx, holdSince, exclude); err != nil {
+		return nil, nil, err
 	}
-	return out, rows.Err()
+	return used, waiting, nil
+}
+
+// LockRegionOnTx serializes checkouts that take a slot in one region. On
+// PostgreSQL it takes a transaction-scoped advisory lock; on SQLite the
+// checkout's first write already takes the single writer lock.
+func (r *HostingRepo) LockRegionOnTx(ctx context.Context, tx *sql.Tx, region string) error {
+	if r.db.Dialect() != DialectPostgres {
+		return nil
+	}
+	sum := sha256.Sum256([]byte("hosting_region:" + region))
+	lockID := int64(binary.BigEndian.Uint64(sum[:8]))
+	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock($1)", lockID); err != nil {
+		return fmt.Errorf("store: lock hosting region: %w", err)
+	}
+	return nil
 }
 
 // SubdomainExists reports whether any instance already holds sub.

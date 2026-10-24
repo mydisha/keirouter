@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -118,4 +121,69 @@ func TestHostingCheckout_RenewalReusesOpenPayment(t *testing.T) {
 	rec = postHostingOrder(t, s, tok, renew)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, a["order_id"], decodeOrder(t, rec)["order_id"])
+}
+
+func TestHostingCheckout_RejectsLongIdempotencyKey(t *testing.T) {
+	s, tok := regionTestServer(t)
+	body := `{"accept_terms":true,"terms_version":"` + hosting.TermsVersion + `","region":"eu","idempotency_key":"` +
+		strings.Repeat("a", maxIdempotencyKeyLen+1) + `"}`
+	rec := postHostingOrder(t, s, tok, body)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}
+
+// Buyers racing for a region's last slot: exactly one checkout gets it, the
+// rest are told the region is sold out.
+func TestHostingCheckout_LastSlotRace(t *testing.T) {
+	s, _ := regionTestServer(t) // Indonesia has one slot
+	const buyers = 8
+	toks := make([]string, buyers)
+	for i := range toks {
+		toks[i] = addPortalUser(t, s, "racer-"+strconv.Itoa(i))
+	}
+	codes := make([]int, buyers)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range toks {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			codes[i] = postHostingOrder(t, s, toks[i], regionOrder("id")).Code
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	created, soldOut := 0, 0
+	for _, c := range codes {
+		switch c {
+		case http.StatusCreated:
+			created++
+		case http.StatusConflict:
+			soldOut++
+		}
+	}
+	require.Equal(t, 1, created, "codes: %v", codes)
+	require.Equal(t, buyers-1, soldOut, "codes: %v", codes)
+}
+
+// The recount inside the transaction catches a checkout that passed the
+// stock check before another buyer's order committed.
+func TestHostingCheckout_RecountInsideTransaction(t *testing.T) {
+	s, tok := regionTestServer(t)
+	rec := postHostingOrder(t, s, tok, regionOrder("id"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	st, err := hosting.Load(t.Context(), s.settingsGet(), s.financeBox())
+	require.NoError(t, err)
+	now := time.Now()
+	late := store.HostingInstance{ID: "late", TenantID: adminTenant, KeyID: "k-late", Region: "id",
+		Status: store.HostingAwaitingPayment, CreatedAt: now, UpdatedAt: now}
+	o := store.PaymentOrder{ID: "o-late", TenantID: adminTenant, KeyID: "k-late", AmountIDR: 20000,
+		Status: store.PaymentPending, Provider: "sumopod", ProviderPaymentID: "pay-late",
+		CreatedAt: now, UpdatedAt: now, Product: store.ProductHosting, HostingInstanceID: "late"}
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	err = s.createHostingOrder(req, st, late, true, o, now.Add(time.Minute), "id")
+	require.ErrorIs(t, err, errRegionSoldOut)
+	_, err = s.db.PaymentOrders().Get(t.Context(), "o-late")
+	require.ErrorIs(t, err, store.ErrNotFound, "the losing checkout leaves nothing behind")
 }

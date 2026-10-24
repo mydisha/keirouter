@@ -120,6 +120,10 @@ func (s *Server) handlePortalCreateOrder(w http.ResponseWriter, r *http.Request)
 	if idem == "" {
 		idem = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	}
+	if len(idem) > maxIdempotencyKeyLen {
+		writeError(w, http.StatusBadRequest, "idempotency key is too long")
+		return
+	}
 	if idem != "" {
 		if existing, gerr := s.db.PaymentOrders().GetByIdempotencyKey(r.Context(), idem); gerr == nil {
 			if existing.KeyID != keyID {
