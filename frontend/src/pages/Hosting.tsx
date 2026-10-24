@@ -2,6 +2,7 @@ import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { dashboard } from "../lib/dashboardRoutes";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { bytesToMemory, cpuToNano, memoryToBytes, nanoToCpu } from "../lib/containerLimits";
 import {
   ArrowLeft,
@@ -12,6 +13,7 @@ import {
   CircleDashed,
   ExternalLink,
   Loader2,
+  MoreHorizontal,
   Play,
   PlugZap,
   Plus,
@@ -142,7 +144,8 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
   const [regionFilter, setRegionFilter] = useState("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
-  const [extending, setExtending] = useState(false);
+  // Instances the Add days dialog applies to; "selection" means the ticked rows.
+  const [extendTarget, setExtendTarget] = useState<{ ids: string[]; fromSelection: boolean } | null>(null);
   const [provisioning, setProvisioning] = useState<HostingInstanceAdmin | null>(null);
   const [ordersOf, setOrdersOf] = useState<HostingInstanceAdmin | null>(null);
 
@@ -319,7 +322,7 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
           {selected.size > 0 && (
             <div className="flex flex-wrap items-center gap-2 border-b border-line bg-subtle px-4 py-2 text-[12.5px]" role="status">
               <span className="font-medium text-fg tabular-nums">{selected.size} selected</span>
-              <Button variant="primary" onClick={() => setExtending(true)}>
+              <Button variant="primary" onClick={() => setExtendTarget({ ids: [...selected], fromSelection: true })}>
                 <CalendarPlus aria-hidden="true" />
                 Add days
               </Button>
@@ -329,7 +332,7 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
             </div>
           )}
           <div className="overflow-x-auto" role="region" aria-label="Hosting instances table" tabIndex={0}>
-            <table className="w-full min-w-[1180px] text-[13px]">
+            <table className="w-full min-w-[1100px] text-[13px]">
               <thead>
                 <tr className={THEAD}>
                   <th scope="col" className="w-10 px-4 py-2">
@@ -348,19 +351,19 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
                   </th>
                   <th scope="col" className={TH}>User</th>
                   <th scope="col" className={TH}>Status</th>
-                  <th scope="col" className={TH}>Node / region</th>
+                  <th scope="col" className={cn(TH, "whitespace-nowrap")}>Node / region</th>
                   <th scope="col" className={TH}>Address</th>
                   <th scope="col" className={TH}>Image</th>
                   <th scope="col" className={TH}>Paid until</th>
                   <th scope="col" className={TH}>Created</th>
-                  <th scope="col" className={cn(TH, "text-right")}>
+                  <th scope="col" className={cn(TH, "sticky right-0 border-l border-line bg-subtle text-right")}>
                     <span className="sr-only">Actions</span>
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
                 {paged.map((h) => (
-                  <tr key={h.id} className={cn("align-top transition-colors hover:bg-hover", selected.has(h.id) && "bg-accent-500/5")}>
+                  <tr key={h.id} className={cn("group align-top transition-colors hover:bg-hover", selected.has(h.id) && "bg-accent-500/5")}>
                     <td className="px-4 py-2.5">
                       <input
                         type="checkbox"
@@ -392,7 +395,7 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
                           href={h.url}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 break-all font-mono text-[12px] text-link hover:underline"
+                          className="inline-flex items-center gap-1 whitespace-nowrap font-mono text-[12px] text-link hover:underline"
                         >
                           {h.fqdn || h.url}
                           <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -403,14 +406,21 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
                         "-"
                       )}
                     </td>
-                    <td className="max-w-[220px] break-all px-4 py-2.5 font-mono text-[12px] text-fg-muted">{h.image || "-"}</td>
+                    <td className="px-4 py-2.5 font-mono text-[12px] text-fg-muted">
+                      <span className="block max-w-[200px] truncate" title={h.image || undefined}>
+                        {h.image || "-"}
+                      </span>
+                    </td>
                     <td className="whitespace-nowrap px-4 py-2.5 tabular-nums">
                       {h.paid_until ? dateID(h.paid_until) : "-"}
                       {h.prepaid_days > 0 && <p className="text-[11.5px] text-fg-muted">+{h.prepaid_days} days prepaid</p>}
                     </td>
-                    <td className="whitespace-nowrap px-4 py-2.5 tabular-nums text-fg-muted">{dateID(h.created_at, true)}</td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex flex-wrap justify-end gap-1">
+                    <td className="whitespace-nowrap px-4 py-2.5 tabular-nums text-fg-muted" title={dateID(h.created_at, true)}>
+                      {dateID(h.created_at)}
+                    </td>
+                    {/* Sticky so the actions stay in view when the table scrolls sideways. */}
+                    <td className="sticky right-0 border-l border-line bg-surface px-3 py-2.5 transition-colors group-hover:bg-hover">
+                      <div className="flex items-center justify-end gap-1 whitespace-nowrap">
                         {(h.status === "paid" || h.status === "failed") && (
                           <Button variant={h.status === "paid" ? "primary" : "secondary"} onClick={() => setProvisioning(h)}>
                             {h.status === "paid" ? <Rocket aria-hidden="true" /> : <RotateCcw aria-hidden="true" />}
@@ -418,27 +428,50 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
                           </Button>
                         )}
                         {(h.status === "active" || h.status === "expired") && (
-                          <Button variant="ghost" disabled={busy(h.id)} onClick={() => action.mutate({ kind: "stop", id: h.id })}>
+                          <Button variant="secondary" disabled={busy(h.id)} onClick={() => action.mutate({ kind: "stop", id: h.id })}>
                             {busy(h.id) && action.variables?.kind === "stop" ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Square aria-hidden="true" />}
                             Stop
                           </Button>
                         )}
                         {h.status === "stopped" && (
-                          <Button variant="ghost" disabled={busy(h.id)} onClick={() => action.mutate({ kind: "start", id: h.id })}>
+                          <Button variant="secondary" disabled={busy(h.id)} onClick={() => action.mutate({ kind: "start", id: h.id })}>
                             {busy(h.id) && action.variables?.kind === "start" ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Play aria-hidden="true" />}
                             Start
                           </Button>
                         )}
-                        <Button variant="ghost" onClick={() => setOrdersOf(h)} title="View orders">
-                          <ReceiptText aria-hidden="true" />
-                          Order
-                          {(h.orders?.length ?? 0) > 0 && <span className="tabular-nums text-fg-muted">{h.orders!.length}</span>}
-                        </Button>
-                        {h.status !== "deleted" && (
-                          <Button variant="ghost" disabled={busy(h.id)} onClick={() => onDelete(h)} title="Delete instance" aria-label="Delete instance">
-                            {busy(h.id) && action.variables?.kind === "delete" ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
-                          </Button>
-                        )}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            aria-label={`More actions for ${h.user_email || h.key_id}`}
+                            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                          >
+                            {busy(h.id) && action.variables?.kind === "delete" ? (
+                              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                            ) : (
+                              <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
+                            )}
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onSelect={() => setOrdersOf(h)}>
+                              <ReceiptText />
+                              View orders{(h.orders?.length ?? 0) > 0 ? ` (${h.orders!.length})` : ""}
+                            </DropdownMenuItem>
+                            {EXTENDABLE.has(h.status) && (
+                              <DropdownMenuItem onSelect={() => setExtendTarget({ ids: [h.id], fromSelection: false })}>
+                                <CalendarPlus />
+                                Add days
+                              </DropdownMenuItem>
+                            )}
+                            {h.status !== "deleted" && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem tone="danger" disabled={busy(h.id)} onSelect={() => onDelete(h)}>
+                                  <Trash2 />
+                                  Delete instance
+                                </DropdownMenuItem>
+                              </>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </td>
                   </tr>
@@ -467,13 +500,13 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
         />
       )}
       {ordersOf && <OrdersModal inst={ordersOf} onClose={() => setOrdersOf(null)} />}
-      {extending && (
+      {extendTarget && (
         <ExtendModal
-          ids={[...selected]}
-          onClose={() => setExtending(false)}
+          ids={extendTarget.ids}
+          onClose={() => setExtendTarget(null)}
           onDone={() => {
-            setExtending(false);
-            setSelected(new Set());
+            if (extendTarget.fromSelection) setSelected(new Set());
+            setExtendTarget(null);
             invalidate();
           }}
         />
