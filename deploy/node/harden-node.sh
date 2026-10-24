@@ -149,13 +149,15 @@ if ! [[ $SSH_PORT =~ ^[0-9]+$ ]] || (( SSH_PORT < 1024 || SSH_PORT > 65535 )); t
   die "--ssh-port must be between 1024 and 65535"
 fi
 
-[[ -n $EXT_IFACE ]] || EXT_IFACE=$(ip -4 route show default | awk '{print $5; exit}')
+[[ -n $EXT_IFACE ]] || EXT_IFACE=$(ip -4 route show default | awk '!f{print $5; f=1}')
 if [[ -z $EXT_IFACE ]] || ! ip link show "$EXT_IFACE" >/dev/null 2>&1; then
   die "could not detect the public interface; pass --iface"
 fi
 
 mkdir -p /run/sshd
-CURRENT_SSH_PORT=$(sshd -T 2>/dev/null | awk '$1=="port"{print $2; exit}')
+# awk reads to the end on purpose: exiting early would kill sshd with
+# SIGPIPE, and pipefail would then stop the script without a message.
+CURRENT_SSH_PORT=$(sshd -T 2>/dev/null | awk '$1=="port" && !f{print $2; f=1}') || true
 CURRENT_SSH_PORT=${CURRENT_SSH_PORT:-22}
 
 log "Installing packages"
@@ -235,7 +237,7 @@ rollback_sshd() {
 }
 
 sshd -t || rollback_sshd "sshd rejected the new config"
-EFFECTIVE=$(sshd -T)
+EFFECTIVE=$(sshd -T) || rollback_sshd "sshd -T failed"
 for want in "port $SSH_PORT" "permitrootlogin no" "passwordauthentication $PASSWORD_LOGIN"; do
   grep -qx "$want" <<<"$EFFECTIVE" || rollback_sshd "sshd did not pick up '$want'"
 done
@@ -249,7 +251,7 @@ systemctl daemon-reload
 systemctl restart ssh 2>/dev/null || systemctl restart sshd
 
 sleep 2
-ss -ltn "sport = :$SSH_PORT" | grep -q LISTEN || rollback_sshd "sshd is not listening on $SSH_PORT"
+[[ -n $(ss -ltnH "sport = :$SSH_PORT") ]] || rollback_sshd "sshd is not listening on $SSH_PORT"
 if [[ $CURRENT_SSH_PORT != "$SSH_PORT" ]]; then
   ufw delete allow "$CURRENT_SSH_PORT/tcp" >/dev/null || true
   ufw delete allow OpenSSH >/dev/null 2>&1 || true
@@ -282,7 +284,7 @@ EOF
 systemctl daemon-reload
 systemctl enable --now keirouter-cloudflare-refresh.timer >/dev/null 2>&1
 
-PUBLIC_IP=$(ip -4 addr show "$EXT_IFACE" | awk '/inet /{sub(/\/.*/,"",$2); print $2; exit}')
+PUBLIC_IP=$(ip -4 addr show "$EXT_IFACE" | awk '/inet / && !f{sub(/\/.*/,"",$2); print $2; f=1}') || true
 cat <<EOF
 
 Done. Do not close this session yet.
