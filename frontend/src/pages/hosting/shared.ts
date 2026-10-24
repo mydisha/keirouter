@@ -12,14 +12,14 @@ export const QK_HOSTING = {
 };
 
 export const STATUS_LABEL: Record<HostingStatus, string> = {
-  awaiting_payment: "Menunggu pembayaran",
-  paid: "Lunas, belum dibuat",
-  provisioning: "Sedang dibuat",
-  active: "Aktif",
-  failed: "Gagal",
-  expired: "Kedaluwarsa",
-  stopped: "Dihentikan",
-  deleted: "Dihapus",
+  awaiting_payment: "Awaiting payment",
+  paid: "Paid, not provisioned",
+  provisioning: "Provisioning",
+  active: "Active",
+  failed: "Failed",
+  expired: "Expired",
+  stopped: "Stopped",
+  deleted: "Deleted",
 };
 
 export const STATUS_TONE: Record<HostingStatus, "success" | "warning" | "danger" | "neutral" | "accent"> = {
@@ -40,8 +40,8 @@ export function nodeUsage(n: { used: number; capacity: number }): string {
 
 /** Why a node takes no new instances, or "" when it does. */
 export function nodeBlockedLabel(n: { enabled: boolean; available: boolean }): string {
-  if (!n.enabled) return "nonaktif";
-  return n.available ? "" : "penuh";
+  if (!n.enabled) return "disabled";
+  return n.available ? "" : "full";
 }
 
 /** Node name by id, falling back to the id itself. */
@@ -73,34 +73,34 @@ export function validDomain(d: string): boolean {
 export function monthLabel(month: string): string {
   const [y, m] = month.split("-").map(Number);
   if (!y || !m) return month;
-  return new Date(y, m - 1, 1).toLocaleDateString("id-ID", { month: "short", year: "numeric" });
+  return new Date(y, m - 1, 1).toLocaleDateString("en-US", { month: "short", year: "numeric" });
 }
 
 /** "2026-10-05" → "5 Okt 2026" without timezone shifts; "" → "". */
 export function plainDateID(value: string): string {
   const [y, m, d] = value.split("-").map(Number);
   if (!y || !m || !d) return value;
-  return new Date(y, m - 1, d).toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+  return new Date(y, m - 1, d).toLocaleDateString("en-US", { day: "numeric", month: "short", year: "numeric" });
 }
 
-/** Short IDR for axis ticks: Rp500 rb, Rp1,2 jt, Rp3 M. */
+/** Short IDR for axis ticks: Rp500K, Rp1.2M, Rp3B. */
 export function idrCompact(n: number): string {
   const sign = n < 0 ? "-" : "";
   const a = Math.abs(n);
-  const fmt = (v: number) => v.toLocaleString("id-ID", { maximumFractionDigits: v >= 10 ? 0 : 1 });
-  if (a >= 1e9) return `${sign}Rp${fmt(a / 1e9)} M`;
-  if (a >= 1e6) return `${sign}Rp${fmt(a / 1e6)} jt`;
-  if (a >= 1e3) return `${sign}Rp${fmt(a / 1e3)} rb`;
+  const fmt = (v: number) => v.toLocaleString("en-US", { maximumFractionDigits: v >= 10 ? 0 : 1 });
+  if (a >= 1e9) return `${sign}Rp${fmt(a / 1e9)}B`;
+  if (a >= 1e6) return `${sign}Rp${fmt(a / 1e6)}M`;
+  if (a >= 1e3) return `${sign}Rp${fmt(a / 1e3)}K`;
   return `${sign}Rp${Math.round(a)}`;
 }
 
 export function pct(n: number, digits = 1): string {
-  return `${n.toLocaleString("id-ID", { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
+  return `${n.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}%`;
 }
 
 /** Number with Indonesian separators and up to `digits` decimals. */
 export function num(n: number, digits = 1): string {
-  return n.toLocaleString("id-ID", { maximumFractionDigits: digits });
+  return n.toLocaleString("en-US", { maximumFractionDigits: digits });
 }
 
 /** Seconds → "3 hari 4 jam" / "5 jam 12 menit" / "8 menit". */
@@ -109,7 +109,7 @@ export function uptimeID(seconds: number): string {
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
   const m = Math.floor((seconds % 3600) / 60);
-  if (d > 0) return h > 0 ? `${d} hari ${h} jam` : `${d} hari`;
-  if (h > 0) return m > 0 ? `${h} jam ${m} menit` : `${h} jam`;
-  return `${Math.max(1, m)} menit`;
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+  return `${Math.max(1, m)}m`;
 }

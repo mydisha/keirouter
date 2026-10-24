@@ -25,16 +25,16 @@ export function UpstreamAccounts({
   const unmapped = report?.unmapped;
 
   return (
-    <Panel icon={Server} title="Saldo provider upstream" subtitle={`Saldo dihitung dari saldo awal, topup, dan pemakaian. Terpakai: ${rangeLabel.toLowerCase()}.`}>
+    <Panel icon={Server} title="Upstream provider balances" subtitle={`Balance is the opening balance plus top-ups minus usage. Spent: ${rangeLabel.toLowerCase()}.`}>
       {loading && !report ? (
-        <LoadingRegion label="Memuat saldo provider" className="grid grid-cols-1 gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
+        <LoadingRegion label="Loading provider balances" className="grid grid-cols-1 gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-[220px] w-full rounded-xl" />
           ))}
         </LoadingRegion>
       ) : !report ? (
         <div className="p-4">
-          <ErrorBanner message={`Saldo provider gagal dimuat. ${error ?? ""}`.trim()} />
+          <ErrorBanner message={`Couldn't load provider balances. ${error ?? ""}`.trim()} />
         </div>
       ) : (
         <div className="space-y-3 p-4">
@@ -43,17 +43,17 @@ export function UpstreamAccounts({
               <div className="flex min-w-0 items-start gap-2.5">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
                 <p className="min-w-0 break-words text-[13px] leading-snug text-fg">
-                  {usd(unmapped.spent_range_usd)} dari {count(unmapped.requests)} request belum masuk ke akun mana pun
-                  {unmapped.providers.length > 0 && <> ({unmapped.providers.join(", ")})</>}. Saldo akun tidak menghitung pemakaian ini.
+                  {usd(unmapped.spent_range_usd)} from {count(unmapped.requests)} requests isn't assigned to any account
+                  {unmapped.providers.length > 0 && <> ({unmapped.providers.join(", ")})</>}. Account balances don't include this usage.
                 </p>
               </div>
               <a href={`#${SETTINGS_ANCHOR}`} className="shrink-0 text-[12.5px] font-medium text-link hover:underline">
-                Atur pemetaan provider
+                Set up provider mapping
               </a>
             </div>
           )}
           {sorted.length === 0 ? (
-            <EmptyState icon={Server} size="sm" title="Belum ada akun upstream" hint="Akun upstream muncul di sini setelah dibuat di pengaturan." />
+            <EmptyState icon={Server} size="sm" title="No upstream accounts yet" hint="Upstream accounts show up here once they are created in settings." />
           ) : (
             <ul className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
               {sorted.map((a) => (
@@ -69,10 +69,10 @@ export function UpstreamAccounts({
 }
 
 function daysLeftText(a: UpstreamAccountBalance): string {
-  if (a.days_left == null) return "Belum ada pemakaian 7 hari";
-  if (a.days_left <= 0) return "Habis";
-  if (a.days_left < 1) return "Kurang dari 1 hari";
-  return `Sekitar ${Math.floor(a.days_left).toLocaleString("id-ID")} hari`;
+  if (a.days_left == null) return "No usage in the last 7 days";
+  if (a.days_left <= 0) return "Empty";
+  if (a.days_left < 1) return "Less than 1 day";
+  return `About ${Math.floor(a.days_left).toLocaleString("en-US")} days`;
 }
 
 function AccountCard({ account: a, onTopup }: { account: UpstreamAccountBalance; onTopup: () => void }) {
@@ -96,42 +96,42 @@ function AccountCard({ account: a, onTopup }: { account: UpstreamAccountBalance;
           )}
         </div>
         <div className="flex shrink-0 flex-wrap justify-end gap-1">
-          {planned && <Badge>Direncanakan</Badge>}
-          {a.low && !planned && <Badge tone="danger">Saldo rendah</Badge>}
+          {planned && <Badge>Planned</Badge>}
+          {a.low && !planned && <Badge tone="danger">Low balance</Badge>}
         </div>
       </div>
 
       <div className={cn("mt-3", planned && "opacity-70")}>
-        <p className="text-[12px] text-fg-muted">Saldo</p>
+        <p className="text-[12px] text-fg-muted">Balance</p>
         <p className={cn("text-[22px] font-semibold leading-tight tabular-nums", a.low && !planned ? "text-bad" : "text-fg")}>{usd(a.balance_usd)}</p>
         <p className="mt-0.5 text-[12px] text-fg-muted">
-          Batas peringatan {a.low_balance_usd > 0 ? usd(a.low_balance_usd) : "belum diatur"}
-          {a.spent_estimated_usd > 0 && <> · termasuk estimasi {usd(a.spent_estimated_usd)}</>}
+          Alert threshold {a.low_balance_usd > 0 ? usd(a.low_balance_usd) : "not set"}
+          {a.spent_estimated_usd > 0 && <> · includes {usd(a.spent_estimated_usd)} estimated</>}
         </p>
       </div>
 
       <dl className={cn("mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-[12.5px]", planned && "opacity-70")}>
         <div className="min-w-0">
-          <dt className="text-fg-muted">Terpakai di rentang</dt>
+          <dt className="text-fg-muted">Spent in range</dt>
           <dd className="tabular-nums text-fg">{usd(a.spent_range_usd)}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-fg-muted">Perkiraan habis</dt>
+          <dt className="text-fg-muted">Runs out in</dt>
           <dd className="text-fg">{daysLeftText(a)}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-fg-muted">Request aktif</dt>
+          <dt className="text-fg-muted">Active requests</dt>
           <dd className="tabular-nums text-fg">{count(a.in_flight)}</dd>
         </div>
         <div className="min-w-0">
-          <dt className="text-fg-muted">Rata-rata harian</dt>
+          <dt className="text-fg-muted">Daily average</dt>
           <dd className="tabular-nums text-fg">{usd(a.avg_daily_usd)}</dd>
         </div>
       </dl>
 
       <div className={cn("mt-3 flex min-w-0 flex-wrap gap-1", planned && "opacity-70")}>
         {a.providers.length === 0 ? (
-          <span className="text-[12px] text-fg-faint">Belum ada provider dipetakan</span>
+          <span className="text-[12px] text-fg-faint">No providers mapped yet</span>
         ) : (
           a.providers.map((p) => (
             <Badge key={p} className="max-w-full truncate">
@@ -143,7 +143,7 @@ function AccountCard({ account: a, onTopup }: { account: UpstreamAccountBalance;
 
       <div className="mt-4 flex flex-1 items-end">
         <Button variant="ghost" onClick={onTopup} className="w-full sm:w-auto">
-          <Plus aria-hidden="true" /> Catat topup
+          <Plus aria-hidden="true" /> Record top-up
         </Button>
       </div>
     </li>
@@ -161,24 +161,24 @@ function TopupModal({ account, onClose }: { account: UpstreamAccountBalance; onC
   const amountNum = Number(amount);
   const amountError =
     amount.trim() === "" || !Number.isFinite(amountNum) || amountNum <= 0
-      ? "Isi jumlah lebih dari 0."
+      ? "Enter an amount above 0."
       : amountNum > 1_000_000
-        ? "Jumlah maksimal $1,000,000."
+        ? "Maximum amount is $1,000,000."
         : null;
   const openingDate = toDateInput(account.opening_at);
   const dateError =
     date && date > todayISO()
-      ? "Tanggal tidak boleh di masa depan."
+      ? "Date can't be in the future."
       : date && openingDate && date < openingDate
-        ? `Tanggal tidak boleh sebelum tanggal saldo awal (${dateID(account.opening_at)}).`
+        ? `Date can't be before the opening balance date (${dateID(account.opening_at)}).`
         : null;
-  const noteError = note.length > 500 ? "Catatan maksimal 500 karakter." : null;
+  const noteError = note.length > 500 ? "Note can be at most 500 characters." : null;
   const valid = !amountError && !dateError && !noteError;
 
   const create = useMutation({
     mutationFn: () => api.createUpstreamTopup(account.id, { amount_usd: amountNum, topup_at: dateInputToRFC3339(date, account.opening_at) || undefined, note: note.trim() || undefined }),
     onSuccess: () => {
-      toast.success("Topup dicatat", `${usd(amountNum)} ditambahkan ke saldo ${account.name}.`);
+      toast.success("Top-up recorded", `${usd(amountNum)} added to the ${account.name} balance.`);
       qc.invalidateQueries({ queryKey: QK.finance });
       qc.invalidateQueries({ queryKey: QK.accounts });
       qc.invalidateQueries({ queryKey: QK.topups });
@@ -194,10 +194,10 @@ function TopupModal({ account, onClose }: { account: UpstreamAccountBalance; onC
   };
 
   return (
-    <Modal open onClose={onClose} title="Catat topup" subtitle={account.name}>
+    <Modal open onClose={onClose} title="Record top-up" subtitle={account.name}>
       <form onSubmit={onSubmit} noValidate>
         <div className="space-y-4 px-5 py-4">
-          <Field label="Jumlah (USD)" required error={submitted ? amountError : undefined}>
+          <Field label="Amount (USD)" required error={submitted ? amountError : undefined}>
             <Input
               type="number"
               inputMode="decimal"
@@ -209,21 +209,21 @@ function TopupModal({ account, onClose }: { account: UpstreamAccountBalance; onC
               placeholder="50.00"
             />
           </Field>
-          <Field label="Tanggal" hint="Tanggal saldo masuk di provider." error={dateError ?? undefined}>
+          <Field label="Date" hint="When the balance arrived at the provider." error={dateError ?? undefined}>
             <Input type="date" min={openingDate || undefined} max={todayISO()} value={date} onChange={(e) => setDate(e.target.value)} />
           </Field>
-          <Field label="Catatan" optional error={noteError ?? undefined}>
-            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Misal: transfer via kartu kredit" maxLength={500} />
+          <Field label="Note" optional error={noteError ?? undefined}>
+            <Input value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: paid by credit card" maxLength={500} />
           </Field>
-          {create.isError && <ErrorBanner message={`Topup gagal dicatat. ${errorText(create.error)}`} />}
+          {create.isError && <ErrorBanner message={`Couldn't record the top-up. ${errorText(create.error)}`} />}
         </div>
         <ModalFooter>
           <Button type="button" variant="ghost" onClick={onClose}>
-            Batal
+            Cancel
           </Button>
           <Button type="submit" disabled={create.isPending}>
             {create.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Plus aria-hidden="true" />}
-            Simpan topup
+            Save top-up
           </Button>
         </ModalFooter>
       </form>

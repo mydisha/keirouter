@@ -27,15 +27,15 @@ export function idr(n: number): string {
 }
 
 export function count(n: number): string {
-  return n.toLocaleString("id-ID");
+  return n.toLocaleString("en-US");
 }
 
-/** "15 Okt 2026", or "-" when the value is empty or invalid. */
+/** "Oct 15, 2026", or "-" when the value is empty or invalid. */
 export function dateID(value: string, withTime = false): string {
   if (!value) return "-";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "-";
-  return d.toLocaleString("id-ID", {
+  return d.toLocaleString("en-US", {
     day: "numeric",
     month: "short",
     year: "numeric",

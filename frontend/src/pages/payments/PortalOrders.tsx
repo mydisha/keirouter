@@ -16,11 +16,11 @@ const STATUS_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> 
 };
 
 const STATUS_LABEL: Record<string, string> = {
-  completed: "Lunas",
-  manual: "Disetujui manual",
-  pending: "Menunggu",
-  failed: "Gagal",
-  expired: "Kedaluwarsa",
+  completed: "Paid",
+  manual: "Approved manually",
+  pending: "Pending",
+  failed: "Failed",
+  expired: "Expired",
 };
 
 export function PortalOrders() {
@@ -36,7 +36,7 @@ export function PortalOrders() {
     mutationFn: ({ id, reason }: { id: string; reason: string }) => api.approvePaymentOrder(id, reason),
     onSuccess: (order) => {
       const hosting = (order?.product ?? approving?.product) === "hosting";
-      toast.success("Pembayaran disetujui", hosting ? "Instance siap dibuat di halaman Hosting." : "Credit sudah ditambahkan ke key user.");
+      toast.success("Payment approved", hosting ? "The instance can now be created on the Hosting page." : "Credit added to the user's key.");
       if (hosting) qc.invalidateQueries({ queryKey: ["hosting-instances"] });
       qc.invalidateQueries({ queryKey: ["payment-orders"] });
       qc.invalidateQueries({ queryKey: ["payment-summary"] });
@@ -58,37 +58,37 @@ export function PortalOrders() {
   return (
     <Panel
       icon={ShoppingCart}
-      title="Order portal"
-      subtitle="Topup credit user lewat payment gateway, dengan persetujuan manual."
-      action={pending > 0 ? <Badge tone="warning">{pending} menunggu</Badge> : undefined}
+      title="Portal orders"
+      subtitle="User credit top-ups through the payment gateway, with manual approval."
+      action={pending > 0 ? <Badge tone="warning">{pending} pending</Badge> : undefined}
     >
       {ordersQuery.isLoading ? (
-        <LoadingRegion label="Memuat order portal" className="space-y-2 p-4">
+        <LoadingRegion label="Loading portal orders" className="space-y-2 p-4">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-10 w-full" />
           ))}
         </LoadingRegion>
       ) : ordersQuery.isError && !ordersQuery.data ? (
         <div className="p-4">
-          <ErrorBanner message={`Order portal gagal dimuat. ${errorText(ordersQuery.error)}`} />
+          <ErrorBanner message={`Couldn't load portal orders. ${errorText(ordersQuery.error)}`} />
         </div>
       ) : orders.length === 0 ? (
-        <EmptyState icon={ShoppingCart} size="sm" title="Belum ada pembayaran" hint="Topup dari portal muncul di sini begitu user memulai pembayaran." />
+        <EmptyState icon={ShoppingCart} size="sm" title="No payments yet" hint="Portal top-ups show up here as soon as a user starts a payment." />
       ) : (
         <>
-          <div className="overflow-x-auto" role="region" aria-label="Tabel order portal" tabIndex={0}>
+          <div className="overflow-x-auto" role="region" aria-label="Portal orders table" tabIndex={0}>
             <table className="w-full min-w-[960px] text-[13px]">
               <thead>
                 <tr className={THEAD}>
                   <th scope="col" className={TH}>User</th>
                   <th scope="col" className={TH}>Key</th>
-                  <th scope="col" className={cn(TH, "text-right")}>Jumlah</th>
+                  <th scope="col" className={cn(TH, "text-right")}>Amount</th>
                   <th scope="col" className={cn(TH, "text-right")}>Credit</th>
                   <th scope="col" className={TH}>Status</th>
-                  <th scope="col" className={TH}>Invoice dibuat</th>
-                  <th scope="col" className={TH}>Dibayar</th>
+                  <th scope="col" className={TH}>Invoice created</th>
+                  <th scope="col" className={TH}>Paid</th>
                   <th scope="col" className={cn(TH, "text-right")}>
-                    <span className="sr-only">Aksi</span>
+                    <span className="sr-only">Actions</span>
                   </th>
                 </tr>
               </thead>
@@ -105,7 +105,7 @@ export function PortalOrders() {
                     <td className="px-4 py-2.5 font-mono text-[12px] text-fg-muted">{o.key_display || o.key_id}</td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums">{idr(o.amount_idr)}</td>
                     <td className="whitespace-nowrap px-4 py-2.5 text-right font-semibold tabular-nums">
-                      {o.product === "hosting" ? <span className="font-normal text-fg-muted">—</span> : usd(o.credit_usd)}
+                      {o.product === "hosting" ? <span className="font-normal text-fg-muted">-</span> : usd(o.credit_usd)}
                     </td>
                     <td className="px-4 py-2.5">
                       <Badge tone={STATUS_TONE[o.status] ?? "neutral"}>{STATUS_LABEL[o.status] ?? o.status}</Badge>
@@ -114,8 +114,8 @@ export function PortalOrders() {
                     <td className="whitespace-nowrap px-4 py-2.5 tabular-nums">{o.paid_at ? dateID(o.paid_at, true) : "-"}</td>
                     <td className="px-4 py-2.5 text-right">
                       {o.status === "pending" && (
-                        <Button variant="ghost" onClick={() => setApproving(o)} title="Setujui manual">
-                          <Check aria-hidden="true" /> Setujui
+                        <Button variant="ghost" onClick={() => setApproving(o)} title="Approve manually">
+                          <Check aria-hidden="true" /> Approve
                         </Button>
                       )}
                     </td>
@@ -124,35 +124,35 @@ export function PortalOrders() {
               </tbody>
             </table>
           </div>
-          <TablePagination page={page} pages={pages} total={total} onPage={setPage} label="Halaman order portal" />
+          <TablePagination page={page} pages={pages} total={total} onPage={setPage} label="Portal order pages" />
         </>
       )}
 
       {approving && (
-        <Modal open onClose={close} title="Setujui pembayaran">
+        <Modal open onClose={close} title="Approve payment">
           <div className="space-y-3 px-5 py-4">
             <p className="text-[13px] text-fg-muted">
               {approving.product === "hosting"
-                ? `Tandai order hosting ${idr(approving.amount_idr)} dari ${approving.user_email || approving.key_id} sebagai lunas. Instance lalu bisa dibuat di halaman Hosting.`
-                : `Tambah credit ${usd(approving.credit_usd)} ke ${approving.user_email || approving.key_id}.`}{" "}
-              Tindakan ini tidak bisa dibatalkan otomatis.
+                ? `Mark the ${idr(approving.amount_idr)} hosting order from ${approving.user_email || approving.key_id} as paid. The instance can then be created on the Hosting page.`
+                : `Add ${usd(approving.credit_usd)} credit to ${approving.user_email || approving.key_id}.`}{" "}
+              This can't be reversed automatically.
             </p>
             <Textarea
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="Alasan, misal: transfer bank sudah dicek"
-              aria-label="Alasan persetujuan"
+              placeholder="Reason, for example: bank transfer checked"
+              aria-label="Approval reason"
               rows={3}
             />
-            {approve.isError && <ErrorBanner message={`Persetujuan gagal. ${errorText(approve.error)}`} />}
+            {approve.isError && <ErrorBanner message={`Approval failed. ${errorText(approve.error)}`} />}
           </div>
           <ModalFooter>
             <Button variant="ghost" onClick={close}>
-              Batal
+              Cancel
             </Button>
             <Button onClick={() => approve.mutate({ id: approving.order_id, reason })} disabled={approve.isPending}>
               {approve.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <CreditCard aria-hidden="true" />}
-              {approving.product === "hosting" ? "Setujui pembayaran" : "Setujui dan tambah credit"}
+              {approving.product === "hosting" ? "Approve payment" : "Approve and add credit"}
             </Button>
           </ModalFooter>
         </Modal>

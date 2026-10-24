@@ -4,10 +4,10 @@ import { ErrorBanner, Kpi, KpiGrid, LoadingRegion, Skeleton } from "../../compon
 import { count, idr, usd } from "./shared";
 
 export const RANGE_LABEL: Record<FinanceRange, string> = {
-  today: "Hari ini",
-  "7d": "7 hari",
-  "30d": "30 hari",
-  all: "Semua",
+  today: "Today",
+  "7d": "7 days",
+  "30d": "30 days",
+  all: "All time",
 };
 
 export function FinanceOverview({
@@ -23,13 +23,13 @@ export function FinanceOverview({
 }) {
   if (loading && !overview) {
     return (
-      <LoadingRegion label="Memuat ringkasan keuangan">
+      <LoadingRegion label="Loading finance summary">
         <Skeleton className="h-[188px] w-full rounded-2xl" />
       </LoadingRegion>
     );
   }
   if (!overview) {
-    return <ErrorBanner message={`Ringkasan keuangan gagal dimuat. ${error ?? ""}`.trim()} />;
+    return <ErrorBanner message={`Couldn't load the finance summary. ${error ?? ""}`.trim()} />;
   }
 
   const o = overview;
@@ -38,49 +38,49 @@ export function FinanceOverview({
 
   return (
     <div className="space-y-2">
-      {error && <ErrorBanner message={`Data terakhir gagal diperbarui, angka di bawah mungkin sudah lama. ${error}`} />}
-      <KpiGrid cols={4} label={`Credit dan modal, ${rangeText}`}>
+      {error && <ErrorBanner message={`The last refresh failed, so the numbers below may be out of date. ${error}`} />}
+      <KpiGrid cols={4} label={`Credit and cost basis, ${rangeText}`}>
         <Kpi
           icon={Wallet}
-          label="Credit masuk"
+          label="Credit received"
           value={idr(o.credit_in_idr)}
-          hint={`${usd(o.credit_in_usd)} dari ${count(o.paid_orders)} order`}
+          hint={`${usd(o.credit_in_usd)} from ${count(o.paid_orders)} orders`}
         />
-        <Kpi icon={Coins} label="Credit user tersisa" value={usd(o.outstanding_credit_usd)} hint="Saldo semua user saat ini" />
+        <Kpi icon={Coins} label="Unused user credit" value={usd(o.outstanding_credit_usd)} hint="Current balance across all users" />
         <Kpi
           icon={Receipt}
-          label="Pendapatan"
+          label="Revenue"
           value={usd(o.revenue_usd)}
-          hint={`Markup dari tagihan ${usd(o.billed_usd)} · ${count(o.requests)} request`}
+          hint={`Markup on ${usd(o.billed_usd)} billed · ${count(o.requests)} requests`}
         />
         <Kpi
           icon={Wrench}
-          label="Modal"
+          label="Cost basis"
           value={usd(cost)}
-          hint={o.cost_estimated_usd > 0 ? `Harga upstream, termasuk estimasi ${usd(o.cost_estimated_usd)}` : "Harga upstream sebelum markup"}
+          hint={o.cost_estimated_usd > 0 ? `Upstream price, including ${usd(o.cost_estimated_usd)} estimated` : "Upstream price before markup"}
         />
       </KpiGrid>
-      <KpiGrid cols={3} label={`Keuntungan dan request, ${rangeText}`}>
+      <KpiGrid cols={3} label={`Profit and requests, ${rangeText}`}>
         <Kpi
           icon={PiggyBank}
-          label="Keuntungan"
+          label="Profit"
           value={usd(o.profit_usd)}
           tone={o.profit_usd < 0 ? "bad" : "section"}
           valueClassName={o.profit_usd < 0 ? "text-bad" : ""}
-          hint="Tagihan user dikurangi modal"
+          hint="User billing minus cost basis"
         />
         <Kpi
           icon={Percent}
           label="Margin"
-          value={`${o.margin_pct.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`}
-          hint="Keuntungan dibagi modal"
+          value={`${o.margin_pct.toLocaleString("en-US", { maximumFractionDigits: 1 })}%`}
+          hint="Profit divided by cost basis"
         />
-        <Kpi icon={Activity} label="Request aktif" value={count(o.in_flight)} hint="Sedang berjalan saat ini" />
+        <Kpi icon={Activity} label="Active requests" value={count(o.in_flight)} hint="Running right now" />
       </KpiGrid>
       {o.cost_estimated_usd > 0 && (
         <p className="text-[12px] text-fg-muted">
-          Sebagian modal ({usd(o.cost_estimated_usd)}) dihitung dari tarif jual dikurangi markup karena harga upstream tidak tercatat. Pendapatan, keuntungan,
-          dan margin memakai angka ini.
+          Part of the cost basis ({usd(o.cost_estimated_usd)}) is the sell price minus markup, because the upstream price wasn't recorded. Revenue, profit
+          and margin use this figure.
         </p>
       )}
     </div>

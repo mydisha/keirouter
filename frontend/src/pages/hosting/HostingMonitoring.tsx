@@ -85,16 +85,16 @@ export function MonitoringTab() {
         <p className="text-[12.5px] text-fg-muted" aria-live="polite">
           {updatedAt > 0 ? (
             <>
-              Terakhir diperbarui <span className="tabular-nums text-fg">{new Date(updatedAt).toLocaleTimeString("id-ID", { hour12: false })}</span> · otomatis
-              tiap 30 detik
+              Last updated <span className="tabular-nums text-fg">{new Date(updatedAt).toLocaleTimeString("en-GB", { hour12: false })}</span> · refreshes
+              every 30 seconds
             </>
           ) : (
-            "Data diambil dari monitoring Dokploy tiap 30 detik."
+            "Data comes from Dokploy monitoring every 30 seconds."
           )}
         </p>
         <Button variant="secondary" onClick={refresh} disabled={fetching}>
           <RefreshCw className={cn(fetching && "animate-spin")} aria-hidden="true" />
-          Muat ulang
+          Refresh
         </Button>
       </div>
 
@@ -118,27 +118,27 @@ function ServersSection({
 }) {
   if (query.isLoading) {
     return (
-      <LoadingRegion label="Memuat metrik server" className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+      <LoadingRegion label="Loading server metrics" className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Skeleton className="h-[360px] w-full rounded-2xl" />
         <Skeleton className="hidden h-[360px] w-full rounded-2xl lg:block" />
       </LoadingRegion>
     );
   }
   const list = query.data?.servers ?? [];
-  if (!query.data) return <ErrorBanner message={`Metrik server gagal dimuat. ${errorText(query.error)}`} />;
+  if (!query.data) return <ErrorBanner message={`Couldn't load server metrics. ${errorText(query.error)}`} />;
   if (list.length === 0) {
     return (
       <EmptyState
         variant="card"
         icon={Server}
-        title={hasTargets || settingsLoading ? "Belum ada data server" : "Belum ada server yang dipantau"}
-        hint="Tambahkan URL dan token monitoring Dokploy di bagian Pengaturan monitoring di bawah."
+        title={hasTargets || settingsLoading ? "No server data yet" : "No monitored servers yet"}
+        hint="Add a Dokploy monitoring URL and token in Monitoring settings below."
       />
     );
   }
   return (
     <div className="space-y-2">
-      {query.isError && <ErrorBanner message={`Data terakhir gagal diperbarui, angka di bawah mungkin sudah lama. ${errorText(query.error)}`} />}
+      {query.isError && <ErrorBanner message={`Couldn't refresh the data. The numbers below may be out of date. ${errorText(query.error)}`} />}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {list.map((s) => (
           <ServerCard key={s.id} s={s} />
@@ -156,7 +156,7 @@ function sampleTime(ts: string, i: number): number {
 function ServerCard({ s }: { s: HostingServerMetrics }) {
   const last: HostingServerMetric | undefined = s.samples[s.samples.length - 1];
   const points = useMemo(() => s.samples.map((m, i) => ({ t: sampleTime(m.timestamp, i), cpu: m.cpu, mem: m.memUsed })), [s.samples]);
-  const platform = last ? [last.distro || last.os, last.cpuModel, last.cpuCores ? `${last.cpuCores} core` : ""].filter(Boolean).join(" · ") : "";
+  const platform = last ? [last.distro || last.os, last.cpuModel, last.cpuCores ? `${last.cpuCores} cores` : ""].filter(Boolean).join(" · ") : "";
   const diskUsedGB = last ? (last.totalDisk * last.diskUsed) / 100 : 0;
 
   return (
@@ -167,30 +167,30 @@ function ServerCard({ s }: { s: HostingServerMetrics }) {
         last ? (
           <span className="tabular-nums [overflow-wrap:anywhere]">
             {platform}
-            {last.uptime > 0 && ` · menyala ${uptimeID(last.uptime)}`}
+            {last.uptime > 0 && ` · up ${uptimeID(last.uptime)}`}
           </span>
         ) : undefined
       }
-      action={s.instances ? <Badge tone="accent">Server pelanggan</Badge> : undefined}
+      action={s.instances ? <Badge tone="accent">Customer server</Badge> : undefined}
     >
       {s.error && (
         <div className="px-4 pt-3">
-          <ErrorBanner message={`Gagal membaca metrik: ${s.error}`} />
+          <ErrorBanner message={`Couldn't read metrics: ${s.error}`} />
         </div>
       )}
       {!last ? (
-        !s.error && <EmptyState icon={Activity} size="sm" title="Belum ada sampel" hint="Dokploy belum mengirim data monitoring untuk server ini." />
+        !s.error && <EmptyState icon={Activity} size="sm" title="No samples yet" hint="Dokploy hasn't sent monitoring data for this server yet." />
       ) : (
         <>
           <div className="grid grid-cols-1 divide-y divide-line sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-            <Meter icon={Cpu} label="CPU" value={last.cpu} detail={last.cpuCores ? `${last.cpuCores} core` : ""} />
+            <Meter icon={Cpu} label="CPU" value={last.cpu} detail={last.cpuCores ? `${last.cpuCores} cores` : ""} />
             <Meter icon={MemoryStick} label="RAM" value={last.memUsed} detail={`${num(last.memUsedGB)} / ${num(last.memTotal)} GB`} />
             <Meter icon={HardDrive} label="Disk" value={last.diskUsed} detail={`${num(diskUsedGB)} / ${num(last.totalDisk)} GB`} />
           </div>
           <div className="border-t border-line px-4 pb-3 pt-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <p className="text-[12px] font-medium text-fg-muted">CPU dan RAM, {points.length} sampel terakhir</p>
-              <ul className="flex gap-3 text-[12px] text-fg-muted" aria-label="Keterangan grafik">
+              <p className="text-[12px] font-medium text-fg-muted">CPU and RAM, last {points.length} samples</p>
+              <ul className="flex gap-3 text-[12px] text-fg-muted" aria-label="Chart legend">
                 <li className="inline-flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-[2px]" style={{ background: C_CPU }} aria-hidden="true" />
                   CPU
@@ -202,7 +202,7 @@ function ServerCard({ s }: { s: HostingServerMetrics }) {
               </ul>
             </div>
             {points.length < 2 ? (
-              <p className="py-6 text-center text-[12.5px] text-fg-muted">Grafik muncul setelah ada minimal dua sampel.</p>
+              <p className="py-6 text-center text-[12.5px] text-fg-muted">The chart appears once there are at least two samples.</p>
             ) : (
               <TimeLines
                 data={points}
@@ -210,9 +210,9 @@ function ServerCard({ s }: { s: HostingServerMetrics }) {
                 max={100}
                 height={120}
                 format={(v) => pct(v, 0)}
-                tooltipTime={(ms) => new Date(ms).toLocaleTimeString("id-ID", { hour12: false })}
+                tooltipTime={(ms) => new Date(ms).toLocaleTimeString("en-GB", { hour12: false })}
                 xFormat={clockLabel}
-                label={`Pemakaian CPU dan RAM server ${s.name}`}
+                label={`CPU and RAM usage on ${s.name}`}
                 series={[
                   // TimeLines breaks the line at 0; keep idle samples on the baseline.
                   { key: "cpu", label: "CPU", color: C_CPU, value: (p) => Math.max(p.cpu, 0.01) },
@@ -222,7 +222,7 @@ function ServerCard({ s }: { s: HostingServerMetrics }) {
             )}
             {(last.networkIn > 0 || last.networkOut > 0) && (
               <p className="mt-2 text-[12px] tabular-nums text-fg-faint">
-                Jaringan sejak menyala: masuk {formatMB(last.networkIn)} · keluar {formatMB(last.networkOut)}
+                Network since boot: in {formatMB(last.networkIn)} · out {formatMB(last.networkOut)}
               </p>
             )}
           </div>
@@ -255,13 +255,13 @@ function Meter({ icon: Icon, label, value, detail }: { icon: typeof Cpu; label: 
         <span className={cn("inline-flex items-center gap-1 text-[18px] font-semibold leading-none tabular-nums", lvl === "bad" ? "text-bad" : lvl === "warn" ? "text-warn" : "text-fg")}>
           {lvl !== "ok" && <AlertTriangle className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />}
           {pct(value)}
-          {lvl !== "ok" && <span className="sr-only">({lvl === "bad" ? "hampir penuh" : "tinggi"})</span>}
+          {lvl !== "ok" && <span className="sr-only">({lvl === "bad" ? "nearly full" : "high"})</span>}
         </span>
       </div>
       <div
         className="mt-2.5 h-2 overflow-hidden rounded-full bg-track"
         role="meter"
-        aria-label={`${label} terpakai`}
+        aria-label={`${label} used`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(clamped)}
@@ -297,51 +297,51 @@ function ContainersSection({
   return (
     <Panel
       icon={Boxes}
-      title="Container pelanggan"
-      subtitle="Pemakaian resource tiap instance hosting, diurutkan dari pemakaian tertinggi."
+      title="Customer containers"
+      subtitle="Resource usage per hosting instance, highest first."
       action={
         <SegmentedControl<SortKey>
-          label="Urutkan berdasarkan"
+          label="Sort by"
           value={sort}
           onChange={setSort}
           options={[
             { value: "cpu", label: "CPU" },
-            { value: "mem", label: "Memori" },
+            { value: "mem", label: "Memory" },
           ]}
         />
       }
     >
       {query.isLoading ? (
-        <LoadingRegion label="Memuat metrik container" className="space-y-2 p-4">
+        <LoadingRegion label="Loading container metrics" className="space-y-2 p-4">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-10 w-full" />
           ))}
         </LoadingRegion>
       ) : !data ? (
         <div className="p-4">
-          <ErrorBanner message={`Metrik container gagal dimuat. ${errorText(query.error)}`} />
+          <ErrorBanner message={`Couldn't load container metrics. ${errorText(query.error)}`} />
         </div>
       ) : (
         <>
           {(data.error || query.isError) && (
             <div className="px-4 pt-3">
-              <ErrorBanner message={data.error ? containersError(data.error) : `Data terakhir gagal diperbarui. ${errorText(query.error)}`} />
+              <ErrorBanner message={data.error ? containersError(data.error) : `Couldn't refresh the data. ${errorText(query.error)}`} />
             </div>
           )}
           {rows.length === 0 ? (
             <EmptyState
               icon={Boxes}
               size="sm"
-              title="Belum ada data container"
+              title="No container data yet"
               hint={
                 <>
-                  Container hanya muncul jika ikut dipantau Dokploy. Tambahkan <code className="font-mono text-fg">nr-</code> di Services to include pada
-                  pengaturan Monitoring Dokploy, dan tandai server yang menjalankan container pelanggan.
+                  Containers show up only if Dokploy monitors them. Add <code className="font-mono text-fg">nr-</code> to Services to include in
+                  Dokploy's Monitoring settings, and mark the server that runs customer containers.
                 </>
               }
             />
           ) : (
-            <div className="overflow-x-auto" role="region" aria-label="Tabel pemakaian container" tabIndex={0}>
+            <div className="overflow-x-auto" role="region" aria-label="Container usage table" tabIndex={0}>
               <table className="w-full min-w-[1000px] text-[13px]">
                 <thead>
                   <tr className={THEAD}>
@@ -349,11 +349,11 @@ function ContainersSection({
                     <th scope="col" className={TH}>Node</th>
                     <th scope="col" className={cn(TH, "text-right")} aria-sort={sort === "cpu" ? "descending" : undefined}>CPU</th>
                     <th scope="col" className={TH}>
-                      <span className="sr-only">Tren CPU</span>
+                      <span className="sr-only">CPU trend</span>
                     </th>
-                    <th scope="col" className={cn(TH, "text-right")} aria-sort={sort === "mem" ? "descending" : undefined}>Memori</th>
-                    <th scope="col" className={cn(TH, "text-right")}>Jaringan masuk / keluar</th>
-                    <th scope="col" className={cn(TH, "text-right")}>Block IO baca / tulis</th>
+                    <th scope="col" className={cn(TH, "text-right")} aria-sort={sort === "mem" ? "descending" : undefined}>Memory</th>
+                    <th scope="col" className={cn(TH, "text-right")}>Network in / out</th>
+                    <th scope="col" className={cn(TH, "text-right")}>Block IO read / write</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
@@ -392,7 +392,7 @@ function ContainersSection({
                         </>
                       ) : (
                         <td colSpan={5} className="px-4 py-2.5 text-[12.5px] text-fg-muted">
-                          {c.error ? "-" : "Belum ada sampel. Pastikan container ini termasuk di Services to include."}
+                          {c.error ? "-" : "No samples yet. Check that this container is in Services to include."}
                         </td>
                       )}
                     </tr>
@@ -409,16 +409,16 @@ function ContainersSection({
 
 function containerRowError(msg: string): string {
   if (msg.includes("no monitoring server is set for this node")) {
-    return "Node ini belum punya server monitoring. Pilih server monitoring node di Pengaturan hosting, atau tandai server pelanggan di Pengaturan monitoring.";
+    return "This node has no monitoring server. Pick one for the node in Hosting settings, or mark a customer server in Monitoring settings.";
   }
   return msg;
 }
 
 function containersError(msg: string): string {
   if (msg.includes("no monitoring server is marked")) {
-    return "Belum ada server yang ditandai sebagai server pelanggan. Tandai salah satu di Pengaturan monitoring.";
+    return "No server is marked as the customer server. Mark one in Monitoring settings.";
   }
-  return `Metrik container gagal dibaca: ${msg}`;
+  return `Couldn't read container metrics: ${msg}`;
 }
 
 // ─── Monitoring settings ────────────────────────────────────────────────────
@@ -461,23 +461,23 @@ function MonitorSettingsPanel({
   return (
     <Panel
       icon={Settings2}
-      title="Pengaturan monitoring"
-      subtitle="Server Dokploy yang dipantau dan token metrics-nya."
+      title="Monitoring settings"
+      subtitle="Monitored Dokploy servers and their metrics tokens."
       action={
         <Button variant="ghost" onClick={() => setOpen(!expanded)} aria-expanded={expanded} aria-controls={bodyId}>
-          {expanded ? "Tutup" : "Buka"}
+          {expanded ? "Close" : "Open"}
           <ChevronDown className={cn("transition-transform", expanded && "rotate-180")} aria-hidden="true" />
         </Button>
       }
     >
       <div id={bodyId} hidden={!expanded}>
         {query.isLoading ? (
-          <LoadingRegion label="Memuat pengaturan monitoring" className="p-4">
+          <LoadingRegion label="Loading monitoring settings" className="p-4">
             <Skeleton className="h-[160px] w-full rounded-xl" />
           </LoadingRegion>
         ) : !query.data ? (
           <div className="p-4">
-            <ErrorBanner message={`Pengaturan monitoring gagal dimuat. ${errorText(query.error)}`} />
+            <ErrorBanner message={`Couldn't load monitoring settings. ${errorText(query.error)}`} />
           </div>
         ) : (
           <TargetsForm key={JSON.stringify(query.data.targets)} targets={query.data.targets} />
@@ -514,13 +514,13 @@ function TargetsForm({ targets }: { targets: HostingMonitorTarget[] }) {
     const url = r.url.trim();
     const urlChanged = !!r.id && url.replace(/\/+$/, "") !== r.origUrl.replace(/\/+$/, "");
     return {
-      name: !r.name.trim() ? "Isi nama server." : null,
-      url: !url ? "Isi URL monitoring." : !/^https?:\/\/\S+$/i.test(url) ? "URL harus diawali http:// atau https://." : null,
+      name: !r.name.trim() ? "Enter a server name." : null,
+      url: !url ? "Enter the monitoring URL." : !/^https?:\/\/\S+$/i.test(url) ? "URL must start with http:// or https://." : null,
       token:
         r.token.trim() === "" && (!r.hasToken || urlChanged)
           ? urlChanged && r.hasToken
-            ? "URL berubah. Masukkan ulang token untuk URL baru."
-            : "Isi token metrics."
+            ? "The URL changed. Enter the token again for the new URL."
+            : "Enter the metrics token."
           : null,
     };
   };
@@ -543,7 +543,7 @@ function TargetsForm({ targets }: { targets: HostingMonitorTarget[] }) {
       qc.setQueryData(QK_HOSTING.monitorSettings, data);
       qc.invalidateQueries({ queryKey: QK_HOSTING.monitorServers });
       qc.invalidateQueries({ queryKey: QK_HOSTING.monitorContainers });
-      toast.success("Pengaturan monitoring disimpan");
+      toast.success("Monitoring settings saved");
     },
   });
 
@@ -559,7 +559,7 @@ function TargetsForm({ targets }: { targets: HostingMonitorTarget[] }) {
       <div className="space-y-3 px-4 py-4">
         {rows.length === 0 && (
           <p className="rounded-xl border border-dashed border-line-strong px-4 py-6 text-center text-[13px] text-fg-muted">
-            Belum ada server. Tambahkan server Dokploy yang monitoring-nya sudah aktif.
+            No servers yet. Add a Dokploy server that has monitoring turned on.
           </p>
         )}
         {rows.map((r, i) => {
@@ -572,19 +572,19 @@ function TargetsForm({ targets }: { targets: HostingMonitorTarget[] }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[12.5px] font-medium text-fg">{r.name.trim() || `Server ${i + 1}`}</span>
                   {insecure && (
-                    <Badge tone="warning" title="Gunakan HTTPS atau batasi port monitoring dengan firewall">
+                    <Badge tone="warning" title="Use HTTPS or restrict the monitoring port with a firewall">
                       <ShieldAlert className="h-3 w-3" aria-hidden="true" />
-                      Token dikirim tanpa enkripsi
+                      Token sent unencrypted
                     </Badge>
                   )}
                 </div>
-                <Button type="button" variant="ghost" onClick={() => remove(r.key)} aria-label={`Hapus ${r.name.trim() || `server ${i + 1}`}`} title="Hapus server">
+                <Button type="button" variant="ghost" onClick={() => remove(r.key)} aria-label={`Delete ${r.name.trim() || `server ${i + 1}`}`} title="Delete server">
                   <Trash2 aria-hidden="true" />
                 </Button>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <Field label="Nama" error={err.name}>
-                  <Input value={r.name} onChange={(e) => update(r.key, { name: e.target.value })} placeholder="VPS pelanggan 1" autoComplete="off" />
+                <Field label="Name" error={err.name}>
+                  <Input value={r.name} onChange={(e) => update(r.key, { name: e.target.value })} placeholder="Customer VPS 1" autoComplete="off" />
                 </Field>
                 <Field label="URL monitoring" error={err.url}>
                   <Input
@@ -597,12 +597,12 @@ function TargetsForm({ targets }: { targets: HostingMonitorTarget[] }) {
                     className="font-mono"
                   />
                 </Field>
-                <Field label="Token metrics" error={err.token} hint={!err.token && r.hasToken ? "Kosongkan untuk tetap memakai token yang tersimpan." : undefined}>
+                <Field label="Token metrics" error={err.token} hint={!err.token && r.hasToken ? "Leave empty to keep the saved token." : undefined}>
                   <Input
                     type="password"
                     value={r.token}
                     onChange={(e) => update(r.key, { token: e.target.value })}
-                    placeholder={r.hasToken ? r.tokenMasked : "Tempel token"}
+                    placeholder={r.hasToken ? r.tokenMasked : "Paste token"}
                     autoComplete="new-password"
                     spellCheck={false}
                     className="font-mono"
@@ -617,26 +617,26 @@ function TargetsForm({ targets }: { targets: HostingMonitorTarget[] }) {
                   onChange={() => update(r.key, { instances: true })}
                   className="h-4 w-4 accent-[var(--color-accent-500)]"
                 />
-                Server pelanggan
-                <span className="text-fg-muted">(menjalankan container hosting)</span>
+                Customer server
+                <span className="text-fg-muted">(runs hosting containers)</span>
               </label>
             </fieldset>
           );
         })}
-        {save.isError && <ErrorBanner message={`Pengaturan monitoring gagal disimpan. ${errorText(save.error)}`} />}
+        {save.isError && <ErrorBanner message={`Couldn't save monitoring settings. ${errorText(save.error)}`} />}
       </div>
       <div className="flex flex-col gap-2 border-t border-line bg-subtle px-4 py-2.5 sm:flex-row sm:items-center sm:justify-end">
         <Button type="button" variant="ghost" className="sm:mr-auto" onClick={add} disabled={rows.length >= MAX_TARGETS}>
           <Plus aria-hidden="true" />
-          Tambah server
-          {rows.length >= MAX_TARGETS && <span className="text-fg-faint">(maks. {MAX_TARGETS})</span>}
+          Add server
+          {rows.length >= MAX_TARGETS && <span className="text-fg-faint">(max {MAX_TARGETS})</span>}
         </Button>
         {rows.some((r) => r.instances) || rows.length === 0 ? null : (
-          <span className="text-[12px] text-fg-muted">Tandai satu server pelanggan agar metrik container tampil.</span>
+          <span className="text-[12px] text-fg-muted">Mark one customer server to show container metrics.</span>
         )}
         <Button type="submit" disabled={(touched && invalid) || save.isPending}>
           {save.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
-          Simpan
+          Save
         </Button>
       </div>
     </form>
@@ -648,21 +648,21 @@ function SetupHelp() {
     <div className="border-t border-line px-4 py-4">
       <p className="mb-2 inline-flex items-center gap-2 text-[12.5px] font-medium text-fg">
         <ListChecks className="h-4 w-4 text-tone" strokeWidth={1.75} aria-hidden="true" />
-        Cara menyiapkan
+        Setup
       </p>
       <ol className="list-decimal space-y-1.5 pl-5 text-[13px] text-fg-muted">
         <li>
-          Aktifkan Monitoring di Dokploy (<span className="text-fg">Web Server</span> atau <span className="text-fg">Servers → Monitoring</span>), lalu catat port
-          (default <span className="font-mono text-fg">4500</span>) dan token metrics.
+          Turn on Monitoring in Dokploy (<span className="text-fg">Web Server</span> or <span className="text-fg">Servers → Monitoring</span>), then note the port
+          (default <span className="font-mono text-fg">4500</span>) and the metrics token.
         </li>
         <li>
-          Di bagian <span className="text-fg">Services to include</span> tambahkan <code className="font-mono text-fg">nr-</code> agar semua container hosting ikut
-          dipantau. Pencocokan memakai nama yang mengandung teks tersebut.
+          In <span className="text-fg">Services to include</span>, add <code className="font-mono text-fg">nr-</code> so every hosting container is
+          monitored. Any service whose name contains that text matches.
         </li>
         <li>
-          Buka port monitoring hanya untuk IP server KeiRouter lewat firewall, karena token dikirim lewat HTTP jika tidak memakai HTTPS.
+          Open the monitoring port only to the KeiRouter server IP with a firewall. Without HTTPS, the token travels over plain HTTP.
         </li>
-        <li>Isi URL dan token di sini, lalu tandai server yang menjalankan container pelanggan.</li>
+        <li>Enter the URL and token here, then mark the server that runs customer containers.</li>
       </ol>
     </div>
   );

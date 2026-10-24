@@ -56,7 +56,7 @@ const CATEGORY_LABEL: Record<HostingCostCategory, string> = {
   vps: "VPS",
   domain: "Domain",
   software: "Software",
-  other: "Lainnya",
+  other: "Other",
 };
 
 const CATEGORY_TONE: Record<HostingCostCategory, "accent" | "secondary" | "neutral" | "warning"> = {
@@ -94,19 +94,19 @@ export function FinanceTab() {
 
   if (q.isLoading && !f) {
     return (
-      <LoadingRegion label="Memuat keuangan hosting" className="space-y-4">
+      <LoadingRegion label="Loading hosting finance" className="space-y-4">
         <Skeleton className="h-[188px] w-full rounded-2xl" />
         <Skeleton className="h-[340px] w-full rounded-2xl" />
       </LoadingRegion>
     );
   }
   if (!f) {
-    return <ErrorBanner message={`Keuangan hosting gagal dimuat. ${q.isError ? errorText(q.error) : ""}`.trim()} />;
+    return <ErrorBanner message={`Couldn't load hosting finance. ${q.isError ? errorText(q.error) : ""}`.trim()} />;
   }
 
   return (
     <div className="space-y-6">
-      {q.isError && <ErrorBanner message={`Data terakhir gagal diperbarui, angka di bawah mungkin sudah lama. ${errorText(q.error)}`} />}
+      {q.isError && <ErrorBanner message={`Couldn't refresh the data. The numbers below may be out of date. ${errorText(q.error)}`} />}
       <RefundWarning refunds={f.refunds_needed ?? []} />
       <CurrentMonth f={f} />
       <MonthlyChart f={f} range={range} onRange={setRange} fetching={q.isFetching} />
@@ -123,50 +123,50 @@ function CurrentMonth({ f }: { f: HostingFinance }) {
   const gap = c.break_even_instances - c.running_instances;
   return (
     <div className="space-y-2">
-      <KpiGrid cols={4} label={`Keuangan hosting ${month}`}>
-        <Kpi icon={Wallet} label={`Pendapatan ${month}`} value={idr(c.revenue_idr)} hint="Kotor, sebelum biaya SumoPod" />
-        <Kpi icon={Receipt} label="Biaya" value={idr(c.cost_idr)} hint="Biaya operasional bulan ini" />
+      <KpiGrid cols={4} label={`Hosting finance, ${month}`}>
+        <Kpi icon={Wallet} label={`Revenue, ${month}`} value={idr(c.revenue_idr)} hint="Gross, before SumoPod fees" />
+        <Kpi icon={Receipt} label="Costs" value={idr(c.cost_idr)} hint="Operating costs this month" />
         <Kpi
           icon={PiggyBank}
-          label="Laba"
+          label="Profit"
           value={signedIdr(c.profit_idr)}
           tone={c.profit_idr < 0 ? "bad" : c.profit_idr > 0 ? "ok" : "section"}
           valueClassName={c.profit_idr < 0 ? "text-bad" : c.profit_idr > 0 ? "text-ok" : ""}
-          hint={c.profit_idr < 0 ? "Rugi bulan ini" : c.profit_idr > 0 ? "Untung bulan ini" : "Impas"}
+          hint={c.profit_idr < 0 ? "Loss this month" : c.profit_idr > 0 ? "Profit this month" : "Break-even"}
         />
         <Kpi
           icon={Repeat}
           label="MRR"
           value={idr(c.mrr_idr)}
-          hint={c.price_idr > 0 ? `${count(c.running_instances)} instance, rata-rata ${idr(c.price_idr)}` : "Harga belum diatur"}
+          hint={c.price_idr > 0 ? `${count(c.running_instances)} running, avg ${idr(c.price_idr)}` : "No price set"}
         />
       </KpiGrid>
-      <KpiGrid cols={3} label="Kapasitas dan titik impas">
-        <Kpi icon={Server} label="Instance berjalan" value={count(c.running_instances)} hint="Aktif dan kedaluwarsa yang belum dihentikan" />
+      <KpiGrid cols={3} label="Capacity and break-even">
+        <Kpi icon={Server} label="Running instances" value={count(c.running_instances)} hint="Active, plus expired ones not yet stopped" />
         <Kpi
           icon={Calculator}
-          label="Biaya per instance"
+          label="Cost per instance"
           value={c.running_instances > 0 ? idr(c.cost_per_instance_idr) : "-"}
-          hint={c.running_instances > 0 ? "Biaya bulan ini ÷ instance berjalan" : "Belum ada instance berjalan"}
+          hint={c.running_instances > 0 ? "This month's costs ÷ running instances" : "No running instances yet"}
         />
         <Kpi
           icon={Scale}
-          label="Titik impas"
-          value={c.price_idr > 0 ? `${count(c.break_even_instances)} instance` : "-"}
+          label="Break-even"
+          value={c.price_idr > 0 ? `${count(c.break_even_instances)} ${c.break_even_instances === 1 ? "instance" : "instances"}` : "-"}
           tone={c.price_idr > 0 && c.cost_idr > 0 ? (gap <= 0 ? "ok" : "warn") : "section"}
           hint={
             c.price_idr <= 0
-              ? "Isi harga di Pengaturan hosting"
+              ? "Set a price in Hosting settings"
               : c.cost_idr <= 0
-                ? "Belum ada biaya bulan ini"
+                ? "No costs this month yet"
                 : gap <= 0
-                  ? "Sudah balik modal bulan ini"
-                  : `Kurang ${count(gap)} instance untuk balik modal`
+                  ? "Costs covered this month"
+                  : `${count(gap)} more instances to break even`
           }
         />
       </KpiGrid>
       <p className="text-[12px] text-fg-muted">
-        Pendapatan dihitung dari nilai kotor order yang lunas. Biaya SumoPod belum dipotong, jadi laba sebenarnya sedikit lebih kecil.
+        Revenue is the gross value of paid orders. SumoPod fees aren't deducted, so actual profit is slightly lower.
       </p>
     </div>
   );
@@ -186,33 +186,33 @@ function MonthlyChart({ f, range, onRange, fetching }: { f: HostingFinance; rang
   return (
     <Panel
       icon={TrendingUp}
-      title="Pendapatan vs biaya"
+      title="Revenue vs costs"
       subtitle={
         <span className="tabular-nums">
-          {range} bulan terakhir · pendapatan {idr(t.revenue_idr)} · biaya {idr(t.cost_idr)} · laba{" "}
+          Last {range} months · revenue {idr(t.revenue_idr)} · costs {idr(t.cost_idr)} · profit{" "}
           <span className={cn("font-medium", t.profit_idr < 0 ? "text-bad" : t.profit_idr > 0 ? "text-ok" : "text-fg")}>{signedIdr(t.profit_idr)}</span>
         </span>
       }
       action={
         <div className="flex flex-wrap items-center gap-2">
-          {fetching && <Loader2 className="h-4 w-4 animate-spin text-fg-faint" aria-label="Memuat" />}
+          {fetching && <Loader2 className="h-4 w-4 animate-spin text-fg-faint" aria-label="Loading" />}
           <SegmentedControl<Range>
-            label="Rentang bulan"
+            label="Month range"
             value={range}
             onChange={onRange}
             options={[
-              { value: "6", label: "6 bulan" },
-              { value: "12", label: "12 bulan" },
-              { value: "24", label: "24 bulan" },
+              { value: "6", label: "6 months" },
+              { value: "12", label: "12 months" },
+              { value: "24", label: "24 months" },
             ]}
           />
           <SegmentedControl<"chart" | "table">
-            label="Tampilan"
+            label="View"
             value={view}
             onChange={setView}
             options={[
-              { value: "chart", label: "Grafik" },
-              { value: "table", label: "Tabel" },
+              { value: "chart", label: "Chart" },
+              { value: "table", label: "Table" },
             ]}
           />
         </div>
@@ -222,15 +222,15 @@ function MonthlyChart({ f, range, onRange, fetching }: { f: HostingFinance; rang
         <EmptyState
           icon={TrendingUp}
           size="sm"
-          title="Belum ada pendapatan atau biaya"
-          hint="Grafik terisi begitu ada order hosting yang lunas atau biaya operasional dicatat di bawah."
+          title="No revenue or costs yet"
+          hint="The chart fills in once a hosting order is paid or an operating cost is added below."
         />
       ) : view === "chart" ? (
         <div className={cn("px-4 pb-3 pt-4", VIZ_VARS)}>
-          <ul className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-fg-muted" aria-label="Keterangan grafik">
-            <LegendItem color={C_REV} label="Pendapatan" />
-            <LegendItem color={C_COST} label="Biaya" />
-            <LegendItem color={C_PROFIT} label="Laba" line />
+          <ul className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-fg-muted" aria-label="Chart legend">
+            <LegendItem color={C_REV} label="Revenue" />
+            <LegendItem color={C_COST} label="Costs" />
+            <LegendItem color={C_PROFIT} label="Profit" line />
           </ul>
           <div className="h-[280px] w-full" role="img" aria-label={chartSummary(rows)}>
             <ResponsiveContainer width="100%" height="100%">
@@ -240,11 +240,11 @@ function MonthlyChart({ f, range, onRange, fetching }: { f: HostingFinance; rang
                 <YAxis tick={axisTick} tickLine={false} axisLine={false} tickFormatter={idrCompact} width={72} />
                 {hasLoss && <ReferenceLine y={0} stroke="var(--border-strong)" />}
                 <Tooltip cursor={{ fill: "var(--bg-subtle)", opacity: 0.7 }} content={<FinanceTooltip />} />
-                <Bar dataKey="revenue_idr" name="Pendapatan" fill={C_REV} radius={[4, 4, 0, 0]} maxBarSize={24} isAnimationActive={false} />
-                <Bar dataKey="cost_idr" name="Biaya" fill={C_COST} radius={[4, 4, 0, 0]} maxBarSize={24} isAnimationActive={false} />
+                <Bar dataKey="revenue_idr" name="Revenue" fill={C_REV} radius={[4, 4, 0, 0]} maxBarSize={24} isAnimationActive={false} />
+                <Bar dataKey="cost_idr" name="Costs" fill={C_COST} radius={[4, 4, 0, 0]} maxBarSize={24} isAnimationActive={false} />
                 <Line
                   dataKey="profit_idr"
-                  name="Laba"
+                  name="Profit"
                   type="monotone"
                   stroke={C_PROFIT}
                   strokeWidth={2}
@@ -266,10 +266,10 @@ function MonthlyChart({ f, range, onRange, fetching }: { f: HostingFinance; rang
 }
 
 function chartSummary(rows: Row[]): string {
-  if (!rows.length) return "Grafik pendapatan, biaya, dan laba per bulan.";
+  if (!rows.length) return "Monthly revenue, costs and profit chart.";
   const last = rows[rows.length - 1];
   const best = rows.reduce((a, b) => (b.profit_idr > a.profit_idr ? b : a));
-  return `Grafik pendapatan, biaya, dan laba per bulan dari ${rows[0].label} sampai ${last.label}. Bulan ini: pendapatan ${idr(last.revenue_idr)}, biaya ${idr(last.cost_idr)}, laba ${idr(last.profit_idr)}. Laba tertinggi ${idr(best.profit_idr)} di ${best.label}. Pilih tampilan Tabel untuk angka lengkap.`;
+  return `Monthly revenue, costs and profit from ${rows[0].label} to ${last.label}. This month: revenue ${idr(last.revenue_idr)}, costs ${idr(last.cost_idr)}, profit ${idr(last.profit_idr)}. Highest profit ${idr(best.profit_idr)} in ${best.label}. Switch to Table view for full numbers.`;
 }
 
 function LegendItem({ color, label, line }: { color: string; label: string; line?: boolean }) {
@@ -293,9 +293,9 @@ function FinanceTooltip({ active, payload, label }: any) {
   const row = payload[0]?.payload as Row | undefined;
   if (!row) return null;
   const items = [
-    { label: "Pendapatan", color: C_REV, value: idr(row.revenue_idr) },
-    { label: "Biaya", color: C_COST, value: idr(row.cost_idr) },
-    { label: "Laba", color: C_PROFIT, value: signedIdr(row.profit_idr) },
+    { label: "Revenue", color: C_REV, value: idr(row.revenue_idr) },
+    { label: "Costs", color: C_COST, value: idr(row.cost_idr) },
+    { label: "Profit", color: C_PROFIT, value: signedIdr(row.profit_idr) },
   ];
   return (
     <div className={cn("rounded-lg border border-line bg-surface px-3 py-2 text-[12.5px] shadow-[var(--shadow-pop)]", VIZ_VARS)}>
@@ -308,7 +308,7 @@ function FinanceTooltip({ active, payload, label }: any) {
         </p>
       ))}
       <p className="mt-1 border-t border-line pt-1 text-[11.5px] tabular-nums text-fg-faint">
-        {count(row.orders)} order{row.refund_idr > 0 ? ` · refund ${idr(row.refund_idr)}` : ""}
+        Orders: {count(row.orders)}{row.refund_idr > 0 ? ` · refund ${idr(row.refund_idr)}` : ""}
       </p>
     </div>
   );
@@ -316,15 +316,15 @@ function FinanceTooltip({ active, payload, label }: any) {
 
 function MonthlyTable({ rows }: { rows: Row[] }) {
   return (
-    <div className="overflow-x-auto" role="region" aria-label="Tabel pendapatan dan biaya per bulan" tabIndex={0}>
+    <div className="overflow-x-auto" role="region" aria-label="Monthly revenue and costs table" tabIndex={0}>
       <table className="w-full min-w-[640px] text-[13px]">
         <thead>
           <tr className={THEAD}>
-            <th scope="col" className={TH}>Bulan</th>
-            <th scope="col" className={cn(TH, "text-right")}>Pendapatan</th>
-            <th scope="col" className={cn(TH, "text-right")}>Biaya</th>
-            <th scope="col" className={cn(TH, "text-right")}>Laba</th>
-            <th scope="col" className={cn(TH, "text-right")}>Order</th>
+            <th scope="col" className={TH}>Month</th>
+            <th scope="col" className={cn(TH, "text-right")}>Revenue</th>
+            <th scope="col" className={cn(TH, "text-right")}>Costs</th>
+            <th scope="col" className={cn(TH, "text-right")}>Profit</th>
+            <th scope="col" className={cn(TH, "text-right")}>Orders</th>
             <th scope="col" className={cn(TH, "text-right")}>Refund</th>
           </tr>
         </thead>
@@ -356,15 +356,15 @@ function RefundWarning({ refunds }: { refunds: NonNullable<HostingFinance["refun
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <h2 className="text-[13px] font-semibold text-fg">
-            {count(refunds.length)} order perlu di-refund ({idr(total)})
+            Refunds needed: {count(refunds.length)} ({idr(total)})
           </h2>
-          <p className="mt-0.5 text-[12.5px] text-fg-muted">Order ini sudah dibayar, tetapi instance-nya dihapus sebelum dipakai. Kembalikan dana lewat SumoPod.</p>
+          <p className="mt-0.5 text-[12.5px] text-fg-muted">These orders were paid, but their instance was deleted before use. Refund them through SumoPod.</p>
           <ul className="mt-2 divide-y divide-warn/20 text-[12.5px]">
             {refunds.map((r) => (
               <li key={r.order_id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 py-1.5">
                 <span className="min-w-0 break-all font-mono text-[12px] text-fg">{r.order_id}</span>
                 <span className="flex flex-wrap items-baseline gap-x-3 tabular-nums text-fg-muted">
-                  <span>Dibayar {r.paid_at ? dateID(r.paid_at, true) : "-"}</span>
+                  <span>Paid {r.paid_at ? dateID(r.paid_at, true) : "-"}</span>
                   {r.instance_id && <span className="font-mono text-[11.5px]">instance {r.instance_id}</span>}
                   <span className="font-medium text-fg">{idr(r.amount_idr)}</span>
                 </span>
@@ -388,23 +388,23 @@ function CostsPanel({ costs }: { costs: HostingCost[] }) {
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteHostingCost(id),
     onSuccess: () => {
-      toast.success("Biaya dihapus");
+      toast.success("Cost deleted");
       qc.invalidateQueries({ queryKey: QK_HOSTING.finance });
     },
-    onError: (e) => toast.error("Gagal menghapus biaya", errorText(e)),
+    onError: (e) => toast.error("Couldn't delete cost", errorText(e)),
   });
 
   const onDelete = async (c: HostingCost) => {
     const ok = await confirm({
-      title: "Hapus biaya?",
+      title: "Delete cost?",
       description: (
         <>
-          <span className="font-medium text-fg">{c.name}</span> dihapus dari semua bulan, jadi laba bulan-bulan sebelumnya ikut berubah. Kalau biaya ini
-          sudah berhenti, lebih baik isi tanggal selesai.
+          <span className="font-medium text-fg">{c.name}</span> is removed from every month, so profit for past months changes too. If this cost
+          has ended, set an end date instead.
         </>
       ),
-      confirmLabel: "Hapus biaya",
-      cancelLabel: "Batal",
+      confirmLabel: "Delete cost",
+      cancelLabel: "Cancel",
       tone: "danger",
     });
     if (ok) remove.mutate(c.id);
@@ -415,12 +415,12 @@ function CostsPanel({ costs }: { costs: HostingCost[] }) {
   return (
     <Panel
       icon={Coins}
-      title="Biaya operasional"
-      subtitle={costs.length ? `Bulan ini ${idr(monthTotal)} dari ${count(costs.length)} biaya.` : "Sewa atau pembelian VPS, domain, dan biaya lain untuk hosting."}
+      title="Operating costs"
+      subtitle={costs.length ? `This month: ${idr(monthTotal)} across ${count(costs.length)} costs.` : "VPS rental or purchase, domains and other hosting costs."}
       action={
         <Button onClick={() => setEditing("new")}>
           <Plus aria-hidden="true" />
-          Tambah biaya
+          Add cost
         </Button>
       }
     >
@@ -428,22 +428,22 @@ function CostsPanel({ costs }: { costs: HostingCost[] }) {
         <EmptyState
           icon={Coins}
           size="sm"
-          title="Belum ada biaya"
-          hint="Catat sewa VPS bulanan atau pembelian sekali bayar agar laba dan titik impas bisa dihitung."
+          title="No costs yet"
+          hint="Add monthly VPS rent or one-time purchases so profit and break-even can be calculated."
         />
       ) : (
-        <div className="overflow-x-auto" role="region" aria-label="Tabel biaya operasional" tabIndex={0}>
+        <div className="overflow-x-auto" role="region" aria-label="Operating costs table" tabIndex={0}>
           <table className="w-full min-w-[860px] text-[13px]">
             <thead>
               <tr className={THEAD}>
-                <th scope="col" className={TH}>Nama</th>
-                <th scope="col" className={TH}>Kategori</th>
-                <th scope="col" className={cn(TH, "text-right")}>Jumlah</th>
-                <th scope="col" className={TH}>Masa berlaku</th>
-                <th scope="col" className={cn(TH, "text-right")}>Bulan ini</th>
-                <th scope="col" className={TH}>Catatan</th>
+                <th scope="col" className={TH}>Name</th>
+                <th scope="col" className={TH}>Category</th>
+                <th scope="col" className={cn(TH, "text-right")}>Amount</th>
+                <th scope="col" className={TH}>Period</th>
+                <th scope="col" className={cn(TH, "text-right")}>This month</th>
+                <th scope="col" className={TH}>Note</th>
                 <th scope="col" className={cn(TH, "text-right")}>
-                  <span className="sr-only">Aksi</span>
+                  <span className="sr-only">Actions</span>
                 </th>
               </tr>
             </thead>
@@ -456,10 +456,10 @@ function CostsPanel({ costs }: { costs: HostingCost[] }) {
                   </td>
                   <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums">
                     {idr(c.amount_idr)}
-                    <p className="text-[11.5px] text-fg-muted">{c.period === "monthly" ? "per bulan" : "sekali"}</p>
+                    <p className="text-[11.5px] text-fg-muted">{c.period === "monthly" ? "per month" : "one-time"}</p>
                   </td>
                   <td className="whitespace-nowrap px-4 py-2.5 tabular-nums text-fg-muted">
-                    {c.period === "one_time" ? plainDateID(c.start_date) : `${plainDateID(c.start_date)} – ${c.end_date ? plainDateID(c.end_date) : "berjalan"}`}
+                    {c.period === "one_time" ? plainDateID(c.start_date) : `${plainDateID(c.start_date)} – ${c.end_date ? plainDateID(c.end_date) : "ongoing"}`}
                   </td>
                   <td className={cn("whitespace-nowrap px-4 py-2.5 text-right tabular-nums", c.this_month_idr > 0 ? "text-fg" : "text-fg-faint")}>
                     {idr(c.this_month_idr)}
@@ -467,15 +467,15 @@ function CostsPanel({ costs }: { costs: HostingCost[] }) {
                   <td className="max-w-[240px] break-words px-4 py-2.5 text-[12.5px] text-fg-muted">{c.note || "-"}</td>
                   <td className="px-4 py-2.5">
                     <div className="flex justify-end gap-1">
-                      <Button variant="ghost" onClick={() => setEditing(c)} title="Ubah biaya" aria-label={`Ubah ${c.name}`}>
+                      <Button variant="ghost" onClick={() => setEditing(c)} title="Edit cost" aria-label={`Edit ${c.name}`}>
                         <Pencil aria-hidden="true" />
                       </Button>
                       <Button
                         variant="ghost"
                         onClick={() => onDelete(c)}
                         disabled={remove.isPending && remove.variables === c.id}
-                        title="Hapus biaya"
-                        aria-label={`Hapus ${c.name}`}
+                        title="Delete cost"
+                        aria-label={`Delete ${c.name}`}
                       >
                         {remove.isPending && remove.variables === c.id ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
                       </Button>
@@ -505,15 +505,15 @@ function CostModal({ cost, onClose }: { cost: HostingCost | null; onClose: () =>
   const [touched, setTouched] = useState(false);
 
   const amountNum = Number(amount);
-  const nameError = touched && !name.trim() ? "Isi nama biaya." : null;
-  const amountError = touched && (amount.trim() === "" || !Number.isInteger(amountNum) || amountNum <= 0) ? "Isi angka bulat lebih dari 0." : null;
-  const startError = touched && !start ? "Isi tanggal mulai." : null;
-  const endError = period === "monthly" && end && start && end < start ? "Tanggal selesai tidak boleh sebelum tanggal mulai." : null;
+  const nameError = touched && !name.trim() ? "Enter a cost name." : null;
+  const amountError = touched && (amount.trim() === "" || !Number.isInteger(amountNum) || amountNum <= 0) ? "Enter a whole number above 0." : null;
+  const startError = touched && !start ? "Enter a start date." : null;
+  const endError = period === "monthly" && end && start && end < start ? "End date can't be before the start date." : null;
 
   const save = useMutation({
     mutationFn: (body: HostingCostInput) => (cost ? api.updateHostingCost(cost.id, body) : api.createHostingCost(body)),
     onSuccess: () => {
-      toast.success(cost ? "Biaya diperbarui" : "Biaya ditambahkan");
+      toast.success(cost ? "Cost updated" : "Cost added");
       qc.invalidateQueries({ queryKey: QK_HOSTING.finance });
       onClose();
     },
@@ -536,14 +536,14 @@ function CostModal({ cost, onClose }: { cost: HostingCost | null; onClose: () =>
   };
 
   return (
-    <Modal open onClose={save.isPending ? () => {} : onClose} title={cost ? "Ubah biaya" : "Tambah biaya"} subtitle="Biaya operasional hosting">
+    <Modal open onClose={save.isPending ? () => {} : onClose} title={cost ? "Edit cost" : "Add cost"} subtitle="Hosting operating cost">
       <form onSubmit={onSubmit} noValidate>
         <div className="space-y-4 px-5 py-4">
-          <Field label="Nama" error={nameError} required>
+          <Field label="Name" error={nameError} required>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="VPS Contabo 8 GB" autoFocus />
           </Field>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Kategori">
+            <Field label="Category">
               <Select value={category} onChange={(e) => setCategory(e.target.value as HostingCostCategory)}>
                 {(Object.keys(CATEGORY_LABEL) as HostingCostCategory[]).map((k) => (
                   <option key={k} value={k}>
@@ -552,38 +552,38 @@ function CostModal({ cost, onClose }: { cost: HostingCost | null; onClose: () =>
                 ))}
               </Select>
             </Field>
-            <Field label="Periode" hint={period === "monthly" ? "Dihitung penuh setiap bulan selama berlaku." : "Dihitung sekali di bulan tanggal mulai."}>
+            <Field label="Billing" hint={period === "monthly" ? "Counted in full every month while active." : "Counted once, in the start date's month."}>
               <Select value={period} onChange={(e) => setPeriod(e.target.value as HostingCostPeriod)}>
-                <option value="monthly">Bulanan</option>
-                <option value="one_time">Sekali bayar</option>
+                <option value="monthly">Monthly</option>
+                <option value="one_time">One-time</option>
               </Select>
             </Field>
           </div>
-          <Field label="Jumlah (IDR)" error={amountError} hint={!amountError && amountNum > 0 ? idr(amountNum) : undefined} required>
+          <Field label="Amount (IDR)" error={amountError} hint={!amountError && amountNum > 0 ? idr(amountNum) : undefined} required>
             <Input type="number" inputMode="numeric" min="1" step="1" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="250000" className="tabular-nums" />
           </Field>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="Tanggal mulai" error={startError} required>
+            <Field label="Start date" error={startError} required>
               <Input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
             </Field>
             {period === "monthly" && (
-              <Field label="Tanggal selesai" optional hint={endError ? undefined : "Kosongkan selama masih berjalan."} error={endError}>
+              <Field label="End date" optional hint={endError ? undefined : "Leave empty while ongoing."} error={endError}>
                 <Input type="date" value={end} min={start || undefined} onChange={(e) => setEnd(e.target.value)} />
               </Field>
             )}
           </div>
-          <Field label="Catatan" optional>
-            <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Misal: server pelanggan, bayar via kartu kredit" />
+          <Field label="Note" optional>
+            <Textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="e.g. customer server, paid by credit card" />
           </Field>
-          {save.isError && <ErrorBanner message={`Biaya gagal disimpan. ${errorText(save.error)}`} />}
+          {save.isError && <ErrorBanner message={`Couldn't save cost. ${errorText(save.error)}`} />}
         </div>
         <ModalFooter>
           <Button type="button" variant="ghost" onClick={onClose} disabled={save.isPending}>
-            Batal
+            Cancel
           </Button>
           <Button type="submit" disabled={save.isPending}>
             {save.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
-            {cost ? "Simpan" : "Tambah"}
+            {cost ? "Save" : "Add"}
           </Button>
         </ModalFooter>
       </form>

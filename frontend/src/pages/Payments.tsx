@@ -48,8 +48,8 @@ export function PaymentsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Payments"
-        description="Credit masuk, modal, keuntungan, dan saldo provider upstream. Diperbarui tiap 15 detik."
-        action={<SegmentedControl value={range} onChange={setRange} options={RANGES} label="Rentang waktu" />}
+        description="Credit received, cost basis, profit and upstream provider balances. Refreshes every 15 seconds."
+        action={<SegmentedControl value={range} onChange={setRange} options={RANGES} label="Time range" />}
       />
 
       <FinanceOverview overview={finance.data?.overview} range={range} loading={finance.isLoading} error={financeError} />

@@ -17,9 +17,9 @@ import { QK, Panel, REFETCH_MS, SETTINGS_ANCHOR, dateInputToRFC3339, errorText, 
 const ALERTS_TAB = "__alerts";
 
 const STATUS_LABEL: Record<UpstreamAccountStatus, string> = {
-  active: "Aktif",
-  planned: "Direncanakan",
-  archived: "Diarsipkan",
+  active: "Active",
+  planned: "Planned",
+  archived: "Archived",
 };
 
 export function FinanceSettings({
@@ -36,7 +36,7 @@ export function FinanceSettings({
   // One tab per account plus the Discord tab; only the selected one renders.
   const tabsId = useId();
   const [picked, setPicked] = useState<string | null>(null);
-  const tabs = [...(accounts ?? []).map((a) => ({ id: a.id, label: a.name, muted: a.status !== "active" })), { id: ALERTS_TAB, label: "Notifikasi Discord", muted: false }];
+  const tabs = [...(accounts ?? []).map((a) => ({ id: a.id, label: a.name, muted: a.status !== "active" })), { id: ALERTS_TAB, label: "Discord alerts", muted: false }];
   const current = tabs.some((t) => t.id === picked) ? picked! : tabs[0].id;
   const currentAccount = accounts?.find((a) => a.id === current);
   const onTabKeys = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -50,24 +50,24 @@ export function FinanceSettings({
   };
 
   return (
-    <Panel id={SETTINGS_ANCHOR} icon={Settings2} title="Pengaturan keuangan" subtitle="Saldo awal, batas peringatan, dan provider untuk tiap akun upstream.">
+    <Panel id={SETTINGS_ANCHOR} icon={Settings2} title="Finance settings" subtitle="Opening balance, alert threshold and providers for each upstream account.">
       <div className="space-y-4 p-4">
         {accountsLoading && !accounts ? (
-          <LoadingRegion label="Memuat akun upstream" className="space-y-3">
+          <LoadingRegion label="Loading upstream accounts" className="space-y-3">
             {[0, 1].map((i) => (
               <Skeleton key={i} className="h-[260px] w-full rounded-xl" />
             ))}
           </LoadingRegion>
         ) : !accounts ? (
-          <ErrorBanner message={`Akun upstream gagal dimuat. ${accountsError ?? ""}`.trim()} />
+          <ErrorBanner message={`Couldn't load upstream accounts. ${accountsError ?? ""}`.trim()} />
         ) : accounts.length === 0 ? (
-          <EmptyState icon={Settings2} size="sm" title="Belum ada akun upstream" hint="Akun Surplus Intelligence, Inferhub, dan Crowbot dibuat oleh migrasi database." />
+          <EmptyState icon={Settings2} size="sm" title="No upstream accounts yet" hint="The Surplus Intelligence, Inferhub and Crowbot accounts are created by a database migration." />
         ) : (
           <>
             <div
               className="-mx-4 flex gap-1 overflow-x-auto border-b border-line px-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               role="tablist"
-              aria-label="Akun upstream"
+              aria-label="Upstream accounts"
               onKeyDown={onTabKeys}
             >
               {tabs.map((t) => {
@@ -97,7 +97,7 @@ export function FinanceSettings({
               {currentAccount ? (
                 <div className="space-y-3">
                   {providersQuery.isError && (
-                    <ErrorBanner message={`Daftar provider gagal dimuat, pemetaan provider belum bisa diubah. ${errorText(providersQuery.error)}`} />
+                    <ErrorBanner message={`Couldn't load the provider list, so provider mapping can't be changed yet. ${errorText(providersQuery.error)}`} />
                   )}
                   <ul className="space-y-3">
                     {/* Re-key on updated_at so a successful save resets the form to the stored values. */}
@@ -144,10 +144,10 @@ function AccountForm({
   const openingNum = Number(opening);
   const thresholdNum = Number(threshold);
   const amountError = (raw: string, n: number) =>
-    raw.trim() === "" || !Number.isFinite(n) || n < 0 ? "Isi angka 0 atau lebih." : n > 1e9 ? "Angka terlalu besar." : null;
+    raw.trim() === "" || !Number.isFinite(n) || n < 0 ? "Enter 0 or more." : n > 1e9 ? "Number is too large." : null;
   const openingError = amountError(opening, openingNum);
   const thresholdError = amountError(threshold, thresholdNum);
-  const openingAtError = !openingAt ? "Isi tanggal saldo awal." : openingAt > todayISO() ? "Tanggal tidak boleh di masa depan." : null;
+  const openingAtError = !openingAt ? "Enter the opening balance date." : openingAt > todayISO() ? "Date can't be in the future." : null;
 
   // Only changed fields are sent, so an untouched opening date keeps its exact stored time.
   const changes: UpstreamAccountInput = {};
@@ -163,7 +163,7 @@ function AccountForm({
   const save = useMutation({
     mutationFn: () => api.updateUpstreamAccount(account.id, changes),
     onSuccess: () => {
-      toast.success("Akun disimpan", `Pengaturan ${account.name} sudah diperbarui.`);
+      toast.success("Account saved", `${account.name} settings updated.`);
       qc.invalidateQueries({ queryKey: QK.finance });
       qc.invalidateQueries({ queryKey: QK.accounts });
       qc.invalidateQueries({ queryKey: QK.topups });
@@ -207,23 +207,23 @@ function AccountForm({
               ))}
             </Select>
           </Field>
-          <Field label="Saldo awal (USD)" error={openingError}>
+          <Field label="Opening balance (USD)" error={openingError}>
             <Input type="number" inputMode="decimal" min="0" step="0.01" value={opening} onChange={(e) => setOpening(e.target.value)} />
           </Field>
-          <Field label="Tanggal saldo awal" hint="Pemakaian dihitung mulai tanggal ini." error={openingAtError}>
+          <Field label="Opening balance date" hint="Usage counts from this date." error={openingAtError}>
             <Input type="date" max={todayISO()} value={openingAt} onChange={(e) => setOpeningAt(e.target.value)} />
           </Field>
-          <Field label="Batas peringatan (USD)" hint="0 berarti tanpa peringatan." error={thresholdError}>
+          <Field label="Alert threshold (USD)" hint="0 means no alert." error={thresholdError}>
             <Input type="number" inputMode="decimal" min="0" step="0.01" value={threshold} onChange={(e) => setThreshold(e.target.value)} />
           </Field>
         </div>
         <fieldset className="px-4 pb-4">
           <legend className="mb-1.5 text-[12.5px] font-medium text-fg">Provider</legend>
-          <p className="mb-2 text-[12px] text-fg-muted">Pemakaian provider yang dicentang mengurangi saldo akun ini. Provider yang sudah dipakai akun lain akan dipindah ke sini.</p>
+          <p className="mb-2 text-[12px] text-fg-muted">Usage from checked providers is deducted from this account's balance. A provider already mapped to another account moves here.</p>
           {!providersReady && options.length === 0 ? (
-            <p className="text-[12px] text-fg-faint">Daftar provider belum tersedia.</p>
+            <p className="text-[12px] text-fg-faint">Provider list not available yet.</p>
           ) : options.length === 0 ? (
-            <p className="text-[12px] text-fg-faint">Belum ada provider dengan pemakaian atau provider kustom.</p>
+            <p className="text-[12px] text-fg-faint">No providers with usage and no custom providers yet.</p>
           ) : (
             <div className="flex max-h-48 flex-wrap gap-1.5 overflow-y-auto">
               {options.map((p) => {
@@ -249,14 +249,14 @@ function AccountForm({
         </fieldset>
         {save.isError && (
           <div className="px-4 pb-3">
-            <ErrorBanner message={`Gagal menyimpan ${account.name}. ${errorText(save.error)}`} />
+            <ErrorBanner message={`Couldn't save ${account.name}. ${errorText(save.error)}`} />
           </div>
         )}
         <div className="flex flex-col gap-2 border-t border-line bg-subtle px-4 py-2.5 sm:flex-row sm:items-center sm:justify-end">
-          {dirty && <span className="text-[12px] text-fg-muted sm:mr-auto">Ada perubahan yang belum disimpan.</span>}
+          {dirty && <span className="text-[12px] text-fg-muted sm:mr-auto">You have unsaved changes.</span>}
           <Button type="submit" disabled={!dirty || !valid || save.isPending}>
             {save.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
-            Simpan
+            Save
           </Button>
         </div>
       </form>
@@ -285,7 +285,7 @@ function AlertSettings() {
       qc.setQueryData(QK.alerts, data);
       setUrl("");
       setEnabledDraft(null);
-      toast.success("Notifikasi disimpan", data.enabled ? "Peringatan saldo rendah akan dikirim ke Discord." : "Peringatan saldo rendah dimatikan.");
+      toast.success("Alerts saved", data.enabled ? "Low balance alerts will be sent to Discord." : "Low balance alerts are off.");
     },
   });
 
@@ -295,17 +295,17 @@ function AlertSettings() {
       qc.setQueryData(QK.alerts, data);
       setUrl("");
       setEnabledDraft(null);
-      toast.success("Webhook dihapus", "Peringatan saldo rendah dimatikan.");
+      toast.success("Webhook deleted", "Low balance alerts are off.");
     },
   });
 
   const onRemove = async () => {
     if (remove.isPending) return;
     const ok = await confirm({
-      title: "Hapus webhook Discord?",
-      description: "Peringatan saldo rendah akan dimatikan sampai webhook baru disimpan.",
-      confirmLabel: "Hapus webhook",
-      cancelLabel: "Batal",
+      title: "Delete Discord webhook?",
+      description: "Low balance alerts stay off until you save a new webhook.",
+      confirmLabel: "Delete webhook",
+      cancelLabel: "Cancel",
       tone: "danger",
     });
     if (!ok) return;
@@ -316,7 +316,7 @@ function AlertSettings() {
 
   const test = useMutation({
     mutationFn: api.testFinanceAlerts,
-    onSuccess: () => toast.success("Pesan tes terkirim", "Cek channel Discord yang terhubung."),
+    onSuccess: () => toast.success("Test message sent", "Check the connected Discord channel."),
   });
 
   const dirty = url.trim() !== "" || (enabledDraft !== null && enabledDraft !== alerts.data?.enabled);
@@ -334,16 +334,16 @@ function AlertSettings() {
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
         <Bell className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
         <h3 id="finance-alerts-title" className="text-[13.5px] font-semibold text-fg">
-          Notifikasi Discord
+          Discord alerts
         </h3>
       </div>
       {alerts.isLoading ? (
-        <LoadingRegion label="Memuat pengaturan notifikasi" className="p-4">
+        <LoadingRegion label="Loading alert settings" className="p-4">
           <Skeleton className="h-24 w-full" />
         </LoadingRegion>
       ) : alerts.isError && !alerts.data ? (
         <div className="p-4">
-          <ErrorBanner message={`Pengaturan notifikasi gagal dimuat. ${errorText(alerts.error)}`} />
+          <ErrorBanner message={`Couldn't load alert settings. ${errorText(alerts.error)}`} />
         </div>
       ) : (
         <form onSubmit={onSubmit} noValidate>
@@ -351,18 +351,18 @@ function AlertSettings() {
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0">
                 <p id="finance-alerts-enabled" className="text-[13px] font-medium text-fg">
-                  Kirim peringatan saldo rendah
+                  Send low balance alerts
                 </p>
-                <p className="text-[12px] text-fg-muted">Satu pesan saat saldo akun turun di bawah batas peringatan.</p>
+                <p className="text-[12px] text-fg-muted">One message when an account balance drops below its alert threshold.</p>
               </div>
               <Toggle checked={enabled} onChange={setEnabledDraft} aria-labelledby="finance-alerts-enabled" />
             </div>
             <Field
-              label="Webhook Discord"
+              label="Discord webhook"
               hint={
                 alerts.data?.configured
-                  ? `Tersimpan: ${alerts.data.discord_webhook_url_masked}. Kosongkan untuk tetap memakai webhook ini.`
-                  : "Belum ada webhook. Salin dari pengaturan channel Discord, menu Integrasi."
+                  ? `Saved: ${alerts.data.discord_webhook_url_masked}. Leave empty to keep using this webhook.`
+                  : "No webhook yet. Copy one from the Discord channel settings, under Integrations."
               }
             >
               <Input
@@ -377,18 +377,18 @@ function AlertSettings() {
             </Field>
             {needsWebhook && (
               <p className="text-[12px] text-fg-muted" role="status">
-                Isi webhook Discord dulu. Peringatan hanya bisa diaktifkan setelah webhook tersimpan.
+                Add a Discord webhook first. Alerts can only be turned on once a webhook is saved.
               </p>
             )}
-            {save.isError && <ErrorBanner message={`Pengaturan notifikasi gagal disimpan. ${errorText(save.error)}`} />}
-            {remove.isError && <ErrorBanner message={`Webhook gagal dihapus. ${errorText(remove.error)}`} />}
-            {test.isError && <ErrorBanner message={`Pesan tes gagal dikirim. ${errorText(test.error)}`} />}
+            {save.isError && <ErrorBanner message={`Couldn't save alert settings. ${errorText(save.error)}`} />}
+            {remove.isError && <ErrorBanner message={`Couldn't delete the webhook. ${errorText(remove.error)}`} />}
+            {test.isError && <ErrorBanner message={`Couldn't send the test message. ${errorText(test.error)}`} />}
           </div>
           <div className="flex flex-col gap-2 border-t border-line bg-subtle px-4 py-2.5 sm:flex-row sm:items-center sm:justify-end">
             {configured && (
               <Button type="button" variant="ghost" className="sm:mr-auto" onClick={onRemove} disabled={remove.isPending || save.isPending}>
                 {remove.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
-                Hapus webhook
+                Delete webhook
               </Button>
             )}
             <Button
@@ -400,14 +400,14 @@ function AlertSettings() {
                 test.mutate();
               }}
               disabled={!alerts.data?.configured || test.isPending}
-              title={alerts.data?.configured ? undefined : "Simpan webhook dulu"}
+              title={alerts.data?.configured ? undefined : "Save a webhook first"}
             >
               {test.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Send aria-hidden="true" />}
-              Kirim tes
+              Send test
             </Button>
             <Button type="submit" disabled={!dirty || needsWebhook || save.isPending || remove.isPending}>
               {save.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
-              Simpan
+              Save
             </Button>
           </div>
         </form>

@@ -42,33 +42,33 @@ export function TopupHistory({
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteUpstreamTopup(id),
     onSuccess: () => {
-      toast.success("Topup dihapus", "Saldo akun sudah dihitung ulang.");
+      toast.success("Top-up deleted", "Account balance recalculated.");
       qc.invalidateQueries({ queryKey: QK.finance });
       qc.invalidateQueries({ queryKey: QK.accounts });
       qc.invalidateQueries({ queryKey: QK.topups });
     },
-    onError: (e) => toast.error("Topup gagal dihapus", errorText(e)),
+    onError: (e) => toast.error("Couldn't delete the top-up", errorText(e)),
   });
 
   const onDelete = async (t: UpstreamTopup) => {
     const ok = await confirm({
-      title: "Hapus topup ini?",
-      description: `${usd(t.amount_usd)} untuk ${names.get(t.account_id) ?? t.account_id} pada ${dateID(t.topup_at)}. Saldo akun akan berkurang sebesar jumlah ini.`,
-      confirmLabel: "Hapus",
-      cancelLabel: "Batal",
+      title: "Delete this top-up?",
+      description: `${usd(t.amount_usd)} for ${names.get(t.account_id) ?? t.account_id} on ${dateID(t.topup_at)}. The account balance drops by this amount.`,
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
       tone: "danger",
     });
     if (ok) remove.mutate(t.id);
   };
 
   return (
-    <Panel icon={History} title="Riwayat topup" subtitle="Topup yang dicatat manual untuk akun upstream.">
+    <Panel icon={History} title="Top-up history" subtitle="Top-ups recorded by hand for upstream accounts.">
       {accountsError && !accounts ? (
         <div className="p-4">
-          <ErrorBanner message={`Daftar akun gagal dimuat, riwayat topup tidak bisa ditampilkan. ${accountsError}`} />
+          <ErrorBanner message={`Couldn't load accounts, so top-up history can't be shown. ${accountsError}`} />
         </div>
       ) : loading && rows.length === 0 ? (
-        <LoadingRegion label="Memuat riwayat topup" className="space-y-2 p-4">
+        <LoadingRegion label="Loading top-up history" className="space-y-2 p-4">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-9 w-full" />
           ))}
@@ -77,25 +77,25 @@ export function TopupHistory({
         <>
           {failed.length > 0 && (
             <div className="p-4 pb-0">
-              <ErrorBanner message={`Riwayat topup sebagian gagal dimuat. ${errorText(failed[0].error)}`} />
+              <ErrorBanner message={`Part of the top-up history couldn't be loaded. ${errorText(failed[0].error)}`} />
             </div>
           )}
           {rows.length === 0 ? (
             failed.length === 0 && (
-              <EmptyState icon={History} size="sm" title="Belum ada topup" hint='Pakai tombol "Catat topup" di kartu akun untuk mencatat saldo masuk.' />
+              <EmptyState icon={History} size="sm" title="No top-ups yet" hint='Use "Record top-up" on an account card to log added balance.' />
             )
           ) : (
             <>
-              <div className="overflow-x-auto" role="region" aria-label="Tabel riwayat topup" tabIndex={0}>
+              <div className="overflow-x-auto" role="region" aria-label="Top-up history table" tabIndex={0}>
                 <table className="w-full min-w-[640px] text-[13px]">
                   <thead>
                     <tr className={THEAD}>
-                      <th scope="col" className={TH}>Tanggal</th>
-                      <th scope="col" className={TH}>Akun</th>
-                      <th scope="col" className={cn(TH, "text-right")}>Jumlah</th>
-                      <th scope="col" className={TH}>Catatan</th>
+                      <th scope="col" className={TH}>Date</th>
+                      <th scope="col" className={TH}>Account</th>
+                      <th scope="col" className={cn(TH, "text-right")}>Amount</th>
+                      <th scope="col" className={TH}>Note</th>
                       <th scope="col" className={cn(TH, "text-right")}>
-                        <span className="sr-only">Aksi</span>
+                        <span className="sr-only">Actions</span>
                       </th>
                     </tr>
                   </thead>
@@ -111,9 +111,9 @@ export function TopupHistory({
                             <span className="line-clamp-2 break-words">{t.note || "-"}</span>
                           </td>
                           <td className="whitespace-nowrap px-4 py-2.5 text-right">
-                            <Button variant="danger" onClick={() => onDelete(t)} disabled={deleting} aria-label={`Hapus topup ${usd(t.amount_usd)} ${dateID(t.topup_at)}`}>
+                            <Button variant="danger" onClick={() => onDelete(t)} disabled={deleting} aria-label={`Delete top-up of ${usd(t.amount_usd)} on ${dateID(t.topup_at)}`}>
                               {deleting ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
-                              Hapus
+                              Delete
                             </Button>
                           </td>
                         </tr>
@@ -122,7 +122,7 @@ export function TopupHistory({
                   </tbody>
                 </table>
               </div>
-              <TablePagination page={page} pages={pages} total={total} onPage={setPage} label="Halaman riwayat topup" />
+              <TablePagination page={page} pages={pages} total={total} onPage={setPage} label="Top-up history pages" />
             </>
           )}
         </>

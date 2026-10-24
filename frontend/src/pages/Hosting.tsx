@@ -73,11 +73,11 @@ const SECTIONS = ["instances", "coupons", "finance", "monitoring", "settings"] a
 type Section = (typeof SECTIONS)[number];
 
 const ORDER_STATUS_LABEL: Record<string, string> = {
-  completed: "Lunas",
-  manual: "Disetujui manual",
-  pending: "Menunggu",
-  failed: "Gagal",
-  expired: "Kedaluwarsa",
+  completed: "Paid",
+  manual: "Manually approved",
+  pending: "Pending",
+  failed: "Failed",
+  expired: "Expired",
 };
 
 const ORDER_STATUS_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> = {
@@ -104,7 +104,7 @@ export function HostingPage() {
     <div className="space-y-6">
       <PageHeader
         title="Hosting"
-        description="Instance 9router yang dipesan user portal. Buat instance di Dokploy setelah pembayaran lunas."
+        description="9router instances ordered by portal users. Create each one in Dokploy once its order is paid."
       />
       {section === "instances" ? (
         <InstancesTab settings={settings.data} onOpenSettings={() => navigate(dashboard("/hosting/settings"))} />
@@ -159,11 +159,11 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
     mutationFn: ({ kind, id }: { kind: "stop" | "start" | "delete"; id: string }) =>
       kind === "stop" ? api.stopHosting(id) : kind === "start" ? api.startHosting(id) : api.deleteHosting(id),
     onSuccess: (_d, { kind }) => {
-      toast.success(kind === "stop" ? "Instance dihentikan" : kind === "start" ? "Instance dijalankan" : "Instance dihapus");
+      toast.success(kind === "stop" ? "Instance stopped" : kind === "start" ? "Instance started" : "Instance deleted");
       invalidate();
     },
     onError: (e, { kind }) => {
-      toast.error(kind === "stop" ? "Gagal menghentikan instance" : kind === "start" ? "Gagal menjalankan instance" : "Gagal menghapus instance", errorText(e));
+      toast.error(kind === "stop" ? "Couldn't stop instance" : kind === "start" ? "Couldn't start instance" : "Couldn't delete instance", errorText(e));
       invalidate();
     },
   });
@@ -172,15 +172,15 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
 
   const onDelete = async (inst: HostingInstanceAdmin) => {
     const ok = await confirm({
-      title: "Hapus instance?",
+      title: "Delete instance?",
       description: (
         <>
-          Aplikasi <span className="font-mono">{inst.dokploy_app_name || inst.subdomain || inst.id}</span> di Dokploy ikut dihapus,
-          termasuk datanya. User {inst.user_email || inst.key_id} kehilangan akses dan tindakan ini tidak bisa dibatalkan.
+          The Dokploy app <span className="font-mono">{inst.dokploy_app_name || inst.subdomain || inst.id}</span> is deleted too,
+          including its data. {inst.user_email || inst.key_id} loses access. This can't be undone.
         </>
       ),
-      confirmLabel: "Hapus instance",
-      cancelLabel: "Batal",
+      confirmLabel: "Delete instance",
+      cancelLabel: "Cancel",
       tone: "danger",
     });
     if (ok) action.mutate({ kind: "delete", id: inst.id });
@@ -189,23 +189,23 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
   return (
     <Panel
       icon={Server}
-      title="Instance"
-      subtitle="Status, alamat, dan masa aktif tiap instance. Diperbarui tiap 15 detik."
+      title="Instances"
+      subtitle="Status, address and paid period of each instance. Refreshes every 15 seconds."
       action={
         <div className="flex flex-wrap gap-2">
           {nodeList.length > 1 && (
             <Select value={nodeFilter} onChange={(e) => setNodeFilter(e.target.value)} aria-label="Filter node" className="w-auto min-w-[150px]">
-              <option value="">Semua node</option>
+              <option value="">All nodes</option>
               {nodeList.map((n) => (
                 <option key={n.id} value={n.id}>
                   {n.name || n.id}
                 </option>
               ))}
-              <option value={NO_NODE}>Belum ada node</option>
+              <option value={NO_NODE}>No node yet</option>
             </Select>
           )}
           <Select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Filter status" className="w-auto min-w-[180px]">
-            <option value="">Semua status</option>
+            <option value="">All statuses</option>
             {(Object.keys(STATUS_LABEL) as HostingStatus[]).map((s) => (
               <option key={s} value={s}>
                 {STATUS_LABEL[s]}
@@ -218,37 +218,37 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
       {nodesQ.data && <RegionStockStrip regions={nodesQ.data.regions ?? []} />}
       {nodesQ.data && <NodeUsageStrip nodes={nodesQ.data.nodes} onOpenSettings={onOpenSettings} />}
       {list.isLoading ? (
-        <LoadingRegion label="Memuat instance" className="space-y-2 p-4">
+        <LoadingRegion label="Loading instances" className="space-y-2 p-4">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-10 w-full" />
           ))}
         </LoadingRegion>
       ) : list.isError && !list.data ? (
         <div className="p-4">
-          <ErrorBanner message={`Instance gagal dimuat. ${errorText(list.error)}`} />
+          <ErrorBanner message={`Couldn't load instances. ${errorText(list.error)}`} />
         </div>
       ) : instances.length === 0 ? (
         <EmptyState
           icon={Server}
           size="sm"
-          title={status || nodeFilter ? "Tidak ada instance yang cocok dengan filter" : "Belum ada instance"}
-          hint="Pesanan hosting dari portal muncul di sini begitu user memulai pembayaran."
+          title={status || nodeFilter ? "No instances match the filter" : "No instances yet"}
+          hint="Hosting orders from the portal show up here as soon as a customer starts paying."
         />
       ) : (
         <>
-          <div className="overflow-x-auto" role="region" aria-label="Tabel instance hosting" tabIndex={0}>
+          <div className="overflow-x-auto" role="region" aria-label="Hosting instances table" tabIndex={0}>
             <table className="w-full min-w-[1140px] text-[13px]">
               <thead>
                 <tr className={THEAD}>
                   <th scope="col" className={TH}>User</th>
                   <th scope="col" className={TH}>Status</th>
                   <th scope="col" className={TH}>Node / region</th>
-                  <th scope="col" className={TH}>Alamat</th>
+                  <th scope="col" className={TH}>Address</th>
                   <th scope="col" className={TH}>Image</th>
-                  <th scope="col" className={TH}>Aktif sampai</th>
-                  <th scope="col" className={TH}>Dibuat</th>
+                  <th scope="col" className={TH}>Paid until</th>
+                  <th scope="col" className={TH}>Created</th>
                   <th scope="col" className={cn(TH, "text-right")}>
-                    <span className="sr-only">Aksi</span>
+                    <span className="sr-only">Actions</span>
                   </th>
                 </tr>
               </thead>
@@ -289,7 +289,7 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
                     <td className="max-w-[220px] break-all px-4 py-2.5 font-mono text-[12px] text-fg-muted">{h.image || "-"}</td>
                     <td className="whitespace-nowrap px-4 py-2.5 tabular-nums">
                       {h.paid_until ? dateID(h.paid_until) : "-"}
-                      {h.prepaid_days > 0 && <p className="text-[11.5px] text-fg-muted">+{h.prepaid_days} hari prabayar</p>}
+                      {h.prepaid_days > 0 && <p className="text-[11.5px] text-fg-muted">+{h.prepaid_days} days prepaid</p>}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2.5 tabular-nums text-fg-muted">{dateID(h.created_at, true)}</td>
                     <td className="px-4 py-2.5">
@@ -297,7 +297,7 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
                         {(h.status === "paid" || h.status === "failed") && (
                           <Button variant={h.status === "paid" ? "primary" : "secondary"} onClick={() => setProvisioning(h)}>
                             {h.status === "paid" ? <Rocket aria-hidden="true" /> : <RotateCcw aria-hidden="true" />}
-                            {h.status === "paid" ? "Buat" : "Coba lagi"}
+                            {h.status === "paid" ? "Create" : "Retry"}
                           </Button>
                         )}
                         {(h.status === "active" || h.status === "expired") && (
@@ -312,13 +312,13 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
                             Start
                           </Button>
                         )}
-                        <Button variant="ghost" onClick={() => setOrdersOf(h)} title="Lihat order">
+                        <Button variant="ghost" onClick={() => setOrdersOf(h)} title="View orders">
                           <ReceiptText aria-hidden="true" />
                           Order
                           {(h.orders?.length ?? 0) > 0 && <span className="tabular-nums text-fg-muted">{h.orders!.length}</span>}
                         </Button>
                         {h.status !== "deleted" && (
-                          <Button variant="ghost" disabled={busy(h.id)} onClick={() => onDelete(h)} title="Hapus instance" aria-label="Hapus instance">
+                          <Button variant="ghost" disabled={busy(h.id)} onClick={() => onDelete(h)} title="Delete instance" aria-label="Delete instance">
                             {busy(h.id) && action.variables?.kind === "delete" ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
                           </Button>
                         )}
@@ -329,7 +329,7 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
               </tbody>
             </table>
           </div>
-          <TablePagination page={page} pages={pages} total={total} onPage={setPage} label="Halaman instance hosting" />
+          <TablePagination page={page} pages={pages} total={total} onPage={setPage} label="Hosting instances pages" />
         </>
       )}
 
@@ -358,18 +358,18 @@ function InstancesTab({ settings, onOpenSettings }: { settings?: HostingSettings
 function RegionStockStrip({ regions }: { regions: HostingRegionStock[] }) {
   if (regions.length === 0) return null;
   return (
-    <div className="flex flex-col divide-y divide-line border-b border-line sm:flex-row sm:divide-x sm:divide-y-0" role="list" aria-label="Stok per region">
+    <div className="flex flex-col divide-y divide-line border-b border-line sm:flex-row sm:divide-x sm:divide-y-0" role="list" aria-label="Stock per region">
       {regions.map((r) => (
         <div key={r.id} role="listitem" className="min-w-0 flex-1 px-4 py-3">
           <div className="flex items-center justify-between gap-2">
             <p className="text-[13px] font-medium text-fg">{r.name}</p>
             <Badge tone={!r.enabled ? "neutral" : r.sold_out ? "danger" : r.stock >= 0 && r.stock <= 2 ? "warning" : "success"}>
-              {!r.enabled ? "Nonaktif" : r.sold_out ? "Sold out" : r.stock < 0 ? "Tanpa batas" : `${r.stock} tersedia`}
+              {!r.enabled ? "Disabled" : r.sold_out ? "Sold out" : r.stock < 0 ? "Unlimited" : `${r.stock} available`}
             </Badge>
           </div>
           <p className="mt-1 text-[12px] tabular-nums text-fg-muted">
-            {r.nodes} node · {r.used} terpakai{r.reserved > 0 ? ` · ${r.reserved} menunggu dibuat` : ""}
-            {r.capacity >= 0 ? ` · kapasitas ${r.capacity}` : ""} · {idr(r.price_idr)}
+            {r.nodes} node · {r.used} used{r.reserved > 0 ? ` · ${r.reserved} waiting to be created` : ""}
+            {r.capacity >= 0 ? ` · capacity ${r.capacity}` : ""} · {idr(r.price_idr)}
           </p>
         </div>
       ))}
@@ -382,17 +382,17 @@ function NodeUsageStrip({ nodes, onOpenSettings }: { nodes: HostingNodeLoad[]; o
   if (nodes.length === 0) {
     return (
       <div className="border-b border-line px-4 py-3">
-        <ErrorBanner message="Belum ada node. Tambahkan node di Pengaturan hosting sebelum membuat instance." />
+        <ErrorBanner message="No nodes yet. Add a node in Hosting settings before creating instances." />
         <Button variant="ghost" className="mt-2" onClick={onOpenSettings}>
           <Settings2 aria-hidden="true" />
-          Buka Pengaturan
+          Open settings
         </Button>
       </div>
     );
   }
   const noneAvailable = !nodes.some((n) => n.available);
   return (
-    <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-4 py-2.5" role="list" aria-label="Pemakaian node">
+    <div className="flex flex-wrap items-center gap-1.5 border-b border-line px-4 py-2.5" role="list" aria-label="Node usage">
       <span className="mr-1 text-[12px] text-fg-muted">Node:</span>
       {nodes.map((n) => {
         const blocked = nodeBlockedLabel(n);
@@ -410,7 +410,7 @@ function NodeUsageStrip({ nodes, onOpenSettings }: { nodes: HostingNodeLoad[]; o
       })}
       {noneAvailable && (
         <button type="button" onClick={onOpenSettings} className="ml-1 text-[12px] text-bad underline-offset-2 hover:underline">
-          Semua node penuh atau nonaktif. Tambah node di Pengaturan.
+          All nodes are full or disabled. Add a node in Hosting settings.
         </button>
       )}
     </div>
@@ -472,7 +472,7 @@ function ProvisionModal({
   const provision = useMutation({
     mutationFn: () => api.provisionHosting(inst.id, image, lockedNode ? undefined : nodeId, !lockedNode && overcommit && chosenFull),
     onSuccess: (h) => {
-      toast.success("Instance dibuat", h.fqdn ? `Aktif di ${h.fqdn}.` : undefined);
+      toast.success("Instance created", h.fqdn ? `Live at ${h.fqdn}.` : undefined);
       onDone();
       onClose();
     },
@@ -486,18 +486,18 @@ function ProvisionModal({
     <Modal
       open
       onClose={provision.isPending ? () => {} : onClose}
-      title={retry ? "Coba buat ulang instance" : "Buat instance"}
+      title={retry ? "Retry creating instance" : "Create instance"}
       subtitle={`${inst.user_email || inst.key_id}${inst.region ? ` · ${regionName}` : ""}`}
     >
       <div className="space-y-3 px-5 py-4">
         <p className="text-[13px] text-fg-muted">
-          Instance dibuat di Dokploy dengan subdomain acak pada domain node terpilih. Masa aktif mulai dihitung saat instance aktif.
+          The instance is created in Dokploy with a random subdomain on the chosen node's domain. The paid period starts when the instance goes live.
         </p>
-        {retry && inst.last_error && <ErrorBanner message={`Percobaan terakhir gagal: ${inst.last_error}`} />}
+        {retry && inst.last_error && <ErrorBanner message={`Last attempt failed: ${inst.last_error}`} />}
         {images.length === 0 ? (
-          <ErrorBanner message="Belum ada image. Tambahkan image Docker di Pengaturan hosting dulu." />
+          <ErrorBanner message="No images yet. Add a Docker image in Hosting settings first." />
         ) : (
-          <Field label="Image Docker">
+          <Field label="Docker image">
             <Select value={image} onChange={(e) => setImage(e.target.value)} className="font-mono">
               {images.map((img) => (
                 <option key={img} value={img}>
@@ -508,7 +508,7 @@ function ProvisionModal({
           </Field>
         )}
         {lockedNode ? (
-          <Field label="Node" hint="Instance ini sudah disiapkan di node ini, jadi percobaan ulang tetap di sana. Hapus instance jika perlu pindah node.">
+          <Field label="Node" hint="This instance was already set up on this node, so the retry stays there. Delete the instance to move it to another node.">
             <p className="rounded-lg border border-line bg-subtle px-3 py-2 text-[13px] text-fg">
               {locked?.name || lockedNode}
               {locked && (
@@ -524,43 +524,43 @@ function ProvisionModal({
         ) : nodesLoading ? (
           <Skeleton className="h-[62px] w-full" />
         ) : nodesError ? (
-          <ErrorBanner message={`Daftar node gagal dimuat. ${errorText(nodesError)}`} />
+          <ErrorBanner message={`Couldn't load nodes. ${errorText(nodesError)}`} />
         ) : !anyEnabled ? (
           <div className="space-y-2">
             <ErrorBanner
               message={
                 candidates.length === 0
-                  ? "Belum ada node. Tambahkan node di Pengaturan hosting dulu."
-                  : "Semua node di region ini nonaktif. Aktifkan node atau tambah node baru di Pengaturan hosting."
+                  ? "No nodes yet. Add a node in Hosting settings first."
+                  : "All nodes in this region are disabled. Enable a node or add a new one in Hosting settings."
               }
             />
             <Button variant="ghost" onClick={onOpenSettings}>
               <Settings2 aria-hidden="true" />
-              Buka Pengaturan
+              Open settings
             </Button>
           </div>
         ) : (
           <>
             {inst.region && inRegion.length === 0 && (
-              <ErrorBanner message={`Belum ada node di region ${regionName}. Instance akan dibuat di node region lain.`} />
+              <ErrorBanner message={`No nodes in ${regionName} yet. The instance will be created on a node in another region.`} />
             )}
             <Field
-              label={inst.region && inRegion.length > 0 ? `Node di ${regionName}` : "Node"}
+              label={inst.region && inRegion.length > 0 ? `Node in ${regionName}` : "Node"}
               hint={
                 !anyAvailable && !overcommit
-                  ? "Semua node penuh. Centang overcommit untuk tetap membuat instance."
+                  ? "All nodes are full. Check Overcommit to create the instance anyway."
                   : picked === null
-                    ? "Dipilih otomatis: node dengan ruang paling lega."
-                    : "Node dipilih manual."
+                    ? "Picked automatically: the node with the most free room."
+                    : "Node picked manually."
               }
             >
               <Select value={nodeId} onChange={(e) => setPicked(e.target.value)}>
-                {!chosen && <option value="">Pilih node</option>}
+                {!chosen && <option value="">Choose a node</option>}
                 {candidates.map((n) => {
                   const blocked = nodeBlockedLabel(n);
                   return (
                     <option key={n.id} value={n.id} disabled={!n.enabled || (!n.available && !overcommit)}>
-                      {`${n.name || n.id} — ${nodeUsage(n)}${blocked ? ` (${blocked})` : ""}`}
+                      {`${n.name || n.id} · ${nodeUsage(n)}${blocked ? ` (${blocked})` : ""}`}
                     </option>
                   );
                 })}
@@ -579,26 +579,26 @@ function ProvisionModal({
               <span>
                 <span className="font-medium text-fg">Overcommit</span>
                 <span className="block text-[12px] text-fg-muted">
-                  Tetap buat instance walau node sudah mencapai kapasitas. Pastikan RAM dan CPU server masih cukup.
+                  Create the instance even if the node is at capacity. Make sure the server still has enough RAM and CPU.
                 </span>
               </span>
             </label>
             {overcommit && chosenFull && (
               <p role="status" className="text-[12.5px] text-warn">
-                {chosen?.name || chosen?.id} sudah penuh ({nodeUsage(chosen!)}). Instance ini akan melebihi kapasitas.
+                {chosen?.name || chosen?.id} is full ({nodeUsage(chosen!)}). This instance will go over capacity.
               </p>
             )}
           </>
         )}
-        {provision.isError && <ErrorBanner message={`Instance gagal dibuat. ${errorText(provision.error)}`} />}
+        {provision.isError && <ErrorBanner message={`Couldn't create instance. ${errorText(provision.error)}`} />}
       </div>
       <ModalFooter>
         <Button variant="ghost" onClick={onClose} disabled={provision.isPending}>
-          Batal
+          Cancel
         </Button>
         <Button onClick={() => provision.mutate()} disabled={!image || !nodeReady || provision.isPending}>
           {provision.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Rocket aria-hidden="true" />}
-          {provision.isPending ? "Membuat…" : retry ? "Coba lagi" : "Buat instance"}
+          {provision.isPending ? "Creating…" : retry ? "Retry" : "Create instance"}
         </Button>
       </ModalFooter>
     </Modal>
@@ -608,20 +608,20 @@ function ProvisionModal({
 function OrdersModal({ inst, onClose }: { inst: HostingInstanceAdmin; onClose: () => void }) {
   const orders = inst.orders ?? [];
   return (
-    <Modal open onClose={onClose} title="Order hosting" subtitle={inst.user_email || inst.key_id} maxWidth="max-w-3xl">
+    <Modal open onClose={onClose} title="Hosting orders" subtitle={inst.user_email || inst.key_id} maxWidth="max-w-3xl">
       {orders.length === 0 ? (
-        <EmptyState icon={ReceiptText} size="sm" title="Belum ada order" />
+        <EmptyState icon={ReceiptText} size="sm" title="No orders yet" />
       ) : (
-        <div className="overflow-x-auto" role="region" aria-label="Tabel order hosting" tabIndex={0}>
+        <div className="overflow-x-auto" role="region" aria-label="Hosting orders table" tabIndex={0}>
           <table className="w-full min-w-[760px] text-[13px]">
             <thead>
               <tr className={THEAD}>
                 <th scope="col" className={TH}>Order</th>
                 <th scope="col" className={TH}>Status</th>
-                <th scope="col" className={cn(TH, "text-right")}>Jumlah</th>
-                <th scope="col" className={TH}>Kupon</th>
-                <th scope="col" className={TH}>Dibayar</th>
-                <th scope="col" className={TH}>Ketentuan</th>
+                <th scope="col" className={cn(TH, "text-right")}>Amount</th>
+                <th scope="col" className={TH}>Coupon</th>
+                <th scope="col" className={TH}>Paid</th>
+                <th scope="col" className={TH}>Terms</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
@@ -644,18 +644,18 @@ function OrdersModal({ inst, onClose }: { inst: HostingInstanceAdmin; onClose: (
                     {o.coupon_code ? (
                       <>
                         <p className="font-mono text-[12px]">{o.coupon_code}</p>
-                        {!!o.bonus_days && <p className="text-[11.5px] text-fg-muted">+{o.bonus_days} hari</p>}
+                        {!!o.bonus_days && <p className="text-[11.5px] text-fg-muted">+{o.bonus_days} days</p>}
                       </>
                     ) : (
                       "-"
                     )}
-                    {o.reason?.startsWith("refund_required") && <Badge tone="danger">Perlu refund</Badge>}
+                    {o.reason?.startsWith("refund_required") && <Badge tone="danger">Refund needed</Badge>}
                   </td>
                   <td className="whitespace-nowrap px-4 py-2.5 tabular-nums">{o.paid_at ? dateID(o.paid_at, true) : "-"}</td>
                   <td className="px-4 py-2.5">
                     <p className="font-mono text-[12px]">{o.terms_version || "-"}</p>
                     <p className="text-[11.5px] tabular-nums text-fg-muted">
-                      {o.terms_accepted_at ? `Disetujui ${dateID(o.terms_accepted_at, true)}` : "-"}
+                      {o.terms_accepted_at ? `Accepted ${dateID(o.terms_accepted_at, true)}` : "-"}
                     </p>
                   </td>
                 </tr>
@@ -666,7 +666,7 @@ function OrdersModal({ inst, onClose }: { inst: HostingInstanceAdmin; onClose: (
       )}
       <ModalFooter>
         <Button variant="ghost" onClick={onClose}>
-          Tutup
+          Close
         </Button>
       </ModalFooter>
     </Modal>
@@ -678,14 +678,14 @@ function OrdersModal({ inst, onClose }: { inst: HostingInstanceAdmin; onClose: (
 function SettingsTab({ query }: { query: { data?: HostingSettings; isLoading: boolean; isError: boolean; error: unknown } }) {
   return (
     <div className="space-y-6">
-      <Panel icon={Settings2} title="Pengaturan hosting" subtitle="Ikuti langkahnya berurutan: Dokploy, image, region, node, lalu buka pemesanan.">
+      <Panel icon={Settings2} title="Hosting settings" subtitle="Go through the steps in order: Dokploy, domain, image, region, node, then open ordering.">
         {query.isLoading ? (
-          <LoadingRegion label="Memuat pengaturan hosting" className="space-y-3 p-4">
+          <LoadingRegion label="Loading hosting settings" className="space-y-3 p-4">
             <Skeleton className="h-[320px] w-full rounded-xl" />
           </LoadingRegion>
         ) : !query.data ? (
           <div className="p-4">
-            <ErrorBanner message={`Pengaturan hosting gagal dimuat. ${query.isError ? errorText(query.error) : ""}`.trim()} />
+            <ErrorBanner message={`Couldn't load hosting settings. ${query.isError ? errorText(query.error) : ""}`.trim()} />
           </div>
         ) : (
           // Re-key on the stored values so a save resets the form to them.
@@ -720,21 +720,21 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const [step, setStep] = useState(0);
 
   const portNum = Number(port);
-  const portError = port.trim() === "" || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535 ? "Isi port 1 sampai 65535." : null;
+  const portError = port.trim() === "" || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535 ? "Enter a port from 1 to 65535." : null;
   const imageList = images
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
   const digits = /^[0-9]*$/;
-  const memError = !digits.test(memoryLimit.trim()) ? "Isi angka bulat dalam byte, atau kosongkan." : null;
-  const cpuError = !digits.test(cpuLimit.trim()) ? "Isi angka bulat dalam nano-CPU, atau kosongkan." : null;
-  const dataPathError = !dataPath.trim().startsWith("/") || dataPath.includes("..") ? "Isi path absolut di dalam container, misal /data." : null;
-  const envNameError = !/^[A-Za-z_][A-Za-z0-9_]*$/.test(passwordEnv.trim()) ? "Nama variabel tidak valid." : null;
-  const supportUrlError = !/^https:\/\/[^\s/]+/.test(supportUrl.trim()) ? "Isi link https://, misal https://t.me/username." : null;
+  const memError = !digits.test(memoryLimit.trim()) ? "Enter a whole number of bytes, or leave empty." : null;
+  const cpuError = !digits.test(cpuLimit.trim()) ? "Enter a whole number of nano-CPUs, or leave empty." : null;
+  const dataPathError = !dataPath.trim().startsWith("/") || dataPath.includes("..") ? "Enter an absolute path inside the container, e.g. /data." : null;
+  const envNameError = !/^[A-Za-z_][A-Za-z0-9_]*$/.test(passwordEnv.trim()) ? "Invalid variable name." : null;
+  const supportUrlError = !/^https:\/\/[^\s/]+/.test(supportUrl.trim()) ? "Enter an https:// link, e.g. https://t.me/username." : null;
   const urlChanged = dokployUrl.trim().replace(/\/+$/, "") !== settings.dokploy_url;
   const keyNeeded = settings.has_api_key && urlChanged && dokployUrl.trim() !== "" && apiKey.trim() === "";
   const mainDomain = normalizeDomain(rootDomain);
-  const rootDomainError = mainDomain !== "" && !validDomain(mainDomain) ? "Domain tidak valid, misal tokenizer.ai.id." : null;
+  const rootDomainError = mainDomain !== "" && !validDomain(mainDomain) ? "Invalid domain. Example: tokenizer.ai.id." : null;
   const zoneChanged = zoneId.trim() !== (settings.cloudflare_zone_id ?? "");
   const tokenNeeded = settings.has_cloudflare_token && zoneChanged && cfToken.trim() === "";
   const nodeErrors = nodeErrorsOf(nodes);
@@ -742,11 +742,11 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const sellable = regions.some((rg) => rg.enabled && Number(rg.price) > 0 && nodes.some((n) => n.enabled && n.region === rg.id));
   const nodesError =
     enabled && !nodes.some((n) => n.enabled)
-      ? "Tambahkan minimal satu node aktif sebelum membuka pemesanan."
+      ? "Add at least one active node before opening orders."
       : enabled && !sellable
-        ? "Masukkan minimal satu node aktif ke region aktif yang berharga sebelum membuka pemesanan."
+        ? "Put at least one active node in an active region with a price before opening orders."
         : nodes.some((n) => n.region && !regions.some((rg) => rg.id === n.region))
-          ? "Ada node di region yang sudah dihapus. Pilih ulang region-nya."
+          ? "A node is in a region that was deleted. Choose its region again."
           : null;
   const valid =
     !rootDomainError && !tokenNeeded && !portError && !memError && !cpuError && !envNameError && !dataPathError && !nodesError && !supportUrlError &&
@@ -791,7 +791,7 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
       qc.setQueryData(QK_HOSTING.settings, data);
       qc.invalidateQueries({ queryKey: QK_HOSTING.finance });
       qc.invalidateQueries({ queryKey: QK_HOSTING.nodes });
-      toast.success("Pengaturan disimpan", data.enabled ? "Pemesanan hosting dibuka di portal." : "Pemesanan hosting ditutup di portal.");
+      toast.success("Settings saved", data.enabled ? "Hosting orders are open in the portal." : "Hosting orders are closed in the portal.");
     },
   });
 
@@ -806,10 +806,10 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
 
   const onClearKey = async () => {
     const ok = await confirm({
-      title: "Hapus API key Dokploy?",
-      description: "Instance tidak bisa dibuat, dihentikan, atau dihapus dari dashboard sampai API key baru disimpan.",
-      confirmLabel: "Hapus key",
-      cancelLabel: "Batal",
+      title: "Delete Dokploy API key?",
+      description: "Instances can't be created, stopped or deleted from the dashboard until a new API key is saved.",
+      confirmLabel: "Delete key",
+      cancelLabel: "Cancel",
       tone: "danger",
     });
     if (!ok) return;
@@ -820,10 +820,10 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
 
   const onClearToken = async () => {
     const ok = await confirm({
-      title: "Hapus API token Cloudflare?",
-      description: "Instance baru tidak bisa dibuat atau dihapus sampai token baru disimpan, karena record DNS-nya dikelola lewat token ini.",
-      confirmLabel: "Hapus token",
-      cancelLabel: "Batal",
+      title: "Delete Cloudflare API token?",
+      description: "Instances can't be created or deleted until a new token is saved, because their DNS records are managed with this token.",
+      confirmLabel: "Delete token",
+      cancelLabel: "Cancel",
       tone: "danger",
     });
     if (!ok) return;
@@ -836,19 +836,19 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
   const anyRegionError = regionErrors.some((e) => e.name || e.price);
   const anyNodeError = nodeErrors.some((e) => e.name || e.ip || e.capacity) || !!nodesError;
   const steps: { title: string; short: string; error: boolean }[] = [
-    { title: "Koneksi Dokploy", short: "Dokploy", error: keyNeeded },
+    { title: "Dokploy connection", short: "Dokploy", error: keyNeeded },
     { title: "Domain & Cloudflare", short: "Domain", error: !!rootDomainError || tokenNeeded },
     { title: "Image & container", short: "Image", error: !!(portError || memError || cpuError || envNameError || dataPathError) },
-    { title: "Region & harga", short: "Region", error: anyRegionError },
+    { title: "Regions & prices", short: "Region", error: anyRegionError },
     { title: "Node", short: "Node", error: anyNodeError },
-    { title: "Buka pemesanan", short: "Buka", error: !!supportUrlError || (enabled && !!nodesError) },
+    { title: "Open orders", short: "Open", error: !!supportUrlError || (enabled && !!nodesError) },
   ];
   const last = steps.length - 1;
   const ready = [
-    { ok: !!dokployBase && (settings.has_api_key || !!apiKey.trim()) && !!environmentId.trim(), label: "URL, API key, dan Environment ID Dokploy terisi" },
-    { ok: !!mainDomain && !!zoneId.trim() && (settings.has_cloudflare_token || !!cfToken.trim()), label: "Domain utama dan Cloudflare terisi" },
-    { ok: imageList.length > 0, label: "Minimal satu image Docker" },
-    { ok: sellable, label: "Region aktif berharga dengan minimal satu node aktif" },
+    { ok: !!dokployBase && (settings.has_api_key || !!apiKey.trim()) && !!environmentId.trim(), label: "Dokploy URL, API key and Environment ID filled in" },
+    { ok: !!mainDomain && !!zoneId.trim() && (settings.has_cloudflare_token || !!cfToken.trim()), label: "Main domain and Cloudflare filled in" },
+    { ok: imageList.length > 0, label: "At least one Docker image" },
+    { ok: sellable, label: "An active region with a price and at least one active node" },
   ];
 
   return (
@@ -856,30 +856,30 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
       <SettingsStepper steps={steps} step={step} onStep={setStep} />
       <div className="space-y-5 px-4 py-4">
         {step === 0 && (
-          <StepIntro>Hubungkan dashboard ke panel Dokploy yang menjalankan container pelanggan. Simpan dulu, lalu klik Tes koneksi.</StepIntro>
+          <StepIntro>Connect the dashboard to the Dokploy panel that runs customer containers. Save first, then click Test connection.</StepIntro>
         )}
         {step === 0 && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Field label="URL Dokploy" hint="Alamat panel Dokploy, misal https://dokploy.example.com. Harus https://." className="sm:col-span-2">
+            <Field label="Dokploy URL" hint="Address of the Dokploy panel, e.g. https://dokploy.example.com. Must be https://." className="sm:col-span-2">
               <Input type="url" value={dokployUrl} onChange={(e) => setDokployUrl(e.target.value)} placeholder="https://dokploy.example.com" autoComplete="off" spellCheck={false} className="font-mono" />
             </Field>
             <Field
-              label="API key Dokploy"
+              label="Dokploy API key"
               hint={
                 keyNeeded ? undefined : (
                   <>
-                    Buat di <DokployLink base={dokployBase} ok={hasDokployBase} path="/dashboard/settings/profile">Dokploy → Profile → API keys</DokployLink>.{" "}
-                    {settings.has_api_key ? "Kosongkan untuk tetap memakai key yang tersimpan." : "Belum ada key tersimpan."}
+                    Create one in <DokployLink base={dokployBase} ok={hasDokployBase} path="/dashboard/settings/profile">Dokploy → Profile → API keys</DokployLink>.{" "}
+                    {settings.has_api_key ? "Leave empty to keep the saved key." : "No key saved yet."}
                   </>
                 )
               }
-              error={keyNeeded ? "URL Dokploy berubah. Masukkan ulang API key untuk URL baru." : null}
+              error={keyNeeded ? "The Dokploy URL changed. Enter the API key again for the new URL." : null}
             >
               <Input
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
-                placeholder={settings.has_api_key ? settings.api_key_masked : "Tempel API key"}
+                placeholder={settings.has_api_key ? settings.api_key_masked : "Paste API key"}
                 autoComplete="new-password"
                 spellCheck={false}
                 className="font-mono"
@@ -889,8 +889,8 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
               label="Environment ID"
               hint={
                 <>
-                  Buka <DokployLink base={dokployBase} ok={hasDokployBase} path="/dashboard/projects">Projects di Dokploy</DokployLink>, pilih project dan
-                  environment khusus hosting, lalu salin ID setelah <span className="font-mono">/environment/</span> di alamat browser.
+                  Open <DokployLink base={dokployBase} ok={hasDokployBase} path="/dashboard/projects">Projects in Dokploy</DokployLink>, choose the project and
+                  environment set aside for hosting, then copy the ID after <span className="font-mono">/environment/</span> in the browser address bar.
                 </>
               }
             >
@@ -901,40 +901,40 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
 
         {step === 1 && (
           <StepIntro>
-            Setiap instance mendapat subdomain acak di domain utama. Saat instance dibuat, record DNS-nya ditambahkan otomatis ke Cloudflare
-            (proxied) dan mengarah ke IP node.
+            Each instance gets a random subdomain on the main domain. When an instance is created, its DNS record is added to Cloudflare
+            automatically (proxied) and points to the node IP.
           </StepIntro>
         )}
         {step === 1 && (
           <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field
-                label="Domain utama"
+                label="Main domain"
                 error={rootDomainError}
-                hint={rootDomainError ? undefined : <>Instance jadi <span className="font-mono">abc123xy.{mainDomain || "tokenizer.ai.id"}</span>.</>}
+                hint={rootDomainError ? undefined : <>Instances look like <span className="font-mono">abc123xy.{mainDomain || "tokenizer.ai.id"}</span>.</>}
                 className="sm:col-span-2"
               >
                 <Input value={rootDomain} onChange={(e) => setRootDomain(e.target.value)} placeholder="tokenizer.ai.id" autoComplete="off" spellCheck={false} className="font-mono" />
               </Field>
               <Field
-                label="Zone ID Cloudflare"
+                label="Cloudflare Zone ID"
                 hint={
                   <>
-                    Buka <ExtLink href="https://dash.cloudflare.com/">dashboard Cloudflare</ExtLink>, pilih domain, lalu salin Zone ID di halaman Overview
-                    (kolom kanan, bagian API).
+                    Open the <ExtLink href="https://dash.cloudflare.com/">Cloudflare dashboard</ExtLink>, choose the domain, then copy the Zone ID from the Overview page
+                    (right column, API section).
                   </>
                 }
               >
                 <Input value={zoneId} onChange={(e) => setZoneId(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" />
               </Field>
               <Field
-                label="API token Cloudflare"
-                error={tokenNeeded ? "Zone ID berubah. Masukkan ulang API token." : null}
+                label="Cloudflare API token"
+                error={tokenNeeded ? "The Zone ID changed. Enter the API token again." : null}
                 hint={
                   tokenNeeded ? undefined : (
                     <>
-                      Buat di <ExtLink href="https://dash.cloudflare.com/profile/api-tokens">Cloudflare → API Tokens</ExtLink> dengan izin Zone → DNS → Edit untuk
-                      domain ini. {settings.has_cloudflare_token ? "Kosongkan untuk tetap memakai token yang tersimpan." : "Belum ada token tersimpan."}
+                      Create one in <ExtLink href="https://dash.cloudflare.com/profile/api-tokens">Cloudflare → API Tokens</ExtLink> with the Zone → DNS → Edit permission for
+                      this domain. {settings.has_cloudflare_token ? "Leave empty to keep the saved token." : "No token saved yet."}
                     </>
                   )
                 }
@@ -943,7 +943,7 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
                   type="password"
                   value={cfToken}
                   onChange={(e) => setCfToken(e.target.value)}
-                  placeholder={settings.has_cloudflare_token ? settings.cloudflare_token_masked : "Tempel API token"}
+                  placeholder={settings.has_cloudflare_token ? settings.cloudflare_token_masked : "Paste API token"}
                   autoComplete="new-password"
                   spellCheck={false}
                   className="font-mono"
@@ -951,26 +951,26 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
               </Field>
             </div>
             <p className="rounded-xl border border-line bg-subtle/60 px-3.5 py-2.5 text-[12.5px] text-fg-muted">
-              Atur mode SSL/TLS domain ini ke <span className="font-medium text-fg">Full</span> di Cloudflare (SSL/TLS → Overview). Mode Flexible membuat
-              redirect berulang, sedangkan Full (strict) gagal jika sertifikat node belum terbit.
+              Set this domain's SSL/TLS mode to <span className="font-medium text-fg">Full</span> in Cloudflare (SSL/TLS → Overview). Flexible causes
+              a redirect loop, and Full (strict) fails until the node's certificate is issued.
             </p>
           </>
         )}
 
         {step === 2 && (
           <StepIntro>
-            Image dan batas yang dipakai tiap container pelanggan. Setelah menyimpan, buat satu instance uji dan cek bahwa password default{" "}
-            <span className="font-mono text-fg">123456</span> ditolak.
+            The image and limits used by each customer container. After saving, create a test instance and check that the default password{" "}
+            <span className="font-mono text-fg">123456</span> is rejected.
           </StepIntro>
         )}
         {step === 2 && (
           <>
             <Field
-              label="Image Docker"
+              label="Docker image"
               hint={
                 <>
-                  Satu image per baris. Image pertama jadi pilihan default saat membuat instance. Lihat versi di{" "}
-                  <ExtLink href="https://hub.docker.com/r/luqmenul/9router-go/tags">Docker Hub luqmenul/9router-go</ExtLink>. Versi di bawah 0.4.60 ditolak
+                  One image per line. The first image is the default when creating an instance. See versions on{" "}
+                  <ExtLink href="https://hub.docker.com/r/luqmenul/9router-go/tags">Docker Hub luqmenul/9router-go</ExtLink>. Versions below 0.4.60 are rejected
                   (CVE-2026-63732).
                 </>
               }
@@ -978,46 +978,46 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
               <Textarea value={images} onChange={(e) => setImages(e.target.value)} rows={3} placeholder="luqmenul/9router-go:latest" spellCheck={false} className="font-mono text-[12.5px]" />
             </Field>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Field label="Port container" hint="Diisi ke env PORT. Image luqmenul/9router-go memakai 20130." error={portError}>
+              <Field label="Port container" hint="Passed as the PORT env. The luqmenul/9router-go image uses 20130." error={portError}>
                 <Input type="number" inputMode="numeric" min="1" max="65535" value={port} onChange={(e) => setPort(e.target.value)} className="tabular-nums" />
               </Field>
               <Field
-                label="Env password awal"
-                hint="Setiap instance mendapat password acak di variabel ini. Pastikan sesuai dengan yang dibaca image 9router."
+                label="Initial password env"
+                hint="Each instance gets a random password in this variable. It must match what the 9router image reads."
                 error={envNameError}
               >
                 <Input value={passwordEnv} onChange={(e) => setPasswordEnv(e.target.value)} autoComplete="off" spellCheck={false} className="font-mono" />
               </Field>
               <Field
-                label="Path data"
-                hint="Volume Docker per instance dipasang di sini dan diisi ke DATA_DIR, agar data pelanggan tidak hilang saat redeploy."
+                label="Data path"
+                hint="A Docker volume per instance is mounted here and passed as DATA_DIR, so customer data survives a redeploy."
                 error={dataPathError}
               >
                 <Input value={dataPath} onChange={(e) => setDataPath(e.target.value)} placeholder="/data" autoComplete="off" spellCheck={false} className="font-mono" />
               </Field>
-              <Field label="Batas memori (byte)" hint="Contoh 536870912 untuk 512 MB. Kosongkan untuk tanpa batas." error={memError}>
+              <Field label="Memory limit (bytes)" hint="For example 536870912 for 512 MB. Leave empty for no limit." error={memError}>
                 <Input inputMode="numeric" value={memoryLimit} onChange={(e) => setMemoryLimit(e.target.value)} placeholder="536870912" className="font-mono tabular-nums" />
               </Field>
-              <Field label="Batas CPU (nano-CPU)" hint="Contoh 1000000000 untuk 1 CPU. Kosongkan untuk tanpa batas." error={cpuError}>
+              <Field label="CPU limit (nano-CPUs)" hint="For example 1000000000 for 1 CPU. Leave empty for no limit." error={cpuError}>
                 <Input inputMode="numeric" value={cpuLimit} onChange={(e) => setCpuLimit(e.target.value)} placeholder="1000000000" className="font-mono tabular-nums" />
               </Field>
             </div>
             <details className="group rounded-xl border border-line" open={envTemplate.trim() !== ""}>
               <summary className="flex cursor-pointer list-none items-center gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-medium text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [&::-webkit-details-marker]:hidden">
                 <ChevronRight className="h-4 w-4 shrink-0 text-fg-muted transition-transform group-open:rotate-90" aria-hidden="true" />
-                Lanjutan: template environment
+                Advanced: environment template
               </summary>
               <div className="border-t border-line px-3.5 py-3">
                 <Field
-                  label="Template environment"
+                  label="Environment template"
                   hint={
                     <>
-                      Format KEY=value, satu per baris. Placeholder yang diganti otomatis: <code className="font-mono">{"{{SUBDOMAIN}}"}</code>,{" "}
+                      KEY=value format, one per line. Placeholders replaced automatically: <code className="font-mono">{"{{SUBDOMAIN}}"}</code>,{" "}
                       <code className="font-mono">{"{{FQDN}}"}</code>, <code className="font-mono">{"{{URL}}"}</code>,{" "}
-                      <code className="font-mono">{"{{INSTANCE_ID}}"}</code>, <code className="font-mono">{"{{PASSWORD}}"}</code>. Diatur otomatis dan tidak bisa
-                      ditimpa: variabel password awal, <code className="font-mono">PORT</code>, dan <code className="font-mono">DATA_DIR</code>.{" "}
-                      <code className="font-mono">STRICT_SSL=true</code> ditambahkan kecuali template mengaturnya. <code className="font-mono">JWT_SECRET</code>{" "}
-                      ditolak karena harus unik per instance.
+                      <code className="font-mono">{"{{INSTANCE_ID}}"}</code>, <code className="font-mono">{"{{PASSWORD}}"}</code>. Set automatically and can't be
+                      overridden: the initial password variable, <code className="font-mono">PORT</code> and <code className="font-mono">DATA_DIR</code>.{" "}
+                      <code className="font-mono">STRICT_SSL=true</code> is added unless the template sets it. <code className="font-mono">JWT_SECRET</code>{" "}
+                      is rejected because it must be unique per instance.
                     </>
                   }
                 >
@@ -1039,16 +1039,16 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
             listError={nodesError}
             serversLink={
               <DokployLink base={dokployBase} ok={hasDokployBase} path="/dashboard/settings/servers">
-                Servers di Dokploy
+                Servers in Dokploy
               </DokployLink>
             }
           />
         )}
 
-        {step === 5 && <StepIntro>Periksa kesiapan, isi kontak aktivasi, lalu buka pemesanan dan simpan.</StepIntro>}
+        {step === 5 && <StepIntro>Check the list below, fill in the activation contact, then open orders and save.</StepIntro>}
         {step === 5 && (
           <>
-            <ul className="space-y-1.5 text-[13px]" aria-label="Kesiapan">
+            <ul className="space-y-1.5 text-[13px]" aria-label="Readiness">
               {ready.map((r) => (
                 <li key={r.label} className="flex items-start gap-2">
                   {r.ok ? (
@@ -1057,15 +1057,15 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
                     <CircleDashed className="mt-0.5 h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
                   )}
                   <span className={r.ok ? "text-fg" : "text-fg-muted"}>
-                    <span className="sr-only">{r.ok ? "Sudah: " : "Belum: "}</span>
+                    <span className="sr-only">{r.ok ? "Done: " : "Not done: "}</span>
                     {r.label}
                   </span>
                 </li>
               ))}
             </ul>
             <Field
-              label="Link kontak aktivasi"
-              hint="Tombol “Hubungi admin” untuk pelanggan yang sudah bayar dan menunggu aktivasi."
+              label="Activation contact link"
+              hint="The “Hubungi admin” button in the portal for customers who have paid and are waiting for activation."
               error={supportUrlError}
             >
               <Input type="url" value={supportUrl} onChange={(e) => setSupportUrl(e.target.value)} placeholder="https://t.me/damnwahhh" autoComplete="off" spellCheck={false} className="font-mono" />
@@ -1073,49 +1073,49 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
             <div className="flex items-start justify-between gap-4 rounded-xl border border-line bg-subtle/60 p-3.5">
               <div className="min-w-0">
                 <p id="hosting-enabled" className="text-[13px] font-medium text-fg">
-                  Buka pemesanan di portal
+                  Open orders in the portal
                 </p>
-                <p className="text-[12px] text-fg-muted">Saat mati, user tidak bisa memesan atau memperpanjang. Instance yang ada tetap berjalan.</p>
+                <p className="text-[12px] text-fg-muted">When off, customers can't order or renew. Existing instances keep running.</p>
               </div>
               <Toggle checked={enabled} onChange={setEnabled} aria-labelledby="hosting-enabled" />
             </div>
             {enabled && nodesError && <ErrorBanner message={nodesError} />}
             <p className="text-[12px] text-fg-muted">
-              Versi ketentuan aktif: <span className="font-mono">{settings.terms_version}</span>
+              Active terms version: <span className="font-mono">{settings.terms_version}</span>
             </p>
           </>
         )}
 
-        {save.isError && <ErrorBanner message={`Pengaturan gagal disimpan. ${errorText(save.error)}`} />}
-        {step === 0 && test.isError && <ErrorBanner message={`Tes koneksi gagal. ${errorText(test.error)}`} />}
+        {save.isError && <ErrorBanner message={`Couldn't save settings. ${errorText(save.error)}`} />}
+        {step === 0 && test.isError && <ErrorBanner message={`Connection test failed. ${errorText(test.error)}`} />}
         {step === 0 &&
           test.data &&
           (test.data.ok ? (
             <p role="status" className="flex items-center gap-2 rounded-xl border border-ok/30 bg-ok/10 px-3.5 py-2.5 text-[13px] text-fg">
               <Check className="h-4 w-4 shrink-0 text-ok" aria-hidden="true" />
-              Terhubung ke Dokploy.
+              Connected to Dokploy.
             </p>
           ) : (
-            <ErrorBanner message={`Tidak bisa terhubung ke Dokploy. ${test.data.error ?? ""}`.trim()} />
+            <ErrorBanner message={`Couldn't connect to Dokploy. ${test.data.error ?? ""}`.trim()} />
           ))}
       </div>
       <div className="flex flex-col gap-2 border-t border-line bg-subtle px-4 py-2.5 sm:flex-row sm:items-center sm:justify-end">
         {step > 0 && (
           <Button type="button" variant="ghost" className="sm:mr-auto" onClick={() => setStep(step - 1)}>
             <ArrowLeft aria-hidden="true" />
-            Kembali
+            Back
           </Button>
         )}
         {step === 0 && settings.has_api_key && (
           <Button type="button" variant="ghost" className="sm:mr-auto" onClick={onClearKey} disabled={save.isPending}>
             <Trash2 aria-hidden="true" />
-            Hapus API key
+            Delete API key
           </Button>
         )}
         {step === 1 && settings.has_cloudflare_token && (
           <Button type="button" variant="ghost" onClick={onClearToken} disabled={save.isPending}>
             <Trash2 aria-hidden="true" />
-            Hapus token Cloudflare
+            Delete Cloudflare token
           </Button>
         )}
         {step === 0 && (
@@ -1127,19 +1127,19 @@ function SettingsForm({ settings }: { settings: HostingSettings }) {
               test.mutate();
             }}
             disabled={test.isPending}
-            title="Menguji pengaturan yang sudah tersimpan"
+            title="Tests the saved settings"
           >
             {test.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <PlugZap aria-hidden="true" />}
-            Tes koneksi
+            Test connection
           </Button>
         )}
         <Button type="submit" variant={step < last ? "ghost" : undefined} disabled={!valid || keyNeeded || save.isPending}>
           {save.isPending ? <Loader2 className="animate-spin" aria-hidden="true" /> : <Check aria-hidden="true" />}
-          Simpan
+          Save
         </Button>
         {step < last && (
           <Button type="button" onClick={() => setStep(step + 1)}>
-            Lanjut
+            Next
             <ArrowRight aria-hidden="true" />
           </Button>
         )}
@@ -1157,20 +1157,20 @@ function ExtLink({ href, children }: { href: string; children: ReactNode }) {
     <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 text-link hover:underline">
       {children}
       <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
-      <span className="sr-only"> (tab baru)</span>
+      <span className="sr-only"> (new tab)</span>
     </a>
   );
 }
 
 /** Link into the Dokploy panel, or plain text until a valid URL is filled in. */
 function DokployLink({ base, ok, path, children }: { base: string; ok: boolean; path: string; children: ReactNode }) {
-  if (!ok) return <span className="text-fg">{children} (isi URL Dokploy dulu)</span>;
+  if (!ok) return <span className="text-fg">{children} (enter the Dokploy URL first)</span>;
   return <ExtLink href={base + path}>{children}</ExtLink>;
 }
 
 function SettingsStepper({ steps, step, onStep }: { steps: { title: string; short: string; error: boolean }[]; step: number; onStep: (i: number) => void }) {
   return (
-    <nav aria-label="Langkah pengaturan" className="border-b border-line px-4 py-3">
+    <nav aria-label="Settings steps" className="border-b border-line px-4 py-3">
       <ol className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
         {steps.map((s, i) => {
           const current = i === step;
@@ -1197,7 +1197,7 @@ function SettingsStepper({ steps, step, onStep }: { steps: { title: string; shor
                 </span>
                 <span className={cn("truncate text-[12px] sm:text-[12.5px]", current ? "font-medium text-fg" : "text-fg-muted")}>
                   {s.short}
-                  {s.error && <span className="sr-only"> (ada isian yang perlu diperbaiki)</span>}
+                  {s.error && <span className="sr-only"> (has fields to fix)</span>}
                 </span>
               </button>
             </li>
@@ -1205,7 +1205,7 @@ function SettingsStepper({ steps, step, onStep }: { steps: { title: string; shor
         })}
       </ol>
       <p className="mt-2 text-[12px] text-fg-muted" aria-hidden="true">
-        Langkah {step + 1} dari {steps.length} · {steps[step].title}
+        Step {step + 1} of {steps.length} · {steps[step].title}
       </p>
     </nav>
   );
@@ -1250,10 +1250,10 @@ function nodeErrorsOf(nodes: NodeDraft[]) {
     const capText = n.capacity.trim();
     const cap = Number(capText || "0");
     return {
-      name: !name ? "Isi nama node." : name.length > 80 ? "Maksimal 80 karakter." : null,
-      ip: ip === "" ? (n.enabled ? "Isi IP publik node aktif." : null) : !IPV4.test(ip) ? "Isi alamat IPv4, misal 203.0.113.7." : null,
+      name: !name ? "Enter a node name." : name.length > 80 ? "80 characters at most." : null,
+      ip: ip === "" ? (n.enabled ? "Enter the public IP of an active node." : null) : !IPV4.test(ip) ? "Enter an IPv4 address, e.g. 203.0.113.7." : null,
       capacity:
-        !/^[0-9]*$/.test(capText) || !Number.isInteger(cap) || cap > MAX_NODE_CAPACITY ? `Isi angka bulat 0 sampai ${MAX_NODE_CAPACITY}.` : null,
+        !/^[0-9]*$/.test(capText) || !Number.isInteger(cap) || cap > MAX_NODE_CAPACITY ? `Enter a whole number from 0 to ${MAX_NODE_CAPACITY}.` : null,
     };
   });
 }
@@ -1273,8 +1273,8 @@ function regionErrorsOf(regions: RegionDraft[]) {
   return regions.map((r) => {
     const n = Number(r.price);
     return {
-      name: !r.name.trim() ? "Isi nama region." : null,
-      price: r.price.trim() === "" || !Number.isInteger(n) || n < 0 ? "Isi angka bulat 0 atau lebih." : null,
+      name: !r.name.trim() ? "Enter a region name." : null,
+      price: r.price.trim() === "" || !Number.isInteger(n) || n < 0 ? "Enter a whole number, 0 or more." : null,
     };
   });
 }
@@ -1296,7 +1296,7 @@ function RegionsEditor({
           Region
         </p>
         <p className="text-[12px] text-fg-muted">
-          Pilihan lokasi di halaman hosting dan portal, masing-masing dengan harga per 30 hari. Region nonaktif atau tanpa node tampil sebagai sold out.
+          Locations offered on the hosting page and in the portal, each with a price per 30 days. A disabled region, or one with no nodes, shows as sold out.
         </p>
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1311,16 +1311,16 @@ function RegionsEditor({
                 <span className="font-mono text-[11px] text-fg-faint">{r.id}</span>
                 <div className="flex items-center gap-2">
                   <span id={toggleId} className="text-[12px] text-fg-muted">
-                    Dijual
+                    For sale
                   </span>
                   <Toggle checked={r.enabled} onChange={(v) => update(r.id, { enabled: v })} aria-labelledby={toggleId} />
                 </div>
               </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Field label="Nama" error={err.name}>
+                <Field label="Name" error={err.name}>
                   <Input value={r.name} onChange={(e) => update(r.id, { name: e.target.value })} maxLength={60} autoComplete="off" />
                 </Field>
-                <Field label="Harga (IDR)" error={err.price} hint={!err.price && priceNum > 0 ? idr(priceNum) : undefined}>
+                <Field label="Price (IDR)" error={err.price} hint={!err.price && priceNum > 0 ? idr(priceNum) : undefined}>
                   <Input
                     type="number"
                     inputMode="numeric"
@@ -1377,15 +1377,15 @@ function NodesEditor({
     const used = loadOf(r.id)?.used ?? 0;
     if (used > 0) {
       const ok = await confirm({
-        title: `Hapus ${r.name.trim() || "node"}?`,
+        title: `Delete ${r.name.trim() || "node"}?`,
         description: (
           <>
-            Node ini masih dipakai {used} instance. Instance yang berjalan tidak ikut dihapus, tetapi instance gagal di node ini tidak bisa dicoba
-            ulang lagi. Jika hanya ingin berhenti menerima instance baru, matikan saja tombol Aktif di node ini.
+            {used} instance(s) still use this node. Running instances are not deleted, but failed instances on this node can no longer be
+            retried. To stop taking new instances only, turn off Active on this node instead.
           </>
         ),
-        confirmLabel: "Tetap hapus",
-        cancelLabel: "Batal",
+        confirmLabel: "Delete anyway",
+        cancelLabel: "Cancel",
         tone: "danger",
       });
       if (!ok) return;
@@ -1400,13 +1400,13 @@ function NodesEditor({
           Node
         </p>
         <p className="text-[12px] text-fg-muted">
-          Server Dokploy yang menjalankan container pelanggan. Record DNS tiap instance mengarah ke IP publik node-nya. Tambahkan server remote khusus
-          pelanggan di {serversLink}, lalu salin Server ID dan IP-nya. Container di server utama Dokploy bisa menjangkau database dan Redis milik Dokploy. Region menentukan stok yang dijual di halaman hosting: jumlah slot kosong node aktif di region itu.
+          Dokploy servers that run customer containers. Each instance's DNS record points to its node's public IP. Add remote servers just for
+          customers in {serversLink}, then copy their Server ID and IP. Containers on the main Dokploy server can reach Dokploy's own database and Redis. The region sets the stock sold on the hosting page: the free slots of active nodes in that region.
         </p>
       </div>
       {nodes.length === 0 && (
         <p className="rounded-xl border border-dashed border-line-strong px-4 py-6 text-center text-[13px] text-fg-muted">
-          Belum ada node. Tambahkan minimal satu node agar instance bisa dibuat.
+          No nodes yet. Add at least one node so instances can be created.
         </p>
       )}
       {nodes.map((r, i) => {
@@ -1424,30 +1424,30 @@ function NodesEditor({
                 <span className="text-[12.5px] font-medium text-fg">{r.name.trim() || `Node ${i + 1}`}</span>
                 <span className="font-mono text-[11px] text-fg-faint">{r.id}</span>
                 {r.isNew ? (
-                  <Badge tone="accent">Baru</Badge>
+                  <Badge tone="accent">New</Badge>
                 ) : load ? (
-                  <Badge tone={!r.enabled ? "neutral" : full ? "danger" : "neutral"} title="Instance di node ini / kapasitas">
-                    <span className="tabular-nums">{load.used}/{cap > 0 ? cap : "∞"}</span> instance{full && r.enabled ? " · penuh" : ""}
+                  <Badge tone={!r.enabled ? "neutral" : full ? "danger" : "neutral"} title="Instances on this node / capacity">
+                    <span className="tabular-nums">{load.used}/{cap > 0 ? cap : "∞"}</span> instance{full && r.enabled ? " · full" : ""}
                   </Badge>
                 ) : null}
-                {!r.enabled && <Badge tone="neutral">Nonaktif</Badge>}
-                {!r.region && <Badge tone="warning">Tanpa region</Badge>}
+                {!r.enabled && <Badge tone="neutral">Disabled</Badge>}
+                {!r.region && <Badge tone="warning">No region</Badge>}
               </div>
               <div className="flex items-center gap-2">
                 <span id={toggleId} className="text-[12px] text-fg-muted">
-                  Aktif
+                  Active
                 </span>
                 <Toggle checked={r.enabled} onChange={(v) => update(r.key, { enabled: v })} aria-labelledby={toggleId} />
-                <Button type="button" variant="ghost" onClick={() => remove(r)} aria-label={`Hapus ${r.name.trim() || `node ${i + 1}`}`} title="Hapus node">
+                <Button type="button" variant="ghost" onClick={() => remove(r)} aria-label={`Delete ${r.name.trim() || `node ${i + 1}`}`} title="Delete node">
                   <Trash2 aria-hidden="true" />
                 </Button>
               </div>
             </div>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              <Field label="Nama" error={err.name}>
+              <Field label="Name" error={err.name}>
                 <Input value={r.name} onChange={(e) => update(r.key, { name: e.target.value })} placeholder="Node 1" maxLength={80} autoComplete="off" />
               </Field>
-              <Field label="IP publik" error={err.ip} hint={err.ip ? undefined : <>IPv4 server node. Lihat di {serversLink}.</>}>
+              <Field label="Public IP" error={err.ip} hint={err.ip ? undefined : <>IPv4 of the node server. Find it in {serversLink}.</>}>
                 <Input
                   inputMode="decimal"
                   value={r.publicIp}
@@ -1458,23 +1458,23 @@ function NodesEditor({
                   className="font-mono tabular-nums"
                 />
               </Field>
-              <Field label="Server ID Dokploy" hint={<>Salin dari {serversLink}. Kosongkan untuk server utama Dokploy (tidak disarankan).</>}>
+              <Field label="Dokploy Server ID" hint={<>Copy it from {serversLink}. Leave empty for the main Dokploy server (not recommended).</>}>
                 <Input value={r.serverId} onChange={(e) => update(r.key, { serverId: e.target.value })} autoComplete="off" spellCheck={false} className="font-mono" />
               </Field>
-              <Field label="Server monitoring" hint={monitor.isError ? `Daftar server monitoring gagal dimuat. ${errorText(monitor.error)}` : undefined}>
+              <Field label="Server monitoring" hint={monitor.isError ? `Couldn't load monitoring servers. ${errorText(monitor.error)}` : undefined}>
                 <Select value={r.monitorTargetId} onChange={(e) => update(r.key, { monitorTargetId: e.target.value })}>
-                  <option value="">Otomatis (server pelanggan)</option>
+                  <option value="">Automatic (customer server)</option>
                   {targets.map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
                     </option>
                   ))}
-                  {unknownTarget && <option value={r.monitorTargetId}>(server tidak ditemukan)</option>}
+                  {unknownTarget && <option value={r.monitorTargetId}>(server not found)</option>}
                 </Select>
               </Field>
-              <Field label="Region" hint={r.region ? undefined : "Node tanpa region tidak menambah stok yang dijual."}>
+              <Field label="Region" hint={r.region ? undefined : "A node without a region adds no stock for sale."}>
                 <Select value={r.region} onChange={(e) => update(r.key, { region: e.target.value })}>
-                  <option value="">Tanpa region (tidak dijual)</option>
+                  <option value="">No region (not for sale)</option>
                   {regions.map((rg) => (
                     <option key={rg.id} value={rg.id}>
                       {rg.name.trim() || rg.id}
@@ -1483,8 +1483,8 @@ function NodesEditor({
                 </Select>
               </Field>
               <Field
-                label="Kapasitas container"
-                hint={err.capacity ? undefined : "Slot yang dijual di node ini. 0 = tanpa batas. Bisa dilewati dengan overcommit saat membuat instance."}
+                label="Container capacity"
+                hint={err.capacity ? undefined : "Slots sold on this node. 0 = no limit. Overcommit can go past it when creating an instance."}
                 error={err.capacity}
               >
                 <Input
@@ -1505,7 +1505,7 @@ function NodesEditor({
       {listError && <ErrorBanner message={listError} />}
       <Button type="button" variant="ghost" onClick={add}>
         <Plus aria-hidden="true" />
-        Tambah node
+        Add node
       </Button>
     </section>
   );
