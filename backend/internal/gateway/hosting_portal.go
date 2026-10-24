@@ -53,6 +53,7 @@ func hostingInstanceView(st hosting.Settings, h store.HostingInstance, pending *
 	if pending != nil {
 		v["pending_payment_link"] = pending.PaymentLinkURL
 		v["pending_order_id"] = pending.ID
+		v["pending_expires_at"] = pending.ExpiresAt
 	}
 	return v
 }
@@ -151,8 +152,9 @@ func (s *Server) instancePrices(st hosting.Settings, instances []store.HostingIn
 	return out
 }
 
-// latestPendingHostingOrders maps instance id to its newest unexpired
-// pending hosting order, so the portal can offer "continue payment".
+// latestPendingHostingOrders maps instance id to its newest pending hosting
+// order still inside its checkout window, so the portal shows the same
+// payment link after a refresh until the window ends.
 // prices holds each instance's current base price; orders at another price
 // are skipped so a price change cannot be dodged. A non-nil coupon keeps
 // only orders made with that coupon code ("" = no coupon), so a reused
@@ -171,16 +173,30 @@ func latestPendingHostingOrders(orders []store.PaymentOrder, now time.Time, pric
 		if coupon != nil && o.CouponCode != *coupon {
 			continue
 		}
-		if o.ExpiresAt != "" {
-			if t, err := time.Parse(time.RFC3339, o.ExpiresAt); err == nil && t.Before(now) {
-				continue
-			}
+		if !checkoutOpen(o, now) {
+			continue
 		}
 		if _, seen := out[o.HostingInstanceID]; !seen {
 			out[o.HostingInstanceID] = o
 		}
 	}
 	return out
+}
+
+// checkoutOpen reports whether a hosting order's payment link may still be
+// offered: within CheckoutWindow of its creation and before its expiry.
+// Orders made before the window existed carry a longer gateway expiry, so
+// the creation time is checked too.
+func checkoutOpen(o store.PaymentOrder, now time.Time) bool {
+	if !o.CreatedAt.IsZero() && !now.Before(o.CreatedAt.Add(hosting.CheckoutWindow)) {
+		return false
+	}
+	if o.ExpiresAt != "" {
+		if t, err := time.Parse(time.RFC3339, o.ExpiresAt); err == nil && !now.Before(t) {
+			return false
+		}
+	}
+	return true
 }
 
 type createHostingOrderRequest struct {
@@ -309,6 +325,21 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusServiceUnavailable, "hosting is not available for this region")
 		return
 	}
+	// Reuse an open payment for this instance instead of creating a new
+	// SumoPod payment on every click. This runs before the stock check: an
+	// open checkout already holds its slot.
+	if !newInstance {
+		orders, oerr := s.db.PaymentOrders().ListByKey(r.Context(), keyID)
+		if oerr != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, oerr, "internal server error"))
+			return
+		}
+		if open, ok := latestPendingHostingOrders(orders, time.Now(), map[string]int64{inst.ID: price}, &couponCode)[inst.ID]; ok {
+			s.writeHostingOrderResponse(w, http.StatusOK, open)
+			return
+		}
+	}
+
 	// An instance nobody has paid for yet takes a new slot, so its region
 	// must have stock. Renewals of paid instances do not.
 	if inst.Status == store.HostingAwaitingPayment {
@@ -319,20 +350,6 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 		}
 		if region != "" && (!known || rs.SoldOut) {
 			writeHostingRegionError(w, http.StatusConflict, "region_sold_out", "Stok region ini sedang habis.")
-			return
-		}
-	}
-
-	// Reuse an open payment for this instance instead of creating a new
-	// SumoPod payment on every click.
-	if !newInstance {
-		orders, oerr := s.db.PaymentOrders().ListByKey(r.Context(), keyID)
-		if oerr != nil {
-			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, oerr, "internal server error"))
-			return
-		}
-		if open, ok := latestPendingHostingOrders(orders, time.Now(), map[string]int64{inst.ID: price}, &couponCode)[inst.ID]; ok {
-			s.writeHostingOrderResponse(w, http.StatusOK, open)
 			return
 		}
 	}
@@ -358,7 +375,8 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 	base := s.publicBaseURL(r)
 	created, err := s.paymentClient.CreatePayment(r.Context(), payment.CreateRequest{
 		OrderID: orderID, AmountIDR: quote.FinalIDR, Currency: "IDR",
-		ExpiresInHours:        p.ExpiresInHours,
+		// The gateway takes whole hours; the portal enforces CheckoutWindow.
+		ExpiresInHours:        1,
 		SuccessReturnURL:      base + "/portal/hosting?status=success",
 		CancelReturnURL:       base + "/portal/hosting?status=cancel",
 		PaymentMethodTypeCode: p.PaymentMethodTypeCode,
@@ -370,12 +388,16 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 	}
 
 	now := time.Now()
+	expires := now.Add(hosting.CheckoutWindow)
+	if t, perr := time.Parse(time.RFC3339, created.ExpiresAt); perr == nil && t.Before(expires) {
+		expires = t
+	}
 	o := store.PaymentOrder{
 		ID: orderID, TenantID: adminTenant, KeyID: keyID, GoogleSub: u.GoogleSub,
 		AmountIDR: quote.FinalIDR, Status: store.PaymentPending, Provider: p.Provider,
 		ProviderPaymentID: created.PaymentID, PaymentLinkURL: created.PaymentLinkURL,
 		IdempotencyKey: idem, Actor: "portal", CreatedAt: now, UpdatedAt: now,
-		ExpiresAt: created.ExpiresAt, Product: store.ProductHosting,
+		ExpiresAt: expires.UTC().Format(time.RFC3339), Product: store.ProductHosting,
 		HostingInstanceID: inst.ID, TermsVersion: hosting.TermsVersion,
 		TermsAcceptedAt: now.UTC().Format(time.RFC3339),
 		CouponID:        coupon.ID, CouponCode: coupon.Code, BonusDays: quote.BonusDays,
@@ -383,7 +405,7 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 	if coupon.ID != "" {
 		o.BaseAmountIDR = quote.BaseIDR
 	}
-	if err := s.createHostingOrder(r, inst, newInstance, o, s.couponHoldUntil(created.ExpiresAt, now)); err != nil {
+	if err := s.createHostingOrder(r, inst, newInstance, o, couponHoldUntil(expires)); err != nil {
 		if reject := couponReserveRejection(err); reject != "" {
 			writeCouponRejection(w, reject)
 			return

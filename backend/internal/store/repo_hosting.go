@@ -306,12 +306,19 @@ func (r *HostingRepo) CountByNode(ctx context.Context) (map[string]int, error) {
 	return out, rows.Err()
 }
 
-// CountWaitingByRegion counts paid instances not placed on a node yet, per
-// region: they will take a slot in that region once created.
-func (r *HostingRepo) CountWaitingByRegion(ctx context.Context) (map[string]int, error) {
-	q := r.db.rebind(`SELECT region, COUNT(*) FROM hosting_instances
-		WHERE node_id = '' AND region <> '' AND status IN (?, ?, ?) GROUP BY region`)
-	rows, err := r.db.sql.QueryContext(ctx, q, string(HostingPaid), string(HostingProvisioning), string(HostingFailed))
+// CountWaitingByRegion counts, per region, instances not placed on a node
+// yet that will take a slot there: paid ones, and unpaid ones whose hosting
+// order was created at or after holdSince and is still pending (a checkout
+// in progress holds its slot).
+func (r *HostingRepo) CountWaitingByRegion(ctx context.Context, holdSince time.Time) (map[string]int, error) {
+	q := r.db.rebind(`SELECT h.region, COUNT(*) FROM hosting_instances h
+		WHERE h.node_id = '' AND h.region <> '' AND (
+			h.status IN (?, ?, ?)
+			OR (h.status = ? AND EXISTS (SELECT 1 FROM payment_orders o
+				WHERE o.hosting_instance_id = h.id AND o.product = ? AND o.status = ? AND o.created_at >= ?))
+		) GROUP BY h.region`)
+	rows, err := r.db.sql.QueryContext(ctx, q, string(HostingPaid), string(HostingProvisioning), string(HostingFailed),
+		string(HostingAwaitingPayment), ProductHosting, string(PaymentPending), formatTime(holdSince))
 	if err != nil {
 		return nil, fmt.Errorf("store: count waiting hosting by region: %w", err)
 	}

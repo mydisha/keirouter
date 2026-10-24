@@ -560,7 +560,7 @@ func (s *Server) adminListHostingNodes(w http.ResponseWriter, r *http.Request) {
 	if best, ok := hosting.PickNode(loads); ok {
 		recommended = best.ID
 	}
-	waiting, err := s.db.Hosting().CountWaitingByRegion(r.Context())
+	waiting, err := s.db.Hosting().CountWaitingByRegion(r.Context(), time.Now().Add(-hosting.CheckoutWindow))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return

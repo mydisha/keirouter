@@ -136,6 +136,45 @@ func (r *PaymentOrderRepo) TransitionFromOnTx(ctx context.Context, tx *sql.Tx, i
 	return n == 1, nil
 }
 
+// ExpireHostingCheckouts marks pending hosting orders created before cutoff
+// as expired, so the portal stops offering their payment links. A payment
+// that still arrives later settles them as a late payment. It returns the
+// expired order ids.
+func (r *PaymentOrderRepo) ExpireHostingCheckouts(ctx context.Context, cutoff time.Time) ([]string, error) {
+	q := r.db.rebind(`SELECT id FROM payment_orders WHERE product = ? AND status = ? AND created_at < ?`)
+	rows, err := r.db.sql.QueryContext(ctx, q, ProductHosting, string(PaymentPending), formatTime(cutoff))
+	if err != nil {
+		return nil, fmt.Errorf("store: list stale hosting checkouts: %w", err)
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(ids))
+	upd := r.db.rebind(`UPDATE payment_orders SET status = ?, actor = ?, reason = ?, updated_at = ?
+		WHERE id = ? AND status = ?`)
+	for _, id := range ids {
+		res, err := r.db.sql.ExecContext(ctx, upd, string(PaymentExpired), "system", "checkout window ended",
+			formatTime(time.Now()), id, string(PaymentPending))
+		if err != nil {
+			return out, fmt.Errorf("store: expire hosting checkout: %w", err)
+		}
+		if n, _ := res.RowsAffected(); n == 1 {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+
 // SumCompletedCreditByKey sums credit_micros across completed/manual orders for
 // a key. Used when re-basing a portal plan so paid balance is preserved.
 func (r *PaymentOrderRepo) SumCompletedCreditByKey(ctx context.Context, keyID string) (int64, error) {

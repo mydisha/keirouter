@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/hosting"
 )
@@ -14,7 +15,7 @@ func (s *Server) hostingRegionStocks(ctx context.Context, st hosting.Settings) (
 	if err != nil {
 		return nil, err
 	}
-	waiting, err := repo.CountWaitingByRegion(ctx)
+	waiting, err := repo.CountWaitingByRegion(ctx, time.Now().Add(-hosting.CheckoutWindow))
 	if err != nil {
 		return nil, err
 	}

@@ -2208,6 +2208,8 @@ export interface PortalHostingInstance {
   created_at: string;
   pending_payment_link?: string;
   pending_order_id?: string;
+  /** RFC3339 end of the open payment's checkout window. */
+  pending_expires_at?: string;
   /** True once the instance has its own initial dashboard password. */
   has_password: boolean;
 }

@@ -27,6 +27,32 @@ function formatIDR(n: number): string {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
 }
 
+// CHECKOUT_MINUTES matches hosting.CheckoutWindow on the server.
+const CHECKOUT_MINUTES = 5;
+
+/** Seconds left until `until` (RFC3339), ticking each second; null without a date. */
+function useSecondsLeft(until?: string): number | null {
+  const end = until ? new Date(until).getTime() : NaN;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (Number.isNaN(end)) return;
+    setNow(Date.now());
+    const t = window.setInterval(() => {
+      const at = Date.now();
+      setNow(at);
+      if (at >= end) window.clearInterval(t);
+    }, 1000);
+    return () => window.clearInterval(t);
+  }, [end]);
+  return Number.isNaN(end) ? null : Math.max(0, Math.ceil((end - now) / 1000));
+}
+
+function formatMMSS(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
 function formatDateLong(value: string): string {
   const d = new Date(value);
   if (!value || Number.isNaN(d.getTime())) return "—";
@@ -383,6 +409,9 @@ export function PortalHostingPage() {
               {pendingFor === "" ? <Loader2 className="animate-spin" aria-hidden="true" /> : <CreditCard aria-hidden="true" />}
               {pendingFor === "" ? "Membuka pembayaran…" : region?.sold_out ? "Stok habis" : "Pesan sekarang"}
             </Button>
+            <p className="mt-2 text-center text-[12.5px] text-fg-muted">
+              Link pembayaran berlaku {CHECKOUT_MINUTES} menit. Slot Anda ditahan selama itu.
+            </p>
           </div>
         </div>
       </PanelCard>
@@ -428,9 +457,15 @@ function InstanceRow({
   onRenew: () => void;
   supportUrl: string | null;
 }) {
+  const qc = useQueryClient();
   const view = statusView(inst.status);
   const url = safeHttpUrl(inst.url);
-  const payLink = safeHttpUrl(inst.pending_payment_link);
+  const secondsLeft = useSecondsLeft(inst.pending_payment_link ? inst.pending_expires_at : undefined);
+  // The link stops working for us at the deadline; reload to show the new state.
+  useEffect(() => {
+    if (secondsLeft === 0) qc.invalidateQueries({ queryKey: HOSTING_QK });
+  }, [secondsLeft, qc]);
+  const payLink = secondsLeft === 0 ? null : safeHttpUrl(inst.pending_payment_link);
   const awaiting = inst.status === "awaiting_payment";
   const waiting = waitingActivation(inst.status);
 
@@ -460,7 +495,9 @@ function InstanceRow({
           ) : (
             <span className="text-[13px] text-fg-muted">
               {awaiting
-                ? "Selesaikan pembayaran untuk memproses pesanan."
+                ? payLink
+                  ? "Selesaikan pembayaran untuk memproses pesanan."
+                  : "Waktu pembayaran habis. Buat tagihan baru untuk melanjutkan."
                 : waiting
                   ? "Pembayaran diterima. Instance sedang menunggu aktivasi oleh admin."
                   : inst.status === "stopped"
@@ -469,6 +506,16 @@ function InstanceRow({
             </span>
           )}
         </div>
+        {payLink && secondsLeft !== null && (
+          <p className="flex items-center gap-1.5 text-[12.5px] text-fg-muted">
+            <Clock3 className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+            Link pembayaran berlaku{" "}
+            <span role="timer" className="font-mono font-medium tabular-nums text-fg">
+              {formatMMSS(secondsLeft)}
+            </span>
+            lagi
+          </p>
+        )}
         {waiting && (
           <p className="flex items-start gap-1.5 text-[12.5px] text-fg-muted">
             <Clock3 className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />

@@ -17,7 +17,8 @@ const autoStopReason = "auto-stopped: paid period ended"
 //   - active instances past paid_until become expired;
 //   - expired instances past the grace period are stopped on Dokploy;
 //   - auto-stopped instances that were renewed are started again;
-//   - instances stuck in provisioning after a crash become failed.
+//   - instances stuck in provisioning after a crash become failed;
+//   - pending hosting orders past the checkout window become expired.
 func (a *App) runHostingExpiry(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
@@ -37,6 +38,11 @@ func (a *App) hostingExpiryPass(ctx context.Context, now time.Time) {
 		a.log.Warn("hosting: stale provisioning sweep failed", "err", err)
 	} else if n > 0 {
 		a.log.Warn("hosting: instances interrupted mid-provisioning marked failed", "count", n)
+	}
+	if ids, err := a.db.PaymentOrders().ExpireHostingCheckouts(ctx, now.Add(-hosting.CheckoutWindow)); err != nil {
+		a.log.Warn("hosting: expire lapsed checkouts failed", "err", err)
+	} else if len(ids) > 0 {
+		a.log.Info("hosting: lapsed checkouts expired", "count", len(ids))
 	}
 	if n, err := a.db.HostingCoupons().ReleaseExpired(ctx, "", now); err != nil {
 		a.log.Warn("hosting: release lapsed coupon holds failed", "err", err)

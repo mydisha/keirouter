@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/store"
@@ -28,6 +29,11 @@ const TermsVersion = "2026-10-17"
 
 // PeriodDays is how long one paid order keeps an instance active.
 const PeriodDays = 30
+
+// CheckoutWindow is how long a hosting payment link can be paid from the
+// portal. While it is open, a new instance's order holds one slot in its
+// region; after it the slot is free again and the next order gets a new link.
+const CheckoutWindow = 5 * time.Minute
 
 // GraceDays is how long an expired instance keeps running before the expiry
 // job stops it. A renewal inside the grace window extends from the old end

@@ -14,9 +14,10 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
-// couponHoldGrace keeps a coupon hold a little past the payment expiry, so
-// a payment completed at the last second still finds its reservation.
-const couponHoldGrace = time.Hour
+// couponHoldGrace keeps a coupon hold a little past the checkout window, so
+// a payment completed at the last second still finds its reservation. It is
+// short so the customer can reuse the coupon on a new link soon after.
+const couponHoldGrace = time.Minute
 
 // couponChecksPerMinute caps coupon lookups per API key.
 const couponChecksPerMinute = 10
@@ -39,17 +40,10 @@ func (s *Server) hostingMinChargeIDR() int64 {
 	return 1000
 }
 
-// couponHoldUntil is when a coupon hold lapses: the payment's expiry plus a
-// grace, or the configured payment lifetime when the gateway gave none.
-func (s *Server) couponHoldUntil(expiresAt string, now time.Time) time.Time {
-	if t, err := time.Parse(time.RFC3339, expiresAt); err == nil && t.After(now) {
-		return t.Add(couponHoldGrace)
-	}
-	hours := s.cfg.Payment.ExpiresInHours
-	if hours <= 0 {
-		hours = 24
-	}
-	return now.Add(time.Duration(hours)*time.Hour + couponHoldGrace)
+// couponHoldUntil is when a coupon hold lapses: the checkout window's end
+// plus a short grace.
+func couponHoldUntil(expiresAt time.Time) time.Time {
+	return expiresAt.Add(couponHoldGrace)
 }
 
 // lookupHostingCoupon finds a coupon by code and checks that keyID may use
