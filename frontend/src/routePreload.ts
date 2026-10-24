@@ -42,7 +42,7 @@ export const routeLoaders = {
   "/provider-health": () => named(import("./pages/ProviderHealth"), "ProviderHealthPage"),
   "/bansos": () => named(import("./pages/Bansos"), "BansosPage"),
   "/portal-users": () => named(import("./pages/PortalUsers"), "PortalUsersPage"),
-  "/payments": () => named(import("./pages/Payments"), "PaymentsPage"),
+  "/finance": () => named(import("./pages/Finance"), "FinancePage"),
   "/hosting": () => named(import("./pages/Hosting"), "HostingPage"),
   "/model": () => import("./pages/PublicModels").then((m) => ({ default: m.default })),
 } as const;

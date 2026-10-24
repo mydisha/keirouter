@@ -53,7 +53,6 @@ import {
   useClientPagination,
 } from "../components/ui";
 import { Panel, REFETCH_MS, TH, THEAD, dateID, errorText, idr } from "./payments/shared";
-import { FinanceTab } from "./hosting/HostingFinance";
 import { CouponsTab } from "./hosting/HostingCoupons";
 import {
   QK_HOSTING,
@@ -67,7 +66,7 @@ import {
   validDomain,
 } from "./hosting/shared";
 
-const SECTIONS = ["instances", "coupons", "finance", "settings"] as const;
+const SECTIONS = ["instances", "coupons", "settings"] as const;
 type Section = (typeof SECTIONS)[number];
 
 const ORDER_STATUS_LABEL: Record<string, string> = {
@@ -108,8 +107,6 @@ export function HostingPage() {
         <InstancesTab settings={settings.data} onOpenSettings={() => navigate(dashboard("/hosting/settings"))} />
       ) : section === "coupons" ? (
         <CouponsTab />
-      ) : section === "finance" ? (
-        <FinanceTab />
       ) : (
         <SettingsTab query={settings} />
       )}
@@ -378,7 +375,7 @@ function NodeUsageStrip({ nodes, onOpenSettings }: { nodes: HostingNodeLoad[]; o
   if (nodes.length === 0) {
     return (
       <div className="border-b border-line px-4 py-3">
-        <ErrorBanner message="No nodes yet. Add a node in Hosting settings before creating instances." />
+        <ErrorBanner message="No nodes yet. Add a node in Hosting setup before creating instances." />
         <Button variant="ghost" className="mt-2" onClick={onOpenSettings}>
           <Settings2 aria-hidden="true" />
           Open settings
@@ -406,7 +403,7 @@ function NodeUsageStrip({ nodes, onOpenSettings }: { nodes: HostingNodeLoad[]; o
       })}
       {noneAvailable && (
         <button type="button" onClick={onOpenSettings} className="ml-1 text-[12px] text-bad underline-offset-2 hover:underline">
-          All nodes are full or disabled. Add a node in Hosting settings.
+          All nodes are full or disabled. Add a node in Hosting setup.
         </button>
       )}
     </div>
@@ -491,7 +488,7 @@ function ProvisionModal({
         </p>
         {retry && inst.last_error && <ErrorBanner message={`Last attempt failed: ${inst.last_error}`} />}
         {images.length === 0 ? (
-          <ErrorBanner message="No images yet. Add a Docker image in Hosting settings first." />
+          <ErrorBanner message="No images yet. Add a Docker image in Hosting setup first." />
         ) : (
           <Field label="Docker image">
             <Select value={image} onChange={(e) => setImage(e.target.value)} className="font-mono">
@@ -526,8 +523,8 @@ function ProvisionModal({
             <ErrorBanner
               message={
                 candidates.length === 0
-                  ? "No nodes yet. Add a node in Hosting settings first."
-                  : "All nodes in this region are disabled. Enable a node or add a new one in Hosting settings."
+                  ? "No nodes yet. Add a node in Hosting setup first."
+                  : "All nodes in this region are disabled. Enable a node or add a new one in Hosting setup."
               }
             />
             <Button variant="ghost" onClick={onOpenSettings}>
@@ -674,7 +671,7 @@ function OrdersModal({ inst, onClose }: { inst: HostingInstanceAdmin; onClose: (
 function SettingsTab({ query }: { query: { data?: HostingSettings; isLoading: boolean; isError: boolean; error: unknown } }) {
   return (
     <div className="space-y-6">
-      <Panel icon={Settings2} title="Hosting settings" subtitle="Go through the steps in order: Dokploy, domain, image, region, node, then open ordering.">
+      <Panel icon={Settings2} title="Hosting setup" subtitle="Go through the steps in order: Dokploy, domain, image, region, node, then open ordering.">
         {query.isLoading ? (
           <LoadingRegion label="Loading hosting settings" className="space-y-3 p-4">
             <Skeleton className="h-[320px] w-full rounded-xl" />

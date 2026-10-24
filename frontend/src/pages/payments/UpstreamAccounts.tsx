@@ -1,11 +1,13 @@
 import { useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
+import { dashboard } from "../../lib/dashboardRoutes";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ExternalLink, Loader2, Plus, Server } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type FinanceReport, type UpstreamAccountBalance } from "../../lib/api";
 import { useToast } from "../../components/Toast";
 import { Badge, Button, EmptyState, ErrorBanner, Field, Input, LoadingRegion, Modal, ModalFooter, Skeleton } from "../../components/ui";
-import { QK, Panel, SETTINGS_ANCHOR, count, dateID, dateInputToRFC3339, errorText, toDateInput, todayISO, usd } from "./shared";
+import { QK, Panel, count, dateID, dateInputToRFC3339, errorText, toDateInput, todayISO, usd } from "./shared";
 
 export function UpstreamAccounts({
   report,
@@ -47,9 +49,9 @@ export function UpstreamAccounts({
                   {unmapped.providers.length > 0 && <> ({unmapped.providers.join(", ")})</>}. Account balances don't include this usage.
                 </p>
               </div>
-              <a href={`#${SETTINGS_ANCHOR}`} className="shrink-0 text-[12.5px] font-medium text-link hover:underline">
+              <Link to={dashboard("/finance/settings")} className="shrink-0 text-[12.5px] font-medium text-link hover:underline">
                 Set up provider mapping
-              </a>
+              </Link>
             </div>
           )}
           {sorted.length === 0 ? (
