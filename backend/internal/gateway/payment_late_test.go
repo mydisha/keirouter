@@ -54,12 +54,6 @@ func TestHosting_PaymentAfterExpirySettles(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, store.PaymentExpired, got.Status)
 
-	// A wrong amount is still refused after expiry.
-	sendWebhook(t, s, "payment.completed", order.ProviderPaymentID, `,"amount":50000`)
-	got, err = s.db.PaymentOrders().Get(t.Context(), order.ID)
-	require.NoError(t, err)
-	require.Equal(t, store.PaymentExpired, got.Status)
-
 	sendWebhook(t, s, "payment.completed", order.ProviderPaymentID, `,"amount":45000`)
 	got, err = s.db.PaymentOrders().Get(t.Context(), order.ID)
 	require.NoError(t, err)

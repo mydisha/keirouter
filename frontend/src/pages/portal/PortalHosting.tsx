@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { PageHeader, PanelCard } from "./components";
 
 const HOSTING_QK = ["portal-hosting"] as const;
+const CONFIRM_POLL_MS = 3 * 60_000;
 
 function formatIDR(n: number): string {
   return new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 }).format(n);
@@ -102,11 +103,25 @@ export function PortalHostingPage() {
     retry: false,
   });
 
+  // Back from the gateway, the webhook may land a few seconds later: poll
+  // until no instance awaits payment, for at most CONFIRM_POLL_MS.
+  const [pollExpired, setPollExpired] = useState(false);
+  useEffect(() => {
+    if (returnStatus !== "success") return;
+    const t = setTimeout(() => setPollExpired(true), CONFIRM_POLL_MS);
+    return () => clearTimeout(t);
+  }, [returnStatus]);
   const hosting = useQuery({
     queryKey: HOSTING_QK,
     queryFn: fetchPortalHosting,
     retry: false,
     enabled: !!status?.has_key,
+    refetchInterval: (q) =>
+      returnStatus === "success" &&
+      !pollExpired &&
+      (q.state.data?.instances ?? []).some((i) => i.status === "awaiting_payment")
+        ? 4000
+        : false,
   });
 
   const [accepted, setAccepted] = useState(false);
@@ -237,6 +252,8 @@ export function PortalHostingPage() {
 
   const cfg = hosting.data;
   const instances = cfg.instances ?? [];
+  const confirming = instances.some((i) => i.status === "awaiting_payment");
+  const confirmTimedOut = confirming && pollExpired;
   const termsUrl = cfg.terms_url || "/ketentuan#hosting";
   const periodDays = cfg.period_days || 30;
   // Renewing an existing instance needs no stock; a new order needs a region
@@ -273,7 +290,24 @@ export function PortalHostingPage() {
         subtitle="9router siap pakai di server kami, dengan subdomain HTTPS sendiri."
       />
 
-      {returnStatus === "success" && (
+      {returnStatus === "success" && confirming && (
+        <div role="status" className="flex flex-col gap-3 rounded-2xl border border-line bg-subtle px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            {confirmTimedOut ? (
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+            ) : (
+              <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-fg-muted motion-reduce:animate-none" strokeWidth={1.75} aria-hidden="true" />
+            )}
+            <p className="text-[13px] text-fg">
+              {confirmTimedOut
+                ? "Konfirmasi pembayaran belum kami terima. Jika saldo Anda sudah terpotong, hubungi admin dan sertakan bukti pembayaran."
+                : "Menunggu konfirmasi pembayaran dari gateway. Halaman ini diperbarui otomatis."}
+            </p>
+          </div>
+          {confirmTimedOut && supportUrl && <SupportLink href={supportUrl} />}
+        </div>
+      )}
+      {returnStatus === "success" && !confirming && (
         <div role="status" className="flex flex-col gap-3 rounded-2xl border border-ok/30 bg-ok/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
             <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" strokeWidth={1.75} aria-hidden="true" />

@@ -82,13 +82,13 @@ func (s *Server) handleSumopodWebhook(w http.ResponseWriter, r *http.Request) {
 	switch ev.EventType {
 	case "payment.completed":
 		if order.Product == store.ProductHosting {
-			// Hosting grants a service, not a refundable balance: refuse an
-			// event whose order id or amount does not match what we created.
-			// The amount must be present and exact.
-			if (ev.Data.OrderID != "" && ev.Data.OrderID != order.ID) || ev.Data.Amount != order.AmountIDR {
-				s.log.Error("webhook: hosting event does not match order; left pending for review",
+			// Like credit top-ups, the order is found by our own provider
+			// payment id on an authenticated delivery, and the stored amount
+			// is what counts. A differing event amount is only logged:
+			// SumoPod may omit it or report it net of fees.
+			if (ev.Data.OrderID != "" && ev.Data.OrderID != order.ID) || (ev.Data.Amount != 0 && ev.Data.Amount != order.AmountIDR) {
+				s.log.Warn("webhook: hosting event differs from order; settling by payment id",
 					"order", order.ID, "event_order", ev.Data.OrderID, "amount", ev.Data.Amount, "want", order.AmountIDR)
-				break
 			}
 			if _, herr := s.markHostingOrderPaid(r.Context(), order, store.PaymentCompleted, "webhook", ""); herr != nil {
 				s.log.Error("webhook: hosting fulfilment failed", "order", order.ID, "err", herr)

@@ -138,7 +138,7 @@ func TestHostingCoupon_ExpiredPaymentGivesUseBack(t *testing.T) {
 	require.Equal(t, true, checkCoupon(t, s, tok2, "SATU")["valid"])
 }
 
-func TestHostingCoupon_WebhookAmountMustMatch(t *testing.T) {
+func TestHostingCoupon_WebhookSettlesWithoutAmount(t *testing.T) {
 	s, tok, _ := hostingTestServer(t)
 	s.cfg.Payment.Provider = "sumopod"
 	s.cfg.Payment.WebhookToken = "whtok"
@@ -158,12 +158,14 @@ func TestHostingCoupon_WebhookAmountMustMatch(t *testing.T) {
 		s.handleSumopodWebhook(w, req)
 		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 	}
-	send("")                // amount missing: left pending
-	send(`,"amount":50000`) // full price on a discounted order: left pending
+	// SumoPod may leave the amount out; the order settles by payment id,
+	// at the stored discounted amount, the same as a credit top-up.
+	send("")
 	got, err := s.db.PaymentOrders().Get(t.Context(), order.ID)
 	require.NoError(t, err)
-	require.Equal(t, store.PaymentPending, got.Status)
-	send(`,"amount":25000`)
+	require.Equal(t, store.PaymentCompleted, got.Status)
+	require.EqualValues(t, 25000, got.AmountIDR)
+	send(`,"amount":25000`) // a retry does not settle twice
 	got, err = s.db.PaymentOrders().Get(t.Context(), order.ID)
 	require.NoError(t, err)
 	require.Equal(t, store.PaymentCompleted, got.Status)
