@@ -44,12 +44,14 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    heading: "Hosting",
+    tone: "violet",
+    items: [{ to: portal("/hosting"), label: "9router", icon: Server }],
+  },
+  {
     heading: "Billing",
     tone: "teal",
-    items: [
-      { to: portal("/topup"), label: "Topup", icon: Wallet },
-      { to: portal("/hosting"), label: "Hosting 9router", icon: Server },
-    ],
+    items: [{ to: portal("/topup"), label: "Topup", icon: Wallet }],
   },
   {
     heading: "Help",
