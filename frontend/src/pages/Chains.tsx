@@ -1,7 +1,7 @@
 import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertTriangle, Copy, MoreHorizontal, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { AlertTriangle, Ban, Copy, MoreHorizontal, Pencil, Plus, RotateCcw, Search, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { api, type Chain, type HealthChainRow, type Provider } from "../lib/api";
 import { dashboard } from "../lib/dashboardRoutes";
@@ -140,11 +140,12 @@ type ChainRowProps = {
   onOpen: () => void;
   onCopy: () => void;
   onDelete: () => void;
+  onToggleSale: () => void;
 };
 
 // ChainActionsMenu is the row menu shared by the desktop table row and the
 // mobile card, so both expose exactly the same actions.
-function ChainActionsMenu({ chain, onOpen, onCopy, onDelete, className }: Pick<ChainRowProps, "chain" | "onOpen" | "onCopy" | "onDelete"> & { className?: string }) {
+function ChainActionsMenu({ chain, onOpen, onCopy, onDelete, onToggleSale, className }: Pick<ChainRowProps, "chain" | "onOpen" | "onCopy" | "onDelete" | "onToggleSale"> & { className?: string }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -161,6 +162,10 @@ function ChainActionsMenu({ chain, onOpen, onCopy, onDelete, className }: Pick<C
         <DropdownMenuItem onSelect={onCopy}>
           <Copy aria-hidden="true" />
           Copy model target
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onToggleSale}>
+          {chain.disabled ? <RotateCcw aria-hidden="true" /> : <Ban aria-hidden="true" />}
+          {chain.disabled ? "Put back on sale" : "Mark sold out"}
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem tone="danger" onSelect={onDelete}>
@@ -184,15 +189,23 @@ function HealthBadge({ health }: { health?: HealthChainRow }) {
 }
 
 // ChainPricing shows the chain's billed $/M rates, or a Sold out badge (with
-// the last stored price) when no market offer currently clears its floor.
+// the last stored price) when the operator took it off sale or no market
+// offer currently clears its floor.
 function ChainPricing({ chain }: { chain: Chain }) {
-  if (chain.sold_out) {
+  if (chain.sold_out || chain.disabled) {
     return (
       <div className="flex flex-col items-start gap-1">
-        <span className="inline-flex" title="No market offer currently meets this chain's price floor; requests are refused with 503 until one does.">
+        <span
+          className="inline-flex"
+          title={chain.disabled
+            ? "Marked sold out by an admin; requests are refused with 503 until it is put back on sale."
+            : "No market offer currently meets this chain's price floor; requests are refused with 503 until one does."}
+        >
           <Badge tone="danger">Sold out</Badge>
         </span>
-        <span className="text-[12px] tabular-nums text-fg-muted">Last price {fmtRate(chain.input_per_m)} / {fmtRate(chain.output_per_m)}</span>
+        <span className="text-[12px] tabular-nums text-fg-muted">
+          {chain.disabled ? "Set manually · " : ""}Last price {fmtRate(chain.input_per_m)} / {fmtRate(chain.output_per_m)}
+        </span>
       </div>
     );
   }
@@ -210,7 +223,7 @@ function ChainPricing({ chain }: { chain: Chain }) {
 
 // ChainCard is the below-md rendering of a chain row: identity + health on
 // the first line, the route on the second, key facts and the menu last.
-function ChainCard({ chain, providers, health, onOpen, onCopy, onDelete }: ChainRowProps) {
+function ChainCard({ chain, providers, health, onOpen, onCopy, onDelete, onToggleSale }: ChainRowProps) {
   const hasIssue = health?.status === "degraded" || health?.status === "unhealthy";
   const facts = [
     strategyLabel(chain.strategy),
@@ -241,13 +254,13 @@ function ChainCard({ chain, providers, health, onOpen, onCopy, onDelete }: Chain
       {hasIssue && health?.main_issue && <p className="line-clamp-2 text-[12px] text-fg-muted">{health.main_issue}</p>}
       <div className="flex items-center justify-between gap-3">
         <p className="min-w-0 text-[12px] tabular-nums text-fg-muted">{facts}</p>
-        <ChainActionsMenu chain={chain} onOpen={onOpen} onCopy={onCopy} onDelete={onDelete} className="h-9 w-9" />
+        <ChainActionsMenu chain={chain} onOpen={onOpen} onCopy={onCopy} onDelete={onDelete} onToggleSale={onToggleSale} className="h-9 w-9" />
       </div>
     </li>
   );
 }
 
-function ChainRow({ chain, providers, health, onOpen, onCopy, onDelete }: ChainRowProps) {
+function ChainRow({ chain, providers, health, onOpen, onCopy, onDelete, onToggleSale }: ChainRowProps) {
   const hasIssue = health?.status === "degraded" || health?.status === "unhealthy";
   const StrategyIcon = strategyIcon(chain.strategy);
   const stop = (event: MouseEvent) => event.stopPropagation();
@@ -289,7 +302,7 @@ function ChainRow({ chain, providers, health, onOpen, onCopy, onDelete }: ChainR
       <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-fg">{health ? health.requests.toLocaleString() : <><span className="text-fg-muted" aria-hidden="true">—</span><span className="sr-only">No data</span></>}</td>
       <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-fg">{health ? `${health.fallback_rate.toFixed(1)}%` : <><span className="text-fg-muted" aria-hidden="true">—</span><span className="sr-only">No data</span></>}</td>
       <td className="px-2 py-2.5" onClick={stop}>
-        <ChainActionsMenu chain={chain} onOpen={onOpen} onCopy={onCopy} onDelete={onDelete} />
+        <ChainActionsMenu chain={chain} onOpen={onOpen} onCopy={onCopy} onDelete={onDelete} onToggleSale={onToggleSale} />
       </td>
     </tr>
   );
@@ -314,6 +327,17 @@ export function ChainsPage() {
       toast.success("Chain deleted", "It will no longer resolve as a model target.");
     },
     onError: (error: Error) => toast.error("Deletion failed", error.message),
+  });
+  const saleMutation = useMutation({
+    mutationFn: ({ id, disabled }: { id: string; disabled: boolean }) => api.updateChain(id, { disabled }),
+    onSuccess: (_data, { disabled }) => {
+      queryClient.invalidateQueries({ queryKey: ["chains"] });
+      toast.success(
+        disabled ? "Chain marked sold out" : "Chain back on sale",
+        disabled ? "Requests to it now get a sold-out error." : "It accepts requests again.",
+      );
+    },
+    onError: (error: Error) => toast.error("Couldn't update the chain", error.message),
   });
   const healthByID = useMemo(() => new Map((healthQuery.data?.chains ?? []).map((item) => [item.chain_id, item])), [healthQuery.data]);
   const allChains = chainsQuery.data?.chains ?? [];
@@ -355,6 +379,20 @@ export function ChainsPage() {
       tone: "danger",
     });
     if (ok) deleteMutation.mutate(chain.id);
+  };
+
+  const toggleSale = async (chain: Chain) => {
+    if (chain.disabled) {
+      saleMutation.mutate({ id: chain.id, disabled: false });
+      return;
+    }
+    const ok = await confirmAction({
+      title: `Mark ${chain.name} sold out?`,
+      description: <>The catalog shows it as sold out and calls to <span className="font-mono text-fg">chain:{chain.name}</span> are refused right away. You can put it back on sale from this menu.</>,
+      confirmLabel: "Mark sold out",
+      tone: "danger",
+    });
+    if (ok) saleMutation.mutate({ id: chain.id, disabled: true });
   };
 
   const clearFilters = () => {
@@ -467,6 +505,7 @@ export function ChainsPage() {
                       onOpen={() => navigate(dashboard(`/chains/${chain.id}/edit`))}
                       onCopy={() => copyTarget(chain)}
                       onDelete={() => deleteChain(chain)}
+                          onToggleSale={() => toggleSale(chain)}
                     />
                   ))}
                 </ul>
@@ -495,6 +534,7 @@ export function ChainsPage() {
                           onOpen={() => navigate(dashboard(`/chains/${chain.id}/edit`))}
                           onCopy={() => copyTarget(chain)}
                           onDelete={() => deleteChain(chain)}
+                          onToggleSale={() => toggleSale(chain)}
                         />
                       ))}
                     </tbody>

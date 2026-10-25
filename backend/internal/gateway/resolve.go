@@ -149,6 +149,9 @@ func chainResultWith(ctx context.Context, chains ChainSource, latency LatencyRea
 	}
 	for _, c := range list {
 		if c.Name == name {
+			if c.Disabled {
+				return resolveResult{}, errChainDisabled(name)
+			}
 			steps := dispatch.TargetsFromChain(c)
 			if len(steps) == 0 {
 				return resolveResult{}, errBadModel("chain has no steps: " + name)
@@ -471,6 +474,15 @@ func errBadModel(msg string) error { return badModelError{msg: msg} }
 func errSoldOut(name string) error {
 	return badModelError{
 		msg:    "model " + name + " is sold out: no offer currently meets its price floor, try again later",
+		status: http.StatusServiceUnavailable,
+	}
+}
+
+// errChainDisabled reports a chain the operator took off sale. Callers see
+// the same sold-out answer as a market sell-out.
+func errChainDisabled(name string) error {
+	return badModelError{
+		msg:    "model " + name + " is sold out, try again later",
 		status: http.StatusServiceUnavailable,
 	}
 }

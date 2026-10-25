@@ -1997,6 +1997,7 @@ func (s *Server) adminListChains(w http.ResponseWriter, r *http.Request) {
 			// No live quote for any bound slug: the stored rates are stale and
 			// requests are refused until the market offers it again.
 			"sold_out": s.chainSoldOut(c),
+			"disabled": c.Disabled,
 		}
 		if ref, ok := s.autoOfficialPrice(c); ok {
 			entry["official_auto"] = map[string]any{"input_per_m": ref.InputPerM, "output_per_m": ref.OutputPerM, "source": ref.Source, "provider": ref.Provider}
@@ -2150,6 +2151,7 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 		CacheReadPerM       *float64  `json:"cache_read_per_m"`
 		MarketSlugs         *[]string `json:"market_slugs"`
 		ReorderByMarket     *bool     `json:"reorder_by_market"`
+		Disabled            *bool     `json:"disabled"`
 		// markup_percent: absent = unchanged, null = follow global, number = override.
 		MarkupPercent json.RawMessage `json:"markup_percent"`
 		// official_*_per_m: absent = unchanged, null = automatic, number = manual.
@@ -2196,6 +2198,9 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.ReorderByMarket != nil {
 		existing.ReorderByMarket = *body.ReorderByMarket
+	}
+	if body.Disabled != nil {
+		existing.Disabled = *body.Disabled
 	}
 	if len(body.MarkupPercent) > 0 {
 		if string(body.MarkupPercent) == "null" {
@@ -2277,6 +2282,8 @@ func (s *Server) adminUpdateChain(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
+	// Sold-out and price changes show on the public catalog right away.
+	s.insightsCache.del("public-models")
 	s.resyncMarketPricesAsync(existing)
 	writeJSON(w, http.StatusOK, map[string]any{"id": existing.ID, "name": existing.Name})
 }

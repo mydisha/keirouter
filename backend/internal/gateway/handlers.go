@@ -179,7 +179,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 			hint := "No provider model, alias or chain has this name. Check the client's model setting against the Models page."
 			if status == http.StatusServiceUnavailable {
 				title = fmt.Sprintf("Rejected · model %q is sold out", req.Model)
-				hint = "No market offer currently clears this chain's price floor. It becomes available again once one does."
+				hint = "The chain is disabled on the Chains page, or no market offer currently clears its price floor."
 			}
 			if status == http.StatusUnprocessableEntity {
 				title = fmt.Sprintf("Rejected · model %q cannot meet the key's discount floor", req.Model)

@@ -48,6 +48,16 @@ func (c *ttlCache) set(key string, body []byte) {
 	c.entries[key] = ttlEntry{body: body, expires: time.Now().Add(c.ttl)}
 }
 
+// del drops key so the next request rebuilds it. Safe on a nil cache.
+func (c *ttlCache) del(key string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, key)
+}
+
 // cacheHit writes a cached body for key if one is live, returning true. Handlers
 // call this at the top and return early on a hit.
 func (s *Server) cacheHit(w http.ResponseWriter, key string) bool {

@@ -179,9 +179,12 @@ type Chain struct {
 	// means auto: taken from market and catalog references.
 	OfficialInputPerM  *float64
 	OfficialOutputPerM *float64
-	Steps              []ChainStep
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	// Disabled takes the chain off sale: the catalog shows it as sold out and
+	// requests are refused. Off by default.
+	Disabled  bool
+	Steps     []ChainStep
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // ChainStep is one candidate target within a chain.

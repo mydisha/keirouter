@@ -204,7 +204,7 @@ func surplusSlugs(c store.Chain) []string {
 // snapshot, the way the market sync would, markup included.
 func (s *Server) surplusChainPrice(c store.Chain, slugs []string, settings market.Settings) keyPrice {
 	p := keyPrice{Model: c.Name}
-	if s.marketCache == nil {
+	if c.Disabled || s.marketCache == nil {
 		return p
 	}
 	models := s.marketCache.Models(slugs)

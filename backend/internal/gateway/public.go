@@ -93,8 +93,12 @@ type publicModelRow struct {
 
 // chainSoldOut reports whether a market-bound chain has no live quote for any
 // of its slugs (chain-level or per-step), so it cannot be priced or routed.
-// Chains with no market slug are never sold out.
+// Chains with no market slug are never sold out on market grounds. A chain the
+// operator disabled is always sold out.
 func (s *Server) chainSoldOut(c store.Chain) bool {
+	if c.Disabled {
+		return true
+	}
 	slugs := append([]string(nil), c.MarketSlugs...)
 	for _, st := range c.Steps {
 		if st.MarketSlug != "" {
