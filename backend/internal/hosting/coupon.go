@@ -57,8 +57,10 @@ func ValidateCoupon(c *store.HostingCoupon) error {
 		if c.BonusDays < 1 || c.BonusDays > MaxBonusDays {
 			return fmt.Errorf("bonus_days must be 1-%d", MaxBonusDays)
 		}
+	case store.CouponKindFree:
+		c.DiscountType, c.DiscountValue, c.BonusDays = "", 0, 0
 	default:
-		return errors.New("kind must be discount or bonus_days")
+		return errors.New("kind must be discount, bonus_days or free")
 	}
 	return nil
 }
@@ -71,6 +73,7 @@ const (
 	CouponExpired     = "coupon_expired"
 	CouponExhausted   = "coupon_exhausted"
 	CouponAlreadyUsed = "coupon_already_used"
+	CouponNoDiscount  = "coupon_no_discount"
 )
 
 // CouponMessage is the customer-facing text for a rejection code.
@@ -88,6 +91,8 @@ func CouponMessage(code string) string {
 		return "Kuota kupon ini sudah habis."
 	case CouponAlreadyUsed:
 		return "Anda sudah memakai kupon ini."
+	case CouponNoDiscount:
+		return "Kupon ini tidak memberi potongan karena harga sudah di batas minimum pembayaran."
 	}
 	return "Kupon tidak bisa dipakai."
 }
@@ -117,8 +122,15 @@ type Quote struct {
 	BonusDays   int
 }
 
-// QuoteCoupon applies a coupon to the base price. The final price never
-// drops below minIDR, because the payment gateway cannot charge less.
+// NoDiscount reports a discount coupon that takes nothing off, because the
+// price is already at the minimum charge.
+func (q Quote) NoDiscount(c store.HostingCoupon) bool {
+	return c.Kind == store.CouponKindDiscount && q.DiscountIDR == 0
+}
+
+// QuoteCoupon applies a coupon to the base price. A discount never drops
+// the price below minIDR, because the payment gateway cannot charge less;
+// a free coupon skips the gateway, so it prices the period at 0.
 func QuoteCoupon(base int64, c store.HostingCoupon, minIDR int64) Quote {
 	q := Quote{BaseIDR: base, FinalIDR: base}
 	switch c.Kind {
@@ -140,6 +152,8 @@ func QuoteCoupon(base int64, c store.HostingCoupon, minIDR int64) Quote {
 		q.DiscountIDR = base - final
 	case store.CouponKindBonusDays:
 		q.BonusDays = c.BonusDays
+	case store.CouponKindFree:
+		q.FinalIDR, q.DiscountIDR = 0, base
 	}
 	return q
 }

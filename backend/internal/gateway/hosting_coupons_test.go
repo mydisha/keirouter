@@ -277,3 +277,56 @@ func TestHostingPortal_ShowsSupportURL(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), `"support_url":"`+hosting.DefaultSupportURL+`"`)
 }
+
+func TestHostingCoupon_NoDiscountAtMinimumIsRefused(t *testing.T) {
+	s, tok, _ := hostingTestServer(t)
+	s.cfg.Payment.MinHostingIDR = 50000 // the test price is 50.000
+	c := createCoupon(t, s, `{"code":"PERCUMA","kind":"discount","discount_type":"percent","discount_value":50}`)
+
+	got := checkCoupon(t, s, tok, "PERCUMA")
+	require.Equal(t, false, got["valid"])
+	require.Equal(t, hosting.CouponNoDiscount, got["code"])
+
+	rec := postHostingOrder(t, s, tok, orderWithCoupon("PERCUMA"))
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), hosting.CouponNoDiscount)
+	used, held := couponCounts(t, s, c["id"].(string))
+	require.Zero(t, used)
+	require.Zero(t, held)
+}
+
+func TestHostingCoupon_FreeSkipsPayment(t *testing.T) {
+	s, tok, _ := hostingTestServer(t)
+	c := createCoupon(t, s, `{"code":"GRATIS","kind":"free","max_uses":5}`)
+
+	got := checkCoupon(t, s, tok, "gratis")
+	require.Equal(t, true, got["valid"])
+	require.EqualValues(t, 0, got["final_idr"])
+	require.EqualValues(t, 50000, got["discount_idr"])
+
+	rec := postHostingOrder(t, s, tok, orderWithCoupon("GRATIS"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Equal(t, string(store.PaymentCompleted), out["status"])
+	require.EqualValues(t, 0, out["amount_idr"])
+	require.Empty(t, out["payment_link_url"])
+
+	order, err := s.db.PaymentOrders().Get(t.Context(), out["order_id"].(string))
+	require.NoError(t, err)
+	require.Empty(t, order.ProviderPaymentID, "no gateway payment is created")
+	require.Equal(t, freeCouponProvider, order.Provider)
+	inst, err := s.db.Hosting().Get(t.Context(), order.HostingInstanceID)
+	require.NoError(t, err)
+	require.Equal(t, store.HostingPaid, inst.Status)
+	require.Equal(t, hosting.PeriodDays, inst.PrepaidDays)
+
+	used, held := couponCounts(t, s, c["id"].(string))
+	require.Equal(t, 1, used)
+	require.Zero(t, held)
+
+	// The same customer cannot take a second free period with it.
+	rec = postHostingOrder(t, s, tok, orderWithCoupon("GRATIS"))
+	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), hosting.CouponAlreadyUsed)
+}

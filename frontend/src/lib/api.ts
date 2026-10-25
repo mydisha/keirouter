@@ -2249,7 +2249,7 @@ export interface HostingOrder {
   bonus_days?: number;
 }
 
-export type HostingCouponKind = "discount" | "bonus_days";
+export type HostingCouponKind = "discount" | "bonus_days" | "free";
 export type HostingCouponDiscountType = "percent" | "fixed";
 
 /** Result of checking a coupon before checkout. */

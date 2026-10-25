@@ -14,6 +14,8 @@ import (
 const (
 	CouponKindDiscount  = "discount"
 	CouponKindBonusDays = "bonus_days"
+	// CouponKindFree makes one period cost nothing: no payment is made.
+	CouponKindFree = "free"
 )
 
 // Hosting coupon discount types.

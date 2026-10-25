@@ -133,6 +133,7 @@ export function PortalHostingPage() {
   const [coupon, setCoupon] = useState<Extract<HostingCouponCheck, { valid: true }> | null>(null);
   const [couponError, setCouponError] = useState<string | null>(null);
   const [pickedRegion, setPickedRegion] = useState<string | null>(null);
+  const [freeOrdered, setFreeOrdered] = useState(false);
 
   // The region asked for in the link, else the first one with stock.
   const regionOffers = hosting.data?.regions ?? [];
@@ -185,6 +186,15 @@ export function PortalHostingPage() {
         region: instanceId ? undefined : regionId || undefined,
       }),
     onSuccess: (o) => {
+      // A free coupon settles the order at checkout: nothing to pay.
+      if (o.status === "completed") {
+        clearCoupon();
+        setAccepted(false);
+        setFreeOrdered(true);
+        qc.invalidateQueries({ queryKey: HOSTING_QK });
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
       const link = safeHttpUrl(o.payment_link_url);
       if (link) {
         window.location.href = link;
@@ -266,6 +276,7 @@ export function PortalHostingPage() {
   const supportUrl = safeHttpUrl(cfg.support_url);
   const basePrice = region?.price_idr ?? 0;
   const finalPrice = coupon ? coupon.final_idr : basePrice;
+  const isFree = coupon?.kind === "free";
 
   const formBlocked = !accepted
     ? "Centang persetujuan ketentuan dulu."
@@ -290,6 +301,17 @@ export function PortalHostingPage() {
         subtitle="9router siap pakai di server kami, dengan subdomain HTTPS sendiri."
       />
 
+      {freeOrdered && (
+        <div role="status" className="flex flex-col gap-3 rounded-2xl border border-ok/30 bg-ok/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" strokeWidth={1.75} aria-hidden="true" />
+            <p className="text-[13px] text-fg">
+              Pesanan gratis diterima, tanpa pembayaran. Instance Anda berstatus <strong>Menunggu aktivasi</strong> dan akan diaktifkan admin paling lambat 1x24 jam pada hari kerja.
+            </p>
+          </div>
+          {supportUrl && <SupportLink href={supportUrl} />}
+        </div>
+      )}
       {returnStatus === "success" && confirming && (
         <div role="status" className="flex flex-col gap-3 rounded-2xl border border-line bg-subtle px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-start gap-3">
@@ -441,10 +463,20 @@ export function PortalHostingPage() {
             )}
             <Button className="mt-4 w-full" onClick={() => order.mutate(undefined)} disabled={!ready} title={blockedReason}>
               {pendingFor === "" ? <Loader2 className="animate-spin" aria-hidden="true" /> : <CreditCard aria-hidden="true" />}
-              {pendingFor === "" ? "Membuka pembayaran…" : region?.sold_out ? "Stok habis" : "Pesan sekarang"}
+              {pendingFor === ""
+                ? isFree
+                  ? "Memproses pesanan…"
+                  : "Membuka pembayaran…"
+                : region?.sold_out
+                  ? "Stok habis"
+                  : isFree
+                    ? "Pesan gratis"
+                    : "Pesan sekarang"}
             </Button>
             <p className="mt-2 text-center text-[12.5px] text-fg-muted">
-              Link pembayaran berlaku {CHECKOUT_MINUTES} menit. Slot Anda ditahan selama itu.
+              {isFree
+                ? "Tanpa pembayaran. Instance langsung masuk antrean aktivasi."
+                : `Link pembayaran berlaku ${CHECKOUT_MINUTES} menit. Slot Anda ditahan selama itu.`}
             </p>
           </div>
         </div>
@@ -690,9 +722,12 @@ function CouponField({
           <Ticket className="h-4 w-4 shrink-0 text-ok" strokeWidth={1.75} aria-hidden="true" />
           <span className="min-w-0">
             Kupon <span className="font-mono font-medium">{applied.coupon_code}</span> terpasang:{" "}
-            {applied.kind === "bonus_days"
+            {applied.kind === "free"
+              ? `gratis ${applied.period_days} hari, tanpa pembayaran`
+              : applied.kind === "bonus_days"
               ? `bonus ${applied.bonus_days} hari masa aktif`
-              : applied.discount_type === "percent"
+              : // A percent cut held at the minimum price shows the real amount.
+                applied.discount_type === "percent" && applied.discount_idr === Math.floor((applied.base_idr * applied.discount_value) / 100)
                 ? `diskon ${applied.discount_value}%`
                 : `potongan ${formatIDR(applied.discount_idr)}`}
           </span>

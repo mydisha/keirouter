@@ -31,13 +31,13 @@ func (s *Server) lockHostingOrders(keyID string) func() {
 	return mu.Unlock
 }
 
-// hostingMinChargeIDR is the lowest price a coupon may bring an order to:
-// the gateway's minimum payment.
+// hostingMinChargeIDR is the lowest price a coupon may bring an order to.
+// SumoPod accepts Rp 5.000, the default.
 func (s *Server) hostingMinChargeIDR() int64 {
-	if m := s.cfg.Payment.MinTopupIDR; m > 0 {
+	if m := s.cfg.Payment.MinHostingIDR; m > 0 {
 		return m
 	}
-	return 1000
+	return 5000
 }
 
 // couponHoldUntil is when a coupon hold lapses: the checkout window's end
@@ -157,6 +157,10 @@ func (s *Server) handlePortalCheckHostingCoupon(w http.ResponseWriter, r *http.R
 		return
 	}
 	q := hosting.QuoteCoupon(price, c, s.hostingMinChargeIDR())
+	if q.NoDiscount(c) {
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "code": hosting.CouponNoDiscount, "message": hosting.CouponMessage(hosting.CouponNoDiscount)})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"valid":          true,
 		"coupon_code":    c.Code,

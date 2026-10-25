@@ -281,6 +281,10 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 				writeError(w, http.StatusConflict, "idempotency key already used")
 				return
 			}
+			if isFreeHostingOrder(existing) {
+				s.settleFreeHostingOrder(w, r, existing, http.StatusOK)
+				return
+			}
 			s.writeHostingOrderResponse(w, http.StatusOK, existing)
 			return
 		} else if !errors.Is(gerr, store.ErrNotFound) {
@@ -342,6 +346,10 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 			return
 		}
 		if open, ok := latestPendingHostingOrders(orders, time.Now(), map[string]int64{inst.ID: price}, &couponCode)[inst.ID]; ok {
+			if isFreeHostingOrder(open) {
+				s.settleFreeHostingOrder(w, r, open, http.StatusOK)
+				return
+			}
 			s.writeHostingOrderResponse(w, http.StatusOK, open)
 			return
 		}
@@ -375,6 +383,19 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 		}
 		coupon = c
 		quote = hosting.QuoteCoupon(price, c, s.hostingMinChargeIDR())
+		if quote.NoDiscount(c) {
+			writeCouponRejection(w, hosting.CouponNoDiscount)
+			return
+		}
+	}
+
+	slot := ""
+	if inst.Status == store.HostingAwaitingPayment {
+		slot = region
+	}
+	if quote.FinalIDR == 0 {
+		s.createFreeHostingOrder(w, r, st, inst, newInstance, u.GoogleSub, idem, slot, coupon, quote)
+		return
 	}
 
 	p := s.cfg.Payment
@@ -412,29 +433,72 @@ func (s *Server) handlePortalCreateHostingOrder(w http.ResponseWriter, r *http.R
 	if coupon.ID != "" {
 		o.BaseAmountIDR = quote.BaseIDR
 	}
-	slot := ""
-	if inst.Status == store.HostingAwaitingPayment {
-		slot = region
-	}
 	if err := s.createHostingOrder(r, st, inst, newInstance, o, couponHoldUntil(expires), slot); err != nil {
-		if errors.Is(err, errRegionSoldOut) {
-			writeHostingRegionError(w, http.StatusConflict, "region_sold_out", "Stok region ini sedang habis.")
-			return
-		}
-		if reject := couponReserveRejection(err); reject != "" {
-			writeCouponRejection(w, reject)
-			return
-		}
-		if idem != "" {
-			if existing, gerr := s.db.PaymentOrders().GetByIdempotencyKey(r.Context(), idem); gerr == nil && existing.KeyID == keyID {
-				s.writeHostingOrderResponse(w, http.StatusOK, existing)
-				return
-			}
-		}
-		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		s.writeCreateHostingOrderError(w, r, err, idem, keyID)
 		return
 	}
 	s.writeHostingOrderResponse(w, http.StatusCreated, o)
+}
+
+// freeCouponProvider marks orders a free coupon paid for. They never reach
+// the payment gateway, so no webhook can match them.
+const freeCouponProvider = "coupon"
+
+func isFreeHostingOrder(o store.PaymentOrder) bool {
+	return o.Provider == freeCouponProvider && o.AmountIDR == 0 && o.CouponID != ""
+}
+
+// createFreeHostingOrder handles a checkout a free coupon brings to Rp 0:
+// no payment is created, and the order is stored and settled at once so
+// the instance goes straight to awaiting activation.
+func (s *Server) createFreeHostingOrder(w http.ResponseWriter, r *http.Request, st hosting.Settings, inst store.HostingInstance, newInstance bool, googleSub, idem, slot string, coupon store.HostingCoupon, quote hosting.Quote) {
+	now := time.Now()
+	expires := now.Add(hosting.CheckoutWindow)
+	o := store.PaymentOrder{
+		ID: uuid.NewString(), TenantID: adminTenant, KeyID: inst.KeyID, GoogleSub: googleSub,
+		AmountIDR: 0, BaseAmountIDR: quote.BaseIDR, Status: store.PaymentPending, Provider: freeCouponProvider,
+		IdempotencyKey: idem, Actor: "portal", CreatedAt: now, UpdatedAt: now,
+		ExpiresAt: expires.UTC().Format(time.RFC3339), Product: store.ProductHosting,
+		HostingInstanceID: inst.ID, TermsVersion: hosting.TermsVersion,
+		TermsAcceptedAt: now.UTC().Format(time.RFC3339),
+		CouponID:        coupon.ID, CouponCode: coupon.Code,
+	}
+	if err := s.createHostingOrder(r, st, inst, newInstance, o, couponHoldUntil(expires), slot); err != nil {
+		s.writeCreateHostingOrderError(w, r, err, idem, inst.KeyID)
+		return
+	}
+	s.settleFreeHostingOrder(w, r, o, http.StatusCreated)
+}
+
+// settleFreeHostingOrder marks a free order paid and writes it back. It is
+// safe to repeat: an order already settled is left as it is.
+func (s *Server) settleFreeHostingOrder(w http.ResponseWriter, r *http.Request, o store.PaymentOrder, status int) {
+	if _, err := s.markHostingOrderPaid(r.Context(), o, store.PaymentCompleted, "coupon", "free coupon "+o.CouponCode); err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return
+	}
+	if got, err := s.db.PaymentOrders().Get(r.Context(), o.ID); err == nil {
+		o = got
+	}
+	s.writeHostingOrderResponse(w, status, o)
+}
+
+func (s *Server) writeCreateHostingOrderError(w http.ResponseWriter, r *http.Request, err error, idem, keyID string) {
+	if errors.Is(err, errRegionSoldOut) {
+		writeHostingRegionError(w, http.StatusConflict, "region_sold_out", "Stok region ini sedang habis.")
+		return
+	}
+	if reject := couponReserveRejection(err); reject != "" {
+		writeCouponRejection(w, reject)
+		return
+	}
+	if idem != "" {
+		if existing, gerr := s.db.PaymentOrders().GetByIdempotencyKey(r.Context(), idem); gerr == nil && existing.KeyID == keyID {
+			s.writeHostingOrderResponse(w, http.StatusOK, existing)
+			return
+		}
+	}
+	writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 }
 
 // errRegionSoldOut means another checkout took the region's last slot

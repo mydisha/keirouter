@@ -148,6 +148,9 @@ type PaymentConfig struct {
 	ExpiresInHours        int              `koanf:"expires_in_hours"`
 	SuccessReturnURL      string           `koanf:"success_return_url"`
 	CancelReturnURL       string           `koanf:"cancel_return_url"`
+	// MinHostingIDR is the lowest price a hosting coupon may bring an
+	// order to, kept apart from MinTopupIDR so top-ups are not affected.
+	MinHostingIDR int64 `koanf:"min_hosting_idr"`
 }
 
 // PaymentPackage is an admin-defined preset top-up amount in whole IDR.
@@ -556,6 +559,7 @@ func Default() Config {
 			BaseURL:               "https://api-pay-sandbox.sumopod.com",
 			MinTopupIDR:           10000,
 			MaxTopupIDR:           10000000,
+			MinHostingIDR:         5000,
 			PaymentMethodTypeCode: "QRIS",
 			ExpiresInHours:        24,
 			Packages: []PaymentPackage{

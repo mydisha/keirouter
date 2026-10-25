@@ -40,6 +40,7 @@ const STATE_TONE: Record<HostingCoupon["state"], "success" | "warning" | "danger
 };
 
 function benefit(c: Pick<HostingCoupon, "kind" | "discount_type" | "discount_value" | "bonus_days">): string {
+  if (c.kind === "free") return "Free period, no payment";
   if (c.kind === "bonus_days") return `+${c.bonus_days} days of service`;
   return c.discount_type === "percent" ? `${c.discount_value}% off` : `${idr(c.discount_value)} off`;
 }
@@ -227,14 +228,19 @@ function CouponModal({ coupon, onClose }: { coupon: HostingCoupon | null; onClos
       Number.isInteger(usesNum) &&
       usesNum >= 0 &&
       maxUses.trim() !== "" &&
-      (kind === "discount"
-        ? Number.isInteger(valueNum) && valueNum >= 1 && (discountType !== "percent" || valueNum <= 100)
-        : Number.isInteger(daysNum) && daysNum >= 1 && daysNum <= 365);
+      (kind === "free" ||
+        (kind === "discount"
+          ? Number.isInteger(valueNum) && valueNum >= 1 && (discountType !== "percent" || valueNum <= 100)
+          : Number.isInteger(daysNum) && daysNum >= 1 && daysNum <= 365));
     if (!ok || save.isPending) return;
     save.mutate({
       code: c,
       kind,
-      ...(kind === "discount" ? { discount_type: discountType, discount_value: valueNum } : { bonus_days: daysNum }),
+      ...(kind === "discount"
+        ? { discount_type: discountType, discount_value: valueNum }
+        : kind === "bonus_days"
+          ? { bonus_days: daysNum }
+          : {}),
       max_uses: usesNum,
       starts_at: fromLocalInput(startsAt),
       expires_at: fromLocalInput(expiresAt),
@@ -265,6 +271,7 @@ function CouponModal({ coupon, onClose }: { coupon: HostingCoupon | null; onClos
             <Select value={kind} onChange={(e) => setKind(e.target.value as HostingCouponKind)}>
               <option value="discount">Price discount</option>
               <option value="bonus_days">Extra days</option>
+              <option value="free">Free period (no payment)</option>
             </Select>
           </Field>
           {kind === "discount" ? (
@@ -294,6 +301,10 @@ function CouponModal({ coupon, onClose }: { coupon: HostingCoupon | null; onClos
                 />
               </Field>
             </div>
+          ) : kind === "free" ? (
+            <p className="rounded-lg border border-line bg-subtle px-3 py-2 text-[13px] text-fg-muted">
+              The customer pays nothing for one 30-day period. The order skips the payment gateway and the instance goes straight to awaiting activation.
+            </p>
           ) : (
             <Field label="Extra days" error={daysError} hint={daysError ? undefined : "Added to the 30 days each payment covers."} required>
               <Input type="number" inputMode="numeric" min="1" max="365" step="1" value={bonusDays} onChange={(e) => setBonusDays(e.target.value)} placeholder="7" className="tabular-nums" />
