@@ -6,7 +6,7 @@ require (
 	github.com/RudsonCarvalho/terse-go v0.0.0-20260319103846-35494a19d816
 	github.com/alicebob/miniredis/v2 v2.35.0
 	github.com/bytedance/sonic v1.15.4
-	github.com/go-chi/chi/v5 v5.2.4
+	github.com/go-chi/chi/v5 v5.4.0
 	github.com/go-chi/cors v1.2.1
 	github.com/gogpu/systray v0.2.9-0.20260810092929-45314be7ffa1
 	github.com/google/uuid v1.6.0
