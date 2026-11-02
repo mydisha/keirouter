@@ -114,11 +114,12 @@ func TestListUnpricedModelsMatchesListUnpricedFilter(t *testing.T) {
 
 func TestRedundantUsageIndexesAreDropped(t *testing.T) {
 	db := newTestDB(t)
-	if db.dialect != DialectSQLite {
-		t.Skip("sqlite_master check")
+	q := `SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='usage_records'`
+	if db.dialect == DialectPostgres {
+		q = `SELECT indexname FROM pg_indexes WHERE tablename='usage_records' AND schemaname=current_schema()`
 	}
 	var names []string
-	rows, err := db.sql.Query(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='usage_records'`)
+	rows, err := db.sql.Query(q)
 	require.NoError(t, err)
 	defer rows.Close()
 	for rows.Next() {
