@@ -27,6 +27,7 @@ func (r *RoutingRepo) SetModelCooldown(ctx context.Context, accountID, model str
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(account_id, model) DO UPDATE SET cooldown_until = excluded.cooldown_until`)
 	_, err := r.db.sql.ExecContext(ctx, q, id, accountID, model, formatTime(until), formatTime(time.Now()))
+	r.db.cooldownCache.invalidateAll()
 	if err != nil {
 		return fmt.Errorf("store: set model cooldown: %w", err)
 	}
@@ -37,6 +38,7 @@ func (r *RoutingRepo) SetModelCooldown(ctx context.Context, accountID, model str
 func (r *RoutingRepo) ClearModelCooldown(ctx context.Context, accountID, model string) error {
 	q := r.db.rebind(`DELETE FROM model_cooldowns WHERE account_id = ? AND model = ?`)
 	_, err := r.db.sql.ExecContext(ctx, q, accountID, model)
+	r.db.cooldownCache.invalidateAll()
 	return err
 }
 
@@ -44,6 +46,7 @@ func (r *RoutingRepo) ClearModelCooldown(ctx context.Context, accountID, model s
 func (r *RoutingRepo) ClearAccountModelCooldowns(ctx context.Context, accountID string) error {
 	q := r.db.rebind(`DELETE FROM model_cooldowns WHERE account_id = ?`)
 	_, err := r.db.sql.ExecContext(ctx, q, accountID)
+	r.db.cooldownCache.invalidateAll()
 	return err
 }
 
@@ -116,12 +119,35 @@ func (r *RoutingRepo) ActiveCooldowns(ctx context.Context, accountIDs []string, 
 
 // ActiveCooldownExpirations returns the latest active model cooldown per
 // account for model or '__all__'. It is used to calculate the earliest safe
-// retry instead of polling with fixed sleeps.
+// retry instead of polling with fixed sleeps. The planner calls it for every
+// target of every request, so results are cached briefly; cooldown writes
+// through this DB invalidate the cache, and expiry is re-checked on each hit.
 func (r *RoutingRepo) ActiveCooldownExpirations(ctx context.Context, accountIDs []string, model string) (map[string]time.Time, error) {
-	out := make(map[string]time.Time)
 	if len(accountIDs) == 0 {
-		return out, nil
+		return make(map[string]time.Time), nil
 	}
+	key := routingCacheKey(model, accountIDs)
+	now := time.Now()
+	cached, hit, gen := r.db.cooldownCache.get(key, now)
+	if !hit {
+		var err error
+		if cached, err = r.queryCooldownExpirations(ctx, accountIDs, model); err != nil {
+			return nil, err
+		}
+		r.db.cooldownCache.put(key, cached, gen, now)
+	}
+	// A fresh map: callers may modify it, and the cached one is shared.
+	out := make(map[string]time.Time, len(cached))
+	for id, until := range cached {
+		if until.After(now) {
+			out[id] = until
+		}
+	}
+	return out, nil
+}
+
+func (r *RoutingRepo) queryCooldownExpirations(ctx context.Context, accountIDs []string, model string) (map[string]time.Time, error) {
+	out := make(map[string]time.Time)
 
 	placeholders := make([]string, len(accountIDs))
 	args := make([]any, 0, len(accountIDs)+3)

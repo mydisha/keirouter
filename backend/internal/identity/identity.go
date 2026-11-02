@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/store"
@@ -30,9 +31,21 @@ type Service struct {
 	// (64 MiB + 4 threads each) on every request for the same key.
 	authMu    sync.RWMutex
 	authCache map[string]authCacheEntry
+
+	// authFlight collapses concurrent cache misses for one key into a single
+	// lookup and verification. Without it, every request in flight when an
+	// entry expires runs argon2 on its own: 50 requests hold 50×64 MiB.
+	authFlight singleflight.Group
+
+	// verifySem bounds argon2 verifications running at once across all keys,
+	// so a burst of distinct keys costs at most maxConcurrentVerify×64 MiB.
+	verifySem chan struct{}
 }
 
-// authCacheEntry holds a cached authentication result.
+// authCacheEntry holds a cached authentication result. An expired entry is
+// kept until evicted: it records that the plaintext with this lookup hash
+// already verified against record.KeyHash, so revalidation only needs to
+// confirm the row is unchanged.
 type authCacheEntry struct {
 	record  store.APIKey
 	expires time.Time
@@ -46,11 +59,22 @@ const authCacheTTL = 5 * time.Second
 // authCacheMaxEntries limits the cache size to prevent unbounded memory growth.
 const authCacheMaxEntries = 256
 
+// maxConcurrentVerify caps parallel argon2id verifications (64 MiB each).
+const maxConcurrentVerify = 2
+
+// authVerifyTimeout bounds a shared lookup+verification. It is detached from
+// the caller that started it, so it needs its own deadline.
+const authVerifyTimeout = 10 * time.Second
+
+// verifyAPIKey is the argon2 verifier; tests swap it to count calls.
+var verifyAPIKey = crypto.VerifyAPIKey
+
 // New builds an identity Service.
 func New(keys *store.APIKeyRepo) *Service {
 	return &Service{
 		keys:      keys,
 		authCache: make(map[string]authCacheEntry),
+		verifySem: make(chan struct{}, maxConcurrentVerify),
 	}
 }
 
@@ -126,21 +150,51 @@ func (s *Service) Authenticate(ctx context.Context, plaintext string) (store.API
 	}
 	s.authMu.RUnlock()
 
-	// Slow path: full DB lookup + argon2 verification.
+	// Slow path. Concurrent misses for the same key share one call, which is
+	// detached from the caller that started it so one client hanging up does
+	// not fail the others waiting on the result.
+	ch := s.authFlight.DoChan(lookup, func() (any, error) {
+		vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), authVerifyTimeout)
+		defer cancel()
+		return s.authenticateSlow(vctx, plaintext, lookup)
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return store.APIKey{}, res.Err
+		}
+		return res.Val.(store.APIKey), nil
+	case <-ctx.Done():
+		return store.APIKey{}, ctx.Err()
+	}
+}
+
+// authenticateSlow loads the key row and verifies the plaintext against it.
+// argon2 runs only when this plaintext has not already verified against the
+// row's current hash; an unchanged row is revalidated with the lookup alone,
+// which still picks up disable, deletion and rotation within authCacheTTL.
+func (s *Service) authenticateSlow(ctx context.Context, plaintext, lookup string) (store.APIKey, error) {
 	rec, err := s.keys.FindByLookup(ctx, lookup)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
+			s.invalidateAuthCache(lookup)
 			return store.APIKey{}, ErrUnauthorized
 		}
 		return store.APIKey{}, err
 	}
 	if rec.Disabled {
+		s.invalidateAuthCache(lookup)
 		return store.APIKey{}, ErrUnauthorized
 	}
 
-	ok, err := crypto.VerifyAPIKey(plaintext, rec.KeyHash)
-	if err != nil || !ok {
-		return store.APIKey{}, ErrUnauthorized
+	if !s.verifiedBefore(lookup, rec) {
+		ok, err := s.verify(ctx, plaintext, rec.KeyHash)
+		if err != nil && ctx.Err() != nil {
+			return store.APIKey{}, err
+		}
+		if err != nil || !ok {
+			return store.APIKey{}, ErrUnauthorized
+		}
 	}
 
 	// Cache the positive result for subsequent requests.
@@ -157,11 +211,34 @@ func (s *Service) Authenticate(ctx context.Context, plaintext string) (store.API
 	return rec, nil
 }
 
+// verifiedBefore reports whether this lookup hash already verified against
+// rec's current argon2 hash. The lookup hash is SHA-256 of the plaintext, so
+// a matching entry means the same plaintext; a rotated hash or a recreated
+// row (new id) forces a fresh verification.
+func (s *Service) verifiedBefore(lookup string, rec store.APIKey) bool {
+	s.authMu.RLock()
+	ent, ok := s.authCache[lookup]
+	s.authMu.RUnlock()
+	return ok && rec.KeyHash != "" && ent.record.ID == rec.ID && ent.record.KeyHash == rec.KeyHash
+}
+
+// verify runs argon2 under verifySem so concurrent verifications stay bounded.
+func (s *Service) verify(ctx context.Context, plaintext, hash string) (bool, error) {
+	select {
+	case s.verifySem <- struct{}{}:
+	case <-ctx.Done():
+		return false, ctx.Err()
+	}
+	defer func() { <-s.verifySem }()
+	return verifyAPIKey(plaintext, hash)
+}
+
 // cacheAuthResult stores a successful auth result in the cache.
 func (s *Service) cacheAuthResult(lookup string, rec store.APIKey) {
 	s.authMu.Lock()
-	// Evict oldest entries if the cache is full.
-	if len(s.authCache) >= authCacheMaxEntries {
+	// Evict oldest entries if the cache is full. Refreshing an existing entry
+	// does not grow the map, so it must not evict another key.
+	if _, exists := s.authCache[lookup]; !exists && len(s.authCache) >= authCacheMaxEntries {
 		var oldest string
 		var oldestExpiry time.Time
 		for k, v := range s.authCache {

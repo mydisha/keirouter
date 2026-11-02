@@ -57,17 +57,28 @@ type SettingsRepo struct{ db *DB }
 // Settings returns the settings repository.
 func (db *DB) Settings() *SettingsRepo { return &SettingsRepo{db: db} }
 
-// Get returns a setting value, or ErrNotFound if the key is absent.
+// Get returns a setting value, or ErrNotFound if the key is absent. Results,
+// misses included, are cached for settingsCacheTTL.
 func (r *SettingsRepo) Get(ctx context.Context, key string) (string, error) {
+	now := time.Now()
+	cached, hit, gen := r.db.settingsCache.get(key, now)
+	if hit {
+		if !cached.found {
+			return "", ErrNotFound
+		}
+		return cached.value, nil
+	}
 	q := r.db.rebind(`SELECT value FROM settings WHERE key = ?`)
 	var v string
 	err := r.db.sql.QueryRowContext(ctx, q, key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
+		r.db.settingsCache.put(key, settingValue{}, gen, now)
 		return "", ErrNotFound
 	}
 	if err != nil {
 		return "", fmt.Errorf("store: get setting: %w", err)
 	}
+	r.db.settingsCache.put(key, settingValue{value: v, found: true}, gen, now)
 	return v, nil
 }
 
@@ -76,6 +87,7 @@ func (r *SettingsRepo) Set(ctx context.Context, key, value string) error {
 	q := r.db.rebind(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`)
 	_, err := r.db.sql.ExecContext(ctx, q, key, value, formatTime(time.Now()))
+	r.db.settingsCache.invalidate(key)
 	if err != nil {
 		return fmt.Errorf("store: set setting: %w", err)
 	}
@@ -85,7 +97,9 @@ func (r *SettingsRepo) Set(ctx context.Context, key, value string) error {
 // Delete removes a setting key. Absent keys are not an error.
 func (r *SettingsRepo) Delete(ctx context.Context, key string) error {
 	q := r.db.rebind(`DELETE FROM settings WHERE key = ?`)
-	if _, err := r.db.sql.ExecContext(ctx, q, key); err != nil {
+	_, err := r.db.sql.ExecContext(ctx, q, key)
+	r.db.settingsCache.invalidate(key)
+	if err != nil {
 		return fmt.Errorf("store: delete setting: %w", err)
 	}
 	return nil

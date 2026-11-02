@@ -144,6 +144,37 @@ func (r *UsageRepo) TimelineAccurate(ctx context.Context, tenantID string, since
 	return out, rows.Err()
 }
 
+// UnpricedModel is one provider/model pair that still has unpriced usage rows.
+type UnpricedModel struct {
+	Provider string
+	Model    string
+}
+
+// ListUnpricedModels returns the distinct provider/model pairs among the rows
+// ListUnpriced would return. The backfill uses it to skip a pass over the
+// whole history when none of those models has gained a price.
+func (r *UsageRepo) ListUnpricedModels(ctx context.Context) ([]UnpricedModel, error) {
+	q := r.db.rebind(`
+		SELECT DISTINCT provider, model
+		FROM usage_records
+		WHERE cost_nanos=0 AND prompt_tokens+completion_tokens>0
+			AND pricing_status IN ('missing','legacy')`)
+	rows, err := r.db.sql.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("store: list unpriced models: %w", err)
+	}
+	defer rows.Close()
+	var out []UnpricedModel
+	for rows.Next() {
+		var m UnpricedModel
+		if err := rows.Scan(&m.Provider, &m.Model); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // UnpricedUsageRecord is the minimum historical fact needed by Meter to apply
 // a newly available deterministic catalog price.
 type UnpricedUsageRecord struct {

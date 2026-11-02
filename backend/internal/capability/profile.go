@@ -1,7 +1,6 @@
 package capability
 
 import (
-	"regexp"
 	"strings"
 )
 
@@ -172,31 +171,55 @@ type patternCaps struct {
 	caps    caps
 }
 
-// compiledPattern is a patternCaps with its glob pre-compiled to a regexp.
+// compiledPattern is a patternCaps with its glob split into literal segments.
 type compiledPattern struct {
-	re      *regexp.Regexp
+	glob    glob
 	caps    caps
 	pattern string
 }
 
-// compiledPatterns holds patternCapabilities compiled once at package load, so
-// resolution never recompiles a regexp on the hot path.
+// compiledPatterns holds patternCapabilities compiled once at package load.
 var compiledPatterns = func() []compiledPattern {
 	out := make([]compiledPattern, len(patternCapabilities))
 	for i, p := range patternCapabilities {
-		out[i] = compiledPattern{re: globToRegexp(p.pattern), caps: p.caps, pattern: p.pattern}
+		out[i] = compiledPattern{glob: compileGlob(p.pattern), caps: p.caps, pattern: p.pattern}
 	}
 	return out
 }()
 
-// globToRegexp compiles a "*"-glob into an anchored, case-insensitive regexp.
-// Literal segments are escaped so only "*" acts as a wildcard.
-func globToRegexp(pattern string) *regexp.Regexp {
-	parts := strings.Split(pattern, "*")
-	for i, s := range parts {
-		parts[i] = regexp.QuoteMeta(s)
+// glob is a "*"-wildcard pattern matched against a whole lower-cased string.
+// It replaces an anchored (?i) regexp: a model id that matches no pattern is
+// tested against every one of them on each request, and regexp backtracking
+// made that miss the most expensive step of request planning.
+type glob struct {
+	parts []string // lower-cased literals between the stars
+}
+
+func compileGlob(pattern string) glob {
+	return glob{parts: strings.Split(strings.ToLower(pattern), "*")}
+}
+
+// match reports whether lower (already lower-cased) matches the glob. The
+// first and last literals are anchored; the ones between are found left to
+// right, and taking the leftmost occurrence is always safe when "*" is the
+// only wildcard.
+func (g glob) match(lower string) bool {
+	if len(g.parts) == 1 {
+		return lower == g.parts[0]
 	}
-	return regexp.MustCompile("(?i)^" + strings.Join(parts, ".*") + "$")
+	first, last := g.parts[0], g.parts[len(g.parts)-1]
+	if len(lower) < len(first)+len(last) || !strings.HasPrefix(lower, first) || !strings.HasSuffix(lower, last) {
+		return false
+	}
+	rest := lower[len(first) : len(lower)-len(last)]
+	for _, p := range g.parts[1 : len(g.parts)-1] {
+		i := strings.Index(rest, p)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len(p):]
+	}
+	return true
 }
 
 // ResolveProfile resolves the full capability profile for a model using a
@@ -242,11 +265,12 @@ func Resolve(provider, model string) Resolution {
 	}
 
 	// 3. Glob pattern fallback.
+	lowerBase, lowerModel := strings.ToLower(base), strings.ToLower(model)
 	for _, cp := range compiledPatterns {
 		if provider == "cloudflare-ai" && cp.pattern == "*@cf/*" {
 			continue
 		}
-		if cp.re.MatchString(base) || cp.re.MatchString(model) {
+		if cp.glob.match(lowerBase) || cp.glob.match(lowerModel) {
 			p = cp.caps.merge(p)
 			return Resolution{Profile: p, Source: SourcePattern, VisionState: visionState(p)}
 		}

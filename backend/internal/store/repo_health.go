@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 )
@@ -37,6 +38,7 @@ func (r *HealthRepo) Upsert(ctx context.Context, h AccountHealth) error {
 		h.ID, h.TenantID, h.AccountID, h.Provider, h.Model, h.Status,
 		h.LatencyMS, h.ConsecutiveFailures, h.ConsecutiveSuccesses, nullTime(h.LastOKAt),
 		formatTime(h.LastCheckedAt), h.LastError, formatTime(h.UpdatedAt))
+	r.db.unhealthyCache.invalidateAll()
 	if err != nil {
 		return fmt.Errorf("store: upsert account health: %w", err)
 	}
@@ -80,12 +82,29 @@ func (r *HealthRepo) IsUnhealthy(ctx context.Context, accountID, model string) (
 
 // UnhealthyAccounts returns the set of account IDs (from accountIDs) marked
 // unhealthy for model or '__all__'. Batches per-target health checks into a
-// single query instead of one IsUnhealthy query per account.
+// single query instead of one IsUnhealthy query per account. The planner calls
+// it for every target of every request, so results are cached briefly; health
+// writes through this DB invalidate the cache.
 func (r *HealthRepo) UnhealthyAccounts(ctx context.Context, accountIDs []string, model string) (map[string]bool, error) {
-	out := make(map[string]bool)
 	if len(accountIDs) == 0 {
-		return out, nil
+		return make(map[string]bool), nil
 	}
+	key := routingCacheKey(model, accountIDs)
+	now := time.Now()
+	cached, hit, gen := r.db.unhealthyCache.get(key, now)
+	if !hit {
+		var err error
+		if cached, err = r.queryUnhealthyAccounts(ctx, accountIDs, model); err != nil {
+			return nil, err
+		}
+		r.db.unhealthyCache.put(key, cached, gen, now)
+	}
+	// A fresh map: callers may modify it, and the cached one is shared.
+	return maps.Clone(cached), nil
+}
+
+func (r *HealthRepo) queryUnhealthyAccounts(ctx context.Context, accountIDs []string, model string) (map[string]bool, error) {
+	out := make(map[string]bool)
 
 	placeholders := make([]string, len(accountIDs))
 	args := make([]any, 0, len(accountIDs)+1)
@@ -128,9 +147,13 @@ func (r *HealthRepo) MarkHealthy(ctx context.Context, accountID, model string) e
 		    last_ok_at = ?, last_checked_at = ?, updated_at = ?
 		WHERE account_id = ? AND model IN (?, '__all__')
 		  AND status != 'healthy'`)
-	_, err := r.db.sql.ExecContext(ctx, q, now, now, now, accountID, model)
+	res, err := r.db.sql.ExecContext(ctx, q, now, now, now, accountID, model)
 	if err != nil {
+		r.db.unhealthyCache.invalidateAll()
 		return fmt.Errorf("store: mark account healthy: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		r.db.unhealthyCache.invalidateAll()
 	}
 	return nil
 }

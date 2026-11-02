@@ -320,7 +320,9 @@ type AsyncWriter struct {
 	fullQueuePolicy string
 	log             *slog.Logger
 
-	ch     chan store.UsageRecord
+	// ch carries pointers: a buffer of QueueSize full records (~700 B each)
+	// would stay resident even while the queue is empty.
+	ch     chan *store.UsageRecord
 	once   sync.Once
 	done   chan struct{}
 	closed atomic.Bool
@@ -356,7 +358,7 @@ func NewAsyncWriter(usageStore UsageStore, cfg AsyncConfig) *AsyncWriter {
 		flushInterval:   cfg.FlushInterval,
 		fullQueuePolicy: cfg.FullQueuePolicy,
 		log:             cfg.Logger,
-		ch:              make(chan store.UsageRecord, cfg.QueueSize),
+		ch:              make(chan *store.UsageRecord, cfg.QueueSize),
 		done:            make(chan struct{}),
 	}
 }
@@ -376,7 +378,7 @@ func (w *AsyncWriter) Record(ctx context.Context, rec store.UsageRecord) error {
 		return w.store.Record(ctx, rec)
 	}
 	select {
-	case w.ch <- rec:
+	case w.ch <- &rec:
 		return nil
 	default:
 		if w.fullQueuePolicy == "drop" {
@@ -456,7 +458,7 @@ func (w *AsyncWriter) run(ctx context.Context) {
 						flush()
 						return
 					}
-					batch = append(batch, rec)
+					batch = append(batch, *rec)
 					if len(batch) >= w.batchSize {
 						flush()
 					}
@@ -470,7 +472,7 @@ func (w *AsyncWriter) run(ctx context.Context) {
 				flush()
 				return
 			}
-			batch = append(batch, rec)
+			batch = append(batch, *rec)
 			if len(batch) >= w.batchSize {
 				flush()
 			}

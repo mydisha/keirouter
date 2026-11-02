@@ -35,21 +35,34 @@ func (r *UsageRepo) RecordBatch(ctx context.Context, records []UsageRecord) erro
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// PostgreSQL accepts at most 65,535 bind parameters; SQLite builds used by
-	// KeiRouter allow 32,766. Keep each statement below both limits while one
-	// transaction preserves all-or-nothing batch semantics.
-	const (
-		postgresBindLimit = 65535
-		sqliteBindLimit   = 32766
-	)
-	argsPerRow := len(usageArgs(UsageRecord{}))
-	maxRows := sqliteBindLimit / argsPerRow
-	if r.db.dialect == DialectPostgres {
-		maxRows = postgresBindLimit / argsPerRow
+	if r.db.dialect == DialectSQLite {
+		// SQLite runs in-process, so a multi-row VALUES list saves no round
+		// trips, and it costs a lot: the statement is parsed again on every
+		// flush, and the driver matches each of the batch's thousands of
+		// parameters by scanning the argument list, quadratic in batch size.
+		// One prepared single-row statement executed per row in the same
+		// transaction keeps the all-or-nothing batch and is parsed once.
+		stmt, err := tx.PrepareContext(ctx, r.db.rebind(usageInsertSQL))
+		if err != nil {
+			return fmt.Errorf("store: prepare usage batch: %w", err)
+		}
+		defer func() { _ = stmt.Close() }()
+		for _, u := range records {
+			if _, err := stmt.ExecContext(ctx, usageArgs(u)...); err != nil {
+				return fmt.Errorf("store: record usage batch: %w", err)
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("store: commit usage batch: %w", err)
+		}
+		return nil
 	}
-	if maxRows < 1 {
-		maxRows = 1
-	}
+
+	// PostgreSQL accepts at most 65,535 bind parameters. Keep each statement
+	// below that limit while one transaction preserves all-or-nothing batch
+	// semantics; here a multi-row statement saves a round trip per row.
+	const postgresBindLimit = 65535
+	maxRows := max(postgresBindLimit/usageArgsPerRow, 1)
 	for start := 0; start < len(records); start += maxRows {
 		end := min(start+maxRows, len(records))
 		if err := insertUsageBatch(ctx, tx, r.db.rebind, records[start:end]); err != nil {
@@ -75,19 +88,26 @@ const usageColumns = `id, request_id, tenant_id, project_id, api_key_id, provide
 	cache_write_1h_tokens, web_search_requests, tool_cost_nanos, guardrail_action, guardrail_detector,
 	guardrail_direction, guardrail_mid_stream, guardrail_ms`
 
+// usageArgsPerRow is the number of bind parameters one usage row takes.
+var usageArgsPerRow = len(usageArgs(UsageRecord{}))
+
+// usageRowPlaceholders is one "(?, ...)" tuple for a usage row.
+var usageRowPlaceholders = "(" + strings.TrimSuffix(strings.Repeat("?,", usageArgsPerRow), ",") + ")"
+
+// usageInsertSQL inserts a single usage row (before rebinding).
+var usageInsertSQL = "INSERT INTO usage_records (" + usageColumns + ") VALUES " + usageRowPlaceholders
+
 func insertUsageBatch(ctx context.Context, tx *sql.Tx, rebind func(string) string, records []UsageRecord) error {
-	argsPerRow := len(usageArgs(UsageRecord{}))
-	rowPlaceholders := "(" + strings.TrimSuffix(strings.Repeat("?,", argsPerRow), ",") + ")"
 	var b strings.Builder
 	b.WriteString("INSERT INTO usage_records (")
 	b.WriteString(usageColumns)
 	b.WriteString(") VALUES ")
-	args := make([]any, 0, len(records)*argsPerRow)
+	args := make([]any, 0, len(records)*usageArgsPerRow)
 	for i, u := range records {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString(rowPlaceholders)
+		b.WriteString(usageRowPlaceholders)
 		args = append(args, usageArgs(u)...)
 	}
 	if _, err := tx.ExecContext(ctx, rebind(b.String()), args...); err != nil {
@@ -99,10 +119,7 @@ func insertUsageBatch(ctx context.Context, tx *sql.Tx, rebind func(string) strin
 func insertUsage(ctx context.Context, exec interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
 }, rebind func(string) string, u UsageRecord) error {
-	args := usageArgs(u)
-	placeholders := "(" + strings.TrimSuffix(strings.Repeat("?,", len(args)), ",") + ")"
-	q := rebind("INSERT INTO usage_records (" + usageColumns + ") VALUES " + placeholders)
-	_, err := exec.ExecContext(ctx, q, args...)
+	_, err := exec.ExecContext(ctx, rebind(usageInsertSQL), usageArgs(u)...)
 	return err
 }
 
