@@ -465,6 +465,11 @@ type pricingBackfillStore interface {
 	UpdateUsagePricing(context.Context, string, store.UsagePricingUpdate) error
 }
 
+// unpricedModelLister is optionally implemented by a pricingBackfillStore.
+type unpricedModelLister interface {
+	ListUnpricedModels(context.Context) ([]store.UnpricedModel, error)
+}
+
 // BackfillUnpriced estimates deterministic legacy zero-cost rows in stable
 // (created_at,id) order. Historical rates are explicitly marked as backfilled
 // estimates so analytics can recover missing spend without retroactively
@@ -481,6 +486,26 @@ func (m *Meter) BackfillUnpriced(ctx context.Context) (int, error) {
 	// Rows for models without a price stay unpriced, so they are listed again on
 	// every pass and every restart. Resolve each provider/model once per pass.
 	unpriceable := map[string]bool{}
+	if lister, ok := m.usage.(unpricedModelLister); ok {
+		// Deployments on custom or local models accumulate unpriced history
+		// that no catalog will ever price. Checking the distinct models first
+		// lets startup and every price reload skip reading all of it.
+		models, err := lister.ListUnpricedModels(ctx)
+		if err != nil {
+			return 0, err
+		}
+		anyPriceable := false
+		for _, pm := range models {
+			if match := m.ResolvePrice(pm.Provider, pm.Model); match.Status == "missing" || match.Status == "none" {
+				unpriceable[pm.Provider+"\x00"+pm.Model] = true
+			} else {
+				anyPriceable = true
+			}
+		}
+		if !anyPriceable {
+			return 0, nil
+		}
+	}
 	for {
 		rows, err := repo.ListUnpriced(ctx, cursorTime, cursorID, 1000)
 		if err != nil {

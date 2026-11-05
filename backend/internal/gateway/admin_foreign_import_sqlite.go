@@ -312,6 +312,7 @@ func (s *Server) delete9routerRows(ctx context.Context, opts n9routerImportOptio
 		}
 		_, _ = s.db.SQL().ExecContext(ctx,
 			"DELETE FROM settings WHERE key LIKE '"+providerRoutingPrefix+"%'")
+		s.db.InvalidateSettingsCache()
 	}
 }
 

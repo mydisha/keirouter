@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand/v2"
+	"strings"
 	"sync"
 	"time"
 
@@ -184,6 +185,12 @@ type Dispatcher struct {
 	// clearing DB writes for dirty keys, keeping the success hot path free of
 	// database round-trips.
 	dirty map[string]time.Time
+	// healthyMarked records when NoteSuccess last asked the store to mark an
+	// account\x00model healthy. MarkHealthy is an UPDATE, and on SQLite even
+	// one that matches no row takes the database write lock, so issuing it on
+	// every success serialized all requests behind usage writes. Guarded by
+	// failureMu.
+	healthyMarked map[string]time.Time
 	// defaultCooldown is applied to an account when an error carries no
 	// upstream-specified Retry-After.
 	defaultCooldown time.Duration
@@ -221,9 +228,15 @@ func New(conns ConnectorSource, accounts *store.AccountRepo, v *vault.Vault) *Di
 		recentFailures:   make(map[string]time.Time),
 		transientStrikes: make(map[string]strikeWindow),
 		dirty:            make(map[string]time.Time),
+		healthyMarked:    make(map[string]time.Time),
 		clock:            time.Now,
 	}
 }
+
+// markHealthyInterval is how often a steady stream of successes re-asserts
+// healthy for one account/model. A row the planner saw unhealthy, or an
+// account that just failed, is re-asserted on its next success regardless.
+const markHealthyInterval = 5 * time.Second
 
 // SetTokenRefresher installs an OAuth token refresher, consulted before opening
 // each account's credentials.
@@ -443,6 +456,9 @@ func (d *Dispatcher) PlanWith(ctx context.Context, tenantID string, targets []Ta
 		var unhealthySet map[string]bool
 		if d.health != nil && len(accountIDs) > 0 {
 			unhealthySet, _ = d.health.UnhealthyAccounts(ctx, accountIDs, target.Model)
+			for id := range unhealthySet {
+				d.forgetHealthyMarks(id, target.Model)
+			}
 		}
 
 		for _, acc := range accs {
@@ -663,6 +679,9 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 		(err.Kind == core.ErrUpstream || err.Kind == core.ErrTimeout) {
 		d.recordProviderFailure(err.Provider)
 	}
+	// A real failure may coincide with the health checker degrading this
+	// account; let the next success re-assert healthy without waiting.
+	d.forgetHealthyMarks(accountID, "")
 
 	if scope == core.FailureScopeModel {
 		cooldown := 5 * time.Minute
@@ -822,10 +841,50 @@ func (d *Dispatcher) NoteSuccessAt(ctx context.Context, provider, accountID, mod
 	if modelDirty && d.routing != nil && model != "" {
 		_ = d.routing.ClearModelCooldown(ctx, accountID, model)
 	}
-	if d.health != nil && model != "" {
+	if d.health != nil && model != "" && d.markHealthyDue(modelKey) {
 		_ = d.health.MarkHealthy(ctx, accountID, model)
 	}
 	d.recordProviderSuccess(provider)
+}
+
+// markHealthyDue reports whether a success for key should write healthy now,
+// and records the write when it should.
+func (d *Dispatcher) markHealthyDue(key string) bool {
+	now := d.clock()
+	d.failureMu.Lock()
+	defer d.failureMu.Unlock()
+	if at, ok := d.healthyMarked[key]; ok && now.Sub(at) < markHealthyInterval {
+		return false
+	}
+	if len(d.healthyMarked) >= maxRecentFailureEntries {
+		for k, at := range d.healthyMarked {
+			if now.Sub(at) >= markHealthyInterval {
+				delete(d.healthyMarked, k)
+			}
+		}
+		if len(d.healthyMarked) >= maxRecentFailureEntries {
+			clear(d.healthyMarked)
+		}
+	}
+	d.healthyMarked[key] = now
+	return true
+}
+
+// forgetHealthyMarks makes the next success for accountID (every model when
+// model is empty) write healthy immediately.
+func (d *Dispatcher) forgetHealthyMarks(accountID, model string) {
+	d.failureMu.Lock()
+	defer d.failureMu.Unlock()
+	if model != "" {
+		delete(d.healthyMarked, accountID+"\x00"+model)
+		return
+	}
+	prefix := accountID + "\x00"
+	for k := range d.healthyMarked {
+		if strings.HasPrefix(k, prefix) {
+			delete(d.healthyMarked, k)
+		}
+	}
 }
 
 // dirtySince reports whether key carries state written by this process that

@@ -39,6 +39,10 @@ type DB struct {
 	sql        *sql.DB
 	dialect    Dialect
 	sqlitePath string
+
+	settingsCache  *readCache[settingValue]
+	cooldownCache  *readCache[map[string]time.Time]
+	unhealthyCache *readCache[map[string]bool]
 }
 
 // Open connects using the given database configuration and verifies the
@@ -115,7 +119,12 @@ func Open(ctx context.Context, cfg config.DatabaseConfig, dataDir string) (*DB, 
 		return nil, fmt.Errorf("store: ping %s: %w", dialect, err)
 	}
 
-	return &DB{sql: sqlDB, dialect: dialect, sqlitePath: sqliteFilePath}, nil
+	return &DB{
+		sql: sqlDB, dialect: dialect, sqlitePath: sqliteFilePath,
+		settingsCache:  newSettingsCache(),
+		cooldownCache:  newRoutingCache[map[string]time.Time](),
+		unhealthyCache: newRoutingCache[map[string]bool](),
+	}, nil
 }
 
 // SQLite connection pragmas. They are per-connection state, so they travel in
