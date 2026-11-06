@@ -3,9 +3,14 @@ package gateway
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/mydisha/keirouter/backend/internal/core"
 )
 
 func TestHeartbeatWriterEmitsAfterIdle(t *testing.T) {
@@ -127,4 +132,21 @@ type errorWriter struct{}
 
 func (errorWriter) Write([]byte) (int, error) {
 	return 0, errors.New("write failed")
+}
+
+func TestDirectStream_FlushesABurstOnce(t *testing.T) {
+	var body strings.Builder
+	for range 30 {
+		body.WriteString("data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n")
+	}
+	var dst lockedBuffer
+	flushes := 0
+	hw := newHeartbeatWriter(&dst, func() { flushes++ }, time.Hour)
+	defer hw.stop()
+
+	_, err := copySanitizedStream(hw, strings.NewReader(body.String()), core.DialectOpenAI, hw.Flush)
+	require.NoError(t, err)
+	hw.Flush()
+	require.Equal(t, body.String(), dst.String(), "every frame is written")
+	require.LessOrEqual(t, flushes, 3, "frames already buffered upstream go out in one flush")
 }

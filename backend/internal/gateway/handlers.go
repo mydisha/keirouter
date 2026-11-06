@@ -386,7 +386,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 			hw = newHeartbeatWriter(w, flusher.Flush, heartbeatInterval)
 			defer hw.stop()
 			dst = hw
-			frameFlush = nil // the heartbeat writer flushes after every frame
+			frameFlush = hw.Flush
 		}
 		n, cpErr := copySanitizedStream(dst, result.DirectBody, req.Metadata.SourceDialect, frameFlush)
 		if hw != nil {
