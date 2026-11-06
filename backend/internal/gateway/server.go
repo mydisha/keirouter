@@ -244,12 +244,13 @@ func (s *Server) routes() chi.Router {
 	// rewritten path reaches the real /v1/* routes below.
 	r.Use(collapseDoubleV1)
 	r.Use(middleware.RequestID)
+	r.Use(echoRequestID)
 	r.Use(middleware.Recoverer)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: s.cfg.Server.CORSOrigins,
 		AllowedMethods: []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"Authorization", "Content-Type", "x-api-key", "X-KeiRouter-Affinity", "X-KeiRouter-Account", skipSkillsHeader, "X-Conversation-ID", "X-Thread-ID", "X-Session-ID", "OpenAI-Conversation-ID"},
-		ExposedHeaders: []string{"X-KeiRouter-Provider", "X-KeiRouter-Model", "X-KeiRouter-Account"},
+		ExposedHeaders: []string{"X-KeiRouter-Provider", "X-KeiRouter-Model", "X-KeiRouter-Account", "X-Request-Id"},
 	}))
 
 	// Health check (unauthenticated).

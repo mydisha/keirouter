@@ -182,6 +182,7 @@ type respStreamState struct {
 	toolName     map[int]string
 	toolCustom   map[int]bool
 	toolArgs     map[int]string
+	usage        core.Usage
 	completed    bool
 }
 
@@ -193,7 +194,7 @@ func respState(state *StreamState) *respStreamState {
 		return s
 	}
 	s := &respStreamState{
-		responseID: "resp_" + firstNonEmpty(state.MessageID, "stream"),
+		responseID: firstNonEmpty(state.MessageID, "resp_stream"),
 		toolAdded:  map[int]bool{},
 		toolCallID: map[int]string{},
 		toolName:   map[int]string{},
@@ -343,23 +344,13 @@ func (OpenAIResponsesCodec) RenderStreamChunk(chunk core.StreamChunk, state *Str
 		}
 
 	case core.ChunkUsage:
-		if chunk.Usage == nil {
-			return nil, nil
+		// Anthropic reports input tokens at message_start and Gemini repeats
+		// usage on every frame, so usage is merged and only sent with
+		// response.completed at the end.
+		if chunk.Usage != nil {
+			mergeStreamUsage(&s.usage, *chunk.Usage)
 		}
-		ensureStarted()
-		if !s.completed {
-			s.completed = true
-			emit("response.completed", map[string]any{
-				"response": map[string]any{
-					"id": s.responseID, "object": "response", "status": "completed",
-					"usage": map[string]int{
-						"input_tokens":  chunk.Usage.PromptTokens,
-						"output_tokens": chunk.Usage.CompletionTokens,
-						"total_tokens":  chunk.Usage.TotalTokens,
-					},
-				},
-			})
-		}
+		return nil, nil
 
 	default:
 		return nil, nil
@@ -367,21 +358,75 @@ func (OpenAIResponsesCodec) RenderStreamChunk(chunk core.StreamChunk, state *Str
 	return events, nil
 }
 
-// RenderStreamDone emits response.completed if no usage chunk already did.
+// RenderStreamDone ends the response with response.completed, opening it
+// first when the upstream produced no output at all.
 func (OpenAIResponsesCodec) RenderStreamDone(state *StreamState) [][]byte {
 	s := respState(state)
-	if s.completed || !s.started {
+	if s.completed {
 		return nil
 	}
 	s.completed = true
-	s.seq++
-	return [][]byte{respEvent("response.completed", map[string]any{
-		"type":            "response.completed",
-		"sequence_number": s.seq,
-		"response": map[string]any{
-			"id": s.responseID, "object": "response", "status": "completed",
-		},
+	var events [][]byte
+	if !s.started {
+		s.started = true
+		events = append(events, s.event("response.created", map[string]any{
+			"response": map[string]any{"id": s.responseID, "object": "response", "status": "in_progress", "output": []any{}},
+		}))
+	}
+	resp := map[string]any{"id": s.responseID, "object": "response", "status": "completed"}
+	if s.usage != (core.Usage{}) {
+		resp["usage"] = map[string]int{
+			"input_tokens":  s.usage.PromptTokens,
+			"output_tokens": s.usage.CompletionTokens,
+			"total_tokens":  s.usage.PromptTokens + s.usage.CompletionTokens,
+		}
+	}
+	return append(events, s.event("response.completed", map[string]any{"response": resp}))
+}
+
+// RenderStreamError ends a started response with response.failed, the
+// Responses terminal event for a failure. A nil state renders it without a
+// response id or sequence (the zero-copy path has no render state).
+func (OpenAIResponsesCodec) RenderStreamError(state *StreamState, message string) [][]byte {
+	failed := map[string]any{"code": "server_error", "message": message}
+	if state == nil {
+		return [][]byte{respEvent("response.failed", map[string]any{
+			"type":     "response.failed",
+			"response": map[string]any{"object": "response", "status": "failed", "error": failed},
+		})}
+	}
+	s := respState(state)
+	if s.completed {
+		return nil
+	}
+	s.completed = true
+	return [][]byte{s.event("response.failed", map[string]any{
+		"response": map[string]any{"id": s.responseID, "object": "response", "status": "failed", "error": failed},
 	})}
+}
+
+func (s *respStreamState) event(name string, data map[string]any) []byte {
+	s.seq++
+	data["sequence_number"] = s.seq
+	data["type"] = name
+	return respEvent(name, data)
+}
+
+// mergeStreamUsage folds a usage report into the running total. Providers
+// report usage incrementally or cumulatively, so each non-zero field wins.
+func mergeStreamUsage(total *core.Usage, u core.Usage) {
+	if u.PromptTokens > 0 {
+		total.PromptTokens = u.PromptTokens
+	}
+	if u.CompletionTokens > 0 {
+		total.CompletionTokens = u.CompletionTokens
+	}
+	if u.CachedTokens > 0 {
+		total.CachedTokens = u.CachedTokens
+	}
+	if u.ReasoningTokens > 0 {
+		total.ReasoningTokens = u.ReasoningTokens
+	}
 }
 
 // respEvent formats a Responses API SSE event: "event: <name>\ndata: <json>\n\n".

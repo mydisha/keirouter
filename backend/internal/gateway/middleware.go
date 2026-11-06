@@ -97,6 +97,17 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, tr *reqTra
 	next.ServeHTTP(w, r.WithContext(ctx))
 }
 
+// echoRequestID returns the request id to the client so a failed call can be
+// matched with the gateway's logs and console trace.
+func echoRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if id := chimiddleware.GetReqID(r.Context()); id != "" {
+			w.Header().Set(chimiddleware.RequestIDHeader, id)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // extractToken pulls the API key from standard header locations.
 func extractToken(r *http.Request) string {
 	if auth := r.Header.Get("Authorization"); auth != "" {

@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/mydisha/keirouter/backend/internal/budget"
 	"github.com/mydisha/keirouter/backend/internal/config"
 	"github.com/mydisha/keirouter/backend/internal/core"
@@ -329,7 +330,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	result, err := s.pipeline.Stream(r.Context(), req, opts)
 	if err != nil {
 		tr.complete(outcome{fallbacks: req.Metadata.FallbackCount, err: err})
-		s.writeProviderError(w, err)
+		s.writeProviderErrorAs(w, req.Metadata.SourceDialect, err)
 		return
 	}
 	streamPath := "translated"
@@ -347,6 +348,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	}
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("X-KeiRouter-Provider", result.Provider)
 	w.Header().Set("X-KeiRouter-Model", result.Model)
 	w.WriteHeader(http.StatusOK)
@@ -422,15 +424,13 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 
 	state := &transform.StreamState{Model: result.Model}
 	transform.ResetStreamState(state)
+	state.MessageID = streamMessageID(req.Metadata.SourceDialect)
 	var totalTokens int
 	var chunkCount int
 	// clientGone is set on the first failed write so the rest of the stream
 	// is drained quietly instead of logging once per chunk.
 	var clientGone error
 
-	// ToolArgSanitizer buffers streaming tool call arguments and emits
-	// sanitized JSON when each tool call completes. This fixes malformed
-	// arguments from non-Anthropic models (e.g., Read.limit as string).
 	// Tool-call args from fragmenting upstreams (Kiro, Cursor, CommandCode)
 	// arrive split across frames and are reassembled before rendering; some
 	// clients (Cline) reject a call whose fragments they must join themselves.
@@ -513,12 +513,9 @@ streamLoop:
 					streamErr = &core.ProviderError{Kind: core.ErrUpstream, Message: "provider stream failed"}
 				}
 				s.log.Warn("stream error", "err", streamErr)
-				_, _ = bw.Write(streamErrorEvent(req.Metadata.SourceDialect, sanitizeUpstreamError(streamErr)))
-				// Emit terminal events so strict clients (Claude Code, Cline) see a
-				// well-formed stream end instead of a truncated connection. Without
-				// message_stop/[DONE], the client may treat the stream as incomplete
-				// and retry the request — causing duplicate responses on the user side.
-				for _, ev := range streamCodec.RenderStreamDone(state) {
+				// The error event is the last one: a done event after it would make a
+				// half-streamed turn (or tool call) look finished.
+				for _, ev := range renderStreamError(streamCodec, state, req.Metadata.SourceDialect, sanitizeUpstreamError(streamErr)) {
 					_, _ = bw.Write(ev)
 				}
 				_ = bw.Flush()
@@ -830,6 +827,9 @@ func isProviderStreamError(event []byte) bool {
 }
 
 func streamErrorEvent(dialect core.Dialect, message string) []byte {
+	if dialect == core.DialectOpenAIResponses {
+		return transform.OpenAIResponsesCodec{}.RenderStreamError(nil, message)[0]
+	}
 	if dialect == core.DialectOllama {
 		body, _ := json.Marshal(map[string]any{"error": message})
 		return append(body, '\n')
@@ -862,6 +862,31 @@ func streamErrorEvent(dialect core.Dialect, message string) []byte {
 	out = append(out, "data: "...)
 	out = append(out, body...)
 	return append(out, '\n', '\n')
+}
+
+// renderStreamError renders a mid-stream failure, using the codec's own
+// terminal event when it has one (Responses: response.failed).
+func renderStreamError(codec transform.StreamCodec, state *transform.StreamState, dialect core.Dialect, message string) [][]byte {
+	if er, ok := codec.(interface {
+		RenderStreamError(*transform.StreamState, string) [][]byte
+	}); ok {
+		return er.RenderStreamError(state, message)
+	}
+	return [][]byte{streamErrorEvent(dialect, message)}
+}
+
+// streamMessageID gives each translated stream its own id; clients track
+// turns and cost by it.
+func streamMessageID(dialect core.Dialect) string {
+	id := strings.ReplaceAll(uuid.NewString(), "-", "")
+	switch dialect {
+	case core.DialectAnthropic:
+		return "msg_" + id
+	case core.DialectOpenAIResponses:
+		return "resp_" + id
+	default:
+		return "chatcmpl-" + id
+	}
 }
 
 func truncateStreamEvent(event string) string {
