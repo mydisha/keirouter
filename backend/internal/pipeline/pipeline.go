@@ -407,7 +407,14 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 			streamReq := cloneForAttempt(attemptBaseReq, attempt.Target.Model)
 			stream, sErr := attempt.Conn.Stream(streamCtx, streamReq, attempt.Creds, core.StreamConfig{})
 			if sErr == nil {
-				sResp, drainErr := drainStream(stream, req.Model)
+				sResp, drainErr := transform.CollectStream(stream, req.Model)
+				// Connectors close the channel quietly when the deadline ends the
+				// stream, which would read as a complete answer.
+				if drainErr == nil && streamCtx.Err() != nil && ctx.Err() == nil {
+					drainErr = &core.ProviderError{Kind: core.ErrTimeout, Scope: core.FailureScopeRequest,
+						Provider: attempt.Target.Provider, Model: attempt.Target.Model,
+						Message: "stream ended by the request deadline before the provider finished", Cause: streamCtx.Err()}
+				}
 				streamCancel()
 				if drainErr == nil {
 					callErr = nil
@@ -2115,68 +2122,6 @@ func isStreamRequiredError(err error) bool {
 		strings.Contains(msg, "streaming is required") ||
 		strings.Contains(msg, "stream parameter is required") ||
 		strings.Contains(msg, `"stream" must be true`)
-}
-
-// drainStream consumes a stream channel and folds the chunks into a single
-// ChatResponse. Used by the pipeline when a non-streaming Chat() call failed
-// with a "Stream must be set to true" error and the pipeline retries with
-// streaming internally.
-func drainStream(stream <-chan core.StreamChunk, model string) (*core.ChatResponse, error) {
-	msg := core.Message{Role: core.RoleAssistant}
-	var text, thinking string
-	toolCalls := map[string]*core.ToolCall{}
-	var toolOrder []string
-	finish := core.FinishStop
-	var usage core.Usage
-
-	for ch := range stream {
-		switch ch.Type {
-		case core.ChunkText:
-			text += ch.Delta
-		case core.ChunkThinking:
-			thinking += ch.Delta
-		case core.ChunkToolCall:
-			if ch.ToolCall != nil {
-				existing, ok := toolCalls[ch.ToolCall.ID]
-				if !ok {
-					tc := *ch.ToolCall
-					toolCalls[ch.ToolCall.ID] = &tc
-					toolOrder = append(toolOrder, ch.ToolCall.ID)
-				} else if len(ch.ToolCall.Arguments) > 0 {
-					existing.Arguments = append(existing.Arguments, ch.ToolCall.Arguments...)
-				}
-				finish = core.FinishToolCalls
-			}
-		case core.ChunkFinish:
-			if ch.FinishReason != "" {
-				finish = ch.FinishReason
-			}
-		case core.ChunkUsage:
-			if ch.Usage != nil {
-				usage = *ch.Usage
-			}
-		case core.ChunkError:
-			if ch.Err != nil {
-				return nil, ch.Err
-			}
-		}
-	}
-
-	if thinking != "" {
-		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartThinking, Text: thinking})
-	}
-	if text != "" {
-		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartText, Text: text})
-	}
-	for _, id := range toolOrder {
-		tc := toolCalls[id]
-		if len(tc.Arguments) == 0 {
-			tc.Arguments = json.RawMessage("{}")
-		}
-		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartToolCall, ToolCall: tc})
-	}
-
-	return &core.ChatResponse{Model: model, Message: msg, FinishReason: finish, Usage: usage}, nil
 }
 
 // ---- direct-body usage capture -----------------------------------------------
