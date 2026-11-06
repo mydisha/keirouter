@@ -105,13 +105,13 @@ func (AnthropicCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	maxTokens := raw.MaxTokens
 	systemText, systemCache := decodeAntSystemBlocks(raw.System)
 	req := &core.ChatRequest{
-		Model:              raw.Model,
-		System:             systemText,
-		SystemCacheControl: systemCache,
-		Temperature:        raw.Temp,
-		TopP:               raw.TopP,
-		Stop:               raw.Stop,
-		Stream:             raw.Stream,
+		Model:       raw.Model,
+		System:      systemText,
+		SystemCache: systemCache,
+		Temperature: raw.Temp,
+		TopP:        raw.TopP,
+		Stop:        raw.Stop,
+		Stream:      raw.Stream,
 	}
 	if maxTokens > 0 {
 		req.MaxTokens = &maxTokens
@@ -222,10 +222,8 @@ func decodeAntSystem(raw json.RawMessage) string {
 }
 
 // decodeAntSystemBlocks flattens the system prompt (string or block array)
-// to text and returns the cache_control of the last block that had one. A
-// breakpoint on any system block caches the prefix up to that block; after
-// flattening, one breakpoint on the whole system text preserves that.
-func decodeAntSystemBlocks(raw json.RawMessage) (string, json.RawMessage) {
+// to text and returns the blocks that carried a cache breakpoint.
+func decodeAntSystemBlocks(raw json.RawMessage) (string, []core.SystemBlock) {
 	if len(raw) == 0 {
 		return "", nil
 	}
@@ -238,16 +236,26 @@ func decodeAntSystemBlocks(raw json.RawMessage) (string, json.RawMessage) {
 		return "", nil
 	}
 	var out strings.Builder
-	var cache json.RawMessage
+	var cached []core.SystemBlock
 	for _, b := range blocks {
-		if b.Type == "text" {
-			out.WriteString(b.Text)
+		if b.Type != "text" {
+			continue
 		}
-		if len(b.CacheControl) > 0 {
-			cache = b.CacheControl
+		out.WriteString(b.Text)
+		if cc := cacheControl(b.CacheControl); cc != nil {
+			cached = append(cached, core.SystemBlock{Text: b.Text, CacheControl: cc})
 		}
 	}
-	return out.String(), cache
+	return out.String(), cached
+}
+
+// cacheControl keeps a client cache_control object and drops null or junk.
+func cacheControl(raw json.RawMessage) json.RawMessage {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) < 2 || raw[0] != '{' {
+		return nil
+	}
+	return raw
 }
 
 func parseAntMessage(m antMessage) core.Message {
@@ -524,8 +532,11 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 	switch {
 	case req.System == "" && systemExtra != "":
 		out.System, _ = json.Marshal(systemExtra)
-	case len(req.SystemCacheControl) > 0:
-		blocks := []antBlock{{Type: "text", Text: req.System, CacheControl: req.SystemCacheControl}}
+	case len(req.SystemCache) > 0:
+		var blocks []antBlock
+		for _, b := range req.SystemBlocks() {
+			blocks = append(blocks, antBlock{Type: "text", Text: b.Text, CacheControl: b.CacheControl})
+		}
 		if systemExtra != "" {
 			blocks = append(blocks, antBlock{Type: "text", Text: systemExtra})
 		}

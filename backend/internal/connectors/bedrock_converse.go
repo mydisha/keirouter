@@ -487,9 +487,9 @@ func (r *converseRenderer) cachePoint(cc json.RawMessage) *converseCachePoint {
 
 func (r *converseRenderer) system(req *core.ChatRequest) []converseBlock {
 	var blocks []converseBlock
-	if strings.TrimSpace(req.System) != "" {
-		blocks = append(blocks, converseBlock{Text: req.System})
-		if cp := r.cachePoint(req.SystemCacheControl); cp != nil {
+	for _, b := range req.SystemBlocks() {
+		blocks = append(blocks, converseBlock{Text: b.Text})
+		if cp := r.cachePoint(b.CacheControl); cp != nil {
 			blocks = append(blocks, converseBlock{CachePoint: cp})
 		}
 	}
