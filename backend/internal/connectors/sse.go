@@ -201,6 +201,7 @@ func (p *ssePump) scanError(err error) *core.ProviderError {
 // SSE/NDJSON body: it closes the body and the output channel when done.
 func streamSSE(ctx context.Context, provider, model string, body io.ReadCloser, out chan core.StreamChunk, cfg core.StreamConfig, mode sseLineMode, parse func(payload []byte) ([]core.StreamChunk, error)) {
 	defer close(out)
+	defer core.RecoverStream(out)
 	defer body.Close()
 	newSSEPump(ctx, provider, model, out, cfg).run(body, mode, parse)
 }

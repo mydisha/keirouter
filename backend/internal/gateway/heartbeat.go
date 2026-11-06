@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -63,6 +64,12 @@ func (hw *heartbeatWriter) Write(p []byte) (int, error) {
 
 func (hw *heartbeatWriter) run() {
 	defer close(hw.doneCh)
+	defer func() {
+		// A failed heartbeat must stop the beats, not the process.
+		if r := recover(); r != nil {
+			slog.Error("stream heartbeat panicked", "panic", r)
+		}
+	}()
 	ticker := time.NewTicker(hw.interval)
 	defer ticker.Stop()
 	for {

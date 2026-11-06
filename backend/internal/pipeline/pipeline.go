@@ -1032,6 +1032,7 @@ func (p *Pipeline) pumpStream(ctx context.Context, req *core.ChatRequest, in <-c
 	ttft *time.Duration, save *saveState, scope budget.Scope, release limits.ReleaseFunc,
 	fellBack bool, cancelUpstream context.CancelFunc) {
 	defer close(out)
+	defer core.RecoverStream(out)
 	defer cancelUpstream()
 
 	// Resolve effective stall timeout (dynamic from dashboard or static config).

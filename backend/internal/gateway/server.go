@@ -245,7 +245,7 @@ func (s *Server) routes() chi.Router {
 	r.Use(collapseDoubleV1)
 	r.Use(middleware.RequestID)
 	r.Use(echoRequestID)
-	r.Use(middleware.Recoverer)
+	r.Use(recoverPanics)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: s.cfg.Server.CORSOrigins,
 		AllowedMethods: []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},

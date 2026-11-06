@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -116,6 +118,30 @@ func dialectForPath(path string) core.Dialect {
 
 func writeRequestError(w http.ResponseWriter, r *http.Request, status int, message string) {
 	writeDialectError(w, dialectForPath(r.URL.Path), status, message)
+}
+
+// recoverPanics keeps a handler panic from taking the process down. Once the
+// response has started, the connection is aborted rather than ended cleanly,
+// so the client sees a cut instead of a stream that looks complete.
+func recoverPanics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			if rec == http.ErrAbortHandler {
+				panic(rec)
+			}
+			slog.Error("handler panicked", "panic", rec, "path", r.URL.Path, "stack", string(debug.Stack()))
+			if ww.Status() != 0 {
+				panic(http.ErrAbortHandler)
+			}
+			writeRequestError(ww, r, http.StatusInternalServerError, "internal error")
+		}()
+		next.ServeHTTP(ww, r)
+	})
 }
 
 // echoRequestID returns the request id to the client so a failed call can be

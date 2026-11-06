@@ -133,6 +133,7 @@ func replayAdmittedStream(ctx context.Context, prefix []core.StreamChunk, in <-c
 	out := make(chan core.StreamChunk, 16)
 	go func() {
 		defer close(out)
+		defer core.RecoverStream(out)
 		forward := func(chunk core.StreamChunk) bool {
 			select {
 			case out <- chunk:

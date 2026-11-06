@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -128,4 +130,17 @@ func TestScanErrorClassification(t *testing.T) {
 	pe = p.scanError(errors.New("read tcp: connection reset by peer"))
 	require.Equal(t, core.ErrUpstream, pe.Kind)
 	require.Equal(t, core.FailureScopeNetwork, pe.Scope)
+}
+
+func TestStreamSSE_ParserPanicEndsTheStreamWithAnError(t *testing.T) {
+	body := io.NopCloser(strings.NewReader("data: {\"x\":1}\n\n"))
+	out := make(chan core.StreamChunk, 4)
+	go streamSSE(context.Background(), "p", "m", body, out, core.StreamConfig{}, sseDataLines,
+		func([]byte) ([]core.StreamChunk, error) { panic("decoder bug") })
+
+	var last core.StreamChunk
+	for c := range out {
+		last = c
+	}
+	require.Equal(t, core.ChunkError, last.Type)
 }
