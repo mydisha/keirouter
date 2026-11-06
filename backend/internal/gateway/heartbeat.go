@@ -59,7 +59,6 @@ func (hw *heartbeatWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// Flush pushes written frames to the client.
 func (hw *heartbeatWriter) Flush() {
 	hw.mu.Lock()
 	defer hw.mu.Unlock()

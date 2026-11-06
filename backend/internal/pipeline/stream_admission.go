@@ -95,9 +95,8 @@ func admitStreamNotify(ctx context.Context, in <-chan core.StreamChunk, timeout 
 			if meaningfulAdmissionChunk(chunk) {
 				return replayAdmittedStream(ctx, prefix, in), nil
 			}
-			// A length or filter stop without text is still the model's answer
-			// (e.g. max_tokens spent inside a thinking block); only an empty
-			// stop is treated as a failed attempt.
+			// A length or filter stop without text is still an answer (max_tokens
+			// spent inside thinking); only an empty stop is a failed attempt.
 			if chunk.Type == core.ChunkFinish && chunk.FinishReason != core.FinishStop && chunk.FinishReason != core.FinishError {
 				return replayAdmittedStream(ctx, prefix, in), nil
 			}

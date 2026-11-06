@@ -500,9 +500,8 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	// each chunk only when no further chunk is already queued, so a burst of
 	// deltas costs one write+flush syscall pair instead of one per delta,
 	// while a lone delta still reaches the client immediately.
-	// lastActivity tracks bytes sent to the client, not chunks received:
-	// while tool arguments are buffered the client hears nothing, and only a
-	// heartbeat keeps proxies from closing the idle connection.
+	// lastActivity counts bytes sent to the client, not chunks received: while
+	// tool arguments are buffered, only a heartbeat keeps proxies from closing.
 	var lastActivity time.Time
 	rc := http.NewResponseController(w)
 	defer func() { _ = rc.SetWriteDeadline(time.Time{}) }() // the connection may be reused

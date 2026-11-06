@@ -344,9 +344,8 @@ func (OpenAIResponsesCodec) RenderStreamChunk(chunk core.StreamChunk, state *Str
 		}
 
 	case core.ChunkUsage:
-		// Anthropic reports input tokens at message_start and Gemini repeats
-		// usage on every frame, so usage is merged and only sent with
-		// response.completed at the end.
+		// Anthropic reports input tokens at message_start and Gemini on every
+		// frame, so usage is merged and sent once with response.completed.
 		if chunk.Usage != nil {
 			mergeStreamUsage(&s.usage, *chunk.Usage)
 		}
@@ -384,9 +383,8 @@ func (OpenAIResponsesCodec) RenderStreamDone(state *StreamState) [][]byte {
 	return append(events, s.event("response.completed", map[string]any{"response": resp}))
 }
 
-// RenderStreamError ends a started response with response.failed, the
-// Responses terminal event for a failure. A nil state renders it without a
-// response id or sequence (the zero-copy path has no render state).
+// RenderStreamError ends the response with response.failed. A nil state (the
+// zero-copy path) renders it without a response id or sequence number.
 func (OpenAIResponsesCodec) RenderStreamError(state *StreamState, message string) [][]byte {
 	failed := map[string]any{"code": "server_error", "message": message}
 	if state == nil {

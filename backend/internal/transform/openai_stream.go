@@ -145,9 +145,8 @@ func extractOpenAIStreamToolArguments(tc oaiStreamToolCall) json.RawMessage {
 	return nil
 }
 
-// normalizeOpenAIToolArguments returns the tool arguments as a JSON value. A
-// JSON string holds the arguments text (often a fragment); anything else is
-// passed through as sent. The arguments themselves are never reshaped.
+// normalizeOpenAIToolArguments decodes a JSON-string argument (often a
+// fragment) and passes anything else through; arguments are never reshaped.
 func normalizeOpenAIToolArguments(raw json.RawMessage) json.RawMessage {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
@@ -306,9 +305,8 @@ func encodeOAIUsageEvent(state *StreamState, usage *core.Usage) []byte {
 
 func ptr[T any](v T) *T { return &v }
 
-// openAIToolIndex numbers tool calls from 0 in the order they open. The
-// upstream index can count text and thinking blocks too (Anthropic, Responses),
-// which would leave holes OpenAI clients do not expect.
+// openAIToolIndex numbers tool calls from 0 in opening order; the upstream
+// index also counts text and thinking blocks (Anthropic, Responses).
 func openAIToolIndex(state *StreamState, chunk core.StreamChunk) int {
 	if chunk.ToolCall.ID == "" {
 		for i := len(state.oaiToolUpstream) - 1; i >= 0; i-- {

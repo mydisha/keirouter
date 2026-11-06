@@ -6,9 +6,8 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/core"
 )
 
-// CollectStream folds a stream into one unary response, for providers that
-// only stream. Tool calls are joined per stream index like on the streaming
-// path: continuation chunks carry no id, so joining by id would split a call.
+// CollectStream folds a stream into one unary response, for stream-only
+// providers. Tool calls join per index: continuation chunks carry no id.
 func CollectStream(stream <-chan core.StreamChunk, model string) (*core.ChatResponse, error) {
 	var text, thinking strings.Builder
 	var calls []*core.ToolCall

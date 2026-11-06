@@ -490,10 +490,8 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 		}
 	}
 
-	// Structured output: an Anthropic client's own output_config.format goes
-	// back as is. For other clients a forced tool carries the schema, unless
-	// that would block their own tools or thinking (forced tool_choice is
-	// rejected with thinking); then the schema is asked for in the prompt.
+	// An Anthropic client's own output_config.format goes back as is; otherwise a forced
+	// tool carries the schema, or the prompt does when tools or thinking rule that out.
 	var outputFormat json.RawMessage
 	var formatTool json.RawMessage
 	systemExtra := ""

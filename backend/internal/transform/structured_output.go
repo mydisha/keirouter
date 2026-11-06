@@ -36,7 +36,6 @@ func decodeResponseFormat(raw json.RawMessage) (responseFormat, bool) {
 	return rf, rf.Type == "json_object" || rf.Type == "json_schema"
 }
 
-// schema returns the JSON schema of a json_schema format, or nil.
 func (rf responseFormat) schema() json.RawMessage {
 	if rf.Type != "json_schema" || rf.JSONSchema == nil || len(rf.JSONSchema.Schema) == 0 {
 		return nil
@@ -141,7 +140,7 @@ type StructuredOutputStream struct {
 	active bool
 }
 
-// Process rewrites one chunk; other chunks pass through unchanged.
+// Process rewrites a chunk of the forced tool; it reports false for a chunk to drop.
 func (s *StructuredOutputStream) Process(chunk core.StreamChunk) (core.StreamChunk, bool) {
 	switch chunk.Type {
 	case core.ChunkToolCall:

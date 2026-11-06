@@ -45,9 +45,8 @@ const (
 	// TransientCooldown is the default cooldown for transient/upstream errors
 	// that have no explicit Retry-After.
 	TransientCooldown = 30 * time.Second
-	// MaxTransientRetryAfter caps how long an upstream Retry-After may bench an
-	// account after a transient error (5xx, timeout). Rate limits and quota
-	// resets are honoured in full.
+	// MaxTransientRetryAfter caps the Retry-After of a transient error (5xx,
+	// timeout); rate-limit and quota resets are honoured in full.
 	MaxTransientRetryAfter = 5 * time.Minute
 	// ModelCooldownMultiplier scales the per-model cooldown relative to the
 	// account-level cooldown (same duration — model locks are independent).

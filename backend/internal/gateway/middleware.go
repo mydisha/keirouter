@@ -100,9 +100,8 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, tr *reqTra
 	next.ServeHTTP(w, r.WithContext(ctx))
 }
 
-// dialectForPath names the client dialect an API path speaks, so errors raised
-// before a handler runs (auth, limits, body size) use the envelope the
-// client's SDK can parse.
+// dialectForPath names the dialect of an API path, so errors raised before a
+// handler runs (auth, limits, body size) use an envelope the client can parse.
 func dialectForPath(path string) core.Dialect {
 	switch {
 	case strings.HasPrefix(path, "/v1/messages"):
@@ -120,9 +119,8 @@ func writeRequestError(w http.ResponseWriter, r *http.Request, status int, messa
 	writeDialectError(w, dialectForPath(r.URL.Path), status, message)
 }
 
-// recoverPanics keeps a handler panic from taking the process down. Once the
-// response has started, the connection is aborted rather than ended cleanly,
-// so the client sees a cut instead of a stream that looks complete.
+// recoverPanics keeps a handler panic from taking the process down. A started
+// response is aborted, so the client sees a cut, not a complete-looking stream.
 func recoverPanics(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
