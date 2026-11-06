@@ -124,6 +124,12 @@ func (s *Server) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) {
 
 // handleChat is the shared chat handler parameterized by the client dialect.
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core.Dialect) {
+	s.serveChat(w, r, dialect, nil)
+}
+
+// serveChat runs a chat request end to end. fromPath fills the fields a dialect
+// carries in the URL instead of the body (Gemini's model and stream flag).
+func (s *Server) serveChat(w http.ResponseWriter, r *http.Request, dialect core.Dialect, fromPath func(*core.ChatRequest)) {
 	key, _ := authedKey(r.Context())
 	tenantID := tenantOf(key)
 	client := detectClient(r)
@@ -148,6 +154,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 			"The client sent a body KeiRouter could not parse for this endpoint. Check that the client uses the matching API format.")
 		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
+	}
+	if fromPath != nil {
+		fromPath(req)
 	}
 	tr.setRequest(req.Model, req.Stream)
 

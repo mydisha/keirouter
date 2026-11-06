@@ -314,8 +314,8 @@ func (s *Server) routes() chi.Router {
 		r.Post("/v1/responses", s.handleOpenAIResponses)
 
 		// Gemini-native generateContent endpoint. The model + action are in the
-		// URL path ({model}:generateContent), matching Google's SDK clients.
-		r.Post("/v1beta/models/{modelAction}", s.handleGeminiGenerate)
+		// URL path ({model}:generateContent); the model may contain a slash.
+		r.Post("/v1beta/models/*", s.handleGeminiGenerate)
 
 		// Multi-capability endpoints (Phase 2).
 		r.Post("/v1/embeddings", s.handleEmbeddings)
