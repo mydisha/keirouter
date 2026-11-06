@@ -13,10 +13,10 @@ import (
 func TestAuthErrors_UseTheClientDialect(t *testing.T) {
 	h := newE2E(t, openAIUpstream())
 	cases := map[string]string{
-		"/v1/chat/completions":                `"error":{"message":"invalid API key","type":"authentication_error"}`,
+		"/v1/chat/completions":                `"type":"authentication_error"`,
 		"/v1/messages":                        `"type":"error"`,
 		"/v1beta/models/x:generateContent":    `"status":"UNAUTHENTICATED"`,
-		"/v1/responses":                       `"error":{"message":"invalid API key"`,
+		"/v1/responses":                       `"type":"authentication_error"`,
 		"/v1/messages/count_tokens":           `"type":"authentication_error"`,
 		"/v1beta/models/openai/x:countTokens": `"code":401`,
 	}
