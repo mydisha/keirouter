@@ -200,7 +200,7 @@ func (s *Server) authFailureBlocked(w http.ResponseWriter, r *http.Request) bool
 		return false
 	}
 	w.Header().Set("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
-	writeError(w, http.StatusTooManyRequests, "rate limit exceeded: too many authentication failures")
+	writeRequestError(w, r, http.StatusTooManyRequests, "rate limit exceeded: too many authentication failures")
 	return true
 }
 
@@ -225,7 +225,7 @@ func concurrencyLimiter(maxConcurrent int, onReject func(*http.Request)) func(ht
 				if onReject != nil {
 					onReject(r)
 				}
-				writeError(w, http.StatusServiceUnavailable,
+				writeRequestError(w, r, http.StatusServiceUnavailable,
 					"server is at capacity, please retry shortly")
 			}
 		})

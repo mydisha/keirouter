@@ -53,7 +53,7 @@ func (s *Server) readRequestBody(w http.ResponseWriter, r *http.Request) ([]byte
 		message := fmt.Sprintf("request body exceeds maximum allowed size of %s", humanBytes(int(limit)))
 		tr.reject(http.StatusRequestEntityTooLarge, "Rejected · request body too large", message,
 			statusHint(http.StatusRequestEntityTooLarge))
-		writeError(w, http.StatusRequestEntityTooLarge, message)
+		writeRequestError(w, r, http.StatusRequestEntityTooLarge, message)
 		return nil, false
 	}
 
@@ -63,7 +63,7 @@ func (s *Server) readRequestBody(w http.ResponseWriter, r *http.Request) ([]byte
 	} else {
 		tr.reject(http.StatusBadRequest, "Rejected · failed to read request body", err.Error(), "")
 	}
-	writeError(w, http.StatusBadRequest, "failed to read request body")
+	writeRequestError(w, r, http.StatusBadRequest, "failed to read request body")
 	return nil, false
 }
 
@@ -139,7 +139,7 @@ func (s *Server) serveChat(w http.ResponseWriter, r *http.Request, dialect core.
 	codec, err := s.codecs.Codec(dialect)
 	if err != nil {
 		tr.reject(http.StatusInternalServerError, fmt.Sprintf("Unsupported API dialect: %s", dialect), "", "")
-		writeError(w, http.StatusInternalServerError, "unsupported dialect")
+		writeDialectError(w, dialect, http.StatusInternalServerError, "unsupported dialect")
 		return
 	}
 
@@ -153,11 +153,19 @@ func (s *Server) serveChat(w http.ResponseWriter, r *http.Request, dialect core.
 	if err != nil {
 		tr.reject(http.StatusBadRequest, "Rejected · request body is not valid "+string(dialect)+" JSON", err.Error(),
 			"The client sent a body KeiRouter could not parse for this endpoint. Check that the client uses the matching API format.")
-		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		writeDialectError(w, dialect, http.StatusBadRequest, "invalid request: "+err.Error())
 		return
 	}
 	if fromPath != nil {
 		fromPath(req)
+	}
+	if req.PreviousResponseID != "" {
+		// Responses are never stored upstream (store is forced off), so there
+		// is no earlier response to chain to.
+		tr.reject(http.StatusBadRequest, "Rejected · previous_response_id is not supported", "",
+			"Send the whole conversation in input instead of chaining to an earlier response.")
+		writeDialectError(w, dialect, http.StatusBadRequest, "previous_response_id is not supported: send the full conversation in input")
+		return
 	}
 	tr.setRequest(req.Model, req.Stream)
 
@@ -187,11 +195,11 @@ func (s *Server) serveChat(w http.ResponseWriter, r *http.Request, dialect core.
 		if errors.As(err, &bad) {
 			tr.reject(http.StatusBadRequest, fmt.Sprintf("Rejected · unknown model %q", req.Model), bad.Error(),
 				"No provider model, alias or chain has this name. Check the client's model setting against the Models page.")
-			writeError(w, http.StatusBadRequest, bad.Error())
+			writeDialectError(w, dialect, http.StatusBadRequest, bad.Error())
 			return
 		}
 		tr.reject(http.StatusInternalServerError, fmt.Sprintf("Failed to resolve model %q", req.Model), err.Error(), "")
-		writeError(w, http.StatusInternalServerError, "failed to resolve model")
+		writeDialectError(w, dialect, http.StatusInternalServerError, "failed to resolve model")
 		return
 	}
 
@@ -210,14 +218,14 @@ func (s *Server) serveChat(w http.ResponseWriter, r *http.Request, dialect core.
 		filtered, ferr := s.filterAllowedTargets(r.Context(), key.ID, resolved.Targets)
 		if ferr != nil {
 			tr.reject(http.StatusInternalServerError, "Model access check failed", ferr.Error(), "")
-			writeError(w, http.StatusInternalServerError, "model access check failed")
+			writeDialectError(w, dialect, http.StatusInternalServerError, "model access check failed")
 			return
 		}
 		if len(filtered) == 0 {
 			tr.reject(http.StatusForbidden,
 				fmt.Sprintf("Rejected · key %q may not use %q", key.Name, req.Model), "",
 				"The key's model restrictions exclude every target of this model. Allow the model on the Keys page or use another key.")
-			writeError(w, http.StatusForbidden, "access denied: this API key is not permitted to use model "+req.Model)
+			writeDialectError(w, dialect, http.StatusForbidden, "access denied: this API key is not permitted to use model "+req.Model)
 			return
 		}
 		resolved.Targets = filtered
@@ -231,7 +239,7 @@ func (s *Server) serveChat(w http.ResponseWriter, r *http.Request, dialect core.
 	effectiveLimits, err := s.effectiveLimits(r.Context(), key)
 	if err != nil {
 		tr.reject(http.StatusInternalServerError, "Failed to resolve rate limits", err.Error(), "")
-		writeError(w, http.StatusInternalServerError, "limit resolution failed")
+		writeDialectError(w, dialect, http.StatusInternalServerError, "limit resolution failed")
 		return
 	}
 
@@ -320,13 +328,13 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	tr.setRequest(req.Model, true)
 	streamCodec, ok := codec.(transform.StreamCodec)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "dialect does not support streaming")
+		writeDialectError(w, req.Metadata.SourceDialect, http.StatusInternalServerError, "dialect does not support streaming")
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming unsupported by server")
+		writeDialectError(w, req.Metadata.SourceDialect, http.StatusInternalServerError, "streaming unsupported by server")
 		return
 	}
 
@@ -1036,11 +1044,13 @@ func providerErrorStatus(pe *core.ProviderError) int {
 		return http.StatusBadRequest
 	case core.ErrModelUnavailable:
 		return http.StatusNotFound
-	case core.ErrAuth:
-		return http.StatusUnauthorized
+	case core.ErrAuth, core.ErrQuotaExhausted:
+		// The provider account was refused or ran out, not the client's key:
+		// a 401/402 here makes clients ask the user to log in or pay.
+		return http.StatusServiceUnavailable
 	case core.ErrRateLimit:
 		return http.StatusTooManyRequests
-	case core.ErrQuotaExhausted, core.ErrBudgetBlocked:
+	case core.ErrBudgetBlocked:
 		return http.StatusPaymentRequired
 	case core.ErrPolicyBlocked:
 		return http.StatusForbidden

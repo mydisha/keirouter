@@ -187,3 +187,28 @@ test("default fetcher calls only /v1/models", async () => {
     globalThis.fetch = originalFetch;
   }
 });
+
+test("reads the capability names KeiRouter's /v1/models sends", () => {
+  // Shape of gateway modelEntry (backend/internal/gateway/models.go).
+  const server = {
+    id: "anthropic/claude-sonnet-4-5",
+    object: "model",
+    owned_by: "anthropic",
+    provider: "anthropic",
+    kind: "llm",
+    capabilities: {
+      vision: true,
+      pdf: true,
+      audio_input: false,
+      tools: true,
+      reasoning: true,
+      context_window: 200_000,
+      max_output: 64_000,
+    },
+  } as KeiRouterRawModel;
+
+  const model = mapRawModel(server);
+  assert.equal(model.tool_call, true);
+  assert.deepEqual(model.limit, { context: 200_000, output: 64_000 });
+  assert.deepEqual(model.modalities?.input, ["text", "image", "pdf"]);
+});
