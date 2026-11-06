@@ -5,7 +5,9 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -99,4 +101,29 @@ func TestStream_IDIsUniquePerRequest(t *testing.T) {
 		ids = append(ids, m[1])
 	}
 	require.NotEqual(t, ids[0], ids[1])
+}
+
+func TestStream_HeartbeatRunsWhileToolArgumentsAreBuffered(t *testing.T) {
+	h := newE2E(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"save","arguments":""}}]}}]}`+"\n\n")
+		f.Flush()
+		// Fragments keep arriving, but none reaches the client until the call
+		// is complete.
+		for range 12 {
+			time.Sleep(25 * time.Millisecond)
+			fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":" "}}]}}]}`+"\n\n")
+			f.Flush()
+		}
+		fmt.Fprint(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`+"\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}, func(o *e2eOptions) { o.cfg.Server.StreamHeartbeatInterval = 60 * time.Millisecond })
+
+	resp := h.post(t, "/v1/chat/completions",
+		`{"model":"openai/gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}],`+toolDef+`}`, h.apiKey)
+	out := readAll(t, resp)
+	beat := strings.Index(out, ": keep-alive")
+	call := strings.Index(out, `"tool_calls"`)
+	require.True(t, beat >= 0 && beat < call, "a heartbeat must precede the buffered call: %s", out)
 }

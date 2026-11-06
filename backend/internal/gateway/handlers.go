@@ -500,7 +500,14 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	// each chunk only when no further chunk is already queued, so a burst of
 	// deltas costs one write+flush syscall pair instead of one per delta,
 	// while a lone delta still reaches the client immediately.
+	// lastActivity tracks bytes sent to the client, not chunks received:
+	// while tool arguments are buffered the client hears nothing, and only a
+	// heartbeat keeps proxies from closing the idle connection.
+	var lastActivity time.Time
 	flushToClient := func() {
+		if bw.Buffered() > 0 {
+			lastActivity = time.Now()
+		}
 		bw.Flush()
 		flusher.Flush()
 	}
@@ -511,7 +518,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 		defer heartbeatTicker.Stop()
 		heartbeatC = heartbeatTicker.C
 	}
-	lastActivity := time.Now()
+	lastActivity = time.Now()
 
 	var streamErr error
 streamLoop:
@@ -521,7 +528,6 @@ streamLoop:
 			if !ok {
 				break streamLoop
 			}
-			lastActivity = time.Now()
 			if chunk.Type == core.ChunkError {
 				streamErr = chunk.Err
 				if streamErr == nil {
