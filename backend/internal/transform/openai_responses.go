@@ -409,6 +409,10 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 		"stream": req.Stream,
 		"store":  false,
 	}
+	// The ChatGPT Codex backend rejects max_output_tokens; 16 is the API minimum.
+	if req.MaxTokens != nil && *req.MaxTokens > 0 && !c.Codex {
+		out["max_output_tokens"] = max(*req.MaxTokens, 16)
+	}
 	switch {
 	case req.System != "":
 		out["instructions"] = req.System

@@ -38,6 +38,8 @@ type antRequest struct {
 	OutputConfig json.RawMessage `json:"output_config,omitempty"`
 	// Metadata carries user_id for abuse tracking.
 	Metadata json.RawMessage `json:"metadata,omitempty"`
+	// ContextManagement lets the API clear old tool results and thinking.
+	ContextManagement json.RawMessage `json:"context_management,omitempty"`
 }
 
 type antMessage struct {
@@ -156,6 +158,10 @@ func (AnthropicCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 		req.Reasoning.Effort = effort
 	}
 	req.ResponseFormat = parseAntOutputFormat(raw.OutputConfig)
+	if len(raw.ContextManagement) > 0 {
+		// UnmarshalNoCopy aliases the body; the request outlives it.
+		req.Extra = map[string]json.RawMessage{"context_management": append(json.RawMessage(nil), raw.ContextManagement...)}
+	}
 
 	return req, nil
 }
@@ -376,14 +382,34 @@ func mapAntRole(role string) core.Role {
 
 // ---- request rendering ------------------------------------------------------
 
+// antDefaultMaxTokens is max_tokens for a request that set none, which the API
+// requires. A flat 4096 cut long answers and tool calls off mid-way.
+func antDefaultMaxTokens(req *core.ChatRequest) int {
+	const floor, ceil = 4096, 32000
+	model := strings.ToLower(req.Model)
+	// Other vendors' limits are unknown here, and Claude 3 models stop at 4096 or 8192.
+	if !strings.Contains(model, "claude") || strings.Contains(model, "claude-3") {
+		return floor
+	}
+	p := capability.ResolveProfile("anthropic", req.Model)
+	n := min(p.MaxOutput, ceil)
+	// The prompt and max_tokens must fit the context window together.
+	if room := p.ContextWindow - core.EstimatePromptTokens(req) - 1024; room < n {
+		n = room
+	}
+	return max(n, floor)
+}
+
 // antDefaultMaxOutput is the conservative output ceiling for Claude models.
 const antDefaultMaxOutput = 64000
 
 func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 	req = hoistLeadingSystem(req)
-	maxTokens := 4096
+	var maxTokens int
 	if req.MaxTokens != nil && *req.MaxTokens > 0 {
 		maxTokens = *req.MaxTokens
+	} else {
+		maxTokens = antDefaultMaxTokens(req)
 	}
 	thinkingBudget := 0
 
@@ -550,6 +576,10 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 		out.System, _ = json.Marshal(blocks)
 	case req.System != "":
 		out.System, _ = json.Marshal(appendSystem(req.System, systemExtra))
+	}
+	// Other vendors behind the Anthropic API reject the field.
+	if cm := req.Extra["context_management"]; len(cm) > 0 && strings.Contains(strings.ToLower(req.Model), "claude") {
+		out.ContextManagement = cm
 	}
 	if user := extraString(req, "user"); user != "" {
 		// OpenAI's user id maps to Anthropic's abuse-tracking metadata.
