@@ -65,6 +65,18 @@ type respRequest struct {
 	PreviousResponseID string `json:"previous_response_id,omitempty"`
 	// MaxOutputTokens is the Responses-native output cap.
 	MaxOutputTokens *int `json:"max_output_tokens,omitempty"`
+	Text            *struct {
+		Format *respTextFormat `json:"format,omitempty"`
+	} `json:"text,omitempty"`
+}
+
+// respTextFormat is the Responses structured-output setting (text.format).
+type respTextFormat struct {
+	Type        string          `json:"type"`
+	Name        string          `json:"name,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Schema      json.RawMessage `json:"schema,omitempty"`
+	Strict      *bool           `json:"strict,omitempty"`
 }
 
 // responsesAPIAllowlist enumerates the fields that the Responses API (/v1/responses)
@@ -88,6 +100,7 @@ var responsesAPIAllowlist = map[string]bool{
 	"client_metadata":      true,
 	"previous_response_id": true,
 	"parallel_tool_calls":  true,
+	"text":                 true,
 }
 
 // UnmarshalJSON decodes the request and the typed view of its tools.
@@ -162,6 +175,14 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 	}
 	req.TopP = raw.TopP
 	req.PreviousResponseID = raw.PreviousResponseID
+	if raw.Text != nil && raw.Text.Format != nil {
+		switch f := raw.Text.Format; f.Type {
+		case "json_schema":
+			req.ResponseFormat = canonicalResponseFormat(f.Name, f.Schema, f.Strict)
+		case "json_object":
+			req.ResponseFormat = canonicalResponseFormat("", nil, nil)
+		}
+	}
 	if raw.Reasoning != nil && raw.Reasoning.Effort != "" {
 		req.Reasoning = &core.ReasoningConfig{Effort: raw.Reasoning.Effort}
 	}
@@ -566,6 +587,13 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 	}
 	if req.ParallelToolCalls != nil && len(req.Tools) > 0 {
 		out["parallel_tool_calls"] = *req.ParallelToolCalls
+	}
+	if rf, ok := decodeResponseFormat(req.ResponseFormat); ok {
+		format := respTextFormat{Type: "json_object"}
+		if schema := rf.schema(); schema != nil {
+			format = respTextFormat{Type: "json_schema", Name: rf.JSONSchema.Name, Description: rf.JSONSchema.Description, Schema: schema, Strict: rf.JSONSchema.Strict}
+		}
+		out["text"] = map[string]any{"format": format}
 	}
 
 	// Allowlist filter: strip any field not recognized by the Responses API.

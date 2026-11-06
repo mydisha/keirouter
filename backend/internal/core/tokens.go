@@ -239,6 +239,11 @@ func EstimatePromptTokens(req *ChatRequest) int {
 		tokens += perToolOverhead + EstimateTextTokens(t.Name) + EstimateTextTokens(t.Description) +
 			EstimateTextTokens(string(t.Parameters))
 	}
+	// The schema reaches the provider as a tool, an instruction or a format
+	// setting; it is prompt input in every case.
+	if len(req.ResponseFormat) > 0 {
+		tokens += perToolOverhead + EstimateTextTokens(string(req.ResponseFormat))
+	}
 	return tokens
 }
 

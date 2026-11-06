@@ -40,6 +40,8 @@ type gemGenConfig struct {
 	ThinkingConfig     *gemThinkingConfig `json:"thinkingConfig,omitempty"`
 	ResponseMimeType   string             `json:"responseMimeType,omitempty"`
 	ResponseJSONSchema json.RawMessage    `json:"responseJsonSchema,omitempty"`
+	// ResponseSchema is the older OpenAPI-style schema ("type":"OBJECT").
+	ResponseSchema json.RawMessage `json:"responseSchema,omitempty"`
 }
 
 // gemThinkingConfig controls Gemini reasoning. Gemini 2.x takes a token
@@ -119,6 +121,7 @@ func (GeminiCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 		req.TopP = raw.GenerationConfig.TopP
 		req.MaxTokens = raw.GenerationConfig.MaxOutputTokens
 		req.Stop = raw.GenerationConfig.StopSequences
+		req.ResponseFormat = parseGemResponseFormat(raw.GenerationConfig)
 	}
 	for _, t := range raw.Tools {
 		for _, fd := range t.FunctionDeclarations {
@@ -317,6 +320,19 @@ func geminiThinkingConfig(req *core.ChatRequest) *gemThinkingConfig {
 		budget = -1
 	}
 	return &gemThinkingConfig{ThinkingBudget: &budget, IncludeThoughts: true}
+}
+
+// parseGemResponseFormat reads Gemini's JSON mode into the canonical
+// response_format.
+func parseGemResponseFormat(gc *gemGenConfig) json.RawMessage {
+	if !strings.EqualFold(gc.ResponseMimeType, "application/json") {
+		return nil
+	}
+	schema := gc.ResponseJSONSchema
+	if len(schema) == 0 && len(gc.ResponseSchema) > 0 {
+		schema = lowercaseSchemaTypes(gc.ResponseSchema)
+	}
+	return canonicalResponseFormat("", schema, nil)
 }
 
 // geminiResponseFormat maps OpenAI response_format to Gemini's structured

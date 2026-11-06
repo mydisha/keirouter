@@ -209,6 +209,9 @@ func (OpenAICodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 		req.MaxTokens = raw.MaxCompletionTokens
 	}
 	req.Extra = parseOAIExtraParams(body)
+	if _, ok := decodeResponseFormat(raw.ResponseFormat); ok {
+		req.ResponseFormat = raw.ResponseFormat
+	}
 	// stream_options.include_usage: the client opts in to a usage event on the
 	// streaming response. We don't forward this upstream (many OpenAI-compatible
 	// providers 400 on it — see renderOAIRequest), but the pipeline honors it by
@@ -580,8 +583,12 @@ func shouldInjectReasoning(scope reasoningScope, msg oaiMessage) bool {
 func (c OpenAICodec) RenderRequestForProvider(req *core.ChatRequest, providerID string) ([]byte, error) {
 	scope := reasoningEchoScope(providerID, req.Model)
 	if needsJSONSchemaFallback(providerID, req.ResponseFormat) {
+		// JSON mode keeps the output parseable; the schema itself travels in
+		// the prompt because these providers cannot enforce it.
+		rf, _ := decodeResponseFormat(req.ResponseFormat)
 		clone := *req
 		clone.ResponseFormat = fallbackResponseFormat(req.ResponseFormat)
+		clone.System = appendSystem(req.System, structuredOutputInstruction(rf))
 		return renderOAIRequestForProvider(&clone, providerID, scope)
 	}
 	return renderOAIRequestForProvider(req, providerID, scope)

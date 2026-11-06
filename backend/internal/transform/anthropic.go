@@ -152,6 +152,7 @@ func (AnthropicCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 
 	// Parse thinking configuration from the raw body (before unmarshaling)
 	req.Reasoning = parseAntThinkingFromBytes(body)
+	req.ResponseFormat = parseAntOutputFormat(raw.OutputConfig)
 
 	return req, nil
 }
@@ -180,6 +181,24 @@ func parseAntThinkingFromBytes(body []byte) *core.ReasoningConfig {
 		return cfg
 	}
 	return nil
+}
+
+// parseAntOutputFormat reads output_config.format into the canonical
+// response_format.
+func parseAntOutputFormat(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var oc struct {
+		Format *struct {
+			Type   string          `json:"type"`
+			Schema json.RawMessage `json:"schema"`
+		} `json:"format"`
+	}
+	if json.Unmarshal(raw, &oc) != nil || oc.Format == nil || oc.Format.Type != "json_schema" {
+		return nil
+	}
+	return canonicalResponseFormat("", oc.Format.Schema, nil)
 }
 
 func decodeAntSystem(raw json.RawMessage) string {
@@ -450,12 +469,47 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 		}
 	}
 
-	if req.System != "" {
-		if len(req.SystemCacheControl) > 0 {
-			out.System, _ = json.Marshal([]antBlock{{Type: "text", Text: req.System, CacheControl: req.SystemCacheControl}})
-		} else {
-			out.System, _ = json.Marshal(req.System)
+	// Structured output: an Anthropic client's own output_config.format goes
+	// back as is. For other clients a forced tool carries the schema, unless
+	// that would block their own tools or thinking (forced tool_choice is
+	// rejected with thinking); then the schema is asked for in the prompt.
+	var outputFormat json.RawMessage
+	var formatTool json.RawMessage
+	systemExtra := ""
+	if rf, ok := decodeResponseFormat(req.ResponseFormat); ok {
+		schema := rf.schema()
+		switch {
+		case schema != nil && req.Metadata.SourceDialect == core.DialectAnthropic:
+			outputFormat, _ = json.Marshal(map[string]any{"type": "json_schema", "schema": schema})
+		case schema != nil && len(req.Tools) == 0 && !thinkingEnabled:
+			formatTool, _ = json.Marshal(antTool{Name: StructuredOutputTool, Description: "Return the final answer as this JSON object.", InputSchema: schema})
+		default:
+			systemExtra = structuredOutputInstruction(rf)
 		}
+	}
+	if outputFormat != nil {
+		oc := map[string]json.RawMessage{"format": outputFormat}
+		if len(out.OutputConfig) > 0 {
+			var existing map[string]json.RawMessage
+			if json.Unmarshal(out.OutputConfig, &existing) == nil {
+				existing["format"] = outputFormat
+				oc = existing
+			}
+		}
+		out.OutputConfig, _ = json.Marshal(oc)
+	}
+
+	switch {
+	case req.System == "" && systemExtra != "":
+		out.System, _ = json.Marshal(systemExtra)
+	case len(req.SystemCacheControl) > 0:
+		blocks := []antBlock{{Type: "text", Text: req.System, CacheControl: req.SystemCacheControl}}
+		if systemExtra != "" {
+			blocks = append(blocks, antBlock{Type: "text", Text: systemExtra})
+		}
+		out.System, _ = json.Marshal(blocks)
+	case req.System != "":
+		out.System, _ = json.Marshal(appendSystem(req.System, systemExtra))
 	}
 	if user := extraString(req, "user"); user != "" {
 		// OpenAI's user id maps to Anthropic's abuse-tracking metadata.
@@ -483,9 +537,14 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 		out.Tools = append(out.Tools, encoded)
 	}
 
+	if formatTool != nil {
+		out.Tools = append(out.Tools, formatTool)
+		out.ToolChoice, _ = json.Marshal(map[string]string{"type": "tool", "name": StructuredOutputTool})
+	}
+
 	// Render tool_choice only when tools are declared; Anthropic rejects a
 	// tool_choice with an empty tools array.
-	if len(out.Tools) > 0 {
+	if len(out.Tools) > 0 && formatTool == nil {
 		tc := openAIToolChoiceToClaude(req.ToolChoice)
 		tcMap, _ := tc.(map[string]any)
 		if thinkingEnabled && tcMap != nil {

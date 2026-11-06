@@ -283,6 +283,9 @@ func (s *Server) unaryChat(w http.ResponseWriter, r *http.Request, codec transfo
 		s.writeProviderErrorAs(w, req.Metadata.SourceDialect, err)
 		return
 	}
+	if len(req.ResponseFormat) > 0 {
+		transform.UnwrapStructuredOutput(result.Response)
+	}
 
 	out, err := codec.RenderResponse(result.Response)
 	if err != nil {
@@ -436,6 +439,10 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	// clients (Cline) reject a call whose fragments they must join themselves.
 	sanitizer := transform.NewToolArgSanitizer()
 	sanitizer.ClaudeCodeRepairs = req.Metadata.SourceDialect == core.DialectAnthropic
+	var structured *transform.StructuredOutputStream
+	if len(req.ResponseFormat) > 0 {
+		structured = &transform.StructuredOutputStream{}
+	}
 
 	// ThinkTagState strips <think>...</think> tags from streaming content.
 
@@ -526,6 +533,12 @@ streamLoop:
 				totalTokens = chunk.Usage.PromptTokens + chunk.Usage.CompletionTokens
 			}
 			chunkCount++
+			if structured != nil {
+				var keep bool
+				if chunk, keep = structured.Process(chunk); !keep {
+					continue
+				}
+			}
 			sanitizer.Process(chunk, renderChunk)
 			if len(result.Chunks) == 0 {
 				flushToClient()
