@@ -146,3 +146,12 @@ func TestEstimatePrompt_CountsTheResponseFormat(t *testing.T) {
 	req.ResponseFormat = nil
 	require.Greater(t, with, core.EstimatePromptTokens(req))
 }
+
+func TestStructuredOutput_NativeFormatKeepsTheEffort(t *testing.T) {
+	req := parseStructured(t, core.DialectAnthropic)
+	req.Model = "claude-opus-4-6"
+	req.Reasoning = &core.ReasoningConfig{Effort: "high"}
+	out, err := AnthropicCodec{}.RenderRequest(req)
+	require.NoError(t, err)
+	require.Contains(t, string(out), `"output_config":{"effort":"high","format":{"type":"json_schema"`)
+}

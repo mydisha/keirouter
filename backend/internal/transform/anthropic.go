@@ -480,7 +480,10 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 		schema := rf.schema()
 		switch {
 		case schema != nil && req.Metadata.SourceDialect == core.DialectAnthropic:
-			outputFormat, _ = json.Marshal(map[string]any{"type": "json_schema", "schema": schema})
+			outputFormat, _ = json.Marshal(struct {
+				Type   string          `json:"type"`
+				Schema json.RawMessage `json:"schema"`
+			}{"json_schema", schema})
 		case schema != nil && len(req.Tools) == 0 && !thinkingEnabled:
 			formatTool, _ = json.Marshal(antTool{Name: StructuredOutputTool, Description: "Return the final answer as this JSON object.", InputSchema: schema})
 		default:
@@ -488,13 +491,13 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 		}
 	}
 	if outputFormat != nil {
-		oc := map[string]json.RawMessage{"format": outputFormat}
+		oc := struct {
+			Effort json.RawMessage `json:"effort,omitempty"`
+			Format json.RawMessage `json:"format"`
+		}{Format: outputFormat}
 		if len(out.OutputConfig) > 0 {
-			var existing map[string]json.RawMessage
-			if json.Unmarshal(out.OutputConfig, &existing) == nil {
-				existing["format"] = outputFormat
-				oc = existing
-			}
+			_ = json.Unmarshal(out.OutputConfig, &oc)
+			oc.Format = outputFormat
 		}
 		out.OutputConfig, _ = json.Marshal(oc)
 	}
@@ -539,7 +542,10 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 
 	if formatTool != nil {
 		out.Tools = append(out.Tools, formatTool)
-		out.ToolChoice, _ = json.Marshal(map[string]string{"type": "tool", "name": StructuredOutputTool})
+		out.ToolChoice, _ = json.Marshal(struct {
+			Type string `json:"type"`
+			Name string `json:"name"`
+		}{"tool", StructuredOutputTool})
 	}
 
 	// Render tool_choice only when tools are declared; Anthropic rejects a
