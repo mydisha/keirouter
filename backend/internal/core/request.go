@@ -105,6 +105,9 @@ type ReasoningConfig struct {
 	Effort string `json:"effort,omitempty"`
 	// MaxTokens caps the thinking budget where the provider supports it.
 	MaxTokens int `json:"max_tokens,omitempty"`
+	// Adaptive is an Anthropic client's thinking {type: adaptive}; Effort then
+	// holds its output_config.effort, or "adaptive" when none was sent.
+	Adaptive bool `json:"adaptive,omitempty"`
 }
 
 // Tool is a function/tool definition advertised to the model.

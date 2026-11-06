@@ -68,6 +68,8 @@ type respRequest struct {
 	Text            *struct {
 		Format *respTextFormat `json:"format,omitempty"`
 	} `json:"text,omitempty"`
+	ToolChoice        json.RawMessage `json:"tool_choice,omitempty"`
+	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
 }
 
 // respTextFormat is the Responses structured-output setting (text.format).
@@ -175,6 +177,8 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 	}
 	req.TopP = raw.TopP
 	req.PreviousResponseID = raw.PreviousResponseID
+	req.ToolChoice = responsesToolChoiceToOpenAI(raw.ToolChoice)
+	req.ParallelToolCalls = raw.ParallelToolCalls
 	if raw.Text != nil && raw.Text.Format != nil {
 		switch f := raw.Text.Format; f.Type {
 		case "json_schema":
@@ -462,6 +466,13 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 	customCalls := customToolCallIDs(req.Messages)
 	for _, m := range req.Messages {
 		switch m.Role {
+		case core.RoleSystem, core.RoleDeveloper:
+			if text := messageText(m); text != "" {
+				input = append(input, map[string]any{
+					"type": "message", "role": string(m.Role),
+					"content": []map[string]any{{"type": "input_text", "text": text}},
+				})
+			}
 		case core.RoleUser, core.RoleAssistant:
 			// Emit reasoning items with encrypted_content BEFORE the
 			// message/function_call items. The Codex API requires
@@ -581,6 +592,9 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 			})
 		}
 		out["tools"] = tools
+		if tc := openAIToolChoiceToResponses(req.ToolChoice); tc != nil {
+			out["tool_choice"] = tc
+		}
 	}
 	if req.PreviousResponseID != "" {
 		out["previous_response_id"] = req.PreviousResponseID

@@ -12,6 +12,7 @@ package transform
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/mydisha/keirouter/backend/internal/core"
 )
@@ -93,6 +94,38 @@ func ResetStreamState(state *StreamState) {
 	state.ToolIndex = 0
 	state.Custom = make(map[string]any)
 	state.oaiToolUpstream = state.oaiToolUpstream[:0]
+}
+
+// hoistLeadingSystem folds system and developer messages that open the
+// conversation into the system prompt, for dialects that have no such roles
+// (Anthropic, Gemini). It returns req itself when there is nothing to move.
+func hoistLeadingSystem(req *core.ChatRequest) *core.ChatRequest {
+	n := 0
+	for n < len(req.Messages) && (req.Messages[n].Role == core.RoleSystem || req.Messages[n].Role == core.RoleDeveloper) {
+		n++
+	}
+	if n == 0 {
+		return req
+	}
+	clone := *req
+	for _, m := range req.Messages[:n] {
+		clone.System = appendSystem(clone.System, messageText(m))
+	}
+	clone.Messages = req.Messages[n:]
+	return &clone
+}
+
+func messageText(m core.Message) string {
+	var b strings.Builder
+	for _, p := range m.Content {
+		if p.Type == core.PartText {
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			b.WriteString(p.Text)
+		}
+	}
+	return b.String()
 }
 
 // Registry resolves codecs by dialect.

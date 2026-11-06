@@ -122,6 +122,7 @@ func (GeminiCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 		req.MaxTokens = raw.GenerationConfig.MaxOutputTokens
 		req.Stop = raw.GenerationConfig.StopSequences
 		req.ResponseFormat = parseGemResponseFormat(raw.GenerationConfig)
+		req.Reasoning = parseGemThinking(raw.GenerationConfig.ThinkingConfig)
 	}
 	for _, t := range raw.Tools {
 		for _, fd := range t.FunctionDeclarations {
@@ -131,6 +132,7 @@ func (GeminiCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	for _, c := range raw.Contents {
 		req.Messages = append(req.Messages, parseGemContent(c))
 	}
+	req.ToolChoice = geminiToolChoiceToOpenAI(raw.ToolConfig)
 	return req, nil
 }
 
@@ -186,6 +188,7 @@ func mapGemRole(role string) core.Role {
 // ---- request rendering ------------------------------------------------------
 
 func (GeminiCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
+	req = hoistLeadingSystem(req)
 	out := gemRequest{}
 	if req.System != "" {
 		out.SystemInstruction = &gemContent{Parts: []gemPart{{Text: req.System}}}
@@ -320,6 +323,28 @@ func geminiThinkingConfig(req *core.ChatRequest) *gemThinkingConfig {
 		budget = -1
 	}
 	return &gemThinkingConfig{ThinkingBudget: &budget, IncludeThoughts: true}
+}
+
+// parseGemThinking maps thinkingConfig onto the canonical reasoning knobs:
+// a level is an effort, a positive budget a token cap, 0 off and -1 dynamic.
+func parseGemThinking(tc *gemThinkingConfig) *core.ReasoningConfig {
+	switch {
+	case tc == nil:
+		return nil
+	case tc.ThinkingLevel != "":
+		return &core.ReasoningConfig{Effort: strings.ToLower(tc.ThinkingLevel)}
+	case tc.ThinkingBudget == nil:
+		if tc.IncludeThoughts {
+			return &core.ReasoningConfig{Effort: "auto"}
+		}
+		return nil
+	case *tc.ThinkingBudget == 0:
+		return &core.ReasoningConfig{Effort: "none"}
+	case *tc.ThinkingBudget < 0:
+		return &core.ReasoningConfig{Effort: "auto"}
+	default:
+		return &core.ReasoningConfig{Effort: "high", MaxTokens: *tc.ThinkingBudget}
+	}
 }
 
 // parseGemResponseFormat reads Gemini's JSON mode into the canonical

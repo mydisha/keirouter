@@ -152,6 +152,9 @@ func (AnthropicCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 
 	// Parse thinking configuration from the raw body (before unmarshaling)
 	req.Reasoning = parseAntThinkingFromBytes(body)
+	if effort := parseAntOutputEffort(raw.OutputConfig); effort != "" && req.Reasoning != nil && req.Reasoning.Adaptive {
+		req.Reasoning.Effort = effort
+	}
 	req.ResponseFormat = parseAntOutputFormat(raw.OutputConfig)
 
 	return req, nil
@@ -177,10 +180,22 @@ func parseAntThinkingFromBytes(body []byte) *core.ReasoningConfig {
 			}
 		case "adaptive":
 			cfg.Effort = "adaptive"
+			cfg.Adaptive = true
 		}
 		return cfg
 	}
 	return nil
+}
+
+func parseAntOutputEffort(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var oc struct {
+		Effort string `json:"effort"`
+	}
+	_ = json.Unmarshal(raw, &oc)
+	return oc.Effort
 }
 
 // parseAntOutputFormat reads output_config.format into the canonical
@@ -357,6 +372,7 @@ func mapAntRole(role string) core.Role {
 const antDefaultMaxOutput = 64000
 
 func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
+	req = hoistLeadingSystem(req)
 	maxTokens := 4096
 	if req.MaxTokens != nil && *req.MaxTokens > 0 {
 		maxTokens = *req.MaxTokens
@@ -422,10 +438,15 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 	if req.Reasoning != nil {
 		effort := strings.ToLower(strings.TrimSpace(req.Reasoning.Effort))
 		var thinking map[string]any
-		switch effort {
-		case "adaptive", "auto":
+		switch {
+		case req.Reasoning.Adaptive:
 			thinking = map[string]any{"type": "adaptive"}
-		case "", "none", "off", "disabled":
+			if level := anthropicOutputEffort(effort); level != "" {
+				out.OutputConfig, _ = json.Marshal(map[string]any{"effort": level})
+			}
+		case effort == "adaptive" || effort == "auto":
+			thinking = map[string]any{"type": "adaptive"}
+		case effort == "" || effort == "none" || effort == "off" || effort == "disabled":
 			if thinkingBudget > 0 {
 				thinking = map[string]any{"type": "enabled"}
 			}
