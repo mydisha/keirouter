@@ -1316,7 +1316,16 @@ func (p *Pipeline) pumpStream(ctx context.Context, req *core.ChatRequest, in <-c
 				settleClientCancellation()
 				return
 			case <-stallC:
-				settleStall()
+				// The upstream is fine: the client stopped reading (a suspended
+				// laptop, a stuck proxy). Do not count it against the provider.
+				settleClientCancellation()
+				select {
+				case out <- core.StreamChunk{Type: core.ChunkError, Err: &core.ProviderError{
+					Kind: core.ErrTimeout, Scope: core.FailureScopeRequest,
+					Message: "client stopped reading the stream for " + stallTimeout.String(),
+				}}:
+				case <-ctx.Done():
+				}
 				return
 			}
 		case <-ctx.Done():

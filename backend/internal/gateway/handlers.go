@@ -504,10 +504,15 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	// while tool arguments are buffered the client hears nothing, and only a
 	// heartbeat keeps proxies from closing the idle connection.
 	var lastActivity time.Time
+	rc := http.NewResponseController(w)
+	defer func() { _ = rc.SetWriteDeadline(time.Time{}) }() // the connection may be reused
 	flushToClient := func() {
 		if bw.Buffered() > 0 {
 			lastActivity = time.Now()
 		}
+		// A client that stops reading must not hold this goroutine and the
+		// upstream connection forever.
+		_ = rc.SetWriteDeadline(time.Now().Add(streamWriteTimeout))
 		bw.Flush()
 		flusher.Flush()
 	}
@@ -901,6 +906,9 @@ func renderStreamError(codec transform.StreamCodec, state *transform.StreamState
 	}
 	return [][]byte{streamErrorEvent(dialect, message)}
 }
+
+// streamWriteTimeout bounds one write to a streaming client.
+const streamWriteTimeout = 30 * time.Second
 
 // streamMessageID gives each translated stream its own id; clients track
 // turns and cost by it.
