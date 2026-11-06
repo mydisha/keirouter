@@ -204,9 +204,9 @@ func (s *Server) cliToolView(r *http.Request, st clitools.Status, sn cliToolSnip
 	return v
 }
 
-// cliKeyStatus classifies a plaintext key against the key store using the
-// lookup hash alone — no argon2 verification and no last-used update, so
-// rendering the page neither costs a hash nor skews key activity.
+// cliKeyStatus classifies a plaintext key against the key store by its lookup
+// index, without a last-used update, so rendering the page does not skew key
+// activity.
 func (s *Server) cliKeyStatus(ctx context.Context, plaintext string) (status, name string) {
 	if plaintext == "" {
 		return "missing", ""
@@ -214,7 +214,7 @@ func (s *Server) cliKeyStatus(ctx context.Context, plaintext string) (status, na
 	if s.identity == nil {
 		return "invalid", ""
 	}
-	rec, err := s.identity.Keys().FindByLookup(ctx, crypto.LookupHash(plaintext))
+	rec, err := s.identity.FindByPlaintext(ctx, plaintext)
 	if err != nil {
 		return "invalid", ""
 	}

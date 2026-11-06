@@ -14,7 +14,6 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/mydisha/keirouter/backend/internal/caveman"
-	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/ponytail"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
@@ -582,7 +581,7 @@ func (s *Server) import9routerUsageHistory(ctx context.Context, doc map[string]j
 
 		// Resolve apiKey plaintext → api_key_id.
 		if r.APIKey != "" {
-			if id, ok := keyIDByLookup[crypto.LookupHash(r.APIKey)]; ok {
+			if id, ok := keyIDByLookup(r.APIKey); ok {
 				rec.APIKeyID = id
 			}
 		}
@@ -608,23 +607,35 @@ func (s *Server) import9routerUsageHistory(ctx context.Context, doc map[string]j
 	res.UsageRecords = imported
 }
 
-// usageKeyLookup builds a map from api_key lookup_hash → api_key id for the
-// current tenant, so usageHistory rows can be linked to imported keys.
-func (s *Server) usageKeyLookup(ctx context.Context) map[string]string {
-	out := map[string]string{}
+// usageKeyLookup returns a resolver from a plaintext api key to its api_key id
+// for the current tenant, so usageHistory rows can be linked to imported keys.
+// Keys are matched by the keyed lookup index; a row not indexed under the
+// current lookup key yet is matched through its legacy index.
+func (s *Server) usageKeyLookup(ctx context.Context) func(plaintext string) (string, bool) {
+	none := func(string) (string, bool) { return "", false }
 	if s.identity == nil {
-		return out
+		return none
 	}
 	keys, err := s.identity.List(ctx, adminTenant)
 	if err != nil {
-		return out
+		return none
 	}
+	lookup := s.identity.KeyLookup()
+	byIndex := make(map[string]string, len(keys))
 	for _, k := range keys {
-		if k.LookupHash != "" {
-			out[k.LookupHash] = k.ID
+		switch {
+		case k.LookupHMAC != "" && k.LookupKID == lookup.KID():
+			byIndex[k.LookupHMAC] = k.ID
+		case k.LookupHash != "":
+			if h, err := lookup.FromLegacy(k.LookupHash); err == nil {
+				byIndex[h] = k.ID
+			}
 		}
 	}
-	return out
+	return func(plaintext string) (string, bool) {
+		id, ok := byIndex[lookup.Of(plaintext)]
+		return id, ok
+	}
 }
 
 // xform9routerProvider maps 9router provider ids to KeiRouter custom-provider

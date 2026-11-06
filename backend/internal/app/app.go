@@ -131,7 +131,10 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	loadCustomProviders(ctx, db, log)
 	codecs := transform.DefaultRegistry()
 
-	idSvc := identity.New(db.APIKeys())
+	idSvc := identity.New(db.APIKeys(), crypto.NewKeyLookup(masterKey))
+	if err := reconcileKeyLookups(ctx, idSvc, log); err != nil {
+		return nil, err
+	}
 
 	authSvc := auth.New(db.Settings(), cfg.Security.JWTSecret, cfg.Security.SessionTTL)
 	seeded, err := authSvc.EnsureDefaults(ctx)
@@ -831,6 +834,29 @@ func resolveDataDir(cfg config.Config) (string, error) {
 		return "", fmt.Errorf("app: create data dir %q: %w", dir, err)
 	}
 	return dir, nil
+}
+
+// reconcileKeyLookups gives every stored API key the keyed lookup index before
+// the server takes traffic, so keys minted before it existed authenticate on
+// the fast path. A failure stops startup like a failed migration would.
+func reconcileKeyLookups(ctx context.Context, idSvc *identity.Service, log *slog.Logger) error {
+	start := time.Now()
+	st, err := idSvc.ReconcileLookups(ctx)
+	if err != nil {
+		return fmt.Errorf("app: index api keys: %w", err)
+	}
+	if st.Indexed > 0 {
+		log.Info("indexed api keys", "count", st.Indexed, "duration", time.Since(start).Round(time.Millisecond))
+	}
+	if st.Reindexed > 0 {
+		log.Warn("api keys were indexed under a different master key and have been re-indexed",
+			"count", st.Reindexed,
+			"note", "the master key changed; keep it stable, it also protects stored credentials")
+	}
+	if st.Skipped > 0 {
+		log.Warn("api keys with a malformed lookup hash were skipped; they cannot authenticate", "count", st.Skipped)
+	}
+	return nil
 }
 
 // loadOrCreateMasterKey resolves the envelope-encryption root key. Precedence:

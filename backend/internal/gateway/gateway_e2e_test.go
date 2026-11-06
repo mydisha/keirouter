@@ -87,7 +87,7 @@ func newE2E(t *testing.T, upstreamHandler http.HandlerFunc, opts ...func(*e2eOpt
 	require.NoError(t, db.Accounts().Create(ctx, acc))
 
 	// Issue an API key.
-	idSvc := identity.New(db.APIKeys())
+	idSvc := identity.New(db.APIKeys(), crypto.NewKeyLookup(mk))
 	issued, err := idSvc.Create(ctx, store.DefaultTenantID, "", "test-key")
 	require.NoError(t, err)
 

@@ -1,14 +1,20 @@
 // Package identity issues and verifies KeiRouter API keys.
 //
 // Keys are never stored in plaintext: creation returns the plaintext once for
-// the user to copy, while the store keeps only an argon2id verifier plus a
-// fast SHA-256 lookup index. Authentication looks up the candidate row by the
-// lookup index, then confirms with a constant-time argon2 comparison.
+// the user to copy, while the store keeps a keyed lookup index (HMAC-SHA256
+// under a key derived from the master key, see crypto.KeyLookup). A key is
+// 192 random bits, so finding its row by that index authenticates it; no
+// password-style hash is needed on the request path.
+//
+// Rows also carry the legacy SHA-256 index and an argon2id verifier. Neither
+// is read for keys that have the keyed index; they are still written so a
+// release that predates the keyed index keeps working after a rollback.
 package identity
 
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -24,28 +30,20 @@ var ErrUnauthorized = errors.New("identity: unauthorized")
 
 // Service manages API key lifecycle and authentication.
 type Service struct {
-	keys *store.APIKeyRepo
+	keys   *store.APIKeyRepo
+	lookup *crypto.KeyLookup
 
-	// authCache caches successful authentication results keyed by lookup hash.
-	// Under high concurrency, this avoids re-running argon2id verification
-	// (64 MiB + 4 threads each) on every request for the same key.
+	// authCache caches successful authentication results keyed by the keyed
+	// lookup index, so an active key costs no database read per request.
 	authMu    sync.RWMutex
 	authCache map[string]authCacheEntry
 
 	// authFlight collapses concurrent cache misses for one key into a single
-	// lookup and verification. Without it, every request in flight when an
-	// entry expires runs argon2 on its own: 50 requests hold 50×64 MiB.
+	// database lookup.
 	authFlight singleflight.Group
-
-	// verifySem bounds argon2 verifications running at once across all keys,
-	// so a burst of distinct keys costs at most maxConcurrentVerify×64 MiB.
-	verifySem chan struct{}
 }
 
-// authCacheEntry holds a cached authentication result. An expired entry is
-// kept until evicted: it records that the plaintext with this lookup hash
-// already verified against record.KeyHash, so revalidation only needs to
-// confirm the row is unchanged.
+// authCacheEntry holds a cached authentication result.
 type authCacheEntry struct {
 	record  store.APIKey
 	expires time.Time
@@ -59,22 +57,29 @@ const authCacheTTL = 5 * time.Second
 // authCacheMaxEntries limits the cache size to prevent unbounded memory growth.
 const authCacheMaxEntries = 256
 
-// maxConcurrentVerify caps parallel argon2id verifications (64 MiB each).
-const maxConcurrentVerify = 2
+// authLookupTimeout bounds a shared lookup. It is detached from the caller
+// that started it, so it needs its own deadline.
+const authLookupTimeout = 10 * time.Second
 
-// authVerifyTimeout bounds a shared lookup+verification. It is detached from
-// the caller that started it, so it needs its own deadline.
-const authVerifyTimeout = 10 * time.Second
+// reconcileBatch is how many rows ReconcileLookups indexes per transaction.
+const reconcileBatch = 500
 
-// verifyAPIKey is the argon2 verifier; tests swap it to count calls.
-var verifyAPIKey = crypto.VerifyAPIKey
+// Lookup functions, swapped by tests to observe or slow the shared lookup.
+var (
+	findByLookupHMAC = (*store.APIKeyRepo).FindByLookupHMAC
+	findByLookup     = (*store.APIKeyRepo).FindByLookup
+)
 
-// New builds an identity Service.
-func New(keys *store.APIKeyRepo) *Service {
+// New builds an identity Service. lookup must not be nil: it is derived from
+// the master key (crypto.NewKeyLookup) and indexes every key.
+func New(keys *store.APIKeyRepo, lookup *crypto.KeyLookup) *Service {
+	if lookup == nil {
+		panic("identity: nil key lookup")
+	}
 	return &Service{
 		keys:      keys,
+		lookup:    lookup,
 		authCache: make(map[string]authCacheEntry),
-		verifySem: make(chan struct{}, maxConcurrentVerify),
 	}
 }
 
@@ -105,17 +110,29 @@ func (s *Service) Generate(tenantID, projectID, name string) (Issued, error) {
 		return Issued{}, err
 	}
 	rec := store.APIKey{
-		ID:         uuid.NewString(),
-		TenantID:   tenantID,
-		ProjectID:  projectID,
-		Name:       name,
-		KeyHash:    gen.Hash,
-		LookupHash: gen.Lookup,
-		Display:    gen.Display,
-		CreatedAt:  time.Now(),
+		ID:        uuid.NewString(),
+		TenantID:  tenantID,
+		ProjectID: projectID,
+		Name:      name,
+		KeyHash:   gen.Hash,
+		Display:   gen.Display,
+		CreatedAt: time.Now(),
 	}
+	s.SetLookups(&rec, gen.Plaintext)
 	return Issued{Record: rec, Plaintext: gen.Plaintext}, nil
 }
+
+// SetLookups fills rec's lookup indexes for plaintext: the keyed index the
+// request path reads, and the legacy SHA-256 index kept for rollback.
+func (s *Service) SetLookups(rec *store.APIKey, plaintext string) {
+	rec.LookupHash = crypto.LookupHash(plaintext)
+	rec.LookupHMAC = s.lookup.Of(plaintext)
+	rec.LookupKID = s.lookup.KID()
+}
+
+// KeyLookup exposes the keyed lookup index, for callers that match many
+// plaintext keys against stored rows at once (foreign import).
+func (s *Service) KeyLookup() *crypto.KeyLookup { return s.lookup }
 
 // CreateFromIssued persists a previously generated key (from Generate).
 func (s *Service) CreateFromIssued(ctx context.Context, issued Issued) error {
@@ -127,14 +144,12 @@ func (s *Service) Keys() *store.APIKeyRepo { return s.keys }
 
 // Authenticate verifies a presented plaintext key and returns its record. On
 // success it best-effort updates the key's last-used timestamp. A short-lived
-// positive-result cache avoids re-running argon2id on every request for active
-// keys, which is critical under high concurrency (each argon2 verification
-// consumes 64 MiB + 4 OS threads).
+// positive-result cache keeps active keys off the database.
 func (s *Service) Authenticate(ctx context.Context, plaintext string) (store.APIKey, error) {
 	if plaintext == "" {
 		return store.APIKey{}, ErrUnauthorized
 	}
-	lookup := crypto.LookupHash(plaintext)
+	lookup := s.lookup.Of(plaintext)
 
 	// Fast path: check auth cache for a recent positive result.
 	s.authMu.RLock()
@@ -150,13 +165,13 @@ func (s *Service) Authenticate(ctx context.Context, plaintext string) (store.API
 	}
 	s.authMu.RUnlock()
 
-	// Slow path. Concurrent misses for the same key share one call, which is
+	// Slow path. Concurrent misses for the same key share one lookup, which is
 	// detached from the caller that started it so one client hanging up does
 	// not fail the others waiting on the result.
 	ch := s.authFlight.DoChan(lookup, func() (any, error) {
-		vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), authVerifyTimeout)
+		lctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), authLookupTimeout)
 		defer cancel()
-		return s.authenticateSlow(vctx, plaintext, lookup)
+		return s.authenticateSlow(lctx, plaintext, lookup)
 	})
 	select {
 	case res := <-ch:
@@ -169,12 +184,10 @@ func (s *Service) Authenticate(ctx context.Context, plaintext string) (store.API
 	}
 }
 
-// authenticateSlow loads the key row and verifies the plaintext against it.
-// argon2 runs only when this plaintext has not already verified against the
-// row's current hash; an unchanged row is revalidated with the lookup alone,
-// which still picks up disable, deletion and rotation within authCacheTTL.
+// authenticateSlow loads the key row. A fresh lookup on every cache miss picks
+// up disable, deletion and rotation within authCacheTTL.
 func (s *Service) authenticateSlow(ctx context.Context, plaintext, lookup string) (store.APIKey, error) {
-	rec, err := s.keys.FindByLookup(ctx, lookup)
+	rec, err := s.find(ctx, plaintext, lookup, true)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			s.invalidateAuthCache(lookup)
@@ -185,16 +198,6 @@ func (s *Service) authenticateSlow(ctx context.Context, plaintext, lookup string
 	if rec.Disabled {
 		s.invalidateAuthCache(lookup)
 		return store.APIKey{}, ErrUnauthorized
-	}
-
-	if !s.verifiedBefore(lookup, rec) {
-		ok, err := s.verify(ctx, plaintext, rec.KeyHash)
-		if err != nil && ctx.Err() != nil {
-			return store.APIKey{}, err
-		}
-		if err != nil || !ok {
-			return store.APIKey{}, ErrUnauthorized
-		}
 	}
 
 	// Cache the positive result for subsequent requests.
@@ -211,26 +214,98 @@ func (s *Service) authenticateSlow(ctx context.Context, plaintext, lookup string
 	return rec, nil
 }
 
-// verifiedBefore reports whether this lookup hash already verified against
-// rec's current argon2 hash. The lookup hash is SHA-256 of the plaintext, so
-// a matching entry means the same plaintext; a rotated hash or a recreated
-// row (new id) forces a fresh verification.
-func (s *Service) verifiedBefore(lookup string, rec store.APIKey) bool {
-	s.authMu.RLock()
-	ent, ok := s.authCache[lookup]
-	s.authMu.RUnlock()
-	return ok && rec.KeyHash != "" && ent.record.ID == rec.ID && ent.record.KeyHash == rec.KeyHash
+// FindByPlaintext returns the row for a plaintext key, enabled or not, without
+// touching the auth cache, last-used time or the stored indexes.
+func (s *Service) FindByPlaintext(ctx context.Context, plaintext string) (store.APIKey, error) {
+	if plaintext == "" {
+		return store.APIKey{}, store.ErrNotFound
+	}
+	return s.find(ctx, plaintext, s.lookup.Of(plaintext), false)
 }
 
-// verify runs argon2 under verifySem so concurrent verifications stay bounded.
-func (s *Service) verify(ctx context.Context, plaintext, hash string) (bool, error) {
-	select {
-	case s.verifySem <- struct{}{}:
-	case <-ctx.Done():
-		return false, ctx.Err()
+// find resolves a plaintext key to its row by the keyed index. A row that has
+// no keyed index under the current lookup key yet (minted by a replica still
+// on an older release, or indexed under a previous master key) is found by
+// the legacy SHA-256 index instead; with repair set it is then given the
+// keyed index, so the next lookup takes the fast path.
+//
+// The legacy index is only trusted for rows that are not already indexed
+// under the current key: such a row with a different keyed index means the
+// two indexes disagree, and the key is rejected rather than guessed at.
+func (s *Service) find(ctx context.Context, plaintext, lookup string, repair bool) (store.APIKey, error) {
+	rec, err := findByLookupHMAC(s.keys, ctx, lookup)
+	if !errors.Is(err, store.ErrNotFound) {
+		return rec, err
 	}
-	defer func() { <-s.verifySem }()
-	return verifyAPIKey(plaintext, hash)
+	rec, err = findByLookup(s.keys, ctx, crypto.LookupHash(plaintext))
+	if err != nil {
+		return store.APIKey{}, err
+	}
+	kid := s.lookup.KID()
+	if rec.LookupHMAC != "" && rec.LookupKID == kid {
+		return store.APIKey{}, store.ErrNotFound
+	}
+	if repair {
+		if _, err := s.keys.SetLookupHMAC(ctx, store.LookupIndexUpdate{ID: rec.ID, HMAC: lookup, KID: kid}); err != nil {
+			slog.Warn("identity: index api key", "key_id", rec.ID, "err", err)
+		} else {
+			rec.LookupHMAC, rec.LookupKID = lookup, kid
+		}
+	}
+	return rec, nil
+}
+
+// ReconcileStats reports what ReconcileLookups changed.
+type ReconcileStats struct {
+	// Indexed counts rows given a keyed index, Reindexed included.
+	Indexed int
+	// Reindexed counts rows that had a keyed index under another lookup key,
+	// which means the master key changed since they were indexed.
+	Reindexed int
+	// Skipped counts rows whose legacy index is not a SHA-256 hex digest and
+	// so cannot be converted; they cannot authenticate either way.
+	Skipped int
+}
+
+// ReconcileLookups gives every row the keyed index under the current lookup
+// key, computing it from the stored legacy index, so no key has to be
+// presented or reissued. It is idempotent and safe to run on several replicas
+// at once: each row converges to the same value. Run it at startup, after
+// migrations, before serving requests.
+func (s *Service) ReconcileLookups(ctx context.Context) (ReconcileStats, error) {
+	kid := s.lookup.KID()
+	var st ReconcileStats
+	after := ""
+	for {
+		page, err := s.keys.ListPendingLookups(ctx, kid, after, reconcileBatch)
+		if err != nil {
+			return st, err
+		}
+		if len(page) == 0 {
+			return st, nil
+		}
+		after = page[len(page)-1].ID
+
+		updates := make([]store.LookupIndexUpdate, 0, len(page))
+		reindex := 0
+		for _, p := range page {
+			h, err := s.lookup.FromLegacy(p.LookupHash)
+			if err != nil {
+				st.Skipped++
+				continue
+			}
+			if p.LookupHMAC != "" {
+				reindex++
+			}
+			updates = append(updates, store.LookupIndexUpdate{ID: p.ID, HMAC: h, KID: kid})
+		}
+		n, err := s.keys.SetLookupHMACs(ctx, updates)
+		if err != nil {
+			return st, err
+		}
+		st.Indexed += n
+		st.Reindexed += min(reindex, n)
+	}
 }
 
 // cacheAuthResult stores a successful auth result in the cache.

@@ -112,7 +112,7 @@ func newModelDiscoveryTestGateway(t *testing.T, accounts []store.Account) (*Serv
 		require.NoError(t, db.Accounts().Create(ctx, acc))
 	}
 
-	idSvc := identity.New(db.APIKeys())
+	idSvc := identity.New(db.APIKeys(), crypto.NewKeyLookup(mk))
 	issued, err := idSvc.Create(ctx, store.DefaultTenantID, "", "test-key")
 	require.NoError(t, err)
 

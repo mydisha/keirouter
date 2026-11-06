@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -39,10 +40,12 @@ var ErrInvalidHash = errors.New("crypto: invalid argon2 hash")
 type GeneratedKey struct {
 	// Plaintext is the full key string the caller uses (e.g. "kr_AbC123...").
 	Plaintext string
-	// Hash is the argon2id verifier stored in the database.
+	// Hash is the argon2id verifier stored in the database. Authentication no
+	// longer reads it; it is still written so a release that predates the
+	// keyed lookup index can verify keys minted by this one after a rollback.
 	Hash string
-	// Lookup is a fast, non-reversible index (SHA-256 of the plaintext) used to
-	// find the candidate row before running the expensive argon2 comparison.
+	// Lookup is the legacy SHA-256 index (LookupHash). It is still written for
+	// the same rollback reason; the keyed index comes from KeyLookup.
 	Lookup string
 	// Display is a masked form safe to show in listings (e.g. "kr_AbC1…7xQ2").
 	Display string
@@ -98,11 +101,92 @@ func VerifyAPIKey(plaintext, encodedHash string) (bool, error) {
 	return subtle.ConstantTimeCompare(got, want) == 1, nil
 }
 
-// LookupHash returns a deterministic SHA-256 hex index for a key. It is used
-// only to locate the candidate record; argon2 still gates verification.
+// LookupHash returns the legacy lookup index for a key: hex SHA-256 of the
+// plaintext, with no secret. Rows written before the keyed index existed carry
+// only this value; KeyLookup.FromLegacy converts it without the plaintext.
 func LookupHash(plaintext string) string {
 	sum := sha256.Sum256([]byte(plaintext))
 	return hex.EncodeToString(sum[:])
+}
+
+// ErrInvalidLookupHash is returned when a stored legacy lookup hash is not
+// 32 bytes of hex.
+var ErrInvalidLookupHash = errors.New("crypto: invalid legacy lookup hash")
+
+// KeyLookup computes the keyed lookup index stored for every API key:
+// HMAC-SHA256 over the key's SHA-256 digest, under a key derived from the
+// master key. Keys are 192 random bits, so a match on this index is as
+// conclusive as an argon2 verification; the HMAC key means a copy of the
+// database alone can neither test guesses (for imported keys with little
+// entropy) nor mint a row that authenticates.
+//
+// The HMAC input is the SHA-256 digest rather than the plaintext so that a
+// legacy row, which stores that digest, converts without the plaintext.
+//
+// Of runs on every request, so the HMAC pads are prepared once and each call
+// hashes on the stack (RFC 2104 with a key shorter than the block size)
+// instead of allocating a crypto/hmac state.
+type KeyLookup struct {
+	key  []byte
+	ipad [sha256.BlockSize]byte
+	opad [sha256.BlockSize]byte
+	kid  string
+}
+
+// NewKeyLookup derives the lookup key from the credential master key.
+func NewKeyLookup(masterKey []byte) *KeyLookup {
+	mac := hmac.New(sha256.New, masterKey)
+	mac.Write([]byte("keirouter/api-key-lookup/v1"))
+	key := mac.Sum(nil)
+
+	l := &KeyLookup{key: key}
+	for i := range sha256.BlockSize {
+		var b byte
+		if i < len(key) {
+			b = key[i]
+		}
+		l.ipad[i] = b ^ 0x36
+		l.opad[i] = b ^ 0x5c
+	}
+
+	kidMAC := hmac.New(sha256.New, key)
+	kidMAC.Write([]byte("keirouter/api-key-lookup/kid"))
+	l.kid = hex.EncodeToString(kidMAC.Sum(nil)[:8])
+	return l
+}
+
+// Of returns the keyed lookup index for a presented plaintext key.
+func (l *KeyLookup) Of(plaintext string) string {
+	sum := sha256.Sum256([]byte(plaintext))
+	return l.of(sum[:])
+}
+
+// FromLegacy converts a stored legacy lookup hash (LookupHash) into the keyed
+// index, so existing rows gain it without anyone presenting the plaintext.
+func (l *KeyLookup) FromLegacy(legacy string) (string, error) {
+	digest, err := hex.DecodeString(legacy)
+	if err != nil || len(digest) != sha256.Size {
+		return "", ErrInvalidLookupHash
+	}
+	return l.of(digest), nil
+}
+
+// KID identifies the lookup key without revealing it. Each row records the
+// KID it was indexed under, so a changed master key is detectable.
+func (l *KeyLookup) KID() string { return l.kid }
+
+// of is HMAC-SHA256(l.key, digest) for a 32-byte digest.
+func (l *KeyLookup) of(digest []byte) string {
+	var buf [sha256.BlockSize + sha256.Size]byte
+	copy(buf[:], l.ipad[:])
+	copy(buf[sha256.BlockSize:], digest)
+	inner := sha256.Sum256(buf[:])
+	copy(buf[:], l.opad[:])
+	copy(buf[sha256.BlockSize:], inner[:])
+	outer := sha256.Sum256(buf[:])
+	var out [2 * sha256.Size]byte
+	hex.Encode(out[:], outer[:])
+	return string(out[:])
 }
 
 // maskKey renders a key for display, revealing only a short head and tail.
