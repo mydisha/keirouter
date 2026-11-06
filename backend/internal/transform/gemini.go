@@ -136,6 +136,16 @@ func (GeminiCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	return req, nil
 }
 
+// gemMediaPartType classifies Gemini inline and file data by MIME type. A PDF
+// sent as an image block is rejected by Anthropic and misread elsewhere.
+func gemMediaPartType(mime string) core.PartType {
+	mime = strings.ToLower(mime)
+	if mime == "application/pdf" || strings.HasPrefix(mime, "text/") {
+		return core.PartDocument
+	}
+	return core.PartImage
+}
+
 func parseGemContent(c gemContent) core.Message {
 	msg := core.Message{Role: mapGemRole(c.Role)}
 	for _, p := range c.Parts {
@@ -159,12 +169,12 @@ func parseGemContent(c gemContent) core.Message {
 			})
 		case p.InlineData != nil:
 			msg.Content = append(msg.Content, core.ContentPart{
-				Type:  core.PartImage,
+				Type:  gemMediaPartType(p.InlineData.MIMEType),
 				Media: &core.MediaPayload{MIMEType: p.InlineData.MIMEType, Data: p.InlineData.Data},
 			})
 		case p.FileData != nil:
 			msg.Content = append(msg.Content, core.ContentPart{
-				Type:  core.PartImage,
+				Type:  gemMediaPartType(p.FileData.MIMEType),
 				Media: &core.MediaPayload{MIMEType: p.FileData.MIMEType, URL: p.FileData.FileURI},
 			})
 		case p.Text != "":
