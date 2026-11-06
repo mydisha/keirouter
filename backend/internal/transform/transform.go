@@ -76,6 +76,11 @@ type StreamState struct {
 	ToolIndex   int
 	// Custom lets a codec stash dialect-specific bookkeeping.
 	Custom map[string]any
+
+	// oaiToolUpstream maps each OpenAI tool_calls index (the slice position)
+	// to the upstream chunk index it was opened with.
+	oaiToolUpstream []int
+	oaiToolBuf      [8]int
 }
 
 // ResetStreamState resets a StreamState to its initial zero values.
@@ -87,6 +92,7 @@ func ResetStreamState(state *StreamState) {
 	state.SentRole = false
 	state.ToolIndex = 0
 	state.Custom = make(map[string]any)
+	state.oaiToolUpstream = state.oaiToolUpstream[:0]
 }
 
 // Registry resolves codecs by dialect.

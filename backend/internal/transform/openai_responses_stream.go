@@ -3,6 +3,8 @@ package transform
 import (
 	"bytes"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
@@ -309,7 +311,8 @@ func (OpenAIResponsesCodec) RenderStreamChunk(chunk core.StreamChunk, state *Str
 				},
 			})
 		}
-		for idx, callID := range s.toolCallID {
+		for _, idx := range slices.Sorted(maps.Keys(s.toolCallID)) {
+			callID := s.toolCallID[idx]
 			args := s.toolArgs[idx]
 			if args == "" {
 				args = "{}"

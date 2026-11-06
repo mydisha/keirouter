@@ -432,13 +432,10 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	// sanitized JSON when each tool call completes. This fixes malformed
 	// arguments from non-Anthropic models (e.g., Read.limit as string).
 	// Tool-call args from fragmenting upstreams (Kiro, Cursor, CommandCode)
-	// arrive split across frames and must be reassembled into one complete JSON
-	// object before rendering, regardless of tool name or client dialect.
-	// Streaming raw fragments and relying on the client to reassemble breaks
-	// clients like Cline ("missing required parameter"). The sanitizer passes
-	// text/thinking through immediately, so this only buffers the (small,
-	// non-actionable) tool-arg fragments — live text streaming is unaffected.
+	// arrive split across frames and are reassembled before rendering; some
+	// clients (Cline) reject a call whose fragments they must join themselves.
 	sanitizer := transform.NewToolArgSanitizer()
+	sanitizer.ClaudeCodeRepairs = req.Metadata.SourceDialect == core.DialectAnthropic
 
 	// ThinkTagState strips <think>...</think> tags from streaming content.
 

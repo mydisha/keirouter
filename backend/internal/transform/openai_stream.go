@@ -145,148 +145,25 @@ func extractOpenAIStreamToolArguments(tc oaiStreamToolCall) json.RawMessage {
 	return nil
 }
 
-// toolArgWrapperKeys are the keys under which some providers nest the real
-// arguments object ({"input": {...}}). A raw object is only decoded when one
-// of them is textually present; everything else is passed through untouched.
-var toolArgWrapperKeys = [][]byte{
-	[]byte(`"input"`), []byte(`"arguments"`), []byte(`"parameters"`), []byte(`"args"`),
-	[]byte(`"tool_input"`), []byte(`"toolInput"`), []byte(`"tool_arguments"`), []byte(`"toolArguments"`),
-	[]byte(`"tool_parameters"`), []byte(`"toolParameters"`), []byte(`"payload"`), []byte(`"data"`),
-}
-
-// firstValueIsObject reports whether an object's first member value is itself
-// an object ({"anyKey":{...}}), the shape of a single unknown wrapper key.
-func firstValueIsObject(raw []byte) bool {
-	i := 1 // after '{'
-	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\n' || raw[i] == '\t' || raw[i] == '\r') {
-		i++
-	}
-	if i >= len(raw) || raw[i] != '"' {
-		return false
-	}
-	// Skip the key string, honouring escapes.
-	for i++; i < len(raw); i++ {
-		if raw[i] == '\\' {
-			i++
-			continue
-		}
-		if raw[i] == '"' {
-			break
-		}
-	}
-	for i++; i < len(raw) && (raw[i] == ' ' || raw[i] == ':' || raw[i] == '\n' || raw[i] == '\t'); i++ {
-	}
-	return i < len(raw) && raw[i] == '{'
-}
-
-func mayWrapToolArgs(raw []byte) bool {
-	for _, key := range toolArgWrapperKeys {
-		if bytes.Contains(raw, key) {
-			return true
-		}
-	}
-	return false
-}
-
-// normalizeOpenAIToolArguments returns the tool arguments as a JSON value,
-// unwrapping the string-encoded and provider-nested shapes. It is called for
-// every streamed argument fragment, so the common cases (a JSON string holding
-// a fragment, or a plain object) are decided by looking at the first byte and
-// validity instead of a cascade of failing decodes, each of which allocated
-// an error object.
+// normalizeOpenAIToolArguments returns the tool arguments as a JSON value. A
+// JSON string holds the arguments text (often a fragment); anything else is
+// passed through as sent. The arguments themselves are never reshaped.
 func normalizeOpenAIToolArguments(raw json.RawMessage) json.RawMessage {
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
 		return nil
 	}
-
-	switch raw[0] {
-	case '"':
+	if raw[0] == '"' {
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
 			return nil
 		}
-		inner := bytes.TrimSpace([]byte(s))
-		// A complete nested object may still be a wrapper; a fragment or a
-		// non-object is the arguments text itself.
-		if len(inner) > 0 && inner[0] == '{' && mayWrapToolArgs(inner) {
-			if normalized := normalizeOpenAIToolArguments(inner); len(normalized) > 0 {
-				return normalized
-			}
-		}
 		return json.RawMessage(s)
-	case '{':
-		if !json.Valid(raw) {
-			return nil
-		}
-		if mayWrapToolArgs(raw) || firstValueIsObject(raw) {
-			var obj map[string]json.RawMessage
-			if err := json.Unmarshal(raw, &obj); err == nil {
-				if nested := unwrapOpenAIToolArgumentObject(obj); nested != nil {
-					return nested
-				}
-			}
-		}
-		return raw
 	}
-
 	if json.Valid(raw) {
 		return raw
 	}
 	return nil
-}
-
-func unwrapOpenAIToolArgumentObject(obj map[string]json.RawMessage) json.RawMessage {
-	for _, key := range []string{
-		"input", "arguments", "parameters", "args",
-		"tool_input", "toolInput", "tool_arguments", "toolArguments",
-		"tool_parameters", "toolParameters", "payload", "data",
-	} {
-		nestedRaw, ok := obj[key]
-		if !ok {
-			continue
-		}
-		if nested := normalizeNestedOpenAIToolObject(nestedRaw); nested != nil {
-			return nested
-		}
-	}
-
-	if len(obj) == 1 {
-		for _, nestedRaw := range obj {
-			if nested := normalizeNestedOpenAIToolObject(nestedRaw); nested != nil {
-				return nested
-			}
-		}
-	}
-	return nil
-}
-
-func normalizeNestedOpenAIToolObject(raw json.RawMessage) json.RawMessage {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 {
-		return nil
-	}
-
-	var s string
-	if err := json.Unmarshal(raw, &s); err == nil {
-		return normalizeNestedOpenAIToolObject(json.RawMessage(s))
-	}
-
-	if raw[0] != '{' {
-		return nil
-	}
-	var nested map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &nested); err != nil || len(nested) == 0 {
-		return nil
-	}
-	if deeper := unwrapOpenAIToolArgumentObject(nested); deeper != nil {
-		return deeper
-	}
-	out, err := json.Marshal(nested)
-	if err != nil {
-		return nil
-	}
-	return out
 }
 
 // Typed wire shapes for streamed chat.completion.chunk events.
@@ -383,7 +260,7 @@ func (OpenAICodec) RenderStreamChunk(chunk core.StreamChunk, state *StreamState)
 			args = "{}"
 		}
 		delta.ToolCalls = []oaiChunkToolCall{{
-			Index:    chunk.Index,
+			Index:    openAIToolIndex(state, chunk),
 			ID:       chunk.ToolCall.ID,
 			Type:     "function",
 			Function: oaiChunkFunction{Name: chunk.ToolCall.Name, Arguments: args},
@@ -428,3 +305,21 @@ func encodeOAIUsageEvent(state *StreamState, usage *core.Usage) []byte {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// openAIToolIndex numbers tool calls from 0 in the order they open. The
+// upstream index can count text and thinking blocks too (Anthropic, Responses),
+// which would leave holes OpenAI clients do not expect.
+func openAIToolIndex(state *StreamState, chunk core.StreamChunk) int {
+	if chunk.ToolCall.ID == "" {
+		for i := len(state.oaiToolUpstream) - 1; i >= 0; i-- {
+			if state.oaiToolUpstream[i] == chunk.Index {
+				return i
+			}
+		}
+	}
+	if state.oaiToolUpstream == nil {
+		state.oaiToolUpstream = state.oaiToolBuf[:0]
+	}
+	state.oaiToolUpstream = append(state.oaiToolUpstream, chunk.Index)
+	return len(state.oaiToolUpstream) - 1
+}

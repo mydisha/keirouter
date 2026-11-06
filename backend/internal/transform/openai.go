@@ -293,18 +293,6 @@ func parseOAIMessage(m oaiMessage) (msg core.Message, isSystem bool, sysText str
 		})
 	}
 
-	// Assistant tool calls.
-	for _, tc := range m.ToolCalls {
-		msg.Content = append(msg.Content, core.ContentPart{
-			Type: core.PartToolCall,
-			ToolCall: &core.ToolCall{
-				ID:        tc.ID,
-				Name:      tc.Function.Name,
-				Arguments: normalizeOpenAIToolArguments(tc.Function.Arguments),
-			},
-		})
-	}
-
 	// Tool result message. Text becomes Content; images/files (screenshot
 	// tools) are kept as Parts so Anthropic/Gemini upstreams still see them.
 	if role == "tool" {
@@ -322,8 +310,19 @@ func parseOAIMessage(m oaiMessage) (msg core.Message, isSystem bool, sysText str
 		return msg, false, ""
 	}
 
-	// Text / multimodal content parts.
+	// Text / multimodal content parts. The model wrote them before its tool
+	// calls, and Anthropic upstreams expect the blocks in that order.
 	msg.Content = append(msg.Content, decodeOAIContentParts(m.Content)...)
+	for _, tc := range m.ToolCalls {
+		msg.Content = append(msg.Content, core.ContentPart{
+			Type: core.PartToolCall,
+			ToolCall: &core.ToolCall{
+				ID:        tc.ID,
+				Name:      tc.Function.Name,
+				Arguments: normalizeOpenAIToolArguments(tc.Function.Arguments),
+			},
+		})
+	}
 	return msg, false, ""
 }
 
