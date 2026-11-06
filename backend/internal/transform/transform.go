@@ -77,6 +77,8 @@ type StreamState struct {
 	ToolIndex   int
 	// Custom lets a codec stash dialect-specific bookkeeping.
 	Custom map[string]any
+	// ReasoningOrigin is who can verify the stream's thinking signatures.
+	ReasoningOrigin string
 
 	// oaiToolUpstream maps each OpenAI tool_calls index (the slice position)
 	// to the upstream chunk index it was opened with.

@@ -365,6 +365,7 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 		p.log.Debug("attempt start", "i", i, "provider", attempt.Target.Provider,
 			"model", attempt.Target.Model, "account", attempt.Account.ID)
 		attemptReq := cloneForAttempt(attemptBaseReq, attempt.Target.Model)
+		core.DropForeignReasoning(attemptReq, core.ReasoningOrigin(attempt.Target.Provider, attempt.Target.Model))
 
 		// Soft-degrade unsupported modalities. Stripping replaces input
 		// modalities the resolved profile cannot handle with text placeholders,
@@ -743,6 +744,8 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 	for i := 0; hasAttempt; i++ {
 		lastAttempt = attempt
 		attemptReq := cloneForAttempt(req, attempt.Target.Model)
+		origin := core.ReasoningOrigin(attempt.Target.Provider, attempt.Target.Model)
+		core.DropForeignReasoning(attemptReq, origin)
 		started := time.Now()
 		p.log.Debug("stream attempt start", "i", i, "provider", attempt.Target.Provider,
 			"model", attempt.Target.Model, "account", attempt.Account.ID)
@@ -797,7 +800,10 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 		// Outbound guardrails force it too: raw bytes never reach the
 		// StreamGuard, so output PII masking, toxicity, bias and canary checks
 		// would silently be skipped.
+		// The raw stream carries untagged signatures, which the client would
+		// later send back as its own dialect's.
 		if len(attemptReq.Tools) == 0 && !req.IncludeUsage && req.Metadata.SourceDialect == attempt.Conn.Dialect() &&
+			nativeReasoning(req.Metadata.SourceDialect, origin) &&
 			!requiresParsedStreamAdmission(attempt.Target.Provider) && !p.guardrails.ScansStreamOutput(ctx, req) {
 			if ds, ok := attempt.Conn.(core.DirectStreamable); ok {
 				body, _, rawErr := ds.StreamRaw(callCtx, attemptReq, attempt.Creds, streamCfg)
@@ -2083,6 +2089,11 @@ func (r toolNameRestorer) restore(tc *core.ToolCall) {
 	if orig, ok := r[tc.Name]; ok {
 		tc.Name = orig
 	}
+}
+
+func nativeReasoning(client core.Dialect, origin string) bool {
+	native := core.NativeReasoningOrigin(client)
+	return native == "" || native == origin
 }
 
 func cloneForAttempt(req *core.ChatRequest, model string) *core.ChatRequest {

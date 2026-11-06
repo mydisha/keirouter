@@ -288,13 +288,13 @@ func parseAntMessage(m antMessage) core.Message {
 			// Anthropic thinking blocks carry content in the "thinking" field
 			// (not "text"). Signature must be preserved for echoing back on
 			// follow-up turns — the upstream validates it.
-			msg.Content = append(msg.Content, core.ContentPart{
-				Type:      core.PartThinking,
-				Text:      b.Thinking,
-				Signature: b.Signature,
-			})
+			part := core.ContentPart{Type: core.PartThinking, Text: b.Thinking}
+			if b.Signature != "" {
+				part.Signature, part.ReasoningOrigin = core.UntagSignature(b.Signature, "anthropic")
+			}
+			msg.Content = append(msg.Content, part)
 		case "redacted_thinking":
-			msg.Content = append(msg.Content, core.ContentPart{Type: core.PartRedactedThinking, Text: b.Data})
+			msg.Content = append(msg.Content, core.ContentPart{Type: core.PartRedactedThinking, Text: b.Data, ReasoningOrigin: "anthropic"})
 		case "tool_use":
 			msg.Content = append(msg.Content, core.ContentPart{
 				Type:         core.PartToolCall,
@@ -470,6 +470,13 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 				thinking = map[string]any{"type": "enabled"}
 			}
 		}
+		// Budget thinking opens every Claude turn, so a tool turn without it was
+		// produced elsewhere; Claude would reject the request.
+		if thinking != nil && thinking["type"] == "enabled" &&
+			strings.Contains(strings.ToLower(req.Model), "claude") && toolTurnLacksThinking(req.Messages) {
+			thinking = nil
+			req = withoutThinking(req)
+		}
 		if thinking != nil && thinking["type"] == "enabled" {
 			if thinkingBudget <= 0 {
 				thinkingBudget = antMinThinkingBudget
@@ -639,6 +646,48 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 	}
 
 	return json.Marshal(out)
+}
+
+// toolTurnLacksThinking reports a last assistant turn that calls tools without
+// a thinking block Claude can verify ("Expected thinking or redacted_thinking,
+// but found tool_use").
+func toolTurnLacksThinking(msgs []core.Message) bool {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != core.RoleAssistant {
+			continue
+		}
+		calls := false
+		for _, p := range msgs[i].Content {
+			switch {
+			case p.Type == core.PartRedactedThinking && p.Text != "",
+				p.Type == core.PartThinking && p.Signature != "" && p.Text != "":
+				return false
+			case p.Type == core.PartToolCall:
+				calls = true
+			}
+		}
+		return calls
+	}
+	return false
+}
+
+// withoutThinking turns thinking off for one request. Claude also rejects
+// thinking blocks in the history once thinking is off, so they go too.
+func withoutThinking(req *core.ChatRequest) *core.ChatRequest {
+	clone := *req
+	clone.Reasoning = nil
+	clone.Messages = make([]core.Message, len(req.Messages))
+	for i, m := range req.Messages {
+		var content []core.ContentPart
+		for _, p := range m.Content {
+			if p.Type != core.PartThinking && p.Type != core.PartRedactedThinking {
+				content = append(content, p)
+			}
+		}
+		m.Content = content
+		clone.Messages[i] = m
+	}
+	return &clone
 }
 
 func renderAntBlocks(m core.Message) []antBlock {
@@ -900,7 +949,7 @@ func (AnthropicCodec) RenderResponse(resp *core.ChatResponse) ([]byte, error) {
 		case core.PartThinking:
 			block := map[string]any{"type": "thinking", "thinking": p.Text}
 			if p.Signature != "" {
-				block["signature"] = p.Signature
+				block["signature"] = core.TagSignature(p.Signature, p.ReasoningOrigin, "anthropic")
 			}
 			content = append(content, block)
 		case core.PartRedactedThinking:
