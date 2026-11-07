@@ -72,3 +72,16 @@ func TestMoonshot_RequiredToolChoiceBecomesPrompt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "required", decodeJSON(t, body)["tool_choice"])
 }
+
+func TestReasoningEchoScope_NamespacedKimi(t *testing.T) {
+	for _, model := range []string{
+		"moonshotai/Kimi-K2.6",
+		"@cf/moonshotai/kimi-k2.6",
+		"accounts/fireworks/models/kimi-k3",
+		"moonshot/kimi-k2",
+		"kimi-k2-thinking",
+	} {
+		require.Equal(t, reasoningToolCalls, reasoningEchoScope("together", model), model)
+	}
+	require.Equal(t, reasoningNone, reasoningEchoScope("together", "meta-llama/llama-kimi"))
+}

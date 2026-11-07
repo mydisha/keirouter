@@ -527,8 +527,9 @@ func reasoningEchoScope(providerID, model string) reasoningScope {
 		return reasoningAll
 	}
 	// Kimi models (e.g. kimi-k2, kimi-latest) require reasoning_content only
-	// on assistant turns with tool_calls.
-	if strings.HasPrefix(m, "kimi-") || strings.HasPrefix(m, "moonshot/kimi-") {
+	// on assistant turns with tool_calls, also when a host namespaces the id
+	// (moonshotai/kimi-k2.6, @cf/moonshotai/..., accounts/fireworks/models/...).
+	if strings.HasPrefix(m[strings.LastIndexByte(m, '/')+1:], "kimi-") {
 		return reasoningToolCalls
 	}
 	// GLM/Zhipu models (glm-5.2, glm-4.7, zai-org/glm-*, etc.) emit structured
