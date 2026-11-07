@@ -527,8 +527,9 @@ func reasoningEchoScope(providerID, model string) reasoningScope {
 		return reasoningAll
 	}
 	// Kimi models (e.g. kimi-k2, kimi-latest) require reasoning_content only
-	// on assistant turns with tool_calls.
-	if strings.HasPrefix(m, "kimi-") || strings.HasPrefix(m, "moonshot/kimi-") {
+	// on assistant turns with tool_calls, also when a host namespaces the id
+	// (moonshotai/kimi-k2.6, @cf/moonshotai/..., accounts/fireworks/models/...).
+	if strings.HasPrefix(m[strings.LastIndexByte(m, '/')+1:], "kimi-") {
 		return reasoningToolCalls
 	}
 	// GLM/Zhipu models (glm-5.2, glm-4.7, zai-org/glm-*, etc.) emit structured
@@ -846,22 +847,13 @@ func applyDeepSeekThinking(out *oaiRequest, req *core.ChatRequest, providerID st
 	switch strings.ToLower(req.Model) {
 	case "deepseek-v4-pro-max":
 		out.Model = "deepseek-v4-pro"
-		out.Thinking = nil
 		out.ReasoningEffort = "max"
-		setDeepSeekExtraThinking(out, "enabled")
+		out.Thinking = &oaiThinking{Type: "enabled"}
 	case "deepseek-v4-pro-none":
 		out.Model = "deepseek-v4-pro"
-		out.Thinking = nil
 		out.ReasoningEffort = ""
-		setDeepSeekExtraThinking(out, "disabled")
+		out.Thinking = &oaiThinking{Type: "disabled"}
 	}
-}
-
-func setDeepSeekExtraThinking(out *oaiRequest, typ string) {
-	if out.ExtraBody == nil {
-		out.ExtraBody = map[string]any{}
-	}
-	out.ExtraBody["thinking"] = map[string]any{"type": typ}
 }
 
 func normalizeDeepSeekToolMessages(messages []oaiMessage) {

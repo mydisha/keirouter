@@ -49,6 +49,11 @@ func (c *Bedrock) renderInvokeAnthropic(ctx context.Context, req *core.ChatReque
 	}
 	delete(body, "model")
 	delete(body, "stream")
+	if cm := bedrockContextManagement(body["context_management"]); cm != nil {
+		body["context_management"] = cm
+	} else {
+		delete(body, "context_management")
+	}
 	body["anthropic_version"] = json.RawMessage(strconv.Quote(bedrockAnthropicVersion))
 	if betas := bedrockAnthropicBetas(req.Metadata.ClientBetas); len(betas) > 0 {
 		body["anthropic_beta"], _ = json.Marshal(betas)
@@ -393,4 +398,45 @@ func parseCohereEmbeddings(raw []byte) ([][]float32, error) {
 		return nil, err
 	}
 	return typed.Float, nil
+}
+
+// bedrockContextEdits are the context_management edit types InvokeModel
+// accepts; any other edit fails the whole request.
+var bedrockContextEdits = []string{"clear_tool_uses_", "compact_"}
+
+// bedrockContextManagement keeps only the edits Bedrock supports, or returns
+// nil when none remain.
+func bedrockContextManagement(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var cm map[string]json.RawMessage
+	if json.Unmarshal(raw, &cm) != nil {
+		return nil
+	}
+	var edits []json.RawMessage
+	if json.Unmarshal(cm["edits"], &edits) != nil {
+		return nil
+	}
+	kept := edits[:0]
+	for _, e := range edits {
+		var head struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(e, &head) != nil {
+			continue
+		}
+		for _, prefix := range bedrockContextEdits {
+			if strings.HasPrefix(head.Type, prefix) {
+				kept = append(kept, e)
+				break
+			}
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	cm["edits"], _ = json.Marshal(kept)
+	out, _ := json.Marshal(cm)
+	return out
 }

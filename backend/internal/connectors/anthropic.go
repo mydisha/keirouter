@@ -24,7 +24,13 @@ type Anthropic struct {
 
 // NewAnthropic builds an Anthropic connector.
 func NewAnthropic(id, defaultBaseURL string) *Anthropic {
-	return &Anthropic{id: id, defaultBase: defaultBaseURL}
+	return &Anthropic{id: id, defaultBase: defaultBaseURL, codec: transform.AnthropicCodec{ContextManagement: firstPartyAnthropic(id)}}
+}
+
+// firstPartyAnthropic reports whether id talks to Anthropic's own API rather
+// than a compatible host.
+func firstPartyAnthropic(id string) bool {
+	return id == "anthropic" || id == "claude"
 }
 
 func (c *Anthropic) ID() string            { return c.id }

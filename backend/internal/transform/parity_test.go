@@ -650,8 +650,13 @@ func TestKimiThinkingDropsSamplingOverrides(t *testing.T) {
 	require.Nil(t, m["temperature"], "Moonshot thinking accepts only the default temperature")
 	require.Equal(t, "enabled", m["thinking"].(map[string]any)["type"])
 
-	// Without thinking the user's temperature is honoured.
+	// K2.5 thinks by default, so a request that says nothing is thinking too.
 	body, err = OpenAICodec{}.RenderRequestForProvider(quirkReq("kimi-k2.5", ""), "moonshot")
+	require.NoError(t, err)
+	require.Nil(t, decodeJSON(t, body)["temperature"])
+
+	// With thinking off the user's temperature is honoured.
+	body, err = OpenAICodec{}.RenderRequestForProvider(quirkReq("kimi-k2.5", "none"), "moonshot")
 	require.NoError(t, err)
 	require.EqualValues(t, 0.2, decodeJSON(t, body)["temperature"])
 }

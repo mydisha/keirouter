@@ -2,6 +2,7 @@ package connectors
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -430,4 +431,28 @@ func TestGetLiveModelSource_DynamicOpenAIProvider(t *testing.T) {
 	require.NotNil(t, asrc, "dynamic Anthropic-compatible providers should get a live model source")
 	_, ok := asrc.(*AnthropicCompatibleModelSource)
 	require.True(t, ok, "dynamic Anthropic provider should yield an AnthropicCompatibleModelSource")
+}
+
+func TestAnthropic_ContextManagementOnlyReachesAnthropic(t *testing.T) {
+	var got map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = nil
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&got))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"m1","model":"claude-x","content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+	}))
+	defer srv.Close()
+
+	cm := json.RawMessage(`{"edits":[{"type":"clear_tool_uses_20250919"}]}`)
+	for id, want := range map[string]bool{"anthropic": true, "claude": true, "custom-anthropic": false, "kimi": false} {
+		req := textReq("claude-sonnet-4-5", false)
+		req.Extra = map[string]json.RawMessage{"context_management": cm}
+		_, err := NewAnthropic(id, srv.URL).Chat(context.Background(), req, core.Credentials{APIKey: "k"})
+		require.NoError(t, err, id)
+		if want {
+			require.JSONEq(t, string(cm), string(got["context_management"]), id)
+		} else {
+			require.NotContains(t, got, "context_management", id)
+		}
+	}
 }

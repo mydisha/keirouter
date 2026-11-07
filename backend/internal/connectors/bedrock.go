@@ -30,7 +30,7 @@ type Bedrock struct {
 // NewBedrock builds a Bedrock connector. defaultBaseURL may carry the
 // {aws_region} placeholder.
 func NewBedrock(id, defaultBaseURL string) *Bedrock {
-	return &Bedrock{id: id, defaultBase: defaultBaseURL}
+	return &Bedrock{id: id, defaultBase: defaultBaseURL, codec: transform.AnthropicCodec{ContextManagement: true}}
 }
 
 func (c *Bedrock) ID() string            { return c.id }
