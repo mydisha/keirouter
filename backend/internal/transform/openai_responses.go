@@ -231,8 +231,9 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 		}
 	}
 
-	var pendingReasoning string
-	var pendingEncrypted string
+	// Each reasoning item stays its own thinking part: its encrypted_content
+	// only verifies against its own summary text.
+	var pending []core.ContentPart
 	for _, item := range items {
 		itemType := item.Type
 		if itemType == "" && item.Role != "" {
@@ -242,17 +243,10 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 		switch itemType {
 		case "message":
 			msg := core.Message{Role: mapRespRole(item.Role)}
-			if pendingReasoning != "" || pendingEncrypted != "" {
-				if item.Role == "assistant" {
-					msg.Content = append(msg.Content, core.ContentPart{
-						Type:      core.PartThinking,
-						Text:      pendingReasoning,
-						Signature: pendingEncrypted,
-					})
-				}
-				pendingReasoning = ""
-				pendingEncrypted = ""
+			if item.Role == "assistant" {
+				msg.Content = append(msg.Content, pending...)
 			}
+			pending = nil
 			msg.Content = append(msg.Content, parseRespContent(item.Content)...)
 			req.Messages = append(req.Messages, msg)
 
@@ -267,16 +261,8 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 			} else if len(args) == 0 {
 				args = json.RawMessage("{}")
 			}
-			msg := core.Message{Role: core.RoleAssistant}
-			if pendingReasoning != "" || pendingEncrypted != "" {
-				msg.Content = append(msg.Content, core.ContentPart{
-					Type:      core.PartThinking,
-					Text:      pendingReasoning,
-					Signature: pendingEncrypted,
-				})
-				pendingReasoning = ""
-				pendingEncrypted = ""
-			}
+			msg := core.Message{Role: core.RoleAssistant, Content: pending}
+			pending = nil
 			msg.Content = append(msg.Content, core.ContentPart{
 				Type:     core.PartToolCall,
 				ToolCall: &core.ToolCall{ID: item.CallID, Name: item.Name, Arguments: args, Custom: custom},
@@ -304,11 +290,11 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 		case "reasoning":
 			txt, encrypted := extractRespReasoning(item)
 			if txt != "" || encrypted != "" {
-				if pendingReasoning != "" {
-					pendingReasoning += "\n"
+				part := core.ContentPart{Type: core.PartThinking, Text: txt}
+				if encrypted != "" {
+					part.Signature, part.ReasoningOrigin = core.UntagSignature(encrypted, "openai")
 				}
-				pendingReasoning += txt
-				pendingEncrypted = encrypted
+				pending = append(pending, part)
 			}
 		}
 	}
@@ -422,6 +408,10 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 		"model":  model,
 		"stream": req.Stream,
 		"store":  false,
+	}
+	// The ChatGPT Codex backend rejects max_output_tokens; 16 is the API minimum.
+	if req.MaxTokens != nil && *req.MaxTokens > 0 && !c.Codex {
+		out["max_output_tokens"] = max(*req.MaxTokens, 16)
 	}
 	switch {
 	case req.System != "":
@@ -742,7 +732,7 @@ func (OpenAIResponsesCodec) RenderResponse(resp *core.ChatResponse) ([]byte, err
 				"type": "reasoning",
 			}
 			if p.Signature != "" {
-				reasoningItem["encrypted_content"] = p.Signature
+				reasoningItem["encrypted_content"] = core.TagSignature(p.Signature, p.ReasoningOrigin, "openai")
 			}
 			if p.Text != "" {
 				reasoningItem["summary"] = []map[string]any{{"type": "summary_text", "text": p.Text}}

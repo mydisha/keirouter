@@ -294,6 +294,7 @@ func (s *Server) unaryChat(w http.ResponseWriter, r *http.Request, codec transfo
 	if len(req.ResponseFormat) > 0 {
 		transform.UnwrapStructuredOutput(result.Response)
 	}
+	result.Response = core.WithReasoningOrigin(result.Response, core.ReasoningOrigin(result.Provider, result.Model))
 
 	out, err := codec.RenderResponse(result.Response)
 	if err != nil {
@@ -436,6 +437,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	state := &transform.StreamState{Model: result.Model}
 	transform.ResetStreamState(state)
 	state.MessageID = streamMessageID(req.Metadata.SourceDialect)
+	state.ReasoningOrigin = core.ReasoningOrigin(result.Provider, result.Model)
 	var totalTokens int
 	var chunkCount int
 	// clientGone is set on the first failed write so the rest of the stream

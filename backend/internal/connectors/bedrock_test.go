@@ -127,9 +127,9 @@ func TestBedrockConverseChatRendersAndParses(t *testing.T) {
 	c := NewBedrock("bedrock", "https://bedrock-runtime.{aws_region}.amazonaws.com")
 	model := "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 	req := &core.ChatRequest{
-		Model:              model,
-		System:             "be brief",
-		SystemCacheControl: json.RawMessage(`{"type":"ephemeral"}`),
+		Model:       model,
+		System:      "be brief",
+		SystemCache: []core.SystemBlock{{Text: "be brief", CacheControl: json.RawMessage(`{"type":"ephemeral"}`)}},
 		Messages: []core.Message{
 			{Role: core.RoleUser, Content: []core.ContentPart{
 				{Type: core.PartText, Text: "what is this?", CacheControl: json.RawMessage(`{"type":"ephemeral","ttl":"1h"}`)},

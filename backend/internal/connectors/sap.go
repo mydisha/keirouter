@@ -558,9 +558,12 @@ func sapResponseFormat(raw json.RawMessage) json.RawMessage {
 func sapRenderMessages(req *core.ChatRequest) []sapMessage {
 	var out []sapMessage
 	if req.System != "" {
-		if len(req.SystemCacheControl) > 0 {
-			out = append(out, sapMessage{Role: "system", Content: []sapContentPart{
-				{Type: "text", Text: req.System, CacheControl: req.SystemCacheControl}}})
+		if len(req.SystemCache) > 0 {
+			var parts []sapContentPart
+			for _, b := range req.SystemBlocks() {
+				parts = append(parts, sapContentPart{Type: "text", Text: b.Text, CacheControl: b.CacheControl})
+			}
+			out = append(out, sapMessage{Role: "system", Content: parts})
 		} else {
 			out = append(out, sapMessage{Role: "system", Content: req.System})
 		}

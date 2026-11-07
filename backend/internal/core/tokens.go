@@ -6,6 +6,7 @@ import (
 	"image"
 	"strings"
 	"unicode"
+	"unsafe"
 
 	// Register the decoders DecodeConfig needs to read image headers.
 	_ "image/gif"
@@ -111,6 +112,12 @@ func EstimateTextTokens(s string) int {
 	}
 	flush()
 	return tokens
+}
+
+// estimateRawTokens estimates JSON bytes without copying them to a string;
+// EstimateTextTokens does not keep its argument.
+func estimateRawTokens(b []byte) int {
+	return EstimateTextTokens(unsafe.String(unsafe.SliceData(b), len(b)))
 }
 
 type runKind uint8
@@ -237,12 +244,12 @@ func EstimatePromptTokens(req *ChatRequest) int {
 	}
 	for _, t := range req.Tools {
 		tokens += perToolOverhead + EstimateTextTokens(t.Name) + EstimateTextTokens(t.Description) +
-			EstimateTextTokens(string(t.Parameters))
+			estimateRawTokens(t.Parameters)
 	}
 	// The schema reaches the provider as a tool, an instruction or a format
 	// setting; it is prompt input in every case.
 	if len(req.ResponseFormat) > 0 {
-		tokens += perToolOverhead + EstimateTextTokens(string(req.ResponseFormat))
+		tokens += perToolOverhead + estimateRawTokens(req.ResponseFormat)
 	}
 	return tokens
 }
@@ -257,7 +264,7 @@ func estimatePartTokens(part ContentPart) int {
 	}
 	tokens += EstimateTextTokens(part.Text)
 	if part.ToolCall != nil {
-		tokens += EstimateTextTokens(part.ToolCall.Name) + EstimateTextTokens(string(part.ToolCall.Arguments))
+		tokens += EstimateTextTokens(part.ToolCall.Name) + estimateRawTokens(part.ToolCall.Arguments)
 	}
 	if part.ToolResult != nil {
 		tokens += EstimateTextTokens(part.ToolResult.Content)

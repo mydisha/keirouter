@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
@@ -57,10 +58,11 @@ type respStreamEvent struct {
 }
 
 type respStreamItem struct {
-	Type   string `json:"type"`
-	ID     string `json:"id"`
-	CallID string `json:"call_id"`
-	Name   string `json:"name"`
+	Type             string `json:"type"`
+	ID               string `json:"id"`
+	CallID           string `json:"call_id"`
+	Name             string `json:"name"`
+	EncryptedContent string `json:"encrypted_content"`
 }
 
 // ParseStreamLine converts one Responses SSE event payload into canonical chunks.
@@ -139,8 +141,15 @@ func (OpenAIResponsesCodec) ParseStreamLine(line []byte, _ string) ([]core.Strea
 			Err:  classifyRespStreamError(msg),
 		}}, nil
 
+	case "response.output_item.done":
+		// The summary already streamed as deltas; only the signature is new.
+		if ev.Item != nil && ev.Item.Type == "reasoning" && ev.Item.EncryptedContent != "" {
+			return []core.StreamChunk{{Type: core.ChunkThinking, Signature: ev.Item.EncryptedContent}}, nil
+		}
+		return nil, nil
+
 	default:
-		// response.created, in_progress, output_item.done, content_part.*,
+		// response.created, in_progress, content_part.*,
 		// output_text.done, reasoning_summary_*: nothing canonical to emit.
 		return nil, nil
 	}
@@ -184,6 +193,11 @@ type respStreamState struct {
 	toolArgs     map[int]string
 	usage        core.Usage
 	completed    bool
+	// One reasoning item per upstream thinking block: a signature only
+	// verifies against its own block's text.
+	rsOpen  bool
+	rsCount int
+	rsText  string
 }
 
 func respState(state *StreamState) *respStreamState {
@@ -231,9 +245,28 @@ func (OpenAIResponsesCodec) RenderStreamChunk(chunk core.StreamChunk, state *Str
 		})
 	}
 
+	rsID := func() string { return "rs_" + s.responseID + "_" + strconv.Itoa(s.rsCount) }
+	closeReasoning := func(signature string) {
+		if !s.rsOpen {
+			return
+		}
+		summary := []any{}
+		if s.rsText != "" {
+			summary = append(summary, map[string]any{"type": "summary_text", "text": s.rsText})
+		}
+		item := map[string]any{"id": rsID(), "type": "reasoning", "summary": summary}
+		if signature != "" {
+			item["encrypted_content"] = core.TagSignature(signature, state.ReasoningOrigin, "openai")
+		}
+		emit("response.output_item.done", map[string]any{"output_index": 0, "item": item})
+		s.rsOpen, s.rsText = false, ""
+		s.rsCount++
+	}
+
 	switch chunk.Type {
 	case core.ChunkText:
 		ensureStarted()
+		closeReasoning("")
 		msgID := "msg_" + s.responseID + "_0"
 		if !s.msgAdded {
 			s.msgAdded = true
@@ -256,23 +289,29 @@ func (OpenAIResponsesCodec) RenderStreamChunk(chunk core.StreamChunk, state *Str
 
 	case core.ChunkThinking:
 		ensureStarted()
-		rsID := "rs_" + s.responseID + "_0"
-		if _, ok := state.Custom["resp_reasoning_added"]; !ok {
-			state.Custom["resp_reasoning_added"] = true
+		if !s.rsOpen {
+			s.rsOpen = true
 			emit("response.output_item.added", map[string]any{
 				"output_index": 0,
-				"item":         map[string]any{"id": rsID, "type": "reasoning", "summary": []any{}},
+				"item":         map[string]any{"id": rsID(), "type": "reasoning", "summary": []any{}},
 			})
 		}
-		emit("response.reasoning_summary_text.delta", map[string]any{
-			"item_id": rsID, "output_index": 0, "summary_index": 0, "delta": chunk.Delta,
-		})
+		if chunk.Delta != "" {
+			s.rsText += chunk.Delta
+			emit("response.reasoning_summary_text.delta", map[string]any{
+				"item_id": rsID(), "output_index": 0, "summary_index": 0, "delta": chunk.Delta,
+			})
+		}
+		if chunk.Signature != "" {
+			closeReasoning(chunk.Signature)
+		}
 
 	case core.ChunkToolCall:
 		if chunk.ToolCall == nil {
 			return nil, nil
 		}
 		ensureStarted()
+		closeReasoning("")
 		idx := chunk.Index
 		if chunk.ToolCall.Name != "" {
 			s.toolName[idx] = chunk.ToolCall.Name
@@ -299,6 +338,7 @@ func (OpenAIResponsesCodec) RenderStreamChunk(chunk core.StreamChunk, state *Str
 
 	case core.ChunkFinish:
 		// Close any open message/tool items, then complete.
+		closeReasoning("")
 		if s.msgAdded {
 			msgID := "msg_" + s.responseID + "_0"
 			emit("response.output_text.done", map[string]any{

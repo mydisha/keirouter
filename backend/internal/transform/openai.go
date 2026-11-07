@@ -243,16 +243,18 @@ func (OpenAICodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	}
 
 	for _, m := range raw.Messages {
-		msg, isSystem, sysText := parseOAIMessage(m)
-		if isSystem {
+		// OpenAI's "developer" role is a system-equivalent for newer models.
+		if m.Role == "system" || m.Role == "developer" {
 			// Hoist system content to the top-level field; concatenate multiples.
+			text, cached := decodeOAISystem(m.Content)
 			if req.System != "" {
 				req.System += "\n\n"
 			}
-			req.System += sysText
+			req.System += text
+			req.SystemCache = append(req.SystemCache, cached...)
 			continue
 		}
-		req.Messages = append(req.Messages, msg)
+		req.Messages = append(req.Messages, parseOAIMessage(m))
 	}
 	return req, nil
 }
@@ -275,14 +277,9 @@ func decodeOAIStop(raw json.RawMessage) []string {
 	return nil
 }
 
-// parseOAIMessage converts one OpenAI message to canonical form. System and
-// developer roles are reported separately so the caller can hoist them.
-func parseOAIMessage(m oaiMessage) (msg core.Message, isSystem bool, sysText string) {
+// parseOAIMessage converts one non-system OpenAI message to canonical form.
+func parseOAIMessage(m oaiMessage) (msg core.Message) {
 	role := m.Role
-	// OpenAI's "developer" role is a system-equivalent for newer models.
-	if role == "system" || role == "developer" {
-		return core.Message{}, true, decodeOAIContentText(m.Content)
-	}
 
 	msg.Role = mapOAIRole(role)
 	msg.Name = m.Name
@@ -301,7 +298,11 @@ func parseOAIMessage(m oaiMessage) (msg core.Message, isSystem bool, sysText str
 	if role == "tool" {
 		result := &core.ToolResult{CallID: m.ToolCallID}
 		var text strings.Builder
+		var cache json.RawMessage
 		for _, p := range decodeOAIContentParts(m.Content) {
+			if p.CacheControl != nil {
+				cache, p.CacheControl = p.CacheControl, nil
+			}
 			if p.Type == core.PartText {
 				text.WriteString(p.Text)
 				continue
@@ -309,8 +310,8 @@ func parseOAIMessage(m oaiMessage) (msg core.Message, isSystem bool, sysText str
 			result.Parts = append(result.Parts, p)
 		}
 		result.Content = text.String()
-		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartToolResult, ToolResult: result})
-		return msg, false, ""
+		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartToolResult, ToolResult: result, CacheControl: cache})
+		return msg
 	}
 
 	// Text / multimodal content parts. The model wrote them before its tool
@@ -326,7 +327,7 @@ func parseOAIMessage(m oaiMessage) (msg core.Message, isSystem bool, sysText str
 			},
 		})
 	}
-	return msg, false, ""
+	return msg
 }
 
 func mapOAIRole(role string) core.Role {
@@ -342,23 +343,28 @@ func mapOAIRole(role string) core.Role {
 	}
 }
 
-// decodeOAIContentText extracts plain text from an OpenAI content field, which
-// may be a string or an array of typed parts.
-func decodeOAIContentText(raw json.RawMessage) string {
+// decodeOAISystem extracts the text of a system message (a string or typed
+// parts) and the parts that carried a cache breakpoint.
+func decodeOAISystem(raw json.RawMessage) (string, []core.SystemBlock) {
 	if len(raw) == 0 {
-		return ""
+		return "", nil
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
+		return s, nil
 	}
 	var b strings.Builder
+	var cached []core.SystemBlock
 	for _, p := range decodeOAIContentParts(raw) {
-		if p.Type == core.PartText {
-			b.WriteString(p.Text)
+		if p.Type != core.PartText {
+			continue
+		}
+		b.WriteString(p.Text)
+		if p.CacheControl != nil {
+			cached = append(cached, core.SystemBlock{Text: p.Text, CacheControl: p.CacheControl})
 		}
 	}
-	return b.String()
+	return b.String(), cached
 }
 
 // decodeOAIContentParts extracts canonical content parts from an OpenAI content
@@ -376,9 +382,10 @@ func decodeOAIContentParts(raw json.RawMessage) []core.ContentPart {
 	}
 
 	var arr []struct {
-		Type     string `json:"type"`
-		Text     string `json:"text"`
-		ImageURL struct {
+		Type         string          `json:"type"`
+		Text         string          `json:"text"`
+		CacheControl json.RawMessage `json:"cache_control"`
+		ImageURL     struct {
 			URL string `json:"url"`
 		} `json:"image_url"`
 		File struct {
@@ -395,10 +402,10 @@ func decodeOAIContentParts(raw json.RawMessage) []core.ContentPart {
 	for _, p := range arr {
 		switch p.Type {
 		case "text":
-			parts = append(parts, core.ContentPart{Type: core.PartText, Text: p.Text})
+			parts = append(parts, core.ContentPart{Type: core.PartText, Text: p.Text, CacheControl: cacheControl(p.CacheControl)})
 		case "image_url":
 			media := parseOAIImageURL(p.ImageURL.URL)
-			parts = append(parts, core.ContentPart{Type: core.PartImage, Media: media})
+			parts = append(parts, core.ContentPart{Type: core.PartImage, Media: media, CacheControl: cacheControl(p.CacheControl)})
 		case "file":
 			// {"type":"file","file":{"filename":"x.pdf","file_data":"data:application/pdf;base64,..."}}
 			if p.File.FileData != "" {
@@ -406,7 +413,7 @@ func decodeOAIContentParts(raw json.RawMessage) []core.ContentPart {
 				if media.MIMEType == "" {
 					media.MIMEType = "application/pdf"
 				}
-				parts = append(parts, core.ContentPart{Type: core.PartDocument, Media: media})
+				parts = append(parts, core.ContentPart{Type: core.PartDocument, Media: media, CacheControl: cacheControl(p.CacheControl)})
 			}
 		}
 	}
