@@ -846,22 +846,13 @@ func applyDeepSeekThinking(out *oaiRequest, req *core.ChatRequest, providerID st
 	switch strings.ToLower(req.Model) {
 	case "deepseek-v4-pro-max":
 		out.Model = "deepseek-v4-pro"
-		out.Thinking = nil
 		out.ReasoningEffort = "max"
-		setDeepSeekExtraThinking(out, "enabled")
+		out.Thinking = &oaiThinking{Type: "enabled"}
 	case "deepseek-v4-pro-none":
 		out.Model = "deepseek-v4-pro"
-		out.Thinking = nil
 		out.ReasoningEffort = ""
-		setDeepSeekExtraThinking(out, "disabled")
+		out.Thinking = &oaiThinking{Type: "disabled"}
 	}
-}
-
-func setDeepSeekExtraThinking(out *oaiRequest, typ string) {
-	if out.ExtraBody == nil {
-		out.ExtraBody = map[string]any{}
-	}
-	out.ExtraBody["thinking"] = map[string]any{"type": typ}
 }
 
 func normalizeDeepSeekToolMessages(messages []oaiMessage) {
