@@ -454,49 +454,41 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 		structured = &transform.StructuredOutputStream{}
 	}
 
-	// ThinkTagState strips <think>...</think> tags from streaming content.
-
-	// Some models (MiMo, QwQ) embed reasoning as XML tags in the content
-	// field instead of using a structured reasoning_content field.
+	// Some models (MiMo, QwQ, MiniMax M2) write reasoning inside <think> tags
+	// in content; it reaches the client as thinking, as on the unary path.
 	thinkFilter := &transform.ThinkTagState{}
-	renderChunk := func(cleaned core.StreamChunk) {
-		// Route thinking chunks through the filter; tool calls and others
-		// pass through directly.
-		if cleaned.Type == core.ChunkText {
-			for _, fc := range thinkFilter.ProcessFeed(cleaned.Delta) {
-				if fc.Type == core.ChunkThinking {
-					// Thinking content is consumed internally — not sent to client.
-					continue
-				}
-				events, rerr := streamCodec.RenderStreamChunk(fc, state)
-				if rerr != nil {
-					s.log.Warn("failed to render stream chunk", "err", rerr)
-					return
-				}
-				for _, ev := range events {
-					if _, werr := bw.Write(ev); werr != nil {
-						if clientGone == nil {
-							clientGone = &streamWriteError{err: werr}
-						}
-						return
-					}
-				}
-			}
-			return
-		}
-		events, rerr := streamCodec.RenderStreamChunk(cleaned, state)
+	emit := func(chunk core.StreamChunk) bool {
+		events, rerr := streamCodec.RenderStreamChunk(chunk, state)
 		if rerr != nil {
 			s.log.Warn("failed to render stream chunk", "err", rerr)
-			return
+			return false
 		}
 		for _, ev := range events {
 			if _, werr := bw.Write(ev); werr != nil {
 				if clientGone == nil {
 					clientGone = &streamWriteError{err: werr}
 				}
+				return false
+			}
+		}
+		return true
+	}
+	renderChunk := func(cleaned core.StreamChunk) {
+		if cleaned.Type == core.ChunkText {
+			for _, fc := range thinkFilter.ProcessFeed(cleaned.Delta) {
+				if !emit(fc) {
+					return
+				}
+			}
+			return
+		}
+		// A partial tag held back is content that precedes this event.
+		for _, fc := range thinkFilter.Flush() {
+			if !emit(fc) {
 				return
 			}
 		}
+		emit(cleaned)
 	}
 	// flushToClient pushes buffered events to the socket. It is called after
 	// each chunk only when no further chunk is already queued, so a burst of
@@ -600,14 +592,10 @@ streamLoop:
 	// cause re-emission of already-flushed content.
 	sanitizer.Flush(renderChunk)
 
-	// Flush think-tag state — emit any remaining buffered text.
+	// A stream that ended without a finish event can still hold a partial tag.
 	for _, fc := range thinkFilter.Flush() {
-		if fc.Type == core.ChunkThinking {
-			continue
-		}
-		events, _ := streamCodec.RenderStreamChunk(fc, state)
-		for _, ev := range events {
-			_, _ = bw.Write(ev)
+		if !emit(fc) {
+			break
 		}
 	}
 

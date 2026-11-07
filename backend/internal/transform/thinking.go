@@ -71,12 +71,10 @@ func StripThinkTags(content string) (thinkingChunks []core.StreamChunk, cleanCon
 // multiple SSE events, the parser buffers potential tag prefixes/suffixes.
 //
 // Flush() must be called when the stream ends to emit any remaining buffered
-// content. Flush is idempotent — calling it multiple times is safe and will
-// not re-emit already-flushed content.
+// content; calling it again does not re-emit what it already returned.
 type ThinkTagState struct {
 	thinkingMode bool
 	buf          string // buffered text that might be part of a tag
-	flushed      bool   // prevents double-emission on duplicate Flush calls
 }
 
 // ProcessFeed ingests one streaming content delta and returns thinking and/or
@@ -168,13 +166,10 @@ func (ts *ThinkTagState) ProcessFeed(delta string) []core.StreamChunk {
 	return chunks
 }
 
-// Flush emits any remaining buffered content. Must be called at stream end.
-// Safe to call multiple times; subsequent calls return nil.
+// Flush emits any buffered content. Call it before a non-content event and at
+// stream end; it keeps the open/closed tag state, and a call with nothing
+// buffered returns nil.
 func (ts *ThinkTagState) Flush() []core.StreamChunk {
-	if ts.flushed {
-		return nil
-	}
-	ts.flushed = true
 	if len(ts.buf) == 0 {
 		return nil
 	}
