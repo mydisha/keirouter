@@ -27,8 +27,10 @@ type APIKey struct {
 	ProjectID  string
 	PlanID     string // bound plan (empty = custom / no plan)
 	Name       string
-	KeyHash    string // argon2id verifier
-	LookupHash string // sha-256 index
+	KeyHash    string // argon2id verifier, kept for rollback; auth does not read it
+	LookupHash string // legacy sha-256 index, kept for rollback
+	LookupHMAC string // keyed index (crypto.KeyLookup); empty until reconciled
+	LookupKID  string // crypto.KeyLookup.KID the LookupHMAC was computed under
 	Display    string // masked form
 	Scopes     string
 	Disabled   bool

@@ -9,7 +9,7 @@ import (
 
 func TestGenerateProducesVerifiableKey(t *testing.T) {
 	// Generate does not touch the store, so a nil repo is fine here.
-	s := New(nil)
+	s := New(nil, testLookup(1))
 
 	issued, err := s.Generate("tenant-1", "project-1", "my key")
 	if err != nil {
@@ -38,6 +38,9 @@ func TestGenerateProducesVerifiableKey(t *testing.T) {
 	if rec.LookupHash != crypto.LookupHash(issued.Plaintext) {
 		t.Fatal("LookupHash does not match plaintext lookup")
 	}
+	if rec.LookupHMAC != s.lookup.Of(issued.Plaintext) || rec.LookupKID != s.lookup.KID() {
+		t.Fatalf("keyed lookup index not set: %q / %q", rec.LookupHMAC, rec.LookupKID)
+	}
 
 	// The stored argon2 verifier must accept the plaintext.
 	ok, err := crypto.VerifyAPIKey(issued.Plaintext, rec.KeyHash)
@@ -50,7 +53,7 @@ func TestGenerateProducesVerifiableKey(t *testing.T) {
 }
 
 func TestGenerateUniqueKeys(t *testing.T) {
-	s := New(nil)
+	s := New(nil, testLookup(1))
 	seen := map[string]bool{}
 	for i := 0; i < 50; i++ {
 		issued, err := s.Generate("t", "p", "k")

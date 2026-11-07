@@ -492,15 +492,15 @@ func (s *Server) importN9routerAPIKeys(ctx context.Context, doc map[string]json.
 			continue
 		}
 		rec := store.APIKey{
-			ID:         n9IDPrefix + k.ID,
-			TenantID:   adminTenant,
-			Name:       name,
-			KeyHash:    hash,
-			LookupHash: crypto.LookupHash(plaintext),
-			Display:    maskForeignKey(plaintext),
-			Disabled:   k.IsActive != nil && !*k.IsActive,
-			CreatedAt:  time.Now(),
+			ID:        n9IDPrefix + k.ID,
+			TenantID:  adminTenant,
+			Name:      name,
+			KeyHash:   hash,
+			Display:   maskForeignKey(plaintext),
+			Disabled:  k.IsActive != nil && !*k.IsActive,
+			CreatedAt: time.Now(),
 		}
+		s.identity.SetLookups(&rec, plaintext)
 		if err := s.identity.Keys().Create(ctx, rec); err != nil {
 			res.Skipped++
 			res.Errors = append(res.Errors, fmt.Sprintf("key %s: create: %v", k.ID, err))
