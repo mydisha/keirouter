@@ -196,3 +196,37 @@ func TestPipelineDropsPingsFromClientStream(t *testing.T) {
 	}
 	require.Equal(t, []core.ChunkType{core.ChunkText, core.ChunkFinish}, types)
 }
+
+func TestAdmitStream_ThinkingWithOnlyASignature(t *testing.T) {
+	out, err := admitStream(context.Background(), streamOf(
+		core.StreamChunk{Type: core.ChunkThinking, Signature: "sig"},
+		core.StreamChunk{Type: core.ChunkFinish, FinishReason: core.FinishLength},
+	), time.Second, "anthropic", "model")
+	require.NoError(t, err)
+	require.NotNil(t, out)
+}
+
+func TestAdmitStream_RedactedThinking(t *testing.T) {
+	out, err := admitStream(context.Background(), streamOf(
+		core.StreamChunk{Type: core.ChunkRedactedThinking, Signature: "opaque"},
+	), time.Second, "anthropic", "model")
+	require.NoError(t, err)
+	require.NotNil(t, out)
+}
+
+func TestAdmitStream_LengthFinishWithoutText(t *testing.T) {
+	out, err := admitStream(context.Background(), streamOf(
+		core.StreamChunk{Type: core.ChunkFinish, FinishReason: core.FinishLength},
+	), time.Second, "anthropic", "model")
+	require.NoError(t, err)
+	require.NotNil(t, out)
+}
+
+func TestAdmitStream_EmptyStopStillFallsBack(t *testing.T) {
+	out, err := admitStream(context.Background(), streamOf(
+		core.StreamChunk{Type: core.ChunkThinking},
+		core.StreamChunk{Type: core.ChunkFinish, FinishReason: core.FinishStop},
+	), time.Second, "openai", "model")
+	require.Nil(t, out)
+	require.Error(t, err)
+}

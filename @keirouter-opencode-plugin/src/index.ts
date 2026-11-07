@@ -42,6 +42,15 @@ export interface KeiRouterRawModel {
     thinking?: boolean;
     tool_calling?: boolean;
     temperature?: boolean;
+    // Names KeiRouter's /v1/models uses.
+    tools?: boolean;
+    pdf?: boolean;
+    audio_input?: boolean;
+    video_input?: boolean;
+    image_output?: boolean;
+    audio_output?: boolean;
+    context_window?: number;
+    max_output?: number;
   };
   input_modalities?: string[];
   output_modalities?: string[];
@@ -225,11 +234,35 @@ export function buildModelV2Map(
   return models;
 }
 
+// withServerFields fills the fields this plugin reads from the names
+// KeiRouter's /v1/models sends inside capabilities.
+export function withServerFields(raw: KeiRouterRawModel): KeiRouterRawModel {
+  const caps = raw.capabilities;
+  if (!caps) return raw;
+  const input = ["text"];
+  if (caps.vision) input.push("image");
+  if (caps.pdf) input.push("pdf");
+  if (caps.audio_input) input.push("audio");
+  if (caps.video_input) input.push("video");
+  const output = ["text"];
+  if (caps.image_output) output.push("image");
+  if (caps.audio_output) output.push("audio");
+  return {
+    ...raw,
+    context_length: raw.context_length ?? caps.context_window,
+    max_output_tokens: raw.max_output_tokens ?? caps.max_output,
+    input_modalities: raw.input_modalities ?? input,
+    output_modalities: raw.output_modalities ?? output,
+    capabilities: { ...caps, tool_calling: caps.tool_calling ?? caps.tools },
+  };
+}
+
 export function mapRawModelToModelV2(
-  raw: KeiRouterRawModel,
+  serverRaw: KeiRouterRawModel,
   opts: KeiRouterResolvedOptions,
   baseURL: string
 ): ModelV2 {
+  const raw = withServerFields(serverRaw);
   const caps = raw.capabilities ?? {};
   const inMods = new Set(normalizeModalities(raw.input_modalities));
   const outMods = new Set(normalizeModalities(raw.output_modalities));
@@ -293,7 +326,8 @@ export function buildStaticProviderEntry(
   };
 }
 
-export function mapRawModel(raw: KeiRouterRawModel): KeiRouterStaticModel {
+export function mapRawModel(serverRaw: KeiRouterRawModel): KeiRouterStaticModel {
+  const raw = withServerFields(serverRaw);
   const caps = raw.capabilities ?? {};
   const model: KeiRouterStaticModel = { name: raw.name || raw.id };
 

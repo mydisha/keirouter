@@ -1,6 +1,8 @@
 package transform
 
 import (
+	"strings"
+
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
 )
 
@@ -97,6 +99,72 @@ func openAIToolChoiceToGemini(v any, sanitize func(string) string) map[string]an
 						"allowedFunctionNames": []string{sanitize(name)},
 					},
 				}
+			}
+		}
+	}
+	return nil
+}
+
+// geminiToolChoiceToOpenAI reads Gemini's toolConfig.functionCallingConfig.
+func geminiToolChoiceToOpenAI(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var tc struct {
+		Config struct {
+			Mode    string   `json:"mode"`
+			Allowed []string `json:"allowedFunctionNames"`
+		} `json:"functionCallingConfig"`
+	}
+	if json.Unmarshal(raw, &tc) != nil {
+		return nil
+	}
+	switch strings.ToUpper(tc.Config.Mode) {
+	case "AUTO":
+		return "auto"
+	case "NONE":
+		return "none"
+	case "ANY":
+		if len(tc.Config.Allowed) == 1 {
+			return map[string]any{"type": "function", "function": map[string]any{"name": tc.Config.Allowed[0]}}
+		}
+		return "required"
+	}
+	return nil
+}
+
+// responsesToolChoiceToOpenAI reads a Responses tool_choice
+// ("auto" | {"type":"function","name":...}) into the chat form.
+func responsesToolChoiceToOpenAI(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	var m struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(raw, &m) == nil && (m.Type == "function" || m.Type == "custom") && m.Name != "" {
+		return map[string]any{"type": "function", "function": map[string]any{"name": m.Name}}
+	}
+	return nil
+}
+
+// openAIToolChoiceToResponses renders the chat form as a Responses tool_choice.
+func openAIToolChoiceToResponses(v any) any {
+	switch t := v.(type) {
+	case string:
+		return t
+	case map[string]any:
+		if fn, ok := t["function"].(map[string]any); ok {
+			if name, _ := fn["name"].(string); name != "" {
+				return struct {
+					Type string `json:"type"`
+					Name string `json:"name"`
+				}{"function", name}
 			}
 		}
 	}

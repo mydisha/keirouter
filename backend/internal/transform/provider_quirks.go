@@ -2,6 +2,7 @@ package transform
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"strings"
 
 	"github.com/mydisha/keirouter/backend/internal/capability"
@@ -131,11 +132,6 @@ func applyThinkingByFormat(out *oaiRequest, req *core.ChatRequest, providerID st
 		applyGenericReasoningConfig(out, req)
 	case "kimi":
 		applyGenericReasoningConfig(out, req)
-		if !off {
-			// Moonshot thinking models accept only the default sampling.
-			out.Temperature = nil
-			out.TopP = nil
-		}
 	default:
 		if scope != reasoningNone {
 			applyGenericReasoningConfig(out, req)
@@ -193,6 +189,8 @@ func applyProviderParamRules(out *oaiRequest, req *core.ChatRequest, providerID 
 		out.Thinking = nil
 	case "volcengine-ark", "byteplus", "doubao":
 		out.ParallelToolCalls = nil
+	case "moonshot", "kimi":
+		applyMoonshotParams(out, req, profile)
 	}
 
 	// Locked reasoning models (deepseek-reasoner, r1) ignore or reject
@@ -272,4 +270,32 @@ func reasoningDetailsText(details []oaiReasoningDetail) string {
 		b.WriteString(d.Text)
 	}
 	return b.String()
+}
+
+// moonshotRequiredToolPrompt stands in for tool_choice "required", which the
+// Moonshot API rejects.
+const moonshotRequiredToolPrompt = "Please select a tool to handle the current issue."
+
+func applyMoonshotParams(out *oaiRequest, req *core.ChatRequest, profile capability.Profile) {
+	thinking := profile.Reasoning && (req.Reasoning == nil || !thinkingDisabled(req.Reasoning.Effort))
+	if thinking {
+		// Thinking runs only at the default sampling; other values are a 400.
+		out.Temperature, out.TopP = nil, nil
+	} else if out.Temperature != nil {
+		t := *out.Temperature
+		if t > 1 {
+			t = 1 // the API accepts [0, 1]
+		}
+		var n int
+		if t < 0.3 && json.Unmarshal(out.Extra["n"], &n) == nil && n > 1 {
+			// Near-greedy sampling cannot return distinct choices.
+			t = 0.3
+		}
+		out.Temperature = &t
+	}
+	if tc, ok := out.ToolChoice.(string); ok && tc == "required" {
+		out.ToolChoice = nil
+		prompt, _ := json.Marshal(moonshotRequiredToolPrompt)
+		out.Messages = append(out.Messages, oaiMessage{Role: "user", Content: prompt})
+	}
 }

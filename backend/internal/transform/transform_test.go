@@ -158,41 +158,8 @@ func TestOpenAI_ParseStreamLine_ToolArgumentsObject(t *testing.T) {
 	require.JSONEq(t, `{"subject":"Fix Qoder","description":"Debug tool args"}`, string(chunks[0].ToolCall.Arguments))
 }
 
-func TestOpenAI_ParseStreamLine_ToolArgumentsNestedInputObject(t *testing.T) {
-	line := []byte(`{"id":"x","model":"qoder","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"Bash","arguments":{"input":{"command":"pwd","description":"show cwd"}}}}]},"finish_reason":null}]}`)
-
-	chunks, err := OpenAICodec{}.ParseStreamLine(line, "qoder")
-	require.NoError(t, err)
-	require.Len(t, chunks, 1)
-	require.Equal(t, core.ChunkToolCall, chunks[0].Type)
-	require.Equal(t, "Bash", chunks[0].ToolCall.Name)
-	require.JSONEq(t, `{"command":"pwd","description":"show cwd"}`, string(chunks[0].ToolCall.Arguments))
-}
-
-func TestOpenAI_ParseStreamLine_ToolArgumentsNestedStringObject(t *testing.T) {
-	line := []byte(`{"id":"x","model":"qoder","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"Bash","arguments":"{\"input\":{\"command\":\"pwd\",\"description\":\"show cwd\"}}"}}]},"finish_reason":null}]}`)
-
-	chunks, err := OpenAICodec{}.ParseStreamLine(line, "qoder")
-	require.NoError(t, err)
-	require.Len(t, chunks, 1)
-	require.Equal(t, core.ChunkToolCall, chunks[0].Type)
-	require.Equal(t, "Bash", chunks[0].ToolCall.Name)
-	require.JSONEq(t, `{"command":"pwd","description":"show cwd"}`, string(chunks[0].ToolCall.Arguments))
-}
-
 func TestOpenAI_ParseStreamLine_ToolArgumentsTopLevelInput(t *testing.T) {
 	line := []byte(`{"id":"x","model":"qoder","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","name":"TaskCreate","input":{"subject":"Fix Qoder","description":"Debug TaskCreate"}}]},"finish_reason":null}]}`)
-
-	chunks, err := OpenAICodec{}.ParseStreamLine(line, "qoder")
-	require.NoError(t, err)
-	require.Len(t, chunks, 1)
-	require.Equal(t, core.ChunkToolCall, chunks[0].Type)
-	require.Equal(t, "TaskCreate", chunks[0].ToolCall.Name)
-	require.JSONEq(t, `{"subject":"Fix Qoder","description":"Debug TaskCreate"}`, string(chunks[0].ToolCall.Arguments))
-}
-
-func TestOpenAI_ParseStreamLine_ToolArgumentsSingleUnknownWrapper(t *testing.T) {
-	line := []byte(`{"id":"x","model":"qoder","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"TaskCreate","arguments":{"toolCallInput":{"subject":"Fix Qoder","description":"Debug TaskCreate"}}}}]},"finish_reason":null}]}`)
 
 	chunks, err := OpenAICodec{}.ParseStreamLine(line, "qoder")
 	require.NoError(t, err)

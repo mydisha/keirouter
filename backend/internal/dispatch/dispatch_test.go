@@ -633,3 +633,19 @@ func TestProviderCircuitHalfOpenAdmitsSingleProbe(t *testing.T) {
 	d.recordProviderSuccess("openai")
 	require.Equal(t, time.Duration(0), d.providerCircuitRemaining("openai", later.Add(time.Hour)))
 }
+
+func TestNoteFailure_TransientRetryAfterIsCapped(t *testing.T) {
+	ctx := context.Background()
+	d, db := newDispatchTest(t, testAccount("acc-503", 10))
+	started := time.Now()
+	for range 5 {
+		d.NoteFailure(ctx, "acc-503", &core.ProviderError{Kind: core.ErrUpstream, StatusCode: 503, RetryAfter: time.Hour})
+	}
+
+	account, err := db.Accounts().Get(ctx, "acc-503")
+	require.NoError(t, err)
+	require.NotNil(t, account.CooldownUntil, "repeated 503s cool the account down")
+	maxCooldown := time.Duration(float64(MaxTransientRetryAfter) * (1 + BackoffJitterFraction))
+	require.LessOrEqual(t, account.CooldownUntil.Sub(started), maxCooldown+2*time.Second,
+		"one 503 with a long Retry-After must not bench a single-account setup for an hour")
+}

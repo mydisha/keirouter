@@ -65,6 +65,20 @@ type respRequest struct {
 	PreviousResponseID string `json:"previous_response_id,omitempty"`
 	// MaxOutputTokens is the Responses-native output cap.
 	MaxOutputTokens *int `json:"max_output_tokens,omitempty"`
+	Text            *struct {
+		Format *respTextFormat `json:"format,omitempty"`
+	} `json:"text,omitempty"`
+	ToolChoice        json.RawMessage `json:"tool_choice,omitempty"`
+	ParallelToolCalls *bool           `json:"parallel_tool_calls,omitempty"`
+}
+
+// respTextFormat is the Responses structured-output setting (text.format).
+type respTextFormat struct {
+	Type        string          `json:"type"`
+	Name        string          `json:"name,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Schema      json.RawMessage `json:"schema,omitempty"`
+	Strict      *bool           `json:"strict,omitempty"`
 }
 
 // responsesAPIAllowlist enumerates the fields that the Responses API (/v1/responses)
@@ -88,6 +102,7 @@ var responsesAPIAllowlist = map[string]bool{
 	"client_metadata":      true,
 	"previous_response_id": true,
 	"parallel_tool_calls":  true,
+	"text":                 true,
 }
 
 // UnmarshalJSON decodes the request and the typed view of its tools.
@@ -162,6 +177,16 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 	}
 	req.TopP = raw.TopP
 	req.PreviousResponseID = raw.PreviousResponseID
+	req.ToolChoice = responsesToolChoiceToOpenAI(raw.ToolChoice)
+	req.ParallelToolCalls = raw.ParallelToolCalls
+	if raw.Text != nil && raw.Text.Format != nil {
+		switch f := raw.Text.Format; f.Type {
+		case "json_schema":
+			req.ResponseFormat = canonicalResponseFormat(f.Name, f.Schema, f.Strict)
+		case "json_object":
+			req.ResponseFormat = canonicalResponseFormat("", nil, nil)
+		}
+	}
 	if raw.Reasoning != nil && raw.Reasoning.Effort != "" {
 		req.Reasoning = &core.ReasoningConfig{Effort: raw.Reasoning.Effort}
 	}
@@ -206,8 +231,9 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 		}
 	}
 
-	var pendingReasoning string
-	var pendingEncrypted string
+	// Each reasoning item stays its own thinking part: its encrypted_content
+	// only verifies against its own summary text.
+	var pending []core.ContentPart
 	for _, item := range items {
 		itemType := item.Type
 		if itemType == "" && item.Role != "" {
@@ -217,17 +243,10 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 		switch itemType {
 		case "message":
 			msg := core.Message{Role: mapRespRole(item.Role)}
-			if pendingReasoning != "" || pendingEncrypted != "" {
-				if item.Role == "assistant" {
-					msg.Content = append(msg.Content, core.ContentPart{
-						Type:      core.PartThinking,
-						Text:      pendingReasoning,
-						Signature: pendingEncrypted,
-					})
-				}
-				pendingReasoning = ""
-				pendingEncrypted = ""
+			if item.Role == "assistant" {
+				msg.Content = append(msg.Content, pending...)
 			}
+			pending = nil
 			msg.Content = append(msg.Content, parseRespContent(item.Content)...)
 			req.Messages = append(req.Messages, msg)
 
@@ -242,16 +261,8 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 			} else if len(args) == 0 {
 				args = json.RawMessage("{}")
 			}
-			msg := core.Message{Role: core.RoleAssistant}
-			if pendingReasoning != "" || pendingEncrypted != "" {
-				msg.Content = append(msg.Content, core.ContentPart{
-					Type:      core.PartThinking,
-					Text:      pendingReasoning,
-					Signature: pendingEncrypted,
-				})
-				pendingReasoning = ""
-				pendingEncrypted = ""
-			}
+			msg := core.Message{Role: core.RoleAssistant, Content: pending}
+			pending = nil
 			msg.Content = append(msg.Content, core.ContentPart{
 				Type:     core.PartToolCall,
 				ToolCall: &core.ToolCall{ID: item.CallID, Name: item.Name, Arguments: args, Custom: custom},
@@ -279,11 +290,11 @@ func (OpenAIResponsesCodec) ParseRequest(body []byte) (*core.ChatRequest, error)
 		case "reasoning":
 			txt, encrypted := extractRespReasoning(item)
 			if txt != "" || encrypted != "" {
-				if pendingReasoning != "" {
-					pendingReasoning += "\n"
+				part := core.ContentPart{Type: core.PartThinking, Text: txt}
+				if encrypted != "" {
+					part.Signature, part.ReasoningOrigin = core.UntagSignature(encrypted, "openai")
 				}
-				pendingReasoning += txt
-				pendingEncrypted = encrypted
+				pending = append(pending, part)
 			}
 		}
 	}
@@ -398,6 +409,10 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 		"stream": req.Stream,
 		"store":  false,
 	}
+	// The ChatGPT Codex backend rejects max_output_tokens; 16 is the API minimum.
+	if req.MaxTokens != nil && *req.MaxTokens > 0 && !c.Codex {
+		out["max_output_tokens"] = max(*req.MaxTokens, 16)
+	}
 	switch {
 	case req.System != "":
 		out["instructions"] = req.System
@@ -441,6 +456,13 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 	customCalls := customToolCallIDs(req.Messages)
 	for _, m := range req.Messages {
 		switch m.Role {
+		case core.RoleSystem, core.RoleDeveloper:
+			if text := messageText(m); text != "" {
+				input = append(input, map[string]any{
+					"type": "message", "role": string(m.Role),
+					"content": []map[string]any{{"type": "input_text", "text": text}},
+				})
+			}
 		case core.RoleUser, core.RoleAssistant:
 			// Emit reasoning items with encrypted_content BEFORE the
 			// message/function_call items. The Codex API requires
@@ -560,12 +582,22 @@ func (c OpenAIResponsesCodec) RenderRequest(req *core.ChatRequest) ([]byte, erro
 			})
 		}
 		out["tools"] = tools
+		if tc := openAIToolChoiceToResponses(req.ToolChoice); tc != nil {
+			out["tool_choice"] = tc
+		}
 	}
 	if req.PreviousResponseID != "" {
 		out["previous_response_id"] = req.PreviousResponseID
 	}
 	if req.ParallelToolCalls != nil && len(req.Tools) > 0 {
 		out["parallel_tool_calls"] = *req.ParallelToolCalls
+	}
+	if rf, ok := decodeResponseFormat(req.ResponseFormat); ok {
+		format := respTextFormat{Type: "json_object"}
+		if schema := rf.schema(); schema != nil {
+			format = respTextFormat{Type: "json_schema", Name: rf.JSONSchema.Name, Description: rf.JSONSchema.Description, Schema: schema, Strict: rf.JSONSchema.Strict}
+		}
+		out["text"] = map[string]any{"format": format}
 	}
 
 	// Allowlist filter: strip any field not recognized by the Responses API.
@@ -700,7 +732,7 @@ func (OpenAIResponsesCodec) RenderResponse(resp *core.ChatResponse) ([]byte, err
 				"type": "reasoning",
 			}
 			if p.Signature != "" {
-				reasoningItem["encrypted_content"] = p.Signature
+				reasoningItem["encrypted_content"] = core.TagSignature(p.Signature, p.ReasoningOrigin, "openai")
 			}
 			if p.Text != "" {
 				reasoningItem["summary"] = []map[string]any{{"type": "summary_text", "text": p.Text}}

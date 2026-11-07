@@ -209,6 +209,9 @@ func (OpenAICodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 		req.MaxTokens = raw.MaxCompletionTokens
 	}
 	req.Extra = parseOAIExtraParams(body)
+	if _, ok := decodeResponseFormat(raw.ResponseFormat); ok {
+		req.ResponseFormat = raw.ResponseFormat
+	}
 	// stream_options.include_usage: the client opts in to a usage event on the
 	// streaming response. We don't forward this upstream (many OpenAI-compatible
 	// providers 400 on it — see renderOAIRequest), but the pipeline honors it by
@@ -240,16 +243,18 @@ func (OpenAICodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	}
 
 	for _, m := range raw.Messages {
-		msg, isSystem, sysText := parseOAIMessage(m)
-		if isSystem {
+		// OpenAI's "developer" role is a system-equivalent for newer models.
+		if m.Role == "system" || m.Role == "developer" {
 			// Hoist system content to the top-level field; concatenate multiples.
+			text, cached := decodeOAISystem(m.Content)
 			if req.System != "" {
 				req.System += "\n\n"
 			}
-			req.System += sysText
+			req.System += text
+			req.SystemCache = append(req.SystemCache, cached...)
 			continue
 		}
-		req.Messages = append(req.Messages, msg)
+		req.Messages = append(req.Messages, parseOAIMessage(m))
 	}
 	return req, nil
 }
@@ -272,14 +277,9 @@ func decodeOAIStop(raw json.RawMessage) []string {
 	return nil
 }
 
-// parseOAIMessage converts one OpenAI message to canonical form. System and
-// developer roles are reported separately so the caller can hoist them.
-func parseOAIMessage(m oaiMessage) (msg core.Message, isSystem bool, sysText string) {
+// parseOAIMessage converts one non-system OpenAI message to canonical form.
+func parseOAIMessage(m oaiMessage) (msg core.Message) {
 	role := m.Role
-	// OpenAI's "developer" role is a system-equivalent for newer models.
-	if role == "system" || role == "developer" {
-		return core.Message{}, true, decodeOAIContentText(m.Content)
-	}
 
 	msg.Role = mapOAIRole(role)
 	msg.Name = m.Name
@@ -293,7 +293,30 @@ func parseOAIMessage(m oaiMessage) (msg core.Message, isSystem bool, sysText str
 		})
 	}
 
-	// Assistant tool calls.
+	// Tool result message. Text becomes Content; images/files (screenshot
+	// tools) are kept as Parts so Anthropic/Gemini upstreams still see them.
+	if role == "tool" {
+		result := &core.ToolResult{CallID: m.ToolCallID}
+		var text strings.Builder
+		var cache json.RawMessage
+		for _, p := range decodeOAIContentParts(m.Content) {
+			if p.CacheControl != nil {
+				cache, p.CacheControl = p.CacheControl, nil
+			}
+			if p.Type == core.PartText {
+				text.WriteString(p.Text)
+				continue
+			}
+			result.Parts = append(result.Parts, p)
+		}
+		result.Content = text.String()
+		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartToolResult, ToolResult: result, CacheControl: cache})
+		return msg
+	}
+
+	// Text / multimodal content parts. The model wrote them before its tool
+	// calls, and Anthropic upstreams expect the blocks in that order.
+	msg.Content = append(msg.Content, decodeOAIContentParts(m.Content)...)
 	for _, tc := range m.ToolCalls {
 		msg.Content = append(msg.Content, core.ContentPart{
 			Type: core.PartToolCall,
@@ -304,27 +327,7 @@ func parseOAIMessage(m oaiMessage) (msg core.Message, isSystem bool, sysText str
 			},
 		})
 	}
-
-	// Tool result message. Text becomes Content; images/files (screenshot
-	// tools) are kept as Parts so Anthropic/Gemini upstreams still see them.
-	if role == "tool" {
-		result := &core.ToolResult{CallID: m.ToolCallID}
-		var text strings.Builder
-		for _, p := range decodeOAIContentParts(m.Content) {
-			if p.Type == core.PartText {
-				text.WriteString(p.Text)
-				continue
-			}
-			result.Parts = append(result.Parts, p)
-		}
-		result.Content = text.String()
-		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartToolResult, ToolResult: result})
-		return msg, false, ""
-	}
-
-	// Text / multimodal content parts.
-	msg.Content = append(msg.Content, decodeOAIContentParts(m.Content)...)
-	return msg, false, ""
+	return msg
 }
 
 func mapOAIRole(role string) core.Role {
@@ -340,23 +343,28 @@ func mapOAIRole(role string) core.Role {
 	}
 }
 
-// decodeOAIContentText extracts plain text from an OpenAI content field, which
-// may be a string or an array of typed parts.
-func decodeOAIContentText(raw json.RawMessage) string {
+// decodeOAISystem extracts the text of a system message (a string or typed
+// parts) and the parts that carried a cache breakpoint.
+func decodeOAISystem(raw json.RawMessage) (string, []core.SystemBlock) {
 	if len(raw) == 0 {
-		return ""
+		return "", nil
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err == nil {
-		return s
+		return s, nil
 	}
 	var b strings.Builder
+	var cached []core.SystemBlock
 	for _, p := range decodeOAIContentParts(raw) {
-		if p.Type == core.PartText {
-			b.WriteString(p.Text)
+		if p.Type != core.PartText {
+			continue
+		}
+		b.WriteString(p.Text)
+		if p.CacheControl != nil {
+			cached = append(cached, core.SystemBlock{Text: p.Text, CacheControl: p.CacheControl})
 		}
 	}
-	return b.String()
+	return b.String(), cached
 }
 
 // decodeOAIContentParts extracts canonical content parts from an OpenAI content
@@ -374,9 +382,10 @@ func decodeOAIContentParts(raw json.RawMessage) []core.ContentPart {
 	}
 
 	var arr []struct {
-		Type     string `json:"type"`
-		Text     string `json:"text"`
-		ImageURL struct {
+		Type         string          `json:"type"`
+		Text         string          `json:"text"`
+		CacheControl json.RawMessage `json:"cache_control"`
+		ImageURL     struct {
 			URL string `json:"url"`
 		} `json:"image_url"`
 		File struct {
@@ -393,10 +402,10 @@ func decodeOAIContentParts(raw json.RawMessage) []core.ContentPart {
 	for _, p := range arr {
 		switch p.Type {
 		case "text":
-			parts = append(parts, core.ContentPart{Type: core.PartText, Text: p.Text})
+			parts = append(parts, core.ContentPart{Type: core.PartText, Text: p.Text, CacheControl: cacheControl(p.CacheControl)})
 		case "image_url":
 			media := parseOAIImageURL(p.ImageURL.URL)
-			parts = append(parts, core.ContentPart{Type: core.PartImage, Media: media})
+			parts = append(parts, core.ContentPart{Type: core.PartImage, Media: media, CacheControl: cacheControl(p.CacheControl)})
 		case "file":
 			// {"type":"file","file":{"filename":"x.pdf","file_data":"data:application/pdf;base64,..."}}
 			if p.File.FileData != "" {
@@ -404,7 +413,7 @@ func decodeOAIContentParts(raw json.RawMessage) []core.ContentPart {
 				if media.MIMEType == "" {
 					media.MIMEType = "application/pdf"
 				}
-				parts = append(parts, core.ContentPart{Type: core.PartDocument, Media: media})
+				parts = append(parts, core.ContentPart{Type: core.PartDocument, Media: media, CacheControl: cacheControl(p.CacheControl)})
 			}
 		}
 	}
@@ -518,8 +527,9 @@ func reasoningEchoScope(providerID, model string) reasoningScope {
 		return reasoningAll
 	}
 	// Kimi models (e.g. kimi-k2, kimi-latest) require reasoning_content only
-	// on assistant turns with tool_calls.
-	if strings.HasPrefix(m, "kimi-") || strings.HasPrefix(m, "moonshot/kimi-") {
+	// on assistant turns with tool_calls, also when a host namespaces the id
+	// (moonshotai/kimi-k2.6, @cf/moonshotai/..., accounts/fireworks/models/...).
+	if strings.HasPrefix(m[strings.LastIndexByte(m, '/')+1:], "kimi-") {
 		return reasoningToolCalls
 	}
 	// GLM/Zhipu models (glm-5.2, glm-4.7, zai-org/glm-*, etc.) emit structured
@@ -581,8 +591,12 @@ func shouldInjectReasoning(scope reasoningScope, msg oaiMessage) bool {
 func (c OpenAICodec) RenderRequestForProvider(req *core.ChatRequest, providerID string) ([]byte, error) {
 	scope := reasoningEchoScope(providerID, req.Model)
 	if needsJSONSchemaFallback(providerID, req.ResponseFormat) {
+		// JSON mode keeps the output parseable; the schema itself travels in
+		// the prompt because these providers cannot enforce it.
+		rf, _ := decodeResponseFormat(req.ResponseFormat)
 		clone := *req
 		clone.ResponseFormat = fallbackResponseFormat(req.ResponseFormat)
+		clone.System = appendSystem(req.System, structuredOutputInstruction(rf))
 		return renderOAIRequestForProvider(&clone, providerID, scope)
 	}
 	return renderOAIRequestForProvider(req, providerID, scope)
@@ -833,22 +847,13 @@ func applyDeepSeekThinking(out *oaiRequest, req *core.ChatRequest, providerID st
 	switch strings.ToLower(req.Model) {
 	case "deepseek-v4-pro-max":
 		out.Model = "deepseek-v4-pro"
-		out.Thinking = nil
 		out.ReasoningEffort = "max"
-		setDeepSeekExtraThinking(out, "enabled")
+		out.Thinking = &oaiThinking{Type: "enabled"}
 	case "deepseek-v4-pro-none":
 		out.Model = "deepseek-v4-pro"
-		out.Thinking = nil
 		out.ReasoningEffort = ""
-		setDeepSeekExtraThinking(out, "disabled")
+		out.Thinking = &oaiThinking{Type: "disabled"}
 	}
-}
-
-func setDeepSeekExtraThinking(out *oaiRequest, typ string) {
-	if out.ExtraBody == nil {
-		out.ExtraBody = map[string]any{}
-	}
-	out.ExtraBody["thinking"] = map[string]any{"type": typ}
 }
 
 func normalizeDeepSeekToolMessages(messages []oaiMessage) {

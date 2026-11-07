@@ -2,17 +2,18 @@ package transform
 
 import (
 	"encoding/json"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/mydisha/keirouter/backend/internal/core"
 )
 
-// ToolArgSanitizer buffers streaming tool call arguments and emits sanitized
-// JSON when the tool call completes. Tool-call arguments from fragmenting
-// upstreams arrive split across frames and must be reassembled into one
-// complete JSON object before rendering (e.g. fixing Read.limit from string to
-// int, clamping values).
+// ToolArgSanitizer buffers streaming tool call arguments and emits each call
+// once it is complete. Arguments reach the client byte-identical to what the
+// upstream sent, except for the Claude Code repairs, which only run when
+// ClaudeCodeRepairs is set.
 //
 // Usage: call Process() for each chunk. Call Flush() when the stream ends.
 // Flush is idempotent — calling it multiple times is safe and will not
@@ -24,12 +25,18 @@ type ToolArgSanitizer struct {
 	// (e.g. on duplicate ChunkFinish from upstream providers).
 	flushed     bool
 	sawToolCall bool
+
+	// ClaudeCodeRepairs fixes argument types that non-Anthropic models get
+	// wrong for Claude Code's built-in tools. Only set it for Anthropic clients:
+	// another client's tool named "Read" has its own schema.
+	ClaudeCodeRepairs bool
 }
 
 type toolBuffer struct {
-	id   string
-	name string
-	args strings.Builder
+	id     string
+	name   string
+	custom bool
+	args   strings.Builder
 	// argsLen tracks the length of args accumulated so far, used to detect
 	// snapshot-style argument retransmissions (some providers re-send the full
 	// accumulated arguments on every chunk instead of just the new delta).
@@ -79,8 +86,9 @@ func (s *ToolArgSanitizer) Process(chunk core.StreamChunk, emit func(core.Stream
 		if existing, ok := s.buffers[idx]; !ok || existing.id != chunk.ToolCall.ID {
 			s.flushIndex(idx, emit)
 			s.buffers[idx] = &toolBuffer{
-				id:   chunk.ToolCall.ID,
-				name: chunk.ToolCall.Name,
+				id:     chunk.ToolCall.ID,
+				name:   chunk.ToolCall.Name,
+				custom: chunk.ToolCall.Custom,
 			}
 		}
 	}
@@ -94,10 +102,18 @@ func (s *ToolArgSanitizer) Process(chunk core.StreamChunk, emit func(core.Stream
 	}
 
 	args := string(chunk.ToolCall.Arguments)
-	if args != "" && args != "{}" {
-		appendToolArgs(buf, args)
+	if args == "{}" && isPlaceholderPosition(buf) {
+		return
 	}
+	appendToolArgs(buf, args)
+}
 
+// isPlaceholderPosition reports whether a "{}" fragment is the empty input
+// Anthropic decoders emit when a tool_use block opens (or a repeat of it),
+// rather than an empty object inside the arguments.
+func isPlaceholderPosition(buf *toolBuffer) bool {
+	existing := buf.args.String()
+	return existing == "" || isCompleteJSONObject(existing)
 }
 
 // appendToolArgs accumulates tool-call argument fragments into the buffer.
@@ -156,7 +172,7 @@ func (s *ToolArgSanitizer) Flush(emit func(core.StreamChunk)) {
 		return
 	}
 	s.flushed = true
-	for idx := range s.buffers {
+	for _, idx := range slices.Sorted(maps.Keys(s.buffers)) {
 		s.flushIndex(idx, emit)
 	}
 }
@@ -174,8 +190,9 @@ func (s *ToolArgSanitizer) flushIndex(idx int, emit func(core.StreamChunk)) {
 		args = "{}"
 	}
 
-	// Sanitize the arguments.
-	sanitized := sanitizeToolArgs(buf.name, args)
+	if s.ClaudeCodeRepairs {
+		args = sanitizeToolArgs(buf.name, args)
+	}
 
 	emit(core.StreamChunk{
 		Type:  core.ChunkToolCall,
@@ -183,34 +200,25 @@ func (s *ToolArgSanitizer) flushIndex(idx int, emit func(core.StreamChunk)) {
 		ToolCall: &core.ToolCall{
 			ID:        buf.id,
 			Name:      buf.name,
-			Arguments: json.RawMessage(sanitized),
+			Arguments: json.RawMessage(args),
+			Custom:    buf.custom,
 		},
 	})
 }
 
-// sanitizeToolArgs applies argument cleanup rules. It fixes common issues from
-// non-Anthropic models.
+// sanitizeToolArgs fixes Read arguments that non-Anthropic models send with
+// the wrong types. Arguments that need no fix are returned unchanged.
 func sanitizeToolArgs(toolName, argsJSON string) string {
+	if toolName != "Read" {
+		return argsJSON
+	}
 	var args map[string]any
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return argsJSON
 	}
-
-	switch toolName {
-	case "Read":
-		sanitizeReadArgs(args)
-	case "Write":
-		sanitizeWriteArgs(args)
-	case "Edit":
-		sanitizeEditArgs(args)
-	case "Bash":
-		sanitizeBashArgs(args)
-	case "Glob":
-		sanitizeGlobArgs(args)
-	case "Grep":
-		sanitizeGrepArgs(args)
+	if !sanitizeReadArgs(args) {
+		return argsJSON
 	}
-
 	out, err := json.Marshal(args)
 	if err != nil {
 		return argsJSON
@@ -218,9 +226,11 @@ func sanitizeToolArgs(toolName, argsJSON string) string {
 	return string(out)
 }
 
-// sanitizeReadArgs fixes common Read tool argument issues from non-Anthropic models.
-func sanitizeReadArgs(args map[string]any) {
-	// limit: string-digit → int, clamp to [1, 2000]
+// sanitizeReadArgs coerces limit and offset to clamped integers and drops pages
+// for non-PDF files. It reports whether anything changed.
+func sanitizeReadArgs(args map[string]any) bool {
+	before := len(args)
+	changed := false
 	if v, ok := args["limit"]; ok {
 		switch val := v.(type) {
 		case string:
@@ -229,12 +239,14 @@ func sanitizeReadArgs(args map[string]any) {
 			} else {
 				delete(args, "limit")
 			}
+			changed = true
 		case float64:
-			args["limit"] = clampInt(int(val), 1, 2000)
+			if n := clampInt(int(val), 1, 2000); float64(n) != val {
+				args["limit"] = n
+				changed = true
+			}
 		}
 	}
-
-	// offset: string-digit → int, clamp to ≥ 0
 	if v, ok := args["offset"]; ok {
 		switch val := v.(type) {
 		case string:
@@ -243,67 +255,21 @@ func sanitizeReadArgs(args map[string]any) {
 			} else {
 				delete(args, "offset")
 			}
+			changed = true
 		case float64:
-			args["offset"] = maxInt(int(val), 0)
-		}
-	}
-
-	// pages: only valid for .pdf files
-	if pages, hasPages := args["pages"]; hasPages {
-		fp, _ := args["file_path"].(string)
-		if !strings.HasSuffix(strings.ToLower(fp), ".pdf") {
-			delete(args, "pages")
-		} else if _, ok := pages.(string); !ok {
-			delete(args, "pages")
-		}
-	}
-}
-
-// sanitizeWriteArgs ensures file_path is present and content is a string.
-func sanitizeWriteArgs(args map[string]any) {
-	if content, ok := args["content"]; ok {
-		if s, ok := content.(string); !ok || s == "" {
-			args["content"] = ""
-		}
-	}
-}
-
-// sanitizeEditArgs ensures old_string and new_string are strings.
-func sanitizeEditArgs(args map[string]any) {
-	for _, key := range []string{"old_string", "new_string"} {
-		if v, ok := args[key]; ok {
-			if _, ok := v.(string); !ok {
-				args[key] = ""
+			if n := maxInt(int(val), 0); float64(n) != val {
+				args["offset"] = n
+				changed = true
 			}
 		}
 	}
-}
-
-// sanitizeBashArgs ensures command is a string.
-func sanitizeBashArgs(args map[string]any) {
-	if cmd, ok := args["command"]; ok {
-		if _, ok := cmd.(string); !ok {
-			args["command"] = ""
+	if pages, ok := args["pages"]; ok {
+		fp, _ := args["file_path"].(string)
+		if _, isString := pages.(string); !isString || !strings.HasSuffix(strings.ToLower(fp), ".pdf") {
+			delete(args, "pages")
 		}
 	}
-}
-
-// sanitizeGlobArgs ensures pattern is a string.
-func sanitizeGlobArgs(args map[string]any) {
-	if pattern, ok := args["pattern"]; ok {
-		if _, ok := pattern.(string); !ok {
-			args["pattern"] = ""
-		}
-	}
-}
-
-// sanitizeGrepArgs ensures query is a string.
-func sanitizeGrepArgs(args map[string]any) {
-	if query, ok := args["query"]; ok {
-		if _, ok := query.(string); !ok {
-			args["query"] = ""
-		}
-	}
+	return changed || len(args) != before
 }
 
 func clampInt(val, min, max int) int {

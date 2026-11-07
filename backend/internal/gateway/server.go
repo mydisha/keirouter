@@ -244,12 +244,13 @@ func (s *Server) routes() chi.Router {
 	// rewritten path reaches the real /v1/* routes below.
 	r.Use(collapseDoubleV1)
 	r.Use(middleware.RequestID)
-	r.Use(middleware.Recoverer)
+	r.Use(echoRequestID)
+	r.Use(recoverPanics)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: s.cfg.Server.CORSOrigins,
 		AllowedMethods: []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"Authorization", "Content-Type", "x-api-key", "X-KeiRouter-Affinity", "X-KeiRouter-Account", skipSkillsHeader, "X-Conversation-ID", "X-Thread-ID", "X-Session-ID", "OpenAI-Conversation-ID"},
-		ExposedHeaders: []string{"X-KeiRouter-Provider", "X-KeiRouter-Model", "X-KeiRouter-Account"},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "x-api-key", "x-goog-api-key", "anthropic-version", "anthropic-beta", "X-KeiRouter-Affinity", "X-KeiRouter-Account", skipSkillsHeader, "X-Conversation-ID", "X-Thread-ID", "X-Session-ID", "OpenAI-Conversation-ID"},
+		ExposedHeaders: []string{"X-KeiRouter-Provider", "X-KeiRouter-Model", "X-KeiRouter-Account", "X-Request-Id", "Retry-After"},
 	}))
 
 	// Health check (unauthenticated).
@@ -314,8 +315,8 @@ func (s *Server) routes() chi.Router {
 		r.Post("/v1/responses", s.handleOpenAIResponses)
 
 		// Gemini-native generateContent endpoint. The model + action are in the
-		// URL path ({model}:generateContent), matching Google's SDK clients.
-		r.Post("/v1beta/models/{modelAction}", s.handleGeminiGenerate)
+		// URL path ({model}:generateContent); the model may contain a slash.
+		r.Post("/v1beta/models/*", s.handleGeminiGenerate)
 
 		// Multi-capability endpoints (Phase 2).
 		r.Post("/v1/embeddings", s.handleEmbeddings)

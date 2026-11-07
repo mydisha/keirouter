@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -20,8 +21,8 @@ var sseHeartbeatFrame = []byte(": keep-alive\n\n")
 // All writes — frames from the copy loop and heartbeats from the background
 // goroutine — are serialized by a mutex, and the copy loop only ever writes
 // complete SSE frames per Write call, so a heartbeat can never split a frame.
-// Flushing is folded into Write so the underlying http.Flusher is also never
-// used concurrently.
+// Flush takes the same mutex, so the underlying http.Flusher is never used
+// concurrently either.
 type heartbeatWriter struct {
 	mu       sync.Mutex
 	dst      io.Writer
@@ -48,21 +49,32 @@ func newHeartbeatWriter(dst io.Writer, flush func(), interval time.Duration) *he
 	return hw
 }
 
-// Write forwards one complete frame to the client and flushes it immediately,
-// matching the per-frame flush behavior of the unwrapped direct path.
+// Write forwards one complete frame. The copy loop calls Flush once per burst
+// of frames instead of once per frame, which saves a syscall per chunk.
 func (hw *heartbeatWriter) Write(p []byte) (int, error) {
 	hw.mu.Lock()
 	defer hw.mu.Unlock()
 	n, err := hw.dst.Write(p)
 	hw.last = time.Now()
-	if err == nil && hw.flush != nil {
+	return n, err
+}
+
+func (hw *heartbeatWriter) Flush() {
+	hw.mu.Lock()
+	defer hw.mu.Unlock()
+	if hw.flush != nil {
 		hw.flush()
 	}
-	return n, err
 }
 
 func (hw *heartbeatWriter) run() {
 	defer close(hw.doneCh)
+	defer func() {
+		// A failed heartbeat must stop the beats, not the process.
+		if r := recover(); r != nil {
+			slog.Error("stream heartbeat panicked", "panic", r)
+		}
+	}()
 	ticker := time.NewTicker(hw.interval)
 	defer ticker.Stop()
 	for {

@@ -52,9 +52,9 @@ type ChatRequest struct {
 	// System holds top-level system instructions hoisted out of Messages for
 	// dialects that carry them separately (Anthropic, Gemini).
 	System string `json:"system,omitempty"`
-	// SystemCacheControl is an Anthropic cache breakpoint that was attached to
-	// the (last) system block; the flattened System text is cached as a whole.
-	SystemCacheControl json.RawMessage `json:"system_cache_control,omitempty"`
+	// SystemCache lists the client's system blocks that carried a cache
+	// breakpoint. Their text is part of System; SystemBlocks splits it again.
+	SystemCache []SystemBlock `json:"system_cache,omitempty"`
 
 	Tools      []Tool `json:"tools,omitempty"`
 	ToolChoice any    `json:"tool_choice,omitempty"`
@@ -105,6 +105,9 @@ type ReasoningConfig struct {
 	Effort string `json:"effort,omitempty"`
 	// MaxTokens caps the thinking budget where the provider supports it.
 	MaxTokens int `json:"max_tokens,omitempty"`
+	// Adaptive is an Anthropic client's thinking {type: adaptive}; Effort then
+	// holds its output_config.effort, or "adaptive" when none was sent.
+	Adaptive bool `json:"adaptive,omitempty"`
 }
 
 // Tool is a function/tool definition advertised to the model.

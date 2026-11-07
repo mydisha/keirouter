@@ -287,7 +287,62 @@ func TestResponses_RenderStream_EventSequence(t *testing.T) {
 		Type: core.ChunkUsage, Usage: &core.Usage{PromptTokens: 1, CompletionTokens: 2, TotalTokens: 3},
 	}, state)
 	require.NoError(t, err)
-	require.Contains(t, strings.Join(toStrings(usage), ""), "response.completed")
+	require.Empty(t, usage, "usage waits for the end of the stream")
+
+	done := strings.Join(toStrings(codec.RenderStreamDone(state)), "")
+	require.Contains(t, done, "response.completed")
+	require.Contains(t, done, `"input_tokens":1`)
+	require.Contains(t, done, `"output_tokens":2`)
+}
+
+func TestResponsesStream_CompletesOnlyAtTheEnd(t *testing.T) {
+	codec := OpenAIResponsesCodec{}
+	state := &StreamState{MessageID: "resp_1"}
+	var events []string
+	render := func(c core.StreamChunk) {
+		out, err := codec.RenderStreamChunk(c, state)
+		require.NoError(t, err)
+		events = append(events, toStrings(out)...)
+	}
+	// Anthropic reports input tokens before any output; Gemini repeats usage.
+	render(core.StreamChunk{Type: core.ChunkUsage, Usage: &core.Usage{PromptTokens: 40}})
+	render(core.StreamChunk{Type: core.ChunkText, Delta: "hi"})
+	render(core.StreamChunk{Type: core.ChunkToolCall, ToolCall: &core.ToolCall{ID: "c1", Name: "f", Arguments: []byte(`{}`)}})
+	render(core.StreamChunk{Type: core.ChunkUsage, Usage: &core.Usage{CompletionTokens: 7}})
+	render(core.StreamChunk{Type: core.ChunkFinish, FinishReason: core.FinishToolCalls})
+	joined := strings.Join(events, "")
+	require.NotContains(t, joined, "response.completed")
+	require.Contains(t, joined, "function_call")
+
+	done := strings.Join(toStrings(codec.RenderStreamDone(state)), "")
+	require.Contains(t, done, `"status":"completed"`)
+	require.Contains(t, done, `"input_tokens":40`)
+	require.Contains(t, done, `"output_tokens":7`)
+	require.Empty(t, codec.RenderStreamDone(state), "completed is sent once")
+}
+
+func TestResponsesStream_EmptyStreamStillCompletes(t *testing.T) {
+	codec := OpenAIResponsesCodec{}
+	done := strings.Join(toStrings(codec.RenderStreamDone(&StreamState{MessageID: "resp_1"})), "")
+	require.Contains(t, done, "response.created")
+	require.Contains(t, done, "response.completed")
+}
+
+func TestResponsesStream_FailureIsResponseFailed(t *testing.T) {
+	codec := OpenAIResponsesCodec{}
+	state := &StreamState{MessageID: "resp_1"}
+	_, err := codec.RenderStreamChunk(core.StreamChunk{Type: core.ChunkText, Delta: "partial"}, state)
+	require.NoError(t, err)
+
+	failed := strings.Join(toStrings(codec.RenderStreamError(state, "upstream reset")), "")
+	require.Contains(t, failed, "event: response.failed")
+	require.Contains(t, failed, `"id":"resp_1"`)
+	require.Contains(t, failed, `"status":"failed"`)
+	require.Contains(t, failed, "upstream reset")
+	require.Empty(t, codec.RenderStreamDone(state), "nothing follows the failure")
+
+	stateless := strings.Join(toStrings(codec.RenderStreamError(nil, "boom")), "")
+	require.Contains(t, stateless, "event: response.failed")
 }
 
 func TestCrossDialect_OpenAIToResponsesRoundTrip(t *testing.T) {

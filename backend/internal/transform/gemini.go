@@ -40,6 +40,8 @@ type gemGenConfig struct {
 	ThinkingConfig     *gemThinkingConfig `json:"thinkingConfig,omitempty"`
 	ResponseMimeType   string             `json:"responseMimeType,omitempty"`
 	ResponseJSONSchema json.RawMessage    `json:"responseJsonSchema,omitempty"`
+	// ResponseSchema is the older OpenAPI-style schema ("type":"OBJECT").
+	ResponseSchema json.RawMessage `json:"responseSchema,omitempty"`
 }
 
 // gemThinkingConfig controls Gemini reasoning. Gemini 2.x takes a token
@@ -119,6 +121,8 @@ func (GeminiCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 		req.TopP = raw.GenerationConfig.TopP
 		req.MaxTokens = raw.GenerationConfig.MaxOutputTokens
 		req.Stop = raw.GenerationConfig.StopSequences
+		req.ResponseFormat = parseGemResponseFormat(raw.GenerationConfig)
+		req.Reasoning = parseGemThinking(raw.GenerationConfig.ThinkingConfig)
 	}
 	for _, t := range raw.Tools {
 		for _, fd := range t.FunctionDeclarations {
@@ -128,7 +132,18 @@ func (GeminiCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	for _, c := range raw.Contents {
 		req.Messages = append(req.Messages, parseGemContent(c))
 	}
+	req.ToolChoice = geminiToolChoiceToOpenAI(raw.ToolConfig)
 	return req, nil
+}
+
+// gemMediaPartType classifies Gemini inline and file data by MIME type. A PDF
+// sent as an image block is rejected by Anthropic and misread elsewhere.
+func gemMediaPartType(mime string) core.PartType {
+	mime = strings.ToLower(mime)
+	if mime == "application/pdf" || strings.HasPrefix(mime, "text/") {
+		return core.PartDocument
+	}
+	return core.PartImage
 }
 
 func parseGemContent(c gemContent) core.Message {
@@ -154,12 +169,12 @@ func parseGemContent(c gemContent) core.Message {
 			})
 		case p.InlineData != nil:
 			msg.Content = append(msg.Content, core.ContentPart{
-				Type:  core.PartImage,
+				Type:  gemMediaPartType(p.InlineData.MIMEType),
 				Media: &core.MediaPayload{MIMEType: p.InlineData.MIMEType, Data: p.InlineData.Data},
 			})
 		case p.FileData != nil:
 			msg.Content = append(msg.Content, core.ContentPart{
-				Type:  core.PartImage,
+				Type:  gemMediaPartType(p.FileData.MIMEType),
 				Media: &core.MediaPayload{MIMEType: p.FileData.MIMEType, URL: p.FileData.FileURI},
 			})
 		case p.Text != "":
@@ -183,6 +198,7 @@ func mapGemRole(role string) core.Role {
 // ---- request rendering ------------------------------------------------------
 
 func (GeminiCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
+	req = hoistLeadingSystem(req)
 	out := gemRequest{}
 	if req.System != "" {
 		out.SystemInstruction = &gemContent{Parts: []gemPart{{Text: req.System}}}
@@ -317,6 +333,41 @@ func geminiThinkingConfig(req *core.ChatRequest) *gemThinkingConfig {
 		budget = -1
 	}
 	return &gemThinkingConfig{ThinkingBudget: &budget, IncludeThoughts: true}
+}
+
+// parseGemThinking maps thinkingConfig onto the canonical reasoning knobs:
+// a level is an effort, a positive budget a token cap, 0 off and -1 dynamic.
+func parseGemThinking(tc *gemThinkingConfig) *core.ReasoningConfig {
+	switch {
+	case tc == nil:
+		return nil
+	case tc.ThinkingLevel != "":
+		return &core.ReasoningConfig{Effort: strings.ToLower(tc.ThinkingLevel)}
+	case tc.ThinkingBudget == nil:
+		if tc.IncludeThoughts {
+			return &core.ReasoningConfig{Effort: "auto"}
+		}
+		return nil
+	case *tc.ThinkingBudget == 0:
+		return &core.ReasoningConfig{Effort: "none"}
+	case *tc.ThinkingBudget < 0:
+		return &core.ReasoningConfig{Effort: "auto"}
+	default:
+		return &core.ReasoningConfig{Effort: "high", MaxTokens: *tc.ThinkingBudget}
+	}
+}
+
+// parseGemResponseFormat reads Gemini's JSON mode into the canonical
+// response_format.
+func parseGemResponseFormat(gc *gemGenConfig) json.RawMessage {
+	if !strings.EqualFold(gc.ResponseMimeType, "application/json") {
+		return nil
+	}
+	schema := gc.ResponseJSONSchema
+	if len(schema) == 0 && len(gc.ResponseSchema) > 0 {
+		schema = lowercaseSchemaTypes(gc.ResponseSchema)
+	}
+	return canonicalResponseFormat("", schema, nil)
 }
 
 // geminiResponseFormat maps OpenAI response_format to Gemini's structured

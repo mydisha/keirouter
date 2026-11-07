@@ -217,9 +217,11 @@ func TestOpenAI_RenderRequest_DeepSeekV4ProAliases(t *testing.T) {
 			require.NoError(t, json.Unmarshal(body, &got))
 			require.Equal(t, "deepseek-v4-pro", got.Model)
 			require.Equal(t, tc.wantEffort, got.ReasoningEffort)
-			require.NotNil(t, got.ExtraBody["thinking"])
-			thinking := got.ExtraBody["thinking"].(map[string]any)
-			require.Equal(t, tc.wantThinking, thinking["type"])
+			// The API reads thinking at the top level; an "extra_body" key is
+			// only a Python SDK convention and would be ignored.
+			require.NotNil(t, got.Thinking)
+			require.Equal(t, tc.wantThinking, got.Thinking.Type)
+			require.NotContains(t, string(body), "extra_body")
 		})
 	}
 }

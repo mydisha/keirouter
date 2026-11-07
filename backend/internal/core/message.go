@@ -61,6 +61,8 @@ type ContentPart struct {
 	// Signature carries provider-specific opaque data for thinking/reasoning
 	// blocks that must be echoed back on follow-up turns (e.g. Anthropic).
 	Signature string `json:"signature,omitempty"`
+	// ReasoningOrigin is who can verify Signature (see ReasoningOrigin).
+	ReasoningOrigin string `json:"reasoning_origin,omitempty"`
 
 	// CacheControl is an Anthropic prompt-caching breakpoint attached to this
 	// block ({"type":"ephemeral"} optionally with "ttl"). It is forwarded

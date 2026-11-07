@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"strings"
 
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/mydisha/keirouter/backend/internal/core"
 	"github.com/mydisha/keirouter/backend/internal/identity"
 	"github.com/mydisha/keirouter/backend/internal/pipeline"
 	"github.com/mydisha/keirouter/backend/internal/store"
@@ -62,7 +65,7 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, tr *reqTra
 		tr.reject(http.StatusUnauthorized, "Rejected · missing API key",
 			fmt.Sprintf("IP: %s", extractIP(r)),
 			"The request had no Authorization: Bearer or x-api-key header. Configure the client with a KeiRouter API key.")
-		writeError(w, http.StatusUnauthorized, "missing API key")
+		writeRequestError(w, r, http.StatusUnauthorized, "missing API key")
 		return
 	}
 
@@ -82,13 +85,13 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, tr *reqTra
 			tr.reject(http.StatusUnauthorized, "Rejected · invalid API key",
 				fmt.Sprintf("Key: %s\nIP: %s", maskToken(token), extractIP(r)),
 				"The key is unknown, revoked or expired. Compare the masked key with the Keys page.")
-			writeError(w, http.StatusUnauthorized, "invalid API key")
+			writeRequestError(w, r, http.StatusUnauthorized, "invalid API key")
 			return
 		}
 		s.log.Error("auth lookup failed", "err", err)
 		tr.reject(http.StatusInternalServerError, "Authentication lookup failed", err.Error(),
 			"KeiRouter could not check the key against its database. Check database health.")
-		writeError(w, http.StatusInternalServerError, "authentication error")
+		writeRequestError(w, r, http.StatusInternalServerError, "authentication error")
 		return
 	}
 	tr.base.Key = key.Name
@@ -97,16 +100,77 @@ func (s *Server) authenticate(w http.ResponseWriter, r *http.Request, tr *reqTra
 	next.ServeHTTP(w, r.WithContext(ctx))
 }
 
+// dialectForPath names the dialect of an API path, so errors raised before a
+// handler runs (auth, limits, body size) use an envelope the client can parse.
+func dialectForPath(path string) core.Dialect {
+	switch {
+	case strings.HasPrefix(path, "/v1/messages"):
+		return core.DialectAnthropic
+	case strings.HasPrefix(path, "/v1/responses"):
+		return core.DialectOpenAIResponses
+	case strings.HasPrefix(path, "/v1beta/"):
+		return core.DialectGemini
+	default:
+		return core.DialectOpenAI
+	}
+}
+
+func writeRequestError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	writeDialectError(w, dialectForPath(r.URL.Path), status, message)
+}
+
+// recoverPanics keeps a handler panic from taking the process down. A started
+// response is aborted, so the client sees a cut, not a complete-looking stream.
+func recoverPanics(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ww := chimiddleware.NewWrapResponseWriter(w, r.ProtoMajor)
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			if rec == http.ErrAbortHandler {
+				panic(rec)
+			}
+			slog.Error("handler panicked", "panic", rec, "path", r.URL.Path, "stack", string(debug.Stack()))
+			if ww.Status() != 0 {
+				panic(http.ErrAbortHandler)
+			}
+			writeRequestError(ww, r, http.StatusInternalServerError, "internal error")
+		}()
+		next.ServeHTTP(ww, r)
+	})
+}
+
+// echoRequestID returns the request id to the client so a failed call can be
+// matched with the gateway's logs and console trace.
+func echoRequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if id := chimiddleware.GetReqID(r.Context()); id != "" {
+			w.Header().Set(chimiddleware.RequestIDHeader, id)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // extractToken pulls the API key from standard header locations.
 func extractToken(r *http.Request) string {
-	if auth := r.Header.Get("Authorization"); auth != "" {
-		if after, ok := strings.CutPrefix(auth, "Bearer "); ok {
-			return strings.TrimSpace(after)
+	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
+		if len(auth) > 7 && strings.EqualFold(auth[:7], "bearer ") {
+			return strings.TrimSpace(auth[7:])
 		}
-		return strings.TrimSpace(auth)
+		return auth
 	}
 	if k := r.Header.Get("x-api-key"); k != "" {
 		return strings.TrimSpace(k)
+	}
+	// Google's SDKs (Gemini CLI, @google/genai) send the key in x-goog-api-key
+	// or as ?key=; only the Gemini routes accept those.
+	if strings.HasPrefix(r.URL.Path, "/v1beta/") {
+		if k := r.Header.Get("x-goog-api-key"); k != "" {
+			return strings.TrimSpace(k)
+		}
+		return strings.TrimSpace(r.URL.Query().Get("key"))
 	}
 	return ""
 }

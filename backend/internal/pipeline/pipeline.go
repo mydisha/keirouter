@@ -365,6 +365,7 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 		p.log.Debug("attempt start", "i", i, "provider", attempt.Target.Provider,
 			"model", attempt.Target.Model, "account", attempt.Account.ID)
 		attemptReq := cloneForAttempt(attemptBaseReq, attempt.Target.Model)
+		core.DropForeignReasoning(attemptReq, core.ReasoningOrigin(attempt.Target.Provider, attempt.Target.Model))
 
 		// Soft-degrade unsupported modalities. Stripping replaces input
 		// modalities the resolved profile cannot handle with text placeholders,
@@ -407,7 +408,14 @@ func (p *Pipeline) Chat(ctx context.Context, req *core.ChatRequest, opts Options
 			streamReq := cloneForAttempt(attemptBaseReq, attempt.Target.Model)
 			stream, sErr := attempt.Conn.Stream(streamCtx, streamReq, attempt.Creds, core.StreamConfig{})
 			if sErr == nil {
-				sResp, drainErr := drainStream(stream, req.Model)
+				sResp, drainErr := transform.CollectStream(stream, req.Model)
+				// Connectors close the channel quietly when the deadline ends the
+				// stream, which would read as a complete answer.
+				if drainErr == nil && streamCtx.Err() != nil && ctx.Err() == nil {
+					drainErr = &core.ProviderError{Kind: core.ErrTimeout, Scope: core.FailureScopeRequest,
+						Provider: attempt.Target.Provider, Model: attempt.Target.Model,
+						Message: "stream ended by the request deadline before the provider finished", Cause: streamCtx.Err()}
+				}
 				streamCancel()
 				if drainErr == nil {
 					callErr = nil
@@ -736,6 +744,8 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 	for i := 0; hasAttempt; i++ {
 		lastAttempt = attempt
 		attemptReq := cloneForAttempt(req, attempt.Target.Model)
+		origin := core.ReasoningOrigin(attempt.Target.Provider, attempt.Target.Model)
+		core.DropForeignReasoning(attemptReq, origin)
 		started := time.Now()
 		p.log.Debug("stream attempt start", "i", i, "provider", attempt.Target.Provider,
 			"model", attempt.Target.Model, "account", attempt.Account.ID)
@@ -790,7 +800,10 @@ func (p *Pipeline) streamExec(ctx context.Context, req *core.ChatRequest, opts O
 		// Outbound guardrails force it too: raw bytes never reach the
 		// StreamGuard, so output PII masking, toxicity, bias and canary checks
 		// would silently be skipped.
+		// The raw stream carries untagged signatures, which the client would
+		// later send back as its own dialect's.
 		if len(attemptReq.Tools) == 0 && !req.IncludeUsage && req.Metadata.SourceDialect == attempt.Conn.Dialect() &&
+			nativeReasoning(req.Metadata.SourceDialect, origin) &&
 			!requiresParsedStreamAdmission(attempt.Target.Provider) && !p.guardrails.ScansStreamOutput(ctx, req) {
 			if ds, ok := attempt.Conn.(core.DirectStreamable); ok {
 				body, _, rawErr := ds.StreamRaw(callCtx, attemptReq, attempt.Creds, streamCfg)
@@ -1025,6 +1038,7 @@ func (p *Pipeline) pumpStream(ctx context.Context, req *core.ChatRequest, in <-c
 	ttft *time.Duration, save *saveState, scope budget.Scope, release limits.ReleaseFunc,
 	fellBack bool, cancelUpstream context.CancelFunc) {
 	defer close(out)
+	defer core.RecoverStream(out)
 	defer cancelUpstream()
 
 	// Resolve effective stall timeout (dynamic from dashboard or static config).
@@ -1308,7 +1322,16 @@ func (p *Pipeline) pumpStream(ctx context.Context, req *core.ChatRequest, in <-c
 				settleClientCancellation()
 				return
 			case <-stallC:
-				settleStall()
+				// The upstream is fine: the client stopped reading (a suspended
+				// laptop, a stuck proxy). Do not count it against the provider.
+				settleClientCancellation()
+				select {
+				case out <- core.StreamChunk{Type: core.ChunkError, Err: &core.ProviderError{
+					Kind: core.ErrTimeout, Scope: core.FailureScopeRequest,
+					Message: "client stopped reading the stream for " + stallTimeout.String(),
+				}}:
+				case <-ctx.Done():
+				}
 				return
 			}
 		case <-ctx.Done():
@@ -2068,6 +2091,11 @@ func (r toolNameRestorer) restore(tc *core.ToolCall) {
 	}
 }
 
+func nativeReasoning(client core.Dialect, origin string) bool {
+	native := core.NativeReasoningOrigin(client)
+	return native == "" || native == origin
+}
+
 func cloneForAttempt(req *core.ChatRequest, model string) *core.ChatRequest {
 	clone := *req
 	clone.Messages = make([]core.Message, len(req.Messages))
@@ -2115,68 +2143,6 @@ func isStreamRequiredError(err error) bool {
 		strings.Contains(msg, "streaming is required") ||
 		strings.Contains(msg, "stream parameter is required") ||
 		strings.Contains(msg, `"stream" must be true`)
-}
-
-// drainStream consumes a stream channel and folds the chunks into a single
-// ChatResponse. Used by the pipeline when a non-streaming Chat() call failed
-// with a "Stream must be set to true" error and the pipeline retries with
-// streaming internally.
-func drainStream(stream <-chan core.StreamChunk, model string) (*core.ChatResponse, error) {
-	msg := core.Message{Role: core.RoleAssistant}
-	var text, thinking string
-	toolCalls := map[string]*core.ToolCall{}
-	var toolOrder []string
-	finish := core.FinishStop
-	var usage core.Usage
-
-	for ch := range stream {
-		switch ch.Type {
-		case core.ChunkText:
-			text += ch.Delta
-		case core.ChunkThinking:
-			thinking += ch.Delta
-		case core.ChunkToolCall:
-			if ch.ToolCall != nil {
-				existing, ok := toolCalls[ch.ToolCall.ID]
-				if !ok {
-					tc := *ch.ToolCall
-					toolCalls[ch.ToolCall.ID] = &tc
-					toolOrder = append(toolOrder, ch.ToolCall.ID)
-				} else if len(ch.ToolCall.Arguments) > 0 {
-					existing.Arguments = append(existing.Arguments, ch.ToolCall.Arguments...)
-				}
-				finish = core.FinishToolCalls
-			}
-		case core.ChunkFinish:
-			if ch.FinishReason != "" {
-				finish = ch.FinishReason
-			}
-		case core.ChunkUsage:
-			if ch.Usage != nil {
-				usage = *ch.Usage
-			}
-		case core.ChunkError:
-			if ch.Err != nil {
-				return nil, ch.Err
-			}
-		}
-	}
-
-	if thinking != "" {
-		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartThinking, Text: thinking})
-	}
-	if text != "" {
-		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartText, Text: text})
-	}
-	for _, id := range toolOrder {
-		tc := toolCalls[id]
-		if len(tc.Arguments) == 0 {
-			tc.Arguments = json.RawMessage("{}")
-		}
-		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartToolCall, ToolCall: tc})
-	}
-
-	return &core.ChatResponse{Model: model, Message: msg, FinishReason: finish, Usage: usage}, nil
 }
 
 // ---- direct-body usage capture -----------------------------------------------

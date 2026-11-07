@@ -12,7 +12,11 @@ import (
 )
 
 // AnthropicCodec handles the Anthropic Messages wire format (/v1/messages).
-type AnthropicCodec struct{}
+type AnthropicCodec struct {
+	// ContextManagement forwards the client's context_management. Only
+	// Anthropic's own API takes it; compatible hosts reject the field.
+	ContextManagement bool
+}
 
 func (AnthropicCodec) Dialect() core.Dialect { return core.DialectAnthropic }
 
@@ -38,6 +42,8 @@ type antRequest struct {
 	OutputConfig json.RawMessage `json:"output_config,omitempty"`
 	// Metadata carries user_id for abuse tracking.
 	Metadata json.RawMessage `json:"metadata,omitempty"`
+	// ContextManagement lets the API clear old tool results and thinking.
+	ContextManagement json.RawMessage `json:"context_management,omitempty"`
 }
 
 type antMessage struct {
@@ -105,13 +111,13 @@ func (AnthropicCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 	maxTokens := raw.MaxTokens
 	systemText, systemCache := decodeAntSystemBlocks(raw.System)
 	req := &core.ChatRequest{
-		Model:              raw.Model,
-		System:             systemText,
-		SystemCacheControl: systemCache,
-		Temperature:        raw.Temp,
-		TopP:               raw.TopP,
-		Stop:               raw.Stop,
-		Stream:             raw.Stream,
+		Model:       raw.Model,
+		System:      systemText,
+		SystemCache: systemCache,
+		Temperature: raw.Temp,
+		TopP:        raw.TopP,
+		Stop:        raw.Stop,
+		Stream:      raw.Stream,
 	}
 	if maxTokens > 0 {
 		req.MaxTokens = &maxTokens
@@ -152,6 +158,14 @@ func (AnthropicCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 
 	// Parse thinking configuration from the raw body (before unmarshaling)
 	req.Reasoning = parseAntThinkingFromBytes(body)
+	if effort := parseAntOutputEffort(raw.OutputConfig); effort != "" && req.Reasoning != nil && req.Reasoning.Adaptive {
+		req.Reasoning.Effort = effort
+	}
+	req.ResponseFormat = parseAntOutputFormat(raw.OutputConfig)
+	if len(raw.ContextManagement) > 0 {
+		// UnmarshalNoCopy aliases the body; the request outlives it.
+		req.Extra = map[string]json.RawMessage{"context_management": append(json.RawMessage(nil), raw.ContextManagement...)}
+	}
 
 	return req, nil
 }
@@ -176,10 +190,43 @@ func parseAntThinkingFromBytes(body []byte) *core.ReasoningConfig {
 			}
 		case "adaptive":
 			cfg.Effort = "adaptive"
+			cfg.Adaptive = true
+		case "disabled":
+			// An empty effort reads as "auto" to the other dialects.
+			cfg.Effort = "none"
 		}
 		return cfg
 	}
 	return nil
+}
+
+func parseAntOutputEffort(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var oc struct {
+		Effort string `json:"effort"`
+	}
+	_ = json.Unmarshal(raw, &oc)
+	return oc.Effort
+}
+
+// parseAntOutputFormat reads output_config.format into the canonical
+// response_format.
+func parseAntOutputFormat(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return nil
+	}
+	var oc struct {
+		Format *struct {
+			Type   string          `json:"type"`
+			Schema json.RawMessage `json:"schema"`
+		} `json:"format"`
+	}
+	if json.Unmarshal(raw, &oc) != nil || oc.Format == nil || oc.Format.Type != "json_schema" {
+		return nil
+	}
+	return canonicalResponseFormat("", oc.Format.Schema, nil)
 }
 
 func decodeAntSystem(raw json.RawMessage) string {
@@ -188,10 +235,8 @@ func decodeAntSystem(raw json.RawMessage) string {
 }
 
 // decodeAntSystemBlocks flattens the system prompt (string or block array)
-// to text and returns the cache_control of the last block that had one. A
-// breakpoint on any system block caches the prefix up to that block; after
-// flattening, one breakpoint on the whole system text preserves that.
-func decodeAntSystemBlocks(raw json.RawMessage) (string, json.RawMessage) {
+// to text and returns the blocks that carried a cache breakpoint.
+func decodeAntSystemBlocks(raw json.RawMessage) (string, []core.SystemBlock) {
 	if len(raw) == 0 {
 		return "", nil
 	}
@@ -204,16 +249,26 @@ func decodeAntSystemBlocks(raw json.RawMessage) (string, json.RawMessage) {
 		return "", nil
 	}
 	var out strings.Builder
-	var cache json.RawMessage
+	var cached []core.SystemBlock
 	for _, b := range blocks {
-		if b.Type == "text" {
-			out.WriteString(b.Text)
+		if b.Type != "text" {
+			continue
 		}
-		if len(b.CacheControl) > 0 {
-			cache = b.CacheControl
+		out.WriteString(b.Text)
+		if cc := cacheControl(b.CacheControl); cc != nil {
+			cached = append(cached, core.SystemBlock{Text: b.Text, CacheControl: cc})
 		}
 	}
-	return out.String(), cache
+	return out.String(), cached
+}
+
+// cacheControl keeps a client cache_control object and drops null or junk.
+func cacheControl(raw json.RawMessage) json.RawMessage {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) < 2 || raw[0] != '{' {
+		return nil
+	}
+	return raw
 }
 
 func parseAntMessage(m antMessage) core.Message {
@@ -246,13 +301,13 @@ func parseAntMessage(m antMessage) core.Message {
 			// Anthropic thinking blocks carry content in the "thinking" field
 			// (not "text"). Signature must be preserved for echoing back on
 			// follow-up turns — the upstream validates it.
-			msg.Content = append(msg.Content, core.ContentPart{
-				Type:      core.PartThinking,
-				Text:      b.Thinking,
-				Signature: b.Signature,
-			})
+			part := core.ContentPart{Type: core.PartThinking, Text: b.Thinking}
+			if b.Signature != "" {
+				part.Signature, part.ReasoningOrigin = core.UntagSignature(b.Signature, "anthropic")
+			}
+			msg.Content = append(msg.Content, part)
 		case "redacted_thinking":
-			msg.Content = append(msg.Content, core.ContentPart{Type: core.PartRedactedThinking, Text: b.Data})
+			msg.Content = append(msg.Content, core.ContentPart{Type: core.PartRedactedThinking, Text: b.Data, ReasoningOrigin: "anthropic"})
 		case "tool_use":
 			msg.Content = append(msg.Content, core.ContentPart{
 				Type:         core.PartToolCall,
@@ -334,13 +389,34 @@ func mapAntRole(role string) core.Role {
 
 // ---- request rendering ------------------------------------------------------
 
+// antDefaultMaxTokens is max_tokens for a request that set none, which the API
+// requires. A flat 4096 cut long answers and tool calls off mid-way.
+func antDefaultMaxTokens(req *core.ChatRequest) int {
+	const floor, ceil = 4096, 32000
+	model := strings.ToLower(req.Model)
+	// Other vendors' limits are unknown here, and Claude 3 models stop at 4096 or 8192.
+	if !strings.Contains(model, "claude") || strings.Contains(model, "claude-3") {
+		return floor
+	}
+	p := capability.ResolveProfile("anthropic", req.Model)
+	n := min(p.MaxOutput, ceil)
+	// The prompt and max_tokens must fit the context window together.
+	if room := p.ContextWindow - core.EstimatePromptTokens(req) - 1024; room < n {
+		n = room
+	}
+	return max(n, floor)
+}
+
 // antDefaultMaxOutput is the conservative output ceiling for Claude models.
 const antDefaultMaxOutput = 64000
 
-func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
-	maxTokens := 4096
+func (c AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
+	req = hoistLeadingSystem(req)
+	var maxTokens int
 	if req.MaxTokens != nil && *req.MaxTokens > 0 {
 		maxTokens = *req.MaxTokens
+	} else {
+		maxTokens = antDefaultMaxTokens(req)
 	}
 	thinkingBudget := 0
 
@@ -403,10 +479,15 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 	if req.Reasoning != nil {
 		effort := strings.ToLower(strings.TrimSpace(req.Reasoning.Effort))
 		var thinking map[string]any
-		switch effort {
-		case "adaptive", "auto":
+		switch {
+		case req.Reasoning.Adaptive:
 			thinking = map[string]any{"type": "adaptive"}
-		case "", "none", "off", "disabled":
+			if level := anthropicOutputEffort(effort); level != "" {
+				out.OutputConfig, _ = json.Marshal(map[string]any{"effort": level})
+			}
+		case effort == "adaptive" || effort == "auto":
+			thinking = map[string]any{"type": "adaptive"}
+		case effort == "" || effort == "none" || effort == "off" || effort == "disabled":
 			if thinkingBudget > 0 {
 				thinking = map[string]any{"type": "enabled"}
 			}
@@ -421,6 +502,13 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 			} else {
 				thinking = map[string]any{"type": "enabled"}
 			}
+		}
+		// Budget thinking opens every Claude turn, so a tool turn without it was
+		// produced elsewhere; Claude would reject the request.
+		if thinking != nil && thinking["type"] == "enabled" &&
+			strings.Contains(strings.ToLower(req.Model), "claude") && toolTurnLacksThinking(req.Messages) {
+			thinking = nil
+			req = withoutThinking(req)
 		}
 		if thinking != nil && thinking["type"] == "enabled" {
 			if thinkingBudget <= 0 {
@@ -450,12 +538,54 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 		}
 	}
 
-	if req.System != "" {
-		if len(req.SystemCacheControl) > 0 {
-			out.System, _ = json.Marshal([]antBlock{{Type: "text", Text: req.System, CacheControl: req.SystemCacheControl}})
-		} else {
-			out.System, _ = json.Marshal(req.System)
+	// An Anthropic client's own output_config.format goes back as is; otherwise a forced
+	// tool carries the schema, or the prompt does when tools or thinking rule that out.
+	var outputFormat json.RawMessage
+	var formatTool json.RawMessage
+	systemExtra := ""
+	if rf, ok := decodeResponseFormat(req.ResponseFormat); ok {
+		schema := rf.schema()
+		switch {
+		case schema != nil && req.Metadata.SourceDialect == core.DialectAnthropic:
+			outputFormat, _ = json.Marshal(struct {
+				Type   string          `json:"type"`
+				Schema json.RawMessage `json:"schema"`
+			}{"json_schema", schema})
+		case schema != nil && len(req.Tools) == 0 && !thinkingEnabled:
+			formatTool, _ = json.Marshal(antTool{Name: StructuredOutputTool, Description: "Return the final answer as this JSON object.", InputSchema: schema})
+		default:
+			systemExtra = structuredOutputInstruction(rf)
 		}
+	}
+	if outputFormat != nil {
+		oc := struct {
+			Effort json.RawMessage `json:"effort,omitempty"`
+			Format json.RawMessage `json:"format"`
+		}{Format: outputFormat}
+		if len(out.OutputConfig) > 0 {
+			_ = json.Unmarshal(out.OutputConfig, &oc)
+			oc.Format = outputFormat
+		}
+		out.OutputConfig, _ = json.Marshal(oc)
+	}
+
+	switch {
+	case req.System == "" && systemExtra != "":
+		out.System, _ = json.Marshal(systemExtra)
+	case len(req.SystemCache) > 0:
+		var blocks []antBlock
+		for _, b := range req.SystemBlocks() {
+			blocks = append(blocks, antBlock{Type: "text", Text: b.Text, CacheControl: b.CacheControl})
+		}
+		if systemExtra != "" {
+			blocks = append(blocks, antBlock{Type: "text", Text: systemExtra})
+		}
+		out.System, _ = json.Marshal(blocks)
+	case req.System != "":
+		out.System, _ = json.Marshal(appendSystem(req.System, systemExtra))
+	}
+	if c.ContextManagement {
+		out.ContextManagement = req.Extra["context_management"]
 	}
 	if user := extraString(req, "user"); user != "" {
 		// OpenAI's user id maps to Anthropic's abuse-tracking metadata.
@@ -483,9 +613,17 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 		out.Tools = append(out.Tools, encoded)
 	}
 
+	if formatTool != nil {
+		out.Tools = append(out.Tools, formatTool)
+		out.ToolChoice, _ = json.Marshal(struct {
+			Type string `json:"type"`
+			Name string `json:"name"`
+		}{"tool", StructuredOutputTool})
+	}
+
 	// Render tool_choice only when tools are declared; Anthropic rejects a
 	// tool_choice with an empty tools array.
-	if len(out.Tools) > 0 {
+	if len(out.Tools) > 0 && formatTool == nil {
 		tc := openAIToolChoiceToClaude(req.ToolChoice)
 		tcMap, _ := tc.(map[string]any)
 		if thinkingEnabled && tcMap != nil {
@@ -544,6 +682,48 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 	}
 
 	return json.Marshal(out)
+}
+
+// toolTurnLacksThinking reports a last assistant turn that calls tools without
+// a thinking block Claude can verify ("Expected thinking or redacted_thinking,
+// but found tool_use").
+func toolTurnLacksThinking(msgs []core.Message) bool {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != core.RoleAssistant {
+			continue
+		}
+		calls := false
+		for _, p := range msgs[i].Content {
+			switch {
+			case p.Type == core.PartRedactedThinking && p.Text != "",
+				p.Type == core.PartThinking && p.Signature != "" && p.Text != "":
+				return false
+			case p.Type == core.PartToolCall:
+				calls = true
+			}
+		}
+		return calls
+	}
+	return false
+}
+
+// withoutThinking turns thinking off for one request. Claude also rejects
+// thinking blocks in the history once thinking is off, so they go too.
+func withoutThinking(req *core.ChatRequest) *core.ChatRequest {
+	clone := *req
+	clone.Reasoning = nil
+	clone.Messages = make([]core.Message, len(req.Messages))
+	for i, m := range req.Messages {
+		var content []core.ContentPart
+		for _, p := range m.Content {
+			if p.Type != core.PartThinking && p.Type != core.PartRedactedThinking {
+				content = append(content, p)
+			}
+		}
+		m.Content = content
+		clone.Messages[i] = m
+	}
+	return &clone
 }
 
 func renderAntBlocks(m core.Message) []antBlock {
@@ -805,7 +985,7 @@ func (AnthropicCodec) RenderResponse(resp *core.ChatResponse) ([]byte, error) {
 		case core.PartThinking:
 			block := map[string]any{"type": "thinking", "thinking": p.Text}
 			if p.Signature != "" {
-				block["signature"] = p.Signature
+				block["signature"] = core.TagSignature(p.Signature, p.ReasoningOrigin, "anthropic")
 			}
 			content = append(content, block)
 		case core.PartRedactedThinking:

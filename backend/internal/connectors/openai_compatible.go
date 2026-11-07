@@ -229,66 +229,6 @@ func isStreamRequiredError(err error) bool {
 		(strings.Contains(msg, "enable_thinking") && strings.Contains(msg, "stream"))
 }
 
-// drainStreamToResponse consumes a stream channel and folds the chunks into a
-// single ChatResponse. Used by Chat when the provider requires streaming.
-func drainStreamToResponse(stream <-chan core.StreamChunk, model string) (*core.ChatResponse, error) {
-	msg := core.Message{Role: core.RoleAssistant}
-	var text, thinking string
-	toolCalls := map[string]*core.ToolCall{}
-	var toolOrder []string
-	finish := core.FinishStop
-	var usage core.Usage
-
-	for ch := range stream {
-		switch ch.Type {
-		case core.ChunkText:
-			text += ch.Delta
-		case core.ChunkThinking:
-			thinking += ch.Delta
-		case core.ChunkToolCall:
-			if ch.ToolCall != nil {
-				existing, ok := toolCalls[ch.ToolCall.ID]
-				if !ok {
-					tc := *ch.ToolCall
-					toolCalls[ch.ToolCall.ID] = &tc
-					toolOrder = append(toolOrder, ch.ToolCall.ID)
-				} else if len(ch.ToolCall.Arguments) > 0 {
-					existing.Arguments = append(existing.Arguments, ch.ToolCall.Arguments...)
-				}
-				finish = core.FinishToolCalls
-			}
-		case core.ChunkFinish:
-			if ch.FinishReason != "" {
-				finish = ch.FinishReason
-			}
-		case core.ChunkUsage:
-			if ch.Usage != nil {
-				usage = *ch.Usage
-			}
-		case core.ChunkError:
-			if ch.Err != nil {
-				return nil, ch.Err
-			}
-		}
-	}
-
-	if thinking != "" {
-		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartThinking, Text: thinking})
-	}
-	if text != "" {
-		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartText, Text: text})
-	}
-	for _, id := range toolOrder {
-		tc := toolCalls[id]
-		if len(tc.Arguments) == 0 {
-			tc.Arguments = json.RawMessage("{}")
-		}
-		msg.Content = append(msg.Content, core.ContentPart{Type: core.PartToolCall, ToolCall: tc})
-	}
-
-	return &core.ChatResponse{Model: model, Message: msg, FinishReason: finish, Usage: usage}, nil
-}
-
 func (c *OpenAICompatible) Chat(ctx context.Context, req *core.ChatRequest, creds core.Credentials) (*core.ChatResponse, error) {
 	// Some OpenAI-compatible providers only accept streaming requests and reject
 	// non-streaming requests with 400 "Stream must be set to true". For known
@@ -301,7 +241,7 @@ func (c *OpenAICompatible) Chat(ctx context.Context, req *core.ChatRequest, cred
 		if err != nil {
 			return nil, err
 		}
-		return drainStreamToResponse(stream, req.Model)
+		return transform.CollectStream(stream, req.Model)
 	}
 
 	req.Stream = false
@@ -327,7 +267,7 @@ func (c *OpenAICompatible) Chat(ctx context.Context, req *core.ChatRequest, cred
 				if sErr != nil {
 					return nil, sErr
 				}
-				return drainStreamToResponse(stream, req.Model)
+				return transform.CollectStream(stream, req.Model)
 			}
 			return nil, decErr
 		}
@@ -348,7 +288,7 @@ func (c *OpenAICompatible) Chat(ctx context.Context, req *core.ChatRequest, cred
 			if sErr != nil {
 				return nil, sErr
 			}
-			return drainStreamToResponse(stream, req.Model)
+			return transform.CollectStream(stream, req.Model)
 		}
 		return nil, err
 	}

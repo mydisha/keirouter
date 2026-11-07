@@ -20,6 +20,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
 	"github.com/mydisha/keirouter/backend/internal/budget"
 	"github.com/mydisha/keirouter/backend/internal/config"
 	"github.com/mydisha/keirouter/backend/internal/core"
@@ -52,7 +53,7 @@ func (s *Server) readRequestBody(w http.ResponseWriter, r *http.Request) ([]byte
 		message := fmt.Sprintf("request body exceeds maximum allowed size of %s", humanBytes(int(limit)))
 		tr.reject(http.StatusRequestEntityTooLarge, "Rejected · request body too large", message,
 			statusHint(http.StatusRequestEntityTooLarge))
-		writeError(w, http.StatusRequestEntityTooLarge, message)
+		writeRequestError(w, r, http.StatusRequestEntityTooLarge, message)
 		return nil, false
 	}
 
@@ -62,7 +63,7 @@ func (s *Server) readRequestBody(w http.ResponseWriter, r *http.Request) ([]byte
 	} else {
 		tr.reject(http.StatusBadRequest, "Rejected · failed to read request body", err.Error(), "")
 	}
-	writeError(w, http.StatusBadRequest, "failed to read request body")
+	writeRequestError(w, r, http.StatusBadRequest, "failed to read request body")
 	return nil, false
 }
 
@@ -124,6 +125,12 @@ func (s *Server) handleOpenAIResponses(w http.ResponseWriter, r *http.Request) {
 
 // handleChat is the shared chat handler parameterized by the client dialect.
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core.Dialect) {
+	s.serveChat(w, r, dialect, nil)
+}
+
+// serveChat runs a chat request end to end. fromPath fills the fields a dialect
+// carries in the URL instead of the body (Gemini's model and stream flag).
+func (s *Server) serveChat(w http.ResponseWriter, r *http.Request, dialect core.Dialect, fromPath func(*core.ChatRequest)) {
 	key, _ := authedKey(r.Context())
 	tenantID := tenantOf(key)
 	client := detectClient(r)
@@ -132,7 +139,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 	codec, err := s.codecs.Codec(dialect)
 	if err != nil {
 		tr.reject(http.StatusInternalServerError, fmt.Sprintf("Unsupported API dialect: %s", dialect), "", "")
-		writeError(w, http.StatusInternalServerError, "unsupported dialect")
+		writeDialectError(w, dialect, http.StatusInternalServerError, "unsupported dialect")
 		return
 	}
 
@@ -146,7 +153,18 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 	if err != nil {
 		tr.reject(http.StatusBadRequest, "Rejected · request body is not valid "+string(dialect)+" JSON", err.Error(),
 			"The client sent a body KeiRouter could not parse for this endpoint. Check that the client uses the matching API format.")
-		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		writeDialectError(w, dialect, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if fromPath != nil {
+		fromPath(req)
+	}
+	if req.PreviousResponseID != "" {
+		// Responses are never stored upstream (store is forced off), so there
+		// is no earlier response to chain to.
+		tr.reject(http.StatusBadRequest, "Rejected · previous_response_id is not supported", "",
+			"Send the whole conversation in input instead of chaining to an earlier response.")
+		writeDialectError(w, dialect, http.StatusBadRequest, "previous_response_id is not supported: send the full conversation in input")
 		return
 	}
 	tr.setRequest(req.Model, req.Stream)
@@ -177,11 +195,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 		if errors.As(err, &bad) {
 			tr.reject(http.StatusBadRequest, fmt.Sprintf("Rejected · unknown model %q", req.Model), bad.Error(),
 				"No provider model, alias or chain has this name. Check the client's model setting against the Models page.")
-			writeError(w, http.StatusBadRequest, bad.Error())
+			writeDialectError(w, dialect, http.StatusBadRequest, bad.Error())
 			return
 		}
 		tr.reject(http.StatusInternalServerError, fmt.Sprintf("Failed to resolve model %q", req.Model), err.Error(), "")
-		writeError(w, http.StatusInternalServerError, "failed to resolve model")
+		writeDialectError(w, dialect, http.StatusInternalServerError, "failed to resolve model")
 		return
 	}
 
@@ -200,14 +218,14 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 		filtered, ferr := s.filterAllowedTargets(r.Context(), key.ID, resolved.Targets)
 		if ferr != nil {
 			tr.reject(http.StatusInternalServerError, "Model access check failed", ferr.Error(), "")
-			writeError(w, http.StatusInternalServerError, "model access check failed")
+			writeDialectError(w, dialect, http.StatusInternalServerError, "model access check failed")
 			return
 		}
 		if len(filtered) == 0 {
 			tr.reject(http.StatusForbidden,
 				fmt.Sprintf("Rejected · key %q may not use %q", key.Name, req.Model), "",
 				"The key's model restrictions exclude every target of this model. Allow the model on the Keys page or use another key.")
-			writeError(w, http.StatusForbidden, "access denied: this API key is not permitted to use model "+req.Model)
+			writeDialectError(w, dialect, http.StatusForbidden, "access denied: this API key is not permitted to use model "+req.Model)
 			return
 		}
 		resolved.Targets = filtered
@@ -221,7 +239,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request, dialect core
 	effectiveLimits, err := s.effectiveLimits(r.Context(), key)
 	if err != nil {
 		tr.reject(http.StatusInternalServerError, "Failed to resolve rate limits", err.Error(), "")
-		writeError(w, http.StatusInternalServerError, "limit resolution failed")
+		writeDialectError(w, dialect, http.StatusInternalServerError, "limit resolution failed")
 		return
 	}
 
@@ -273,6 +291,10 @@ func (s *Server) unaryChat(w http.ResponseWriter, r *http.Request, codec transfo
 		s.writeProviderErrorAs(w, req.Metadata.SourceDialect, err)
 		return
 	}
+	if len(req.ResponseFormat) > 0 {
+		transform.UnwrapStructuredOutput(result.Response)
+	}
+	result.Response = core.WithReasoningOrigin(result.Response, core.ReasoningOrigin(result.Provider, result.Model))
 
 	out, err := codec.RenderResponse(result.Response)
 	if err != nil {
@@ -307,20 +329,20 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	tr.setRequest(req.Model, true)
 	streamCodec, ok := codec.(transform.StreamCodec)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "dialect does not support streaming")
+		writeDialectError(w, req.Metadata.SourceDialect, http.StatusInternalServerError, "dialect does not support streaming")
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming unsupported by server")
+		writeDialectError(w, req.Metadata.SourceDialect, http.StatusInternalServerError, "streaming unsupported by server")
 		return
 	}
 
 	result, err := s.pipeline.Stream(r.Context(), req, opts)
 	if err != nil {
 		tr.complete(outcome{fallbacks: req.Metadata.FallbackCount, err: err})
-		s.writeProviderError(w, err)
+		s.writeProviderErrorAs(w, req.Metadata.SourceDialect, err)
 		return
 	}
 	streamPath := "translated"
@@ -338,6 +360,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 	}
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.Header().Set("X-KeiRouter-Provider", result.Provider)
 	w.Header().Set("X-KeiRouter-Model", result.Model)
 	w.WriteHeader(http.StatusOK)
@@ -364,7 +387,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 			hw = newHeartbeatWriter(w, flusher.Flush, heartbeatInterval)
 			defer hw.stop()
 			dst = hw
-			frameFlush = nil // the heartbeat writer flushes after every frame
+			frameFlush = hw.Flush
 		}
 		n, cpErr := copySanitizedStream(dst, result.DirectBody, req.Metadata.SourceDialect, frameFlush)
 		if hw != nil {
@@ -413,73 +436,76 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 
 	state := &transform.StreamState{Model: result.Model}
 	transform.ResetStreamState(state)
+	state.MessageID = streamMessageID(req.Metadata.SourceDialect)
+	state.ReasoningOrigin = core.ReasoningOrigin(result.Provider, result.Model)
 	var totalTokens int
 	var chunkCount int
 	// clientGone is set on the first failed write so the rest of the stream
 	// is drained quietly instead of logging once per chunk.
 	var clientGone error
 
-	// ToolArgSanitizer buffers streaming tool call arguments and emits
-	// sanitized JSON when each tool call completes. This fixes malformed
-	// arguments from non-Anthropic models (e.g., Read.limit as string).
 	// Tool-call args from fragmenting upstreams (Kiro, Cursor, CommandCode)
-	// arrive split across frames and must be reassembled into one complete JSON
-	// object before rendering, regardless of tool name or client dialect.
-	// Streaming raw fragments and relying on the client to reassemble breaks
-	// clients like Cline ("missing required parameter"). The sanitizer passes
-	// text/thinking through immediately, so this only buffers the (small,
-	// non-actionable) tool-arg fragments — live text streaming is unaffected.
+	// arrive split across frames and are reassembled before rendering; some
+	// clients (Cline) reject a call whose fragments they must join themselves.
 	sanitizer := transform.NewToolArgSanitizer()
+	sanitizer.ClaudeCodeRepairs = req.Metadata.SourceDialect == core.DialectAnthropic
+	var structured *transform.StructuredOutputStream
+	if len(req.ResponseFormat) > 0 {
+		structured = &transform.StructuredOutputStream{}
+	}
 
-	// ThinkTagState strips <think>...</think> tags from streaming content.
-
-	// Some models (MiMo, QwQ) embed reasoning as XML tags in the content
-	// field instead of using a structured reasoning_content field.
+	// Some models (MiMo, QwQ, MiniMax M2) write reasoning inside <think> tags
+	// in content; it reaches the client as thinking, as on the unary path.
 	thinkFilter := &transform.ThinkTagState{}
-	renderChunk := func(cleaned core.StreamChunk) {
-		// Route thinking chunks through the filter; tool calls and others
-		// pass through directly.
-		if cleaned.Type == core.ChunkText {
-			for _, fc := range thinkFilter.ProcessFeed(cleaned.Delta) {
-				if fc.Type == core.ChunkThinking {
-					// Thinking content is consumed internally — not sent to client.
-					continue
-				}
-				events, rerr := streamCodec.RenderStreamChunk(fc, state)
-				if rerr != nil {
-					s.log.Warn("failed to render stream chunk", "err", rerr)
-					return
-				}
-				for _, ev := range events {
-					if _, werr := bw.Write(ev); werr != nil {
-						if clientGone == nil {
-							clientGone = &streamWriteError{err: werr}
-						}
-						return
-					}
-				}
-			}
-			return
-		}
-		events, rerr := streamCodec.RenderStreamChunk(cleaned, state)
+	emit := func(chunk core.StreamChunk) bool {
+		events, rerr := streamCodec.RenderStreamChunk(chunk, state)
 		if rerr != nil {
 			s.log.Warn("failed to render stream chunk", "err", rerr)
-			return
+			return false
 		}
 		for _, ev := range events {
 			if _, werr := bw.Write(ev); werr != nil {
 				if clientGone == nil {
 					clientGone = &streamWriteError{err: werr}
 				}
+				return false
+			}
+		}
+		return true
+	}
+	renderChunk := func(cleaned core.StreamChunk) {
+		if cleaned.Type == core.ChunkText {
+			for _, fc := range thinkFilter.ProcessFeed(cleaned.Delta) {
+				if !emit(fc) {
+					return
+				}
+			}
+			return
+		}
+		// A partial tag held back is content that precedes this event.
+		for _, fc := range thinkFilter.Flush() {
+			if !emit(fc) {
 				return
 			}
 		}
+		emit(cleaned)
 	}
 	// flushToClient pushes buffered events to the socket. It is called after
 	// each chunk only when no further chunk is already queued, so a burst of
 	// deltas costs one write+flush syscall pair instead of one per delta,
 	// while a lone delta still reaches the client immediately.
+	// lastActivity counts bytes sent to the client, not chunks received: while
+	// tool arguments are buffered, only a heartbeat keeps proxies from closing.
+	var lastActivity time.Time
+	rc := http.NewResponseController(w)
+	defer func() { _ = rc.SetWriteDeadline(time.Time{}) }() // the connection may be reused
 	flushToClient := func() {
+		if bw.Buffered() > 0 {
+			lastActivity = time.Now()
+		}
+		// A client that stops reading must not hold this goroutine and the
+		// upstream connection forever.
+		_ = rc.SetWriteDeadline(time.Now().Add(streamWriteTimeout))
 		bw.Flush()
 		flusher.Flush()
 	}
@@ -490,7 +516,7 @@ func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, codec transf
 		defer heartbeatTicker.Stop()
 		heartbeatC = heartbeatTicker.C
 	}
-	lastActivity := time.Now()
+	lastActivity = time.Now()
 
 	var streamErr error
 streamLoop:
@@ -500,19 +526,15 @@ streamLoop:
 			if !ok {
 				break streamLoop
 			}
-			lastActivity = time.Now()
 			if chunk.Type == core.ChunkError {
 				streamErr = chunk.Err
 				if streamErr == nil {
 					streamErr = &core.ProviderError{Kind: core.ErrUpstream, Message: "provider stream failed"}
 				}
 				s.log.Warn("stream error", "err", streamErr)
-				_, _ = bw.Write(streamErrorEvent(req.Metadata.SourceDialect, sanitizeUpstreamError(streamErr)))
-				// Emit terminal events so strict clients (Claude Code, Cline) see a
-				// well-formed stream end instead of a truncated connection. Without
-				// message_stop/[DONE], the client may treat the stream as incomplete
-				// and retry the request — causing duplicate responses on the user side.
-				for _, ev := range streamCodec.RenderStreamDone(state) {
+				// The error event is the last one: a done event after it would make a
+				// half-streamed turn (or tool call) look finished.
+				for _, ev := range renderStreamError(streamCodec, state, req.Metadata.SourceDialect, sanitizeUpstreamError(streamErr)) {
 					_, _ = bw.Write(ev)
 				}
 				_ = bw.Flush()
@@ -523,6 +545,12 @@ streamLoop:
 				totalTokens = chunk.Usage.PromptTokens + chunk.Usage.CompletionTokens
 			}
 			chunkCount++
+			if structured != nil {
+				var keep bool
+				if chunk, keep = structured.Process(chunk); !keep {
+					continue
+				}
+			}
 			sanitizer.Process(chunk, renderChunk)
 			if len(result.Chunks) == 0 {
 				flushToClient()
@@ -564,14 +592,10 @@ streamLoop:
 	// cause re-emission of already-flushed content.
 	sanitizer.Flush(renderChunk)
 
-	// Flush think-tag state — emit any remaining buffered text.
+	// A stream that ended without a finish event can still hold a partial tag.
 	for _, fc := range thinkFilter.Flush() {
-		if fc.Type == core.ChunkThinking {
-			continue
-		}
-		events, _ := streamCodec.RenderStreamChunk(fc, state)
-		for _, ev := range events {
-			_, _ = bw.Write(ev)
+		if !emit(fc) {
+			break
 		}
 	}
 
@@ -824,6 +848,9 @@ func isProviderStreamError(event []byte) bool {
 }
 
 func streamErrorEvent(dialect core.Dialect, message string) []byte {
+	if dialect == core.DialectOpenAIResponses {
+		return transform.OpenAIResponsesCodec{}.RenderStreamError(nil, message)[0]
+	}
 	if dialect == core.DialectOllama {
 		body, _ := json.Marshal(map[string]any{"error": message})
 		return append(body, '\n')
@@ -856,6 +883,34 @@ func streamErrorEvent(dialect core.Dialect, message string) []byte {
 	out = append(out, "data: "...)
 	out = append(out, body...)
 	return append(out, '\n', '\n')
+}
+
+// renderStreamError renders a mid-stream failure, using the codec's own
+// terminal event when it has one (Responses: response.failed).
+func renderStreamError(codec transform.StreamCodec, state *transform.StreamState, dialect core.Dialect, message string) [][]byte {
+	if er, ok := codec.(interface {
+		RenderStreamError(*transform.StreamState, string) [][]byte
+	}); ok {
+		return er.RenderStreamError(state, message)
+	}
+	return [][]byte{streamErrorEvent(dialect, message)}
+}
+
+// streamWriteTimeout bounds one write to a streaming client.
+const streamWriteTimeout = 30 * time.Second
+
+// streamMessageID gives each translated stream its own id; clients track
+// turns and cost by it.
+func streamMessageID(dialect core.Dialect) string {
+	id := strings.ReplaceAll(uuid.NewString(), "-", "")
+	switch dialect {
+	case core.DialectAnthropic:
+		return "msg_" + id
+	case core.DialectOpenAIResponses:
+		return "resp_" + id
+	default:
+		return "chatcmpl-" + id
+	}
 }
 
 func truncateStreamEvent(event string) string {
@@ -992,11 +1047,13 @@ func providerErrorStatus(pe *core.ProviderError) int {
 		return http.StatusBadRequest
 	case core.ErrModelUnavailable:
 		return http.StatusNotFound
-	case core.ErrAuth:
-		return http.StatusUnauthorized
+	case core.ErrAuth, core.ErrQuotaExhausted:
+		// The provider account was refused or ran out, not the client's key:
+		// a 401/402 here makes clients ask the user to log in or pay.
+		return http.StatusServiceUnavailable
 	case core.ErrRateLimit:
 		return http.StatusTooManyRequests
-	case core.ErrQuotaExhausted, core.ErrBudgetBlocked:
+	case core.ErrBudgetBlocked:
 		return http.StatusPaymentRequired
 	case core.ErrPolicyBlocked:
 		return http.StatusForbidden

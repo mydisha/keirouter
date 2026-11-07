@@ -1080,7 +1080,8 @@ func (c *Qoder) Stream(ctx context.Context, req *core.ChatRequest, creds core.Cr
 		// Sanitize embedded newlines so the SSE frame is a single event.
 		inner = strings.ReplaceAll(inner, "\n", "")
 		inner = strings.ReplaceAll(inner, "\r", "")
-		return c.codec.ParseStreamLine([]byte(inner), req.Model)
+		chunks, err := c.codec.ParseStreamLine([]byte(inner), req.Model)
+		return unwrapQoderToolArgs(chunks), err
 	})
 	return out, nil
 }

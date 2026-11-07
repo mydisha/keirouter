@@ -45,6 +45,9 @@ const (
 	// TransientCooldown is the default cooldown for transient/upstream errors
 	// that have no explicit Retry-After.
 	TransientCooldown = 30 * time.Second
+	// MaxTransientRetryAfter caps the Retry-After of a transient error (5xx,
+	// timeout); rate-limit and quota resets are honoured in full.
+	MaxTransientRetryAfter = 5 * time.Minute
 	// ModelCooldownMultiplier scales the per-model cooldown relative to the
 	// account-level cooldown (same duration — model locks are independent).
 	ModelCooldownMultiplier = 1
@@ -751,6 +754,7 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 
 	var cooldown time.Duration
 	jitter := true
+	retryAfter := err.RetryAfter
 	switch err.Kind {
 	case core.ErrRateLimit:
 		cooldown = d.exponentialCooldown(ctx, accountID)
@@ -769,6 +773,7 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 		// Transient upstream errors: apply a short cooldown so the account
 		// gets a breather without being locked out for too long.
 		cooldown = TransientCooldown
+		retryAfter = min(retryAfter, MaxTransientRetryAfter)
 	}
 	if jitter {
 		cooldown = withJitter(cooldown)
@@ -777,8 +782,8 @@ func (d *Dispatcher) NoteFailure(ctx context.Context, accountID string, err *cor
 	// An upstream reset time is a lower bound. Never replace it with the much
 	// shorter local exponential delay, and never shorten a stricter local
 	// cooldown when an upstream sends a small Retry-After value.
-	if err.RetryAfter > cooldown {
-		cooldown = err.RetryAfter
+	if retryAfter > cooldown {
+		cooldown = retryAfter
 	}
 	err.RetryAfter = cooldown
 

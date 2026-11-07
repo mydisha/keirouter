@@ -95,6 +95,11 @@ func admitStreamNotify(ctx context.Context, in <-chan core.StreamChunk, timeout 
 			if meaningfulAdmissionChunk(chunk) {
 				return replayAdmittedStream(ctx, prefix, in), nil
 			}
+			// A length or filter stop without text is still an answer (max_tokens
+			// spent inside thinking); only an empty stop is a failed attempt.
+			if chunk.Type == core.ChunkFinish && chunk.FinishReason != core.FinishStop && chunk.FinishReason != core.FinishError {
+				return replayAdmittedStream(ctx, prefix, in), nil
+			}
 			if chunk.Type == core.ChunkFinish {
 				return nil, &core.ProviderError{
 					Kind:     core.ErrUpstream,
@@ -110,8 +115,12 @@ func admitStreamNotify(ctx context.Context, in <-chan core.StreamChunk, timeout 
 
 func meaningfulAdmissionChunk(chunk core.StreamChunk) bool {
 	switch chunk.Type {
-	case core.ChunkText, core.ChunkThinking:
+	case core.ChunkText:
 		return chunk.Delta != ""
+	case core.ChunkThinking:
+		return chunk.Delta != "" || chunk.Signature != ""
+	case core.ChunkRedactedThinking:
+		return true
 	case core.ChunkToolCall:
 		return chunk.ToolCall != nil && chunk.ToolCall.ID != ""
 	default:
@@ -123,6 +132,7 @@ func replayAdmittedStream(ctx context.Context, prefix []core.StreamChunk, in <-c
 	out := make(chan core.StreamChunk, 16)
 	go func() {
 		defer close(out)
+		defer core.RecoverStream(out)
 		forward := func(chunk core.StreamChunk) bool {
 			select {
 			case out <- chunk:

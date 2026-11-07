@@ -304,7 +304,8 @@ func (AnthropicCodec) RenderStreamChunk(chunk core.StreamChunk, state *StreamSta
 			events = append(events, antBlockDelta(thinkIdx, antDeltaOut{Type: "thinking_delta", Thinking: &chunk.Delta}))
 		}
 		if chunk.Signature != "" {
-			events = append(events, antBlockDelta(thinkIdx, antDeltaOut{Type: "signature_delta", Signature: chunk.Signature}))
+			sig := core.TagSignature(chunk.Signature, state.ReasoningOrigin, "anthropic")
+			events = append(events, antBlockDelta(thinkIdx, antDeltaOut{Type: "signature_delta", Signature: sig}))
 		}
 
 	case core.ChunkRedactedThinking:

@@ -155,6 +155,12 @@ var patternCapabilities = []patternCaps{
 
 	// Claude 4.5 and older — budget thinking, 200K context.
 	{"*claude*haiku*", caps{Vision: true, PDF: true, Reasoning: true, Search: true, Structured: true, ThinkingFormat: "claude-budget", ContextWindow: 200000, MaxOutput: 64000}},
+	// Opus 4 and 4.1 stop at 32k output tokens.
+	{"*claude*opus-4", caps{Vision: true, PDF: true, Reasoning: true, Search: true, Structured: true, ThinkingFormat: "claude-budget", ContextWindow: 200000, MaxOutput: 32000}},
+	{"*claude*opus-4-0*", caps{Vision: true, PDF: true, Reasoning: true, Search: true, Structured: true, ThinkingFormat: "claude-budget", ContextWindow: 200000, MaxOutput: 32000}},
+	{"*claude*opus-4-1*", caps{Vision: true, PDF: true, Reasoning: true, Search: true, Structured: true, ThinkingFormat: "claude-budget", ContextWindow: 200000, MaxOutput: 32000}},
+	{"*claude*opus-4.1*", caps{Vision: true, PDF: true, Reasoning: true, Search: true, Structured: true, ThinkingFormat: "claude-budget", ContextWindow: 200000, MaxOutput: 32000}},
+	{"*claude*opus-4-2025*", caps{Vision: true, PDF: true, Reasoning: true, Search: true, Structured: true, ThinkingFormat: "claude-budget", ContextWindow: 200000, MaxOutput: 32000}},
 	{"*claude*opus*", caps{Vision: true, PDF: true, Reasoning: true, Search: true, Structured: true, ThinkingFormat: "claude-budget", ContextWindow: 200000, MaxOutput: 64000}},
 	{"*claude*sonnet*", caps{Vision: true, PDF: true, Reasoning: true, Search: true, Structured: true, ThinkingFormat: "claude-budget", ContextWindow: 200000, MaxOutput: 64000}},
 	{"*claude-3*", caps{Vision: true, PDF: true}},
