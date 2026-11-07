@@ -12,7 +12,11 @@ import (
 )
 
 // AnthropicCodec handles the Anthropic Messages wire format (/v1/messages).
-type AnthropicCodec struct{}
+type AnthropicCodec struct {
+	// ContextManagement forwards the client's context_management. Only
+	// Anthropic's own API takes it; compatible hosts reject the field.
+	ContextManagement bool
+}
 
 func (AnthropicCodec) Dialect() core.Dialect { return core.DialectAnthropic }
 
@@ -403,7 +407,7 @@ func antDefaultMaxTokens(req *core.ChatRequest) int {
 // antDefaultMaxOutput is the conservative output ceiling for Claude models.
 const antDefaultMaxOutput = 64000
 
-func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
+func (c AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 	req = hoistLeadingSystem(req)
 	var maxTokens int
 	if req.MaxTokens != nil && *req.MaxTokens > 0 {
@@ -577,9 +581,8 @@ func (AnthropicCodec) RenderRequest(req *core.ChatRequest) ([]byte, error) {
 	case req.System != "":
 		out.System, _ = json.Marshal(appendSystem(req.System, systemExtra))
 	}
-	// Other vendors behind the Anthropic API reject the field.
-	if cm := req.Extra["context_management"]; len(cm) > 0 && strings.Contains(strings.ToLower(req.Model), "claude") {
-		out.ContextManagement = cm
+	if c.ContextManagement {
+		out.ContextManagement = req.Extra["context_management"]
 	}
 	if user := extraString(req, "user"); user != "" {
 		// OpenAI's user id maps to Anthropic's abuse-tracking metadata.

@@ -63,18 +63,18 @@ func TestResponses_RendersMaxOutputTokens(t *testing.T) {
 	require.Equal(t, float64(16), decodeJSON(t, body)["max_output_tokens"])
 }
 
-func TestAnthropic_ContextManagementOnlyReachesClaude(t *testing.T) {
+func TestAnthropic_ContextManagementNeedsOptIn(t *testing.T) {
 	in := `{"model":"claude-sonnet-4-5","max_tokens":100,
 	  "context_management":{"edits":[{"type":"clear_tool_uses_20250919"}]},
 	  "messages":[{"role":"user","content":"hi"}]}`
 	req, err := AnthropicCodec{}.ParseRequest([]byte(in))
 	require.NoError(t, err)
 
-	body, err := AnthropicCodec{}.RenderRequest(req)
+	body, err := AnthropicCodec{ContextManagement: true}.RenderRequest(req)
 	require.NoError(t, err)
 	require.Equal(t, map[string]any{"edits": []any{map[string]any{"type": "clear_tool_uses_20250919"}}}, decodeJSON(t, body)["context_management"])
 
-	req.Model = "glm-4.6"
+	// A compatible host serving a claude-named model still rejects the field.
 	body, err = AnthropicCodec{}.RenderRequest(req)
 	require.NoError(t, err)
 	require.NotContains(t, decodeJSON(t, body), "context_management")

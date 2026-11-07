@@ -661,6 +661,29 @@ func TestBedrockInvokeAnthropicChat(t *testing.T) {
 	require.JSONEq(t, `100`, string(body["max_tokens"]))
 }
 
+func TestBedrockInvokeKeepsOnlySupportedContextEdits(t *testing.T) {
+	srv, rec := newBedrockServer(t, func(w http.ResponseWriter, r *http.Request, body []byte) {
+		_, _ = w.Write([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[{"type":"text","text":"yo"}],
+			"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`))
+	})
+	c := NewBedrock("bedrock", "")
+	send := func(cm string) map[string]json.RawMessage {
+		req := &core.ChatRequest{Model: "invoke/us.anthropic.claude-sonnet-4-5-20250929-v1:0", Messages: []core.Message{bedrockUserText("hi")}, MaxTokens: bedrockIntPtr(100)}
+		req.Extra = map[string]json.RawMessage{"context_management": json.RawMessage(cm)}
+		_, err := c.Chat(context.Background(), req, bedrockTestCreds(srv.URL))
+		require.NoError(t, err)
+		var body map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(rec.last(t).Body, &body))
+		return body
+	}
+
+	body := send(`{"edits":[{"type":"clear_thinking_20251015","keep":"all"},{"type":"clear_tool_uses_20250919","keep":{"type":"tool_uses","value":3}}]}`)
+	require.JSONEq(t, `{"edits":[{"type":"clear_tool_uses_20250919","keep":{"type":"tool_uses","value":3}}]}`, string(body["context_management"]))
+
+	body = send(`{"edits":[{"type":"clear_thinking_20251015"}]}`)
+	require.NotContains(t, body, "context_management")
+}
+
 func TestBedrockInvokeAnthropicStream(t *testing.T) {
 	chunk := func(ev string) []byte {
 		payload, _ := json.Marshal(map[string]string{"bytes": base64.StdEncoding.EncodeToString([]byte(ev))})
