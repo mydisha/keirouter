@@ -191,6 +191,9 @@ func parseAntThinkingFromBytes(body []byte) *core.ReasoningConfig {
 		case "adaptive":
 			cfg.Effort = "adaptive"
 			cfg.Adaptive = true
+		case "disabled":
+			// An empty effort reads as "auto" to the other dialects.
+			cfg.Effort = "none"
 		}
 		return cfg
 	}
