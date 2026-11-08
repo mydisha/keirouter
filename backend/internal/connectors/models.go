@@ -154,6 +154,12 @@ var providerModels = map[string][]ModelSpec{
 		emb("BAAI/bge-large-en-v1.5", "BGE Large EN v1.5", 1024),
 		emb("togethercomputer/m2-bert-80M-8k-retrieval", "M2 BERT 80M 8K", 768),
 	},
+	"runcrate": {
+		m("deepseek-ai/DeepSeek-V3.2", "DeepSeek V3.2"), m("deepseek-ai/DeepSeek-R1-0528", "DeepSeek R1 0528"),
+		m("Qwen/Qwen3-235B-A22B-Instruct-2507", "Qwen3 235B A22B"), m("moonshotai/Kimi-K2.6", "Kimi K2.6"),
+		m("zai-org/GLM-5.2", "GLM 5.2"), m("openai/gpt-oss-120b", "GPT-OSS 120B"),
+		m("meta-llama/Llama-3.3-70B-Instruct-Turbo", "Llama 3.3 70B Turbo"),
+	},
 	"fireworks": {
 		m("accounts/fireworks/models/kimi-k3", "Kimi K3"),
 		m("accounts/fireworks/models/glm-5p3", "GLM 5.3"),
