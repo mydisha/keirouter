@@ -396,6 +396,37 @@ func TestOpenAICompatible_ValidateNoAuthTrustsModels200(t *testing.T) {
 	require.False(t, *chatProbed, "no-auth accounts should not issue a chat probe")
 }
 
+func TestRuncrateCatalogAndChat(t *testing.T) {
+	spec, ok := SpecByID("runcrate")
+	require.True(t, ok, "catalog missing provider runcrate")
+	require.Equal(t, core.DialectOpenAI, spec.Dialect)
+	require.Equal(t, "https://api.runcrate.ai/v1", spec.BaseURL)
+	require.Equal(t, "api_key", spec.AuthKind)
+	if s, ok := SpecByAlias("runcrate"); !ok || s.ID != "runcrate" {
+		t.Fatalf("alias runcrate should resolve to runcrate, got %q ok=%v", s.ID, ok)
+	}
+
+	require.NotEmpty(t, ModelsForProvider("runcrate"))
+	require.Equal(t, "deepseek-ai/DeepSeek-V3.2", firstCatalogModel("runcrate"))
+	require.True(t, DefaultRegistry().Has("runcrate"), "registry should have a connector for runcrate")
+
+	// The catalog base URL already ends in /v1, so chat goes to /chat/completions
+	// under it with the key as a Bearer token.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/chat/completions", r.URL.Path)
+		require.Equal(t, "Bearer rc-test", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"c1","model":"deepseek-ai/DeepSeek-V3.2","choices":[{"message":{"role":"assistant","content":"hi from runcrate"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":3,"total_tokens":6}}`)
+	}))
+	defer srv.Close()
+
+	c := NewOpenAICompatible("runcrate", srv.URL)
+	resp, err := c.Chat(context.Background(), textReq("deepseek-ai/DeepSeek-V3.2", false), core.Credentials{APIKey: "rc-test"})
+	require.NoError(t, err)
+	require.Equal(t, "hi from runcrate", resp.Message.TextContent())
+	require.Equal(t, 6, resp.Usage.TotalTokens)
+}
+
 func TestOpenAICompatibleModelSource_ListModelsPublicNoCreds(t *testing.T) {
 	// A provider whose /models endpoint is public (e.g. sumopod) must be
 	// discoverable without credentials, so the model catalog populates before
