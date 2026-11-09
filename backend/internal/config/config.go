@@ -68,11 +68,13 @@ type DatabaseConfig struct {
 	Driver string `koanf:"driver"`
 	// DSN is the connection string. Empty with sqlite => <data_dir>/keirouter.db.
 	DSN string `koanf:"dsn"`
-	// MaxOpenConns/MaxIdleConns tune the pool (postgres-relevant).
+	// MaxOpenConns/MaxIdleConns tune the pool. Zero picks per-engine defaults
+	// (SQLite keeps 2 idle connections to bound its per-connection page caches).
 	MaxOpenConns int `koanf:"max_open_conns"`
 	MaxIdleConns int `koanf:"max_idle_conns"`
 	// ConnMaxLifetime recycles long-lived connections before managed Postgres
-	// proxies or load balancers expire them. ConnMaxIdleTime bounds idle sockets.
+	// proxies or load balancers expire them. ConnMaxIdleTime bounds idle
+	// sockets, and for SQLite releases the page cache of idle connections.
 	ConnMaxLifetime time.Duration `koanf:"conn_max_lifetime"`
 	ConnMaxIdleTime time.Duration `koanf:"conn_max_idle_time"`
 }

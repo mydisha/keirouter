@@ -75,16 +75,11 @@ func Open(ctx context.Context, cfg config.DatabaseConfig, dataDir string) (*DB, 
 	// SQLite is single-writer; cap connections to avoid SQLITE_BUSY. Postgres
 	// uses the configured pool.
 	if dialect == DialectSQLite {
-		maxOpen := cfg.MaxOpenConns
-		if maxOpen <= 0 {
-			maxOpen = max(runtime.GOMAXPROCS(0), 8)
-		}
-		sqlDB.SetMaxOpenConns(maxOpen)
-		if cfg.MaxIdleConns > 0 {
-			sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
-		} else {
-			sqlDB.SetMaxIdleConns(maxOpen)
-		}
+		p := sqlitePoolSettings(cfg, sqliteFilePath == ":memory:", runtime.GOMAXPROCS(0))
+		sqlDB.SetMaxOpenConns(p.maxOpen)
+		sqlDB.SetMaxIdleConns(p.maxIdle)
+		sqlDB.SetConnMaxIdleTime(p.idleTime)
+		sqlDB.SetConnMaxLifetime(p.lifetime)
 	} else {
 		maxOpen := cfg.MaxOpenConns
 		if maxOpen <= 0 {
@@ -127,19 +122,63 @@ func Open(ctx context.Context, cfg config.DatabaseConfig, dataDir string) (*DB, 
 	}, nil
 }
 
+// sqlitePool is the connection pool sizing applied to a SQLite handle.
+type sqlitePool struct {
+	maxOpen, maxIdle   int
+	idleTime, lifetime time.Duration
+}
+
+const (
+	// sqliteDefaultMaxIdle bounds how many connections, and so how many page
+	// caches, the pool keeps once a burst of dashboard queries is over.
+	sqliteDefaultMaxIdle = 2
+	// sqliteDefaultIdleTime expires idle connections when the config leaves
+	// conn_max_idle_time unset, so the process returns to its small baseline.
+	sqliteDefaultIdleTime = time.Minute
+)
+
+// sqlitePoolSettings sizes the SQLite pool. Every connection owns a private
+// page cache in the SQLite C heap; keeping a burst's worth of connections idle
+// forever made their filled caches the process's permanent idle footprint.
+// A shared-cache in-memory database lives only as long as its last
+// connection, so its connections are never expired or trimmed.
+func sqlitePoolSettings(cfg config.DatabaseConfig, inMemory bool, gomaxprocs int) sqlitePool {
+	p := sqlitePool{maxOpen: cfg.MaxOpenConns}
+	if p.maxOpen <= 0 {
+		p.maxOpen = max(gomaxprocs, 8)
+	}
+	if inMemory {
+		p.maxIdle = p.maxOpen
+		return p
+	}
+	p.maxIdle = cfg.MaxIdleConns
+	if p.maxIdle <= 0 {
+		p.maxIdle = sqliteDefaultMaxIdle
+	}
+	p.maxIdle = min(p.maxIdle, p.maxOpen)
+	p.idleTime = cfg.ConnMaxIdleTime
+	if p.idleTime <= 0 {
+		p.idleTime = sqliteDefaultIdleTime
+	}
+	p.lifetime = max(cfg.ConnMaxLifetime, 0)
+	return p
+}
+
 // SQLite connection pragmas. They are per-connection state, so they travel in
 // the DSN and the driver applies them to every connection the pool opens;
 // running them once through *sql.DB would only reach whichever connection
 // happened to serve that statement.
 const (
 	// sqliteCacheKiB is the page cache per connection (negative cache_size is
-	// KiB). The pool holds up to max(GOMAXPROCS, 8) connections and each cache
-	// fills lazily, so 8 MiB keeps the worst case near 100 MiB.
-	sqliteCacheKiB = 8 * 1024
-	// sqliteMmapBytes caps memory-mapped reads. Mapped pages are file-backed
-	// and reclaimable but still show up as process RSS, so the window stays
-	// modest rather than covering a large usage history.
-	sqliteMmapBytes = 64 << 20
+	// KiB). It lives in the SQLite C heap outside the Go GC and fills lazily
+	// up to this cap; with 2 idle connections kept by default the steady
+	// state stays near 4 MiB, and a full burst pool near 16 MiB.
+	sqliteCacheKiB = 2 * 1024
+	// sqliteMmapBytes disables memory-mapped reads. Each connection maps its
+	// own window, so the same file pages were counted once per connection in
+	// process RSS (64 MiB x pool size after a dashboard scan) without making
+	// queries measurably faster; reads still hit the OS page cache.
+	sqliteMmapBytes = 0
 )
 
 // sqliteConnPragmas apply to file and in-memory databases alike.

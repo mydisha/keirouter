@@ -383,3 +383,118 @@ func TestAuditRepo_AppendAndList(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 2, n)
 }
+
+// TestSQLiteMemoryFootprint pins the per-connection memory budget. Every pooled
+// connection owns its own page cache and mmap window, so these values multiply
+// by the pool size and decide what the process holds once traffic stops.
+func TestSQLiteMemoryFootprint(t *testing.T) {
+	require.Equal(t, 2*1024, sqliteCacheKiB, "page cache per connection (KiB)")
+	require.Equal(t, 0, sqliteMmapBytes, "mmap is mapped per connection and inflates RSS")
+
+	dsn := sqliteDSNFromPath(t.TempDir() + "/f.db")
+	require.Contains(t, dsn, "_pragma=mmap_size(0)")
+	require.Contains(t, dsn, "_pragma=cache_size(-2048)")
+}
+
+func TestSQLitePoolSettings(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		cfg      config.DatabaseConfig
+		inMemory bool
+		procs    int
+		want     sqlitePool
+	}{
+		{
+			name:  "defaults keep few idle conns and expire them",
+			procs: 2,
+			want:  sqlitePool{maxOpen: 8, maxIdle: 2, idleTime: time.Minute},
+		},
+		{
+			name:  "config defaults are honored",
+			cfg:   config.DatabaseConfig{ConnMaxIdleTime: 5 * time.Minute, ConnMaxLifetime: 30 * time.Minute},
+			procs: 16,
+			want:  sqlitePool{maxOpen: 16, maxIdle: 2, idleTime: 5 * time.Minute, lifetime: 30 * time.Minute},
+		},
+		{
+			name:  "explicit sizing is honored",
+			cfg:   config.DatabaseConfig{MaxOpenConns: 4, MaxIdleConns: 3},
+			procs: 2,
+			want:  sqlitePool{maxOpen: 4, maxIdle: 3, idleTime: time.Minute},
+		},
+		{
+			name:  "idle never exceeds open",
+			cfg:   config.DatabaseConfig{MaxOpenConns: 1, MaxIdleConns: 10},
+			procs: 2,
+			want:  sqlitePool{maxOpen: 1, maxIdle: 1, idleTime: time.Minute},
+		},
+		{
+			// A shared-cache in-memory database disappears with its last
+			// connection, so idle connections must never be expired.
+			name:     "in-memory never expires connections",
+			cfg:      config.DatabaseConfig{ConnMaxIdleTime: 5 * time.Minute, ConnMaxLifetime: 30 * time.Minute},
+			inMemory: true,
+			procs:    2,
+			want:     sqlitePool{maxOpen: 8, maxIdle: 8},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, sqlitePoolSettings(tc.cfg, tc.inMemory, tc.procs))
+		})
+	}
+}
+
+// TestSQLitePool_ReleasesIdleConnections opens a burst of connections and checks
+// the pool shrinks back once they go idle, so their page caches are freed
+// instead of becoming the process's new idle baseline.
+func TestSQLitePool_ReleasesIdleConnections(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, config.DatabaseConfig{
+		Driver: "sqlite", DSN: t.TempDir() + "/burst.db",
+		MaxOpenConns: 6, ConnMaxIdleTime: 50 * time.Millisecond,
+	}, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	conns := make([]*sql.Conn, 6)
+	for i := range conns {
+		conns[i], err = db.SQL().Conn(ctx)
+		require.NoError(t, err)
+	}
+	for _, c := range conns {
+		require.NoError(t, c.Close())
+	}
+	require.LessOrEqual(t, db.SQL().Stats().Idle, 2, "burst connections beyond the idle cap are closed at once")
+
+	require.Eventually(t, func() bool {
+		s := db.SQL().Stats()
+		return s.MaxIdleTimeClosed > 0 && s.Idle == 0
+	}, 5*time.Second, 20*time.Millisecond, "idle connections expire")
+
+	// The pool reopens on demand after shrinking to zero.
+	var one int
+	require.NoError(t, db.SQL().QueryRowContext(ctx, "SELECT 1").Scan(&one))
+	require.Equal(t, 1, one)
+}
+
+// TestSQLitePool_InMemorySurvivesIdle guards the shared-cache in-memory
+// database: expiring its last idle connection would silently drop all data.
+func TestSQLitePool_InMemorySurvivesIdle(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, config.DatabaseConfig{
+		Driver: "sqlite", DSN: ":memory:", ConnMaxIdleTime: 20 * time.Millisecond,
+	}, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
+
+	_, err = db.SQL().ExecContext(ctx, "CREATE TABLE keep (v INTEGER)")
+	require.NoError(t, err)
+	_, err = db.SQL().ExecContext(ctx, "INSERT INTO keep VALUES (7)")
+	require.NoError(t, err)
+
+	time.Sleep(200 * time.Millisecond)
+
+	var v int
+	require.NoError(t, db.SQL().QueryRowContext(ctx, "SELECT v FROM keep").Scan(&v))
+	require.Equal(t, 7, v)
+	require.Zero(t, db.SQL().Stats().MaxIdleTimeClosed)
+}

@@ -27,7 +27,11 @@ database:
   # SQLite: empty => <data_dir>/keirouter.db. Postgres: required DSN, e.g.
   #   postgres://user:pass@localhost:5432/keirouter?sslmode=disable
   dsn: ""
-  # Connection pool sizing and recycling (Postgres-relevant).
+  # Connection pool sizing and recycling. The values below suit Postgres.
+  # SQLite reads them too, but its defaults when they are unset (0) are tuned
+  # for a small idle footprint: max(GOMAXPROCS, 8) open, 2 idle, and idle
+  # connections closed after conn_max_idle_time so their page caches are freed.
+  # Each SQLite connection holds up to 2 MiB of page cache.
   max_open_conns: 25
   max_idle_conns: 10
   conn_max_lifetime: 30m
