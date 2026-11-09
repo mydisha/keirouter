@@ -1,27 +1,27 @@
-# Auto-updated by release.yml on tag v0.3.0. Do not edit manually.
+# Auto-updated by release.yml on tag v0.3.1. Do not edit manually.
 class Keirouter < Formula
   desc "Self-hosted AI gateway — one endpoint for 130+ LLM providers with fallback, caching, and a dashboard"
   homepage "https://github.com/mydisha/keirouter"
-  version "0.3.0"
+  version "0.3.1"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.0/keirouter_v0.3.0_darwin_arm64.tar.gz"
-      sha256 "ddf3fdc2fb190713328145efe439eacfc957e2a86151ef7485fa7dbddf1c0006"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.3.1/keirouter_v0.3.1_darwin_arm64.tar.gz"
+      sha256 "7f8fdc6022aa22e786430697219ae33bd197ab9587356d0700b823e066e771c4"
     else
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.0/keirouter_v0.3.0_darwin_amd64.tar.gz"
-      sha256 "84bcd22010a4924fb62fd2267975068e0e337bf4e4a27b1e6efd985ea063ae91"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.3.1/keirouter_v0.3.1_darwin_amd64.tar.gz"
+      sha256 "edb678c3b5f5332d88f6c72bed7fa9d177a24813e7f2e2a3b496c271e38dd470"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.0/keirouter_v0.3.0_linux_arm64.tar.gz"
-      sha256 "a1c3d3797e04c0af5e6378cba47d90dc84c682e86b61ac611a36a47d92fbf0e4"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.3.1/keirouter_v0.3.1_linux_arm64.tar.gz"
+      sha256 "3fd2c6d5bf59ec9bae7f6d8610e71efb6a1d29eb52f406a859a527c494534eba"
     else
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.0/keirouter_v0.3.0_linux_amd64.tar.gz"
-      sha256 "5d9fe1ce98e04e3ec5be7710b3b4819a265e2d98d455a67ad5ef8461a596b5d6"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.3.1/keirouter_v0.3.1_linux_amd64.tar.gz"
+      sha256 "d1993594b599eb3d028f9d8bd4cceb30a2a6aaef7b8c624848e5a34c4400bf39"
     end
   end
 
