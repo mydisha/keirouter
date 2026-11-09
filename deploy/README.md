@@ -178,4 +178,6 @@ For the local source installer, rerun the install command.
 - Use HTTPS when exposing the dashboard outside localhost.
 - The dashboard has session auth, but production deployments should still sit
   behind a reverse proxy, firewall, or platform access control.
-- The default dashboard password is `keirouter`; change it on first login.
+- The default dashboard password is `keirouter`. The first login asks for a new
+  one, and the admin API answers `403 password_change_required` until it is set.
+  Do that before exposing the port: the default is public knowledge.

@@ -228,7 +228,7 @@ Want PostgreSQL instead of SQLite? Layer on `compose.postgres.yaml`. VPS, Postgr
 
 ### First login
 
-Open **http://localhost:20180** (`keirouter start` opens it for you) and sign in with the default password **`keirouter`**. It'll nudge you to change that password right away (please do 🙏).
+Open **http://localhost:20180** (`keirouter start` opens it for you) and sign in with the default password **`keirouter`**. You'll be asked to set your own password right away; the dashboard and admin API stay locked until you do.
 
 Then grab an API key from the **API keys** page, or mint one from the terminal:
 
@@ -743,7 +743,9 @@ Curious what happens after you hit send? Here's the life of a request:
 
 ## 🔒 Security
 
-- The admin API (`/api/*`) only answers on loopback by default (`security.bind_loopback_only`). Exposing it? Put it behind a reverse proxy and set a stable master key.
+- The admin API (`/api/*`) only answers on loopback by default (`security.bind_loopback_only`). In that mode, requests relayed through a tunnel or proxy (they carry `CF-Connecting-IP`, `Tailscale-*`, `X-Forwarded-For` or similar headers) and requests with a non-local `Host` header are refused, so turning on a Cloudflare or Tailscale tunnel exposes the `/v1` API but not the dashboard. Exposing the dashboard? Set `bind_loopback_only: false`, put it behind a reverse proxy with HTTPS, and set a stable master key.
+- The admin API stays locked until the default `keirouter` password is changed.
+- Every response carries `X-Robots-Tag: noindex` and `/robots.txt` disallows crawling, so a public instance stays out of search results. The dashboard ships with a strict Content-Security-Policy and refuses to be framed.
 - **Guard your master key with your life** — it's the root of trust for every encrypted credential.
 - Credentials sit behind AES-256-GCM envelope encryption, including provider-specific secrets such as AWS secret keys, OAuth client secrets and PEM private keys; the dashboard uses Argon2id password hashing + HMAC session cookies; outbound requests get SSRF protection.
 

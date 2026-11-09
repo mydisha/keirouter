@@ -25,6 +25,11 @@ const staticGzipMinSize = 1024
 type staticHandler struct {
 	dir string
 	gz  sync.Map // clean URL path -> *staticGzEntry
+
+	cspMu   sync.Mutex
+	cspMod  time.Time
+	cspSize int64
+	csp     string
 }
 
 type staticGzEntry struct {
@@ -38,11 +43,22 @@ func newStaticHandler(dir string) *staticHandler {
 }
 
 func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// path.Clean only understands "/", but on Windows filepath.Join also
+	// splits on "\", so "/..%5c..%5cmaster.key" would climb out of the build
+	// directory. No dashboard route or asset name contains a backslash or NUL.
+	if strings.ContainsAny(r.URL.Path, "\\\x00") {
+		http.NotFound(w, r)
+		return
+	}
 	upath := path.Clean("/" + r.URL.Path)
 	if upath == "/" {
 		upath = "/index.html"
 	}
 	full := filepath.Join(h.dir, filepath.FromSlash(upath))
+	if !pathInside(h.dir, full) {
+		http.NotFound(w, r)
+		return
+	}
 	fi, err := os.Stat(full)
 	if err != nil || fi.IsDir() {
 		// A missing hashed asset means a stale page is asking for a chunk from
@@ -66,6 +82,9 @@ func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		hdr.Set("Cache-Control", "public, max-age=31536000, immutable")
 	case upath == "/index.html":
 		hdr.Set("Cache-Control", "no-cache")
+		if csp := h.indexCSP(full, fi); csp != "" {
+			hdr.Set("Content-Security-Policy", csp)
+		}
 	default:
 		hdr.Set("Cache-Control", "public, max-age=3600")
 	}
@@ -93,6 +112,22 @@ func (h *staticHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 	http.ServeContent(w, r, upath, fi.ModTime(), f)
+}
+
+// indexCSP returns the Content-Security-Policy for index.html, rebuilt only
+// when the file on disk changes.
+func (h *staticHandler) indexCSP(full string, fi os.FileInfo) string {
+	h.cspMu.Lock()
+	defer h.cspMu.Unlock()
+	if h.csp != "" && h.cspMod.Equal(fi.ModTime()) && h.cspSize == fi.Size() {
+		return h.csp
+	}
+	raw, err := os.ReadFile(full)
+	if err != nil {
+		return ""
+	}
+	h.csp, h.cspMod, h.cspSize = spaCSP(raw), fi.ModTime(), fi.Size()
+	return h.csp
 }
 
 // gzipped returns the cached gzip body for upath, compressing it on first use
@@ -148,4 +183,13 @@ func acceptsGzip(header string) bool {
 		return true
 	}
 	return false
+}
+
+// pathInside reports whether target resolves to dir itself or a path below it.
+func pathInside(dir, target string) bool {
+	rel, err := filepath.Rel(dir, target)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 }

@@ -17,8 +17,8 @@ const sessionCookie = "kr_session"
 func (s *Server) mountAuth(r chi.Router) {
 	r.Post("/logout", s.handleLogout)
 	// Status reports onboarding/default-password state so the UI can decide
-	// whether to show the onboarding flow. Safe to expose unauthenticated: it
-	// reveals only booleans, never secrets.
+	// whether to show the onboarding flow. Unauthenticated callers always see
+	// using_default=false; see handleAuthStatus.
 	r.Get("/status", s.handleAuthStatus)
 }
 
@@ -79,9 +79,13 @@ func (s *Server) handleAuthStatus(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		authed = s.auth.VerifySession(c.Value)
 	}
+	// Whether the seeded default password is still active is only told to a
+	// signed-in operator: to anyone else it is a hint that the password is
+	// public knowledge.
+	usingDefault := authed && s.auth.UsingDefaultPassword(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"authenticated":       authed,
-		"using_default":       s.auth.UsingDefaultPassword(r.Context()),
+		"using_default":       usingDefault,
 		"onboarding_complete": s.auth.OnboardingComplete(r.Context()),
 	})
 }
@@ -174,3 +178,22 @@ func (s *Server) sessionMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// passwordChangedRequired locks the admin API until the seeded default
+// password is replaced. The default is published in the README and printed in
+// the startup log, so a session obtained with it must not reach credentials or
+// routing config. The /api/auth group (where the password is changed) is
+// mounted separately and is not behind this guard.
+func (s *Server) passwordChangedRequired(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.auth.UsingDefaultPassword(r.Context()) {
+			writeError(w, http.StatusForbidden, passwordChangeRequiredMsg)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// passwordChangeRequiredMsg is matched by the dashboard to send the operator
+// back to the change-password screen.
+const passwordChangeRequiredMsg = "password_change_required: change the default dashboard password first"
