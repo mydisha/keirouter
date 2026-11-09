@@ -25,16 +25,19 @@ import type { CodeLanguage } from "../lib/highlight";
 
 // ── Period model ─────────────────────────────────────────────────────────────
 
-type PeriodKey = "24h" | "7d" | "30d" | "90d";
+type PeriodKey = "24h" | "3d" | "7d" | "30d" | "90d";
 
 const PERIODS: Record<PeriodKey, { label: string; buckets: number; text: string; vs: string }> = {
   "24h": { label: "24h", buckets: 24, text: "Last 24 hours", vs: "compared with the 24 hours before" },
+  "3d": { label: "3d", buckets: 36, text: "Last 3 days", vs: "compared with the 3 days before" },
   "7d": { label: "7d", buckets: 42, text: "Last 7 days", vs: "compared with the 7 days before" },
   "30d": { label: "30d", buckets: 30, text: "Last 30 days", vs: "compared with the 30 days before" },
   "90d": { label: "90d", buckets: 45, text: "Last 90 days", vs: "compared with the 90 days before" },
 };
 const PERIOD_KEYS = Object.keys(PERIODS) as PeriodKey[];
-const PERIOD_STORAGE_KEY = "kr.overview.period";
+// v2: the default moved to 3d so the landing page no longer opens on a long
+// window that scans weeks of usage; earlier stored choices start over once.
+const PERIOD_STORAGE_KEY = "kr.overview.period.v2";
 
 const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
 
@@ -45,7 +48,7 @@ function readStoredPeriod(): PeriodKey {
   } catch {
     /* storage unavailable: fall through to the default */
   }
-  return "7d";
+  return "3d";
 }
 
 // Arrow / Home / End move between the radios or tabs of a group and select

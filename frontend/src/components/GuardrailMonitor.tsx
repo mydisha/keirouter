@@ -41,11 +41,12 @@ const C = {
   logOnly: "var(--color-chart-5)",
 };
 
-const BUCKETS: Record<ReportPeriod, number> = { today: 24, "24h": 24, "7d": 42, "30d": 30, "90d": 45 };
+const BUCKETS: Record<ReportPeriod, number> = { today: 24, "24h": 24, "3d": 36, "7d": 42, "30d": 30, "90d": 45 };
 
 const PERIOD_TEXT: Record<ReportPeriod, string> = {
   today: "today",
   "24h": "in the last 24 hours",
+  "3d": "in the last 3 days",
   "7d": "in the last 7 days",
   "30d": "in the last 30 days",
   "90d": "in the last 90 days",
@@ -321,7 +322,7 @@ function TrendCard({ stats, period }: { stats: GuardrailStats; period: ReportPer
       };
     });
   }, [stats]);
-  const long = period === "7d" || period === "30d" || period === "90d";
+  const long = period === "3d" || period === "7d" || period === "30d" || period === "90d";
   const t = stats.totals;
   return (
     <ChartCard

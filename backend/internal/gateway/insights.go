@@ -33,6 +33,8 @@ func sinceForPeriod(period, tz string) time.Time {
 		return time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).UTC()
 	case "24h":
 		return time.Now().UTC().Add(-24 * time.Hour)
+	case "3d":
+		return now.AddDate(0, 0, -3).UTC()
 	case "week", "7d":
 		return now.AddDate(0, 0, -7).UTC()
 	case "30d":
