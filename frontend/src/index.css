@@ -561,10 +561,14 @@ select:disabled,
   }
 }
 
-/* WCAG 2.4.7: a visible focus indicator for anything that does not draw its own ring. */
-:where(a, button, [role="button"], [role="tab"], [role="radio"], [role="switch"], [role="menuitem"], summary, input, select, textarea, [tabindex]):focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: 2px;
+/* WCAG 2.4.7: a visible focus indicator for anything that does not draw its
+   own ring. In the base layer, so a control's `outline-none` + ring utilities
+   replace it instead of stacking a second ring on top. */
+@layer base {
+  :where(a, button, [role="button"], [role="tab"], [role="radio"], [role="switch"], [role="menuitem"], summary, input, select, textarea, [tabindex]):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
 }
 
 /* Placeholder text is still text: keep it at the faint token (≥ 4.5:1). */
