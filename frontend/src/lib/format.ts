@@ -18,11 +18,10 @@ export function formatSpendUSD(usd: number): string {
   return `$${usd.toFixed(2)}`;
 }
 
+/** Token counts: 9,812 below ten thousand, then 12.4K, 1.2M, 3.4B. */
 export function formatTokens(n: number): string {
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return n.toLocaleString();
+  if (Math.abs(n) < 10_000) return new Intl.NumberFormat("en-US").format(n);
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(n);
 }
 
 export function compactNumber(n: number): string {
@@ -92,4 +91,29 @@ export function ptsDelta(cur: number, prev: number): Delta {
   const text = `${diff >= 0 ? "+" : "−"}${Math.abs(diff).toFixed(2)} pts`;
   if (Math.abs(diff) < 0.01) return { text, tone: "flat", dir: "flat" };
   return { text, tone: diff > 0 ? "good" : "bad", dir: diff > 0 ? "up" : "down" };
+}
+
+/** "3 minutes ago", "yesterday"; "Never" for a missing time. */
+export function formatRelative(value: string | number | Date | null | undefined): string {
+  if (value == null || value === "") return "Never";
+  const seconds = Math.round((new Date(value).getTime() - Date.now()) / 1000);
+  const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+  const units: [Intl.RelativeTimeFormatUnit, number][] = [
+    ["year", 31_536_000],
+    ["month", 2_592_000],
+    ["day", 86_400],
+    ["hour", 3_600],
+    ["minute", 60],
+  ];
+  for (const [unit, size] of units) {
+    if (Math.abs(seconds) >= size) return rtf.format(Math.round(seconds / size), unit);
+  }
+  return "just now";
+}
+
+/** "840 ms", "1.2 s"; muted "n/a" for a missing value. */
+export function formatMs(ms: number | null | undefined): string {
+  if (ms == null) return "n/a";
+  if (Math.round(ms) < 1000) return `${Math.round(ms)} ms`;
+  return `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 }).format(ms / 1000)} s`;
 }

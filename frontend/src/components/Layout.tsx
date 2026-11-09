@@ -15,6 +15,7 @@ import {
   Loader2,
   LogOut,
   Menu,
+  MessagesSquare,
   Monitor,
   NotebookPen,
   PanelLeftClose,
@@ -81,6 +82,7 @@ const navGroups: NavGroup[] = [
       { to: "/", label: "Overview", icon: LayoutGrid, end: true, preload: "/" },
       { to: "/usage", label: "Usage", icon: BarChart3, preload: "/usage" },
       { to: "/console", label: "Console", icon: ScrollText, preload: "/console", indicator: "live" },
+      { to: "/playground", label: "Playground", icon: MessagesSquare, preload: "/playground" },
     ],
   },
   {
@@ -150,6 +152,7 @@ const TITLE_BY_PATH: Record<string, string> = {
   "/guardrails": "Guardrails",
   "/provider-health": "Provider health",
   "/console": "Console",
+  "/playground": "Playground",
   "/cli-tools": "CLI tools",
   "/system": "System",
 };
@@ -272,7 +275,8 @@ export function Layout() {
           className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] lg:pl-0 lg:pr-0"
           style={{ outline: "none" }}
         >
-          <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-6 md:py-8">
+          {/* Full-bleed pages (the playground) lay out and scroll their own panes. */}
+          <div className={FULL_BLEED.has(location.pathname) ? "h-full" : "mx-auto w-full max-w-6xl px-4 py-6 md:px-6 md:py-8"}>
             <Suspense fallback={<PageOutletFallback />}>
               <Outlet />
             </Suspense>
@@ -288,6 +292,8 @@ export function Layout() {
     </div>
   );
 }
+
+const FULL_BLEED = new Set(["/playground"]);
 
 const COLLAPSED_KEY = "keirouter-sidebar-collapsed";
 

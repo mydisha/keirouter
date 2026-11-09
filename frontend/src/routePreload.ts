@@ -25,6 +25,7 @@ export const routeLoaders = {
   "/proxy-pools": () => named(import("./pages/ProxyPools"), "ProxyPoolsPage"),
   "/skills": () => named(import("./pages/Skills"), "SkillsPage"),
   "/console": () => named(import("./pages/ConsoleLog"), "ConsoleLogPage"),
+  "/playground": () => named(import("./pages/Playground"), "PlaygroundPage"),
   "/system": () => named(import("./pages/System"), "SystemPage"),
   "/oauth-callback": () => named(import("./pages/OAuthCallback"), "OAuthCallbackPage"),
   "/portal": () => named(import("./pages/KeyPortal"), "KeyPortalPage"),

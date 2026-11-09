@@ -195,7 +195,9 @@ func (s *Service) authenticateSlow(ctx context.Context, plaintext, lookup string
 		}
 		return store.APIKey{}, err
 	}
-	if rec.Disabled {
+	// Managed keys act only through their own surface (the playground key
+	// through the dashboard session), never by presenting a secret.
+	if rec.Disabled || rec.Kind != "" {
 		s.invalidateAuthCache(lookup)
 		return store.APIKey{}, ErrUnauthorized
 	}
@@ -347,6 +349,35 @@ func (s *Service) InvalidateAuthCacheForKey(keyID string) {
 		}
 	}
 	s.authMu.Unlock()
+}
+
+// PlaygroundKeyName is the name usage, the console and budgets show for
+// requests sent from the dashboard playground.
+const PlaygroundKeyName = "Playground"
+
+// Playground returns the tenant's playground key, creating it on first use.
+// Its secret is discarded at creation (and Authenticate refuses managed keys),
+// so the key only ever acts through the dashboard session. A unique index
+// keeps one per tenant; a concurrent creator that loses the race reads the
+// winner's row.
+func (s *Service) Playground(ctx context.Context, tenantID string) (store.APIKey, error) {
+	rec, err := s.keys.FindByKind(ctx, tenantID, store.KeyKindPlayground)
+	if !errors.Is(err, store.ErrNotFound) {
+		return rec, err
+	}
+	issued, err := s.Generate(tenantID, "", PlaygroundKeyName)
+	if err != nil {
+		return store.APIKey{}, err
+	}
+	issued.Record.Kind = store.KeyKindPlayground
+	issued.Record.Display = "dashboard"
+	if err := s.keys.Create(ctx, issued.Record); err != nil {
+		if again, ferr := s.keys.FindByKind(ctx, tenantID, store.KeyKindPlayground); ferr == nil {
+			return again, nil
+		}
+		return store.APIKey{}, err
+	}
+	return issued.Record, nil
 }
 
 // List returns the keys for a tenant (without secrets).

@@ -203,13 +203,20 @@ export function SettingsSection({
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: "primary" | "secondary" | "ghost" | "quiet" | "danger";
+  /** sm for toolbars, icon for a square icon-only button (give it an aria-label). */
+  size?: "md" | "sm" | "icon";
 };
 
 // Every button is ink or paper; the brand blue never fills a button. One
 // primary per view, outlined secondaries, quiet for toolbar icon buttons.
-export function Button({ variant = "primary", className = "", ...props }: ButtonProps) {
+export function Button({ variant = "primary", size = "md", className = "", ...props }: ButtonProps) {
   const base =
-    "press inline-flex min-h-9 select-none items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium disabled:pointer-events-none disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-canvas pointer-coarse:min-h-11 [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0";
+    "press inline-flex select-none items-center justify-center gap-1.5 rounded-lg font-medium disabled:pointer-events-none disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-canvas [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0";
+  const sizes = {
+    md: "min-h-9 px-3 py-1.5 text-[13px] pointer-coarse:min-h-11",
+    sm: "min-h-8 px-2.5 text-[12.5px] pointer-coarse:min-h-11",
+    icon: "size-9 text-[13px] pointer-coarse:size-11",
+  };
   const variants = {
     primary: "border border-transparent bg-action text-action-fg shadow-paper hover:bg-action-hover",
     secondary: "border border-input bg-surface text-fg shadow-paper hover:bg-hover",
@@ -217,7 +224,7 @@ export function Button({ variant = "primary", className = "", ...props }: Button
     quiet: "border border-transparent text-fg-muted hover:bg-hover hover:text-fg",
     danger: "border border-transparent bg-bad-soft text-bad hover:bg-bad hover:text-white",
   };
-  return <button className={`${base} ${variants[variant]} ${className}`} {...props} />;
+  return <button className={`${base} ${sizes[size]} ${variants[variant]} ${className}`} {...props} />;
 }
 
 // fieldAria merges an enclosing <Field>'s hint / error wiring into a control's

@@ -687,6 +687,30 @@ func isOpenAIReasoningModel(model string) bool {
 		strings.HasPrefix(m, "o3") || strings.HasPrefix(m, "o4") || strings.HasPrefix(m, "codex")
 }
 
+// ReasoningControls reports whether a reasoning effort sent to provider/model,
+// which speaks dialect d, changes how the model thinks, and whether "none"
+// turns thinking off. It mirrors renderOAIRequestForProvider: OpenAI first
+// party knows only its own reasoning families and never turns thinking off,
+// vendors with their own thinking switch get the effort, and other
+// OpenAI-compatible upstreams get it only for models that echo reasoning.
+func ReasoningControls(d core.Dialect, provider, model string) (adjustable, canOff bool) {
+	p := capability.ResolveProfile(provider, model)
+	switch {
+	case !p.Reasoning:
+		return false, false
+	case d != core.DialectOpenAI, isDeepSeekTarget(provider, model):
+		return true, p.ThinkingCanDisable
+	case isOpenAIFirstParty(provider):
+		return isOpenAIReasoningModel(model), false
+	}
+	switch thinkingFormatFor(provider) {
+	case "qwen", "hunyuan", "doubao", "minimax", "kimi":
+		return true, p.ThinkingCanDisable
+	}
+	echoes := reasoningEchoScope(provider, model) != reasoningNone
+	return echoes, echoes && p.ThinkingCanDisable
+}
+
 // applyOpenAIFirstPartyFixes adapts a request for api.openai.com / Azure:
 // reasoning models take max_completion_tokens and reasoning_effort (never
 // the vendor-specific "thinking" object), and streams ask for the final usage

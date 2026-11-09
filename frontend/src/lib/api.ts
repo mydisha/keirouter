@@ -1,6 +1,8 @@
 // Typed client for the KeiRouter admin API. All calls go through the dev-server
 // proxy (or the embedded static server in production) to /api.
 
+import type { PlaygroundModel } from "@/features/playground/types";
+
 export interface RegionOption {
   id: string;
   label: string;
@@ -1777,6 +1779,8 @@ export const api = {
   deleteProxyPool: (id: string) => request<void>("DELETE", `/proxy-pools/${id}`),
 
   listSkills: () => request<{ skills: Skill[] }>("GET", "/skills"),
+  /** Chains and connected chat models with the playground's controls per model. */
+  playgroundModels: () => request<{ models: PlaygroundModel[] }>("GET", "/playground/models"),
   createSkill: (input: SkillInput & { name: string }) =>
     request<Skill>("POST", "/skills", input),
   updateSkill: (id: string, patch: SkillInput) =>

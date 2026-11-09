@@ -33,17 +33,21 @@ type modelEntry struct {
 // client discover what it can pass in the `model` field.
 func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	key, _ := authedKey(r.Context())
-	tenantID := tenantOf(key)
+	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": s.targetableModels(r.Context(), tenantOf(key))})
+}
 
+// targetableModels lists the chains and the connected providers' models a
+// tenant can put in a request's `model` field.
+func (s *Server) targetableModels(ctx context.Context, tenantID string) []modelEntry {
 	data := make([]modelEntry, 0, 64)
 	seen := make(map[string]struct{}, 64)
-	usableProviders := s.usableModelProviders(r.Context(), tenantID)
+	usableProviders := s.usableModelProviders(ctx, tenantID)
 
 	// Chains are exposed as "combo" models, matching the upstream convention:
 	// a combo chains multiple providers with auto-fallback and is callable by
 	// its bare name (and via the chain: prefix). owned_by:"combo" lets client
 	// tools surface them distinctly from single-provider models.
-	chains, err := s.chains.ListByTenant(r.Context(), tenantID)
+	chains, err := s.chains.ListByTenant(ctx, tenantID)
 	if err == nil {
 		for _, c := range chains {
 			data = appendModelEntry(data, seen, modelEntry{
@@ -74,7 +78,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 	// Live model discovery: for providers with a LiveModelSource and connected
 	// accounts, fetch the live catalog and merge (live models supplement, not
 	// replace, the static catalog).
-	liveModels := s.fetchLiveModels(r.Context(), tenantID)
+	liveModels := s.fetchLiveModels(ctx, tenantID)
 	for provider, models := range liveModels {
 		if !usableProviders[provider] {
 			continue
@@ -93,7 +97,7 @@ func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{"object": "list", "data": data})
+	return data
 }
 
 // handleListModelsByKind serves GET /v1/models/{kind}: it lists every model of
