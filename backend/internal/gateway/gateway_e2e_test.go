@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/mydisha/keirouter/backend/internal/auth"
 	"github.com/mydisha/keirouter/backend/internal/budget"
 	"github.com/mydisha/keirouter/backend/internal/config"
 	"github.com/mydisha/keirouter/backend/internal/connectors"
@@ -36,6 +37,9 @@ type e2eHarness struct {
 	apiKey   string
 	keyID    string
 	upstream *httptest.Server
+	db       *store.DB
+	// session is a valid dashboard session token for the /api surface.
+	session string
 }
 
 // e2eOptions customizes the harness; the zero value matches production defaults.
@@ -98,11 +102,16 @@ func newE2E(t *testing.T, upstreamHandler http.HandlerFunc, opts ...func(*e2eOpt
 	mtr := meter.New(db.Usage(), nil, nil)
 	bud := budget.New(db.Budgets(), db.Usage())
 	pipeDeps := pipeline.Deps{Dispatcher: disp, Meter: mtr, Budget: bud}
+	authSvc := auth.New(db.Settings(), "e2e-signing-key", time.Hour)
+	session, err := authSvc.IssueSession()
+	require.NoError(t, err)
 	gwDeps := Deps{
 		Config:   o.cfg,
+		Auth:     authSvc,
 		Identity: idSvc,
 		Pipeline: nil,
 		Chains:   db.Chains(),
+		Accounts: db.Accounts(),
 		Codecs:   transform.DefaultRegistry(),
 	}
 	if o.limiter != nil {
@@ -116,7 +125,7 @@ func newE2E(t *testing.T, upstreamHandler http.HandlerFunc, opts ...func(*e2eOpt
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 
-	return &e2eHarness{server: srv, handler: handler, gateway: gw, apiKey: issued.Plaintext, keyID: issued.Record.ID, upstream: upstream}
+	return &e2eHarness{server: srv, handler: handler, gateway: gw, apiKey: issued.Plaintext, keyID: issued.Record.ID, upstream: upstream, db: db, session: session}
 }
 
 func (h *e2eHarness) post(t *testing.T, path, body, auth string) *http.Response {

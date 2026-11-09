@@ -38,12 +38,12 @@ func (r *APIKeyRepo) insert(ctx context.Context, ex sqlExec, k APIKey) error {
 	q := r.db.rebind(`
 		INSERT INTO api_keys
 			(id, tenant_id, project_id, plan_id, name, key_hash, lookup_hash, lookup_hmac, lookup_kid,
-			 display, scopes, disabled, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+			 display, scopes, disabled, kind, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	_, err := ex.ExecContext(ctx, q,
 		k.ID, k.TenantID, nullString(k.ProjectID), k.PlanID, k.Name, k.KeyHash, k.LookupHash,
 		nullString(k.LookupHMAC), k.LookupKID,
-		k.Display, k.Scopes, boolToInt(k.Disabled), formatTime(k.CreatedAt))
+		k.Display, k.Scopes, boolToInt(k.Disabled), k.Kind, formatTime(k.CreatedAt))
 	if err != nil {
 		return fmt.Errorf("store: create api key: %w", err)
 	}
@@ -52,7 +52,7 @@ func (r *APIKeyRepo) insert(ctx context.Context, ex sqlExec, k APIKey) error {
 
 // apiKeyColumns is the column list every api_keys read scans, in scan order.
 const apiKeyColumns = `id, tenant_id, project_id, plan_id, name, key_hash, lookup_hash, lookup_hmac, lookup_kid,
-	display, scopes, disabled, last_used_at, created_at`
+	display, scopes, disabled, kind, last_used_at, created_at`
 
 // FindByLookupHMAC returns the key whose keyed lookup index (crypto.KeyLookup)
 // matches. The index is a 256-bit keyed hash of a 192-bit random key, so a
@@ -190,6 +190,12 @@ func (r *APIKeyRepo) List(ctx context.Context, tenantID string) ([]APIKey, error
 	return out, rows.Err()
 }
 
+// FindByKind returns a tenant's key of a managed kind (KeyKindPlayground).
+func (r *APIKeyRepo) FindByKind(ctx context.Context, tenantID, kind string) (APIKey, error) {
+	q := r.db.rebind(`SELECT ` + apiKeyColumns + ` FROM api_keys WHERE tenant_id = ? AND kind = ?`)
+	return r.scanOne(r.db.sql.QueryRowContext(ctx, q, tenantID, kind))
+}
+
 // TouchLastUsed records that a key authenticated a request.
 func (r *APIKeyRepo) TouchLastUsed(ctx context.Context, id string, at time.Time) error {
 	q := r.db.rebind(`UPDATE api_keys SET last_used_at = ? WHERE id = ?`)
@@ -235,7 +241,7 @@ func scanAPIKey(scan func(dest ...any) error) (APIKey, error) {
 		createdRaw string
 	)
 	err := scan(&k.ID, &k.TenantID, &projectID, &planID, &k.Name, &k.KeyHash, &k.LookupHash,
-		&lookupHMAC, &k.LookupKID, &k.Display, &k.Scopes, &disabled, &lastUsed, &createdRaw)
+		&lookupHMAC, &k.LookupKID, &k.Display, &k.Scopes, &disabled, &k.Kind, &lastUsed, &createdRaw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return APIKey{}, err
 	}

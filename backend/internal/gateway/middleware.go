@@ -36,6 +36,12 @@ func authedKey(ctx context.Context) (store.APIKey, bool) {
 // with exactly one summary line on the dashboard console, even when a handler
 // returns early without logging (the status and error body are captured).
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return s.tracedAuth(next, s.authenticate)
+}
+
+// tracedAuth opens the console trace around an authentication step that puts
+// the request's API key in context (or rejects it) before calling next.
+func (s *Server) tracedAuth(next http.Handler, auth func(http.ResponseWriter, *http.Request, *reqTrace, http.Handler)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tr := newReqTrace(s.consoleLog, r)
 		tr.base.Client = detectClient(r)
@@ -54,7 +60,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			}
 			tr.settle(ww.Status(), tap.buf)
 		}()
-		s.authenticate(ww, r, tr, next)
+		auth(ww, r, tr, next)
 		returned = true
 	})
 }

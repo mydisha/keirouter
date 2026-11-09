@@ -20,6 +20,10 @@ type Project struct {
 	CreatedAt time.Time
 }
 
+// KeyKindPlayground marks the dashboard playground's key: KeiRouter creates it
+// with a discarded secret, so it only ever acts through the dashboard session.
+const KeyKindPlayground = "playground"
+
 // APIKey is a stored inbound credential. The plaintext is never persisted.
 type APIKey struct {
 	ID         string
@@ -34,6 +38,7 @@ type APIKey struct {
 	Display    string // masked form
 	Scopes     string
 	Disabled   bool
+	Kind       string // "" for operator keys, KeyKindPlayground for the dashboard playground
 	LastUsedAt *time.Time
 	CreatedAt  time.Time
 }

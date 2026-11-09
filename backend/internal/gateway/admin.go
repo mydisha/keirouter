@@ -474,6 +474,9 @@ func (s *Server) adminListKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(keys))
 	for _, k := range keys {
+		if k.Kind != "" {
+			continue // managed keys (the playground's) are not the operator's to edit
+		}
 		entry := map[string]any{
 			"id": k.ID, "name": k.Name, "display": k.Display,
 			"disabled": k.Disabled, "plan_id": k.PlanID, "created_at": k.CreatedAt,
@@ -707,11 +710,33 @@ func (s *Server) adminCreateKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminDeleteKey(w http.ResponseWriter, r *http.Request) {
+	if !s.operatorKey(w, r, chi.URLParam(r, "id")) {
+		return
+	}
 	if err := s.identity.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// operatorKey reports whether id names a key the operator may change. Managed
+// keys (the playground's) answer 404, as they do in the key list; a lookup
+// failure other than "not found" answers 500. A missing key passes, so update
+// and delete keep their existing not-found behaviour.
+func (s *Server) operatorKey(w http.ResponseWriter, r *http.Request, id string) bool {
+	k, err := s.identity.Get(r.Context(), id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return true
+	case err != nil:
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+		return false
+	case k.Kind != "":
+		writeError(w, http.StatusNotFound, "key not found")
+		return false
+	}
+	return true
 }
 
 // adminUpdateKey toggles a key's disabled state and/or updates its model access.
@@ -726,6 +751,9 @@ func (s *Server) adminUpdateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Disabled == nil && body.AllowedModels == nil {
 		writeError(w, http.StatusBadRequest, "disabled or allowed_models field is required")
+		return
+	}
+	if !s.operatorKey(w, r, id) {
 		return
 	}
 	if body.Disabled != nil {
@@ -2942,6 +2970,9 @@ func (s *Server) adminExportDatabase(w http.ResponseWriter, r *http.Request) {
 	keys, _ := s.identity.List(ctx, adminTenant)
 	keysOut := make([]map[string]any, 0, len(keys))
 	for _, k := range keys {
+		if k.Kind != "" {
+			continue
+		}
 		keysOut = append(keysOut, map[string]any{
 			"name": k.Name, "disabled": k.Disabled,
 		})
