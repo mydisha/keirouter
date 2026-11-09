@@ -80,8 +80,10 @@ export default function Composer({
       )}
       <div
         className={cn(
-          "rounded-xl border border-input bg-surface shadow-paper transition-[border-color,box-shadow] duration-150 hover:border-fg-muted",
-          "focus-within:border-ring focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-canvas",
+          "rounded-xl border border-input bg-surface shadow-paper transition-[border-color,box-shadow] duration-150 hover:border-fg-faint",
+          // One quiet ring while the message box has focus, like every input;
+          // the attach and send buttons draw their own.
+          "has-[textarea:focus]:border-ring has-[textarea:focus]:ring-[3px] has-[textarea:focus]:ring-tone-ring",
           disabled && "opacity-50",
         )}
       >
