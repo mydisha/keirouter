@@ -1,27 +1,27 @@
-# Auto-updated by release.yml on tag v0.3.1. Do not edit manually.
+# Auto-updated by release.yml on tag v0.3.2. Do not edit manually.
 class Keirouter < Formula
   desc "Self-hosted AI gateway — one endpoint for 130+ LLM providers with fallback, caching, and a dashboard"
   homepage "https://github.com/mydisha/keirouter"
-  version "0.3.1"
+  version "0.3.2"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.1/keirouter_v0.3.1_darwin_arm64.tar.gz"
-      sha256 "7f8fdc6022aa22e786430697219ae33bd197ab9587356d0700b823e066e771c4"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.3.2/keirouter_v0.3.2_darwin_arm64.tar.gz"
+      sha256 "6a73d7c756612c5f0ed21ae2515ab9444c6ff765da8911f968795f4a1d572490"
     else
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.1/keirouter_v0.3.1_darwin_amd64.tar.gz"
-      sha256 "edb678c3b5f5332d88f6c72bed7fa9d177a24813e7f2e2a3b496c271e38dd470"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.3.2/keirouter_v0.3.2_darwin_amd64.tar.gz"
+      sha256 "bf48a922c2011219e31e2e5661723b98f883afe4c08c623fb9f40f0e2f30c33d"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.1/keirouter_v0.3.1_linux_arm64.tar.gz"
-      sha256 "3fd2c6d5bf59ec9bae7f6d8610e71efb6a1d29eb52f406a859a527c494534eba"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.3.2/keirouter_v0.3.2_linux_arm64.tar.gz"
+      sha256 "c3c5bf0bfa12e4c381abe20d319902b010819ef94a77e19905e26e9291c40609"
     else
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.1/keirouter_v0.3.1_linux_amd64.tar.gz"
-      sha256 "d1993594b599eb3d028f9d8bd4cceb30a2a6aaef7b8c624848e5a34c4400bf39"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.3.2/keirouter_v0.3.2_linux_amd64.tar.gz"
+      sha256 "5392695fc595d2635ecf8177876245663148d2d22d7e3aad3e44421b79dbc70e"
     end
   end
 
