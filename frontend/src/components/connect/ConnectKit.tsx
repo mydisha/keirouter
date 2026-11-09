@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowLeft, Check, ChevronRight, Copy, ExternalLink, Load
 import type { DeviceCode } from "../../lib/api";
 import { cn } from "@/lib/utils";
 import { ProviderLogo } from "../ProviderLogo";
-import { Badge, IconTile } from "../ui";
+import { Badge, Glyph } from "../ui";
 import { useToast } from "../Toast";
 
 // The connect kit is the shared vocabulary of every "connect a provider"
@@ -15,11 +15,6 @@ import { useToast } from "../Toast";
 // actually different about that provider.
 
 // ── Shell ────────────────────────────────────────────────────────────────────
-
-// Dialogs render in a portal outside <main>, so they don't inherit the page's
-// section tone. Every connect dialog belongs to the Providers group (teal);
-// `tone` lets a caller from another section override it.
-type DialogTone = "blue" | "violet" | "teal" | "orange" | "slate";
 
 export function ConnectDialog({
   title,
@@ -31,7 +26,6 @@ export function ConnectDialog({
   toolbar,
   children,
   footer,
-  tone = "teal",
 }: {
   title: string;
   description?: ReactNode;
@@ -44,18 +38,16 @@ export function ConnectDialog({
   toolbar?: ReactNode;
   children: ReactNode;
   footer?: ReactNode;
-  tone?: DialogTone;
 }) {
   return (
     <Dialog.Root open onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/45 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
         <Dialog.Content
           {...(description ? {} : { "aria-describedby": undefined })}
-          data-tone={tone}
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 flex max-h-[min(88dvh,760px)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-float)] focus:outline-none",
-            "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.98]",
+            "fixed left-1/2 top-1/2 z-50 flex max-h-[min(88dvh,760px)] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-lift focus:outline-none",
+            "data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out",
             width === "xl" ? "max-w-3xl" : width === "lg" ? "max-w-xl" : "max-w-md",
           )}
           onOpenAutoFocus={(e) => {
@@ -73,19 +65,19 @@ export function ConnectDialog({
                 type="button"
                 onClick={onBack}
                 aria-label="Back"
-                className="-ml-1.5 flex h-9 w-9 shrink-0 sm:mt-0.5 sm:h-7 sm:w-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="-ml-1.5 flex h-9 w-9 shrink-0 sm:mt-0.5 sm:h-7 sm:w-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               </button>
             )}
             {logo && <ProviderLogo icon={logo.icon} name={logo.name} size={28} className="mt-0.5" />}
             <div className="min-w-0 flex-1 self-center">
-              <Dialog.Title className="text-[15px] font-semibold tracking-[-0.01em] text-fg">{title}</Dialog.Title>
+              <Dialog.Title className="text-[15px] font-medium tracking-[-0.01em] text-fg">{title}</Dialog.Title>
               {description && <Dialog.Description className="mt-0.5 text-[13px] leading-5 text-fg-muted">{description}</Dialog.Description>}
             </div>
             <Dialog.Close
               aria-label="Close"
-              className="-mr-1.5 flex h-9 w-9 shrink-0 sm:h-7 sm:w-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="-mr-1.5 flex h-9 w-9 shrink-0 sm:h-7 sm:w-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <X className="h-4 w-4" aria-hidden="true" />
             </Dialog.Close>
@@ -139,7 +131,7 @@ export function PrimaryAction({
       aria-busy={busy || undefined}
       data-autofocus
       className={cn(
-        "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-transparent bg-action px-3.5 text-[13px] font-medium text-action-fg shadow-[var(--shadow-card)] transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface [&_svg]:size-4",
+        "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-transparent bg-action px-3.5 text-[13px] font-medium text-action-fg shadow-paper transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface [&_svg]:size-4",
         className,
       )}
     >
@@ -156,7 +148,7 @@ export function SecondaryAction({ children, onClick, disabled, className }: { ch
       onClick={onClick}
       disabled={disabled}
       className={cn(
-        "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3.5 text-[13px] font-medium text-fg transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [&_svg]:size-4",
+        "inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3.5 text-[13px] font-medium text-fg transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4",
         className,
       )}
     >
@@ -172,7 +164,7 @@ export function TextButton({ children, onClick, ...aria }: { children: ReactNode
       type="button"
       onClick={onClick}
       {...aria}
-      className="inline-flex min-h-6 items-center rounded-md text-[12.5px] font-medium text-fg-muted underline-offset-2 hover:text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+      className="inline-flex min-h-6 items-center rounded-md text-[12.5px] font-medium text-fg-muted underline-offset-2 hover:text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       {children}
     </button>
@@ -199,9 +191,9 @@ export function MethodPicker<T extends string>({ methods, onSelect, intro }: { m
             <button
               type="button"
               onClick={() => onSelect(m.id)}
-              className="group flex w-full items-center gap-3 rounded-xl border border-line bg-surface px-3.5 py-3 text-left transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="group flex w-full items-center gap-3 rounded-xl border border-line bg-surface px-3.5 py-3 text-left transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <IconTile icon={m.icon} size="md" />
+              <Glyph icon={m.icon} />
               <span className="min-w-0 flex-1">
                 <span className="flex items-center gap-2 text-[13px] font-medium text-fg">
                   {m.title}
@@ -209,7 +201,7 @@ export function MethodPicker<T extends string>({ methods, onSelect, intro }: { m
                 </span>
                 <span className="mt-0.5 block text-[12.5px] leading-5 text-fg-muted">{m.description}</span>
               </span>
-              <ChevronRight className="h-4 w-4 shrink-0 text-fg-faint transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-tone" aria-hidden="true" />
+              <ChevronRight className="h-4 w-4 shrink-0 text-fg-faint transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-fg" aria-hidden="true" />
             </button>
           </li>
         ))}
@@ -229,7 +221,7 @@ export function Steps({ title, steps }: { title?: string; steps: ReactNode[] }) 
       <ol className="space-y-2">
         {steps.map((s, i) => (
           <li key={i} className="flex items-start gap-2.5 text-[13px] leading-5 text-fg">
-            <span aria-hidden="true" className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-tone-soft font-mono text-[11px] font-semibold text-tone ring-1 ring-inset ring-tone-ring">{i + 1}</span>
+            <span aria-hidden="true" className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-subtle font-mono text-[11px] font-medium text-fg-muted">{i + 1}</span>
             <span className="min-w-0">{s}</span>
           </li>
         ))}
@@ -244,7 +236,7 @@ export function InlineCode({ children }: { children: ReactNode }) {
 
 export function ExternalTextLink({ href, children }: { href: string; children: ReactNode }) {
   return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 rounded-sm font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+    <a href={href} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-0.5 rounded-sm font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
       {children}
       <ExternalLink className="h-3 w-3" aria-hidden="true" />
       <span className="sr-only"> (opens in a new tab)</span>
@@ -271,7 +263,7 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
         type="button"
         onClick={copy}
         aria-label={label}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {copied ? <Check className="h-4 w-4 text-ok" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
       </button>
@@ -403,7 +395,7 @@ export function DeviceWaiting({
         <div className="rounded-xl border border-line bg-subtle px-4 py-3.5 text-center">
           <p className="text-[12px] text-fg-muted">Your code</p>
           <div className="mt-1 flex items-center justify-center gap-1.5">
-            <span className="min-w-0 break-all font-mono text-[20px] font-semibold tracking-[0.12em] text-fg sm:text-[24px] sm:tracking-[0.18em]">{code.user_code}</span>
+            <span className="min-w-0 break-all font-mono text-[20px] font-medium tracking-[0.12em] text-fg sm:text-[24px] sm:tracking-[0.18em]">{code.user_code}</span>
             <CopyButton value={code.user_code} label="Copy code" />
           </div>
         </div>
@@ -413,14 +405,14 @@ export function DeviceWaiting({
         target="_blank"
         rel="noopener noreferrer"
         data-autofocus
-        className="flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-action px-3 py-2 text-center text-[13px] font-medium text-action-fg shadow-[var(--shadow-card)] transition-colors hover:bg-action-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+        className="flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg bg-action px-3 py-2 text-center text-[13px] font-medium text-action-fg shadow-paper transition-colors hover:bg-action-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
       >
         <ExternalLink className="h-4 w-4" aria-hidden="true" />
         {openLabel}
         <span className="sr-only"> (opens in a new tab)</span>
       </a>
       <div className="flex items-center gap-2.5 rounded-xl border border-line px-3.5 py-2.5">
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-tone" aria-hidden="true" />
+        <Loader2 className="h-4 w-4 shrink-0 animate-spin text-fg-muted" aria-hidden="true" />
         {/* The live region holds only the status text: the ticking timer stays
             outside it so screen readers aren't interrupted every second. */}
         <div className="min-w-0 flex-1" role="status" aria-live="polite">
@@ -447,7 +439,7 @@ function formatElapsed(s: number): string {
 export function Starting({ text }: { text: string }) {
   return (
     <div className="flex flex-col items-center gap-3 py-8" role="status" aria-live="polite">
-      <Loader2 className="h-6 w-6 animate-spin text-tone" aria-hidden="true" />
+      <Loader2 className="h-6 w-6 animate-spin text-fg-muted" aria-hidden="true" />
       <p className="text-[13px] text-fg-muted">{text}</p>
     </div>
   );
@@ -456,8 +448,8 @@ export function Starting({ text }: { text: string }) {
 export function Connected({ name }: { name: string }) {
   return (
     <div className="flex flex-col items-center gap-2 py-8 text-center" role="status" aria-live="polite">
-      <IconTile icon={Check} size="lg" tone="ok" className="mb-1" />
-      <p className="text-[14px] font-semibold text-fg">{name} connected</p>
+      <Glyph icon={Check} size="lg" tone="ok" className="mb-1" />
+      <p className="text-[14px] font-medium text-fg">{name} connected</p>
       <p className="text-[12.5px] text-fg-muted">Refreshing accounts…</p>
     </div>
   );
@@ -466,7 +458,7 @@ export function Connected({ name }: { name: string }) {
 export function ConnectError({ message, onRetry, onClose }: { message: string; onRetry?: () => void; onClose: () => void }) {
   return (
     <div className="space-y-4">
-      <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-bad/30 bg-bad/5 px-3.5 py-3">
+      <div role="alert" className="flex items-start gap-2.5 rounded-xl border border-bad/30 bg-bad-soft px-3.5 py-3">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-bad" aria-hidden="true" />
         <p className="break-words text-[13px] leading-5 text-bad">{message || "Something went wrong. Try again."}</p>
       </div>
@@ -496,7 +488,7 @@ export function FormError({ message, id }: { message?: string; id?: string }) {
 // ── Form fields ──────────────────────────────────────────────────────────────
 
 const fieldClass =
-  "w-full rounded-lg border bg-surface text-[13px] text-fg placeholder:text-fg-faint transition-colors focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-60";
+  "w-full rounded-lg border bg-surface text-[13px] text-fg placeholder:text-fg-faint transition-colors focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60";
 
 function FieldLabel({ htmlFor, label, optional, required }: { htmlFor: string; label: string; optional?: boolean; required?: boolean }) {
   return (
@@ -625,7 +617,7 @@ export function Advanced({ children, label = "More options", defaultOpen = false
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-controls={id}
-        className="inline-flex min-h-6 items-center gap-1 rounded-md text-[12.5px] font-medium text-fg-muted hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+        className="inline-flex min-h-6 items-center gap-1 rounded-md text-[12.5px] font-medium text-fg-muted hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-90")} aria-hidden="true" />
         {label}

@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
 import { formatTokenLimit, ModelMultiSelect } from "../components/ModelSelect";
-import { Badge, Button, IconTile, Input, SectionTitle, Select, Skeleton, Toggle, Modal, ErrorBanner, TablePagination, useClientPagination, EmptyState } from "../components/ui";
+import { Badge, Button, Glyph, Input, SectionTitle, Select, Skeleton, Toggle, Modal, ErrorBanner, TablePagination, useClientPagination, EmptyState } from "../components/ui";
 import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
@@ -40,7 +40,7 @@ const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
   { value: "inactive", label: "Disabled" },
 ];
 
-const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function usedAt(iso?: string | null): number | null {
   if (!iso) return null;
@@ -479,7 +479,7 @@ export function KeysPage() {
             <span>
               Advanced <span className="font-normal text-fg-muted">· limits and models</span>
             </span>
-            <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showAdvanced && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+            <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showAdvanced && "rotate-180")} aria-hidden="true" />
           </button>
 
           {showAdvanced && (
@@ -625,7 +625,6 @@ export function KeysPage() {
         <EmptyState
           variant="card"
           titleAs="h2"
-          icon={ICONS.keys}
           title="No API keys yet"
           hint="Create a key for each tool, app or teammate that calls KeiRouter."
           action={
@@ -636,7 +635,7 @@ export function KeysPage() {
           }
         />
       ) : (
-        <section aria-labelledby={`${fid}-list`} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        <section aria-labelledby={`${fid}-list`} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
           <div className="border-b border-line px-4 py-3">
             <SectionTitle
               icon={ICONS.keys}
@@ -661,7 +660,7 @@ export function KeysPage() {
 
           <div className="flex flex-col gap-2 border-b border-line px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center">
             <div className="relative sm:w-72">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
               <input
                 type="search"
                 value={searchQuery}
@@ -669,7 +668,7 @@ export function KeysPage() {
                 placeholder="Search name, key or plan"
                 aria-label="Search keys"
                 className={cn(
-                  "h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500",
+                  "h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-ring",
                   FOCUS_RING,
                 )}
               />
@@ -697,7 +696,7 @@ export function KeysPage() {
                     className={cn(
                       "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors",
                       FOCUS_RING,
-                      active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+                      active ? "border-accent-500/30 bg-brand-soft text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
                     )}
                   >
                     {f.label}
@@ -733,7 +732,7 @@ export function KeysPage() {
 
           {visibleKeys.length === 0 ? (
             <div className="px-6 py-10 text-center">
-              <h3 className="text-[13px] font-semibold text-fg">No keys match</h3>
+              <h3 className="text-[13px] font-medium text-fg">No keys match</h3>
               <Button
                 variant="ghost"
                 className="mt-3"
@@ -870,7 +869,7 @@ function KeyCard(props: KeyItemProps) {
   ].filter(Boolean);
 
   return (
-    <li className={cn("px-4 py-3", selected && "bg-accent-500/5")}>
+    <li className={cn("px-4 py-3", selected && "bg-brand-soft")}>
       <div className="flex items-center gap-2">
         {/* The label widens the checkbox's tap target to 36px. */}
         <label className="-my-2 -ml-2.5 flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center">
@@ -924,7 +923,7 @@ function KeyRow({
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
   return (
-    <tr className={cn("cursor-pointer transition-colors", selected ? "bg-accent-500/5" : "hover:bg-hover")} onClick={onOpen}>
+    <tr className={cn("cursor-pointer transition-colors", selected ? "bg-brand-soft" : "hover:bg-hover")} onClick={onOpen}>
       <td className="px-4 py-2.5" onClick={stop}>
         <input
           type="checkbox"
@@ -1025,7 +1024,7 @@ function StepSuccess({
       <div className={cn("space-y-4 px-5 py-4", DIALOG_BODY)}>
         <div className="space-y-3">
           <div className="flex items-center gap-3" id={warnId}>
-            <IconTile icon={Check} size="md" tone="ok" />
+            <Glyph icon={Check} tone="ok" />
             <p className="min-w-0 text-[13px] leading-5">
               <span className="block font-medium text-fg">Copy this key now</span>
               <span className="block text-fg-muted">It won't be shown again.</span>
@@ -1060,7 +1059,7 @@ function StepSuccess({
           <p role="status" className="min-h-5 text-[12.5px]">
             {copied && (
               <span className="inline-flex items-center gap-1.5 text-ok">
-                <Check className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
+                <Check className="stroke-2 h-3.5 w-3.5" aria-hidden="true" />
                 Key copied to your clipboard.
               </span>
             )}
@@ -1079,7 +1078,7 @@ function StepSuccess({
                 title="Copy portal link"
                 className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-faint transition-colors hover:bg-hover hover:text-fg sm:h-8 sm:w-8", FOCUS_RING)}
               >
-                {copiedUrl ? <Check className="h-4 w-4 text-ok" strokeWidth={1.75} aria-hidden="true" /> : <Copy className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />}
+                {copiedUrl ? <Check className="h-4 w-4 text-ok" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
               </button>
             </dd>
           </div>
@@ -1116,7 +1115,7 @@ function StepSuccess({
               aria-controls={setupId}
               className={cn("inline-flex min-h-8 items-center gap-1.5 rounded-md text-[12.5px] font-medium text-fg hover:underline", FOCUS_RING)}
             >
-              <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showSetup && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+              <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showSetup && "rotate-180")} aria-hidden="true" />
               Setup message
             </button>
             <button

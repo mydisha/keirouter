@@ -2,7 +2,7 @@ import { useId, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { WifiOff } from "lucide-react";
 import { api, fetchPortalBranding } from "../lib/api";
-import { Button, IconTile, Input, Spinner } from "./ui";
+import { Button, Glyph, Input, Spinner } from "./ui";
 import { BrandMark } from "./BrandMark";
 
 // AuthGate gates the dashboard behind a login, and surfaces a one-time
@@ -26,8 +26,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
         <div className="px-6 py-7 text-center">
           <AuthGateLogo className="mx-auto h-8 object-contain" />
           <div role="alert">
-            <IconTile icon={WifiOff} size="lg" tone="bad" className="mx-auto mt-6" />
-            <h1 className="mt-3 text-[15px] font-semibold tracking-[-0.01em] text-fg">
+            <Glyph icon={WifiOff} size="lg" tone="bad" className="mx-auto mt-6" />
+            <h1 className="mt-3 text-[15px] font-medium tracking-[-0.01em] text-fg">
               Cannot reach <AuthGateName />
             </h1>
             <p className="mt-1.5 text-[13px] text-fg-muted">
@@ -68,7 +68,7 @@ function AuthShell({ children, wide = false }: { children: ReactNode; wide?: boo
           paddingBottom: "max(1.5rem, env(safe-area-inset-bottom))",
         }}
       >
-        <div className={`w-full ${wide ? "max-w-md" : "max-w-sm"} rounded-2xl border border-line bg-surface shadow-[var(--shadow-pop)]`}>
+        <div className={`w-full ${wide ? "max-w-md" : "max-w-sm"} rounded-2xl border border-line bg-surface shadow-lift`}>
           {children}
         </div>
       </div>
@@ -91,7 +91,7 @@ function AuthGateLogo({ className }: { className?: string }) {
   return (
     <span className="inline-flex items-center gap-2.5">
       <BrandMark size={26} />
-      <span className="text-[16px] font-semibold tracking-[-0.01em] text-fg">{data?.name || "KeiRouter"}</span>
+      <span className="text-[16px] font-medium tracking-[-0.01em] text-fg">{data?.name || "KeiRouter"}</span>
     </span>
   );
 }
@@ -129,7 +129,7 @@ function LoginScreen() {
       <div className="px-5 pb-6 pt-7 sm:px-6">
         <div className="flex flex-col items-center text-center">
           <AuthGateLogo className="h-8 object-contain" />
-          <h1 className="mt-5 text-[15px] font-semibold tracking-[-0.01em] text-fg">Sign in to your dashboard</h1>
+          <h1 className="mt-5 text-[15px] font-medium tracking-[-0.01em] text-fg">Sign in to your dashboard</h1>
         </div>
         <form
           className="mt-6 space-y-4"
@@ -211,7 +211,7 @@ function OnboardingScreen() {
     <AuthShell wide>
       <div className="px-5 pb-6 pt-7 sm:px-6">
         <AuthGateLogo className="h-8 object-contain" />
-        <h1 className="mt-5 text-[15px] font-semibold tracking-[-0.01em] text-fg">Welcome to <AuthGateName /></h1>
+        <h1 className="mt-5 text-[15px] font-medium tracking-[-0.01em] text-fg">Welcome to <AuthGateName /></h1>
         <p className="mt-1 text-[13px] leading-5 text-fg-muted">
           You're signed in with the default password. Set a new one to open the dashboard.
         </p>

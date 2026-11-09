@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { X, ExternalLink, ArrowUpCircle, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import { IconTile } from "./ui";
+import { Glyph } from "./ui";
 
 // Only needed once an update is available and the panel is opened.
 const ChangelogMarkdown = lazy(() => import("./ChangelogMarkdown").then((m) => ({ default: m.ChangelogMarkdown })));
@@ -81,11 +81,11 @@ export function UpdateNotification() {
         aria-controls={open ? panelId : undefined}
         aria-label={`Update available: ${data.latest}`}
         title={`Update available: ${data.latest}`}
-        className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 ${
+        className={`relative flex h-9 w-9 items-center justify-center rounded-lg transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
           open ? "bg-hover text-fg" : "text-fg-muted"
         }`}
       >
-        <ArrowUpCircle className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        <ArrowUpCircle className="h-4 w-4" aria-hidden="true" />
         {/* Edge dot — signals an available update (the name says it in words). */}
         <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-accent-500 ring-2 ring-surface" aria-hidden="true" />
       </button>
@@ -99,14 +99,14 @@ export function UpdateNotification() {
           tabIndex={-1}
           // Phones: full width minus 16px gutters under the top bar; from sm
           // a right-aligned popover. Never taller than the visible viewport.
-          className="fixed inset-x-4 top-[calc(4rem+env(safe-area-inset-top))] z-50 flex max-h-[calc(100dvh-5rem-env(safe-area-inset-top))] flex-col sm:left-auto sm:right-4 sm:w-[min(34rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-float)] outline-none animate-in fade-in-0 zoom-in-[0.98] duration-150"
+          className="fixed inset-x-4 top-[calc(4rem+env(safe-area-inset-top))] z-50 flex max-h-[calc(100dvh-5rem-env(safe-area-inset-top))] flex-col sm:left-auto sm:right-4 sm:w-[min(34rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-line bg-surface shadow-lift outline-none animate-in fade-in-0 zoom-in-[0.98] duration-150"
           style={{ outline: "none" }}
         >
           <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-4 py-3">
             <div className="flex min-w-0 items-center gap-3">
-              <IconTile icon={ArrowUpCircle} size="md" tone="blue" />
+              <Glyph icon={ArrowUpCircle} tone="brand" />
               <div className="min-w-0">
-              <h2 id={titleId} className="text-[13px] font-semibold text-fg">Update available</h2>
+              <h2 id={titleId} className="text-[13px] font-medium text-fg">Update available</h2>
               <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[12px] text-fg-muted">
                 <span className="truncate font-mono">{data.current}</span>
                 <span className="text-fg-faint" aria-hidden="true">→</span>
@@ -119,9 +119,9 @@ export function UpdateNotification() {
               type="button"
               onClick={close}
               aria-label="Close"
-              className="-mr-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9 text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="-mr-1.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9 text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+              <X className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
 
@@ -137,9 +137,9 @@ export function UpdateNotification() {
             <Link
               to="/settings#system"
               onClick={() => setOpen(false)}
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent bg-action [@media(pointer:coarse)]:h-9 px-3 text-[13px] font-medium text-action-fg shadow-[var(--shadow-card)] transition-colors hover:bg-action-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-subtle"
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-transparent bg-action [@media(pointer:coarse)]:h-9 px-3 text-[13px] font-medium text-action-fg shadow-paper transition-colors hover:bg-action-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-subtle"
             >
-              <FileText className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+              <FileText className="h-4 w-4" aria-hidden="true" />
               Full changelog
             </Link>
             {data.html_url && (
@@ -147,10 +147,10 @@ export function UpdateNotification() {
                 href={data.html_url}
                 target="_blank"
                 rel="noreferrer noopener"
-                className="inline-flex min-h-6 items-center gap-1 rounded text-[12px] [@media(pointer:coarse)]:min-h-9 [@media(pointer:coarse)]:px-1 font-medium text-link transition-colors hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="inline-flex min-h-6 items-center gap-1 rounded text-[12px] [@media(pointer:coarse)]:min-h-9 [@media(pointer:coarse)]:px-1 font-medium text-link transition-colors hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Release notes
-                <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                 <span className="sr-only">(opens in a new tab)</span>
               </a>
             )}

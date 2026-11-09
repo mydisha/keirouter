@@ -45,7 +45,6 @@ import {
   Wrench,
   type LucideIcon,
 } from "lucide-react";
-import type { TileTone } from "../components/ui";
 
 export type SkillTemplateCategory = "support" | "sales" | "operations" | "engineering" | "writing" | "persona" | "policy";
 
@@ -62,14 +61,14 @@ export type SkillTemplate = {
   scopeTip?: string;
 };
 
-export const SKILL_TEMPLATE_CATEGORIES: { value: SkillTemplateCategory; label: string; tone: TileTone }[] = [
-  { value: "support", label: "Customer service", tone: "teal" },
-  { value: "sales", label: "Sales", tone: "orange" },
-  { value: "operations", label: "Operations", tone: "violet" },
-  { value: "engineering", label: "Engineering", tone: "blue" },
-  { value: "writing", label: "Writing", tone: "violet" },
-  { value: "persona", label: "Persona", tone: "orange" },
-  { value: "policy", label: "Policy & format", tone: "slate" },
+export const SKILL_TEMPLATE_CATEGORIES: { value: SkillTemplateCategory; label: string }[] = [
+  { value: "support", label: "Customer service" },
+  { value: "sales", label: "Sales" },
+  { value: "operations", label: "Operations" },
+  { value: "engineering", label: "Engineering" },
+  { value: "writing", label: "Writing" },
+  { value: "persona", label: "Persona" },
+  { value: "policy", label: "Policy & format" },
 ];
 
 // Placeholders: {{name}} with letters, digits, "_", "." or "-". Mirrors

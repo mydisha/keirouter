@@ -112,7 +112,7 @@ export function TokenSavingsBreakdown({ savings, totalRequests, insights, period
 
   const titleId = useId();
   return (
-    <section aria-labelledby={titleId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section aria-labelledby={titleId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       <div className="border-b border-line px-4 py-3">
         <SectionTitle id={titleId} icon={ICONS.savings} title="Optimization" action={<SavingsCardShareButton insights={insights} period={period} />} />
       </div>
@@ -121,7 +121,6 @@ export function TokenSavingsBreakdown({ savings, totalRequests, insights, period
         {cells.map((c) => (
           <Kpi
             key={c.label}
-            icon={c.icon}
             label={c.label}
             value={c.value}
             hint={c.hint ? <span title={c.hint}>{c.hint}</span> : undefined}

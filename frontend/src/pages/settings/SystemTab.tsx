@@ -58,7 +58,7 @@ function UpdatesSettings() {
       busy={isLoading}
       action={
         <Button variant="ghost" onClick={checkNow} disabled={checking}>
-          <RefreshCw className={`text-fg-faint ${checking ? "animate-spin" : ""}`} strokeWidth={1.75} aria-hidden="true" />
+          <RefreshCw className={`text-fg-faint ${checking ? "animate-spin" : ""}`} aria-hidden="true" />
           {checking ? "Checking…" : "Check now"}
         </Button>
       }
@@ -82,11 +82,11 @@ function UpdatesSettings() {
           <div className="grid grid-cols-2 gap-px bg-line sm:grid-cols-3">
             <div className="bg-surface px-4 py-3">
               <p className="text-[12px] text-fg-muted">Current</p>
-              <p className="mt-1 break-all font-mono text-[15px] font-semibold text-fg">{data.current}</p>
+              <p className="mt-1 break-all font-mono text-[15px] font-medium text-fg">{data.current}</p>
             </div>
             <div className="bg-surface px-4 py-3">
               <p className="text-[12px] text-fg-muted">Latest</p>
-              <p className="mt-1 break-all font-mono text-[15px] font-semibold text-fg">{data.latest || "—"}</p>
+              <p className="mt-1 break-all font-mono text-[15px] font-medium text-fg">{data.latest || "n/a"}</p>
               {publishedLabel && <p className="mt-0.5 text-[12px] text-fg-muted">Released {publishedLabel}</p>}
             </div>
             <div className="col-span-2 bg-surface px-4 py-3 sm:col-span-1">
@@ -113,7 +113,7 @@ function UpdatesSettings() {
                     className="inline-flex items-center gap-1 text-[12px] font-medium text-link hover:underline"
                   >
                     View release on GitHub
-                    <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                    <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                     <span className="sr-only">(opens in a new tab)</span>
                   </a>
                 )}
@@ -122,7 +122,7 @@ function UpdatesSettings() {
                 tabIndex={0}
                 role="region"
                 aria-label={`Changelog for ${data.latest}`}
-                className="max-h-80 overflow-y-auto rounded-lg border border-line bg-subtle p-3 [overflow-wrap:anywhere] focus:outline-none sm:p-4 focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="max-h-80 overflow-y-auto rounded-lg border border-line bg-subtle p-3 [overflow-wrap:anywhere] focus:outline-none sm:p-4 focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <ChangelogMarkdown changelog={data.changelog} />
               </div>

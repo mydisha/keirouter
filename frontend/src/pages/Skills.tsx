@@ -18,7 +18,7 @@ import {
 import { ModelMultiSelect } from "../components/ModelSelect";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
-import { Badge, Button, EmptyState, Field, IconTile, Input, Modal, SectionTitle, SegmentedControl, Skeleton, Textarea, Toggle, ErrorBanner } from "../components/ui";
+import { Badge, Button, EmptyState, Field, Glyph, Input, Modal, SectionTitle, SegmentedControl, Skeleton, Textarea, Toggle, ErrorBanner } from "../components/ui";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import {
   DropdownMenu,
@@ -65,7 +65,7 @@ const MAX_VARIABLE_CHARS = 1000;
 // Above this many injected tokens every request pays a noticeable tax.
 const HEAVY_TOKENS = 2000;
 
-const focusRing = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const focusRing = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 const skillUrl = (id: string) => `https://raw.githubusercontent.com/mydisha/keirouter/main/skills/${id}/SKILL.md`;
 const agentInstruction = (id: string) => `Read this skill and use it: ${skillUrl(id)}`;
@@ -236,7 +236,7 @@ export function SkillsPage() {
 
       <div className="space-y-6">
         {/* Custom skills */}
-        <section aria-labelledby="custom-skills-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        <section aria-labelledby="custom-skills-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
           <div className="border-b border-line px-4 py-3">
             <SectionTitle
               id="custom-skills-heading"
@@ -268,8 +268,8 @@ export function SkillsPage() {
             </div>
           ) : skills.isError ? (
             <div className="p-4">
-              <div role="alert" className="flex items-start gap-2.5 rounded-lg border border-bad/30 bg-bad/5 px-3.5 py-2.5">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-bad" strokeWidth={1.75} aria-hidden="true" />
+              <div role="alert" className="flex items-start gap-2.5 rounded-lg border border-bad/30 bg-bad-soft px-3.5 py-2.5">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-bad" aria-hidden="true" />
                 <p className="text-[13px] text-bad">
                   Couldn't load skills. {skills.error instanceof Error ? `${skills.error.message}. ` : ""}Refresh the page to try again.
                 </p>
@@ -277,7 +277,6 @@ export function SkillsPage() {
             </div>
           ) : custom.length === 0 ? (
             <EmptyState
-              icon={NotebookPen}
               title="No custom skills yet"
               hint="Write an instruction once — house style, review rules, a persona — and every request routed through KeiRouter receives it. Scope it to plans, API keys or models when it shouldn't apply everywhere."
               action={(
@@ -337,8 +336,8 @@ export function SkillsPage() {
 function InjectionSummary({ activeCount, everyTokens, maxTokens }: { activeCount: number; everyTokens: number; maxTokens: number }) {
   const heavy = maxTokens > HEAVY_TOKENS;
   return (
-    <div className={`flex items-start gap-2 border-b border-line px-4 py-2.5 text-[12.5px] ${heavy ? "bg-warn/10 text-warn" : "bg-subtle text-fg-muted"}`}>
-      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+    <div className={`flex items-start gap-2 border-b border-line px-4 py-2.5 text-[12.5px] ${heavy ? "bg-warn-soft text-warn" : "bg-subtle text-fg-muted"}`}>
+      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       <p>
         {activeCount === 0 ? (
           "No skill is active — requests pass through unchanged."
@@ -413,7 +412,7 @@ function SkillEditor({
         <div className="max-h-[calc(100dvh-15rem)] space-y-4 overflow-y-auto px-4 py-4 sm:max-h-[70vh] sm:px-5">
           {template && (
             <div className="flex items-start gap-2 rounded-lg border border-line bg-subtle px-3.5 py-2.5 text-[12.5px] text-fg-muted">
-              <LayoutTemplate className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+              <LayoutTemplate className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               <p>
                 Started from the <span className="font-medium text-fg">{template.name}</span> template — adjust it to your use case before saving.
                 {template.scopeTip && <> {template.scopeTip}</>}
@@ -453,7 +452,7 @@ function SkillEditor({
           </Field>
           {variableNames.length > 0 && (
             <fieldset className="space-y-3 rounded-xl border border-line p-4 pt-1 [&>legend]:mb-0">
-              <legend className="px-1 text-[12.5px] font-semibold text-fg">Variables</legend>
+              <legend className="px-1 text-[12.5px] font-medium text-fg">Variables</legend>
               <p className="text-[12px] leading-5 text-fg-muted">
                 Filled into the prompt's placeholders on every request — change a value here instead of editing the text.
               </p>
@@ -475,7 +474,7 @@ function SkillEditor({
               </div>
               {emptyVariables.length > 0 && (
                 <p className="flex items-start gap-1.5 text-[12px] leading-5 text-warn">
-                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                  <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                   {emptyVariables.length === 1 ? "1 variable is empty" : `${emptyVariables.length} variables are empty`} — the model receives the raw placeholder until you fill {emptyVariables.length === 1 ? "it" : "them"} in.
                 </p>
               )}
@@ -483,13 +482,13 @@ function SkillEditor({
                 <summary className={`cursor-pointer select-none rounded-lg px-3 py-2 text-[12.5px] font-medium text-fg-muted hover:text-fg ${focusRing}`}>
                   Preview what the model receives
                 </summary>
-                <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words border-t border-line px-3 py-2.5 font-mono text-[12px] leading-5 text-fg">{rendered || "—"}</pre>
+                <pre className="max-h-60 overflow-auto whitespace-pre-wrap break-words border-t border-line px-3 py-2.5 font-mono text-[12px] leading-5 text-fg">{rendered || "n/a"}</pre>
               </details>
             </fieldset>
           )}
 
           <fieldset className="space-y-4 rounded-xl border border-line p-4 pt-1 [&>legend]:mb-0">
-            <legend className="px-1 text-[12.5px] font-semibold text-fg">Applies to</legend>
+            <legend className="px-1 text-[12.5px] font-medium text-fg">Applies to</legend>
 
             <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -626,7 +625,7 @@ function ChipPicker({
                 title={o.title}
                 onClick={() => onToggle(o.id)}
                 className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-medium transition-colors sm:h-7 ${focusRing} ${
-                  on ? "border-accent-500/40 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-fg-faint hover:text-fg"
+                  on ? "border-accent-500/40 bg-brand-soft text-link" : "border-line bg-surface text-fg-muted hover:border-fg-faint hover:text-fg"
                 }`}
               >
                 {on && <Check className="h-3.5 w-3.5" aria-hidden="true" />}
@@ -661,7 +660,7 @@ function ScopeBadges({ skill, directory }: { skill: Skill; directory: Directory 
         <>
           {shown.map((it) => (
             <Badge key={it.key} tone="secondary">
-              <it.icon className="h-3 w-3" strokeWidth={1.75} aria-hidden="true" />
+              <it.icon className="h-3 w-3" aria-hidden="true" />
               {it.label}
             </Badge>
           ))}
@@ -696,7 +695,7 @@ function SkillRow({
 
   return (
     <li className="flex flex-wrap items-start gap-x-3 gap-y-2 px-4 py-3 transition-colors hover:bg-hover sm:flex-nowrap">
-      <IconTile icon={ICONS.prompt} size="sm" tone={skill.enabled ? "section" : "slate"} className="mt-0.5" />
+      <Glyph icon={ICONS.prompt}  className="mt-0.5" />
       <div className="min-w-0 flex-1">
         <button type="button" onClick={onEdit} className={`block w-full rounded-md text-left ${focusRing}`} aria-label={`Edit ${skill.name}`}>
           <span className="flex flex-wrap items-baseline gap-x-2">
@@ -762,7 +761,7 @@ function SkillTemplates({ onUse }: { onUse: (t: SkillTemplate) => void }) {
   const shown = collapsed ? filtered.slice(0, TEMPLATES_PREVIEW) : filtered;
 
   return (
-    <section id="skill-templates" aria-labelledby="skill-templates-heading" className="scroll-mt-4 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section id="skill-templates" aria-labelledby="skill-templates-heading" className="scroll-mt-4 overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       <div className="space-y-3 border-b border-line px-4 py-3">
         <SectionTitle
           id="skill-templates-heading"
@@ -812,7 +811,7 @@ function TemplateCard({ template: t, onUse }: { template: SkillTemplate; onUse: 
         className={`group flex w-full flex-col gap-2 px-4 py-3 text-left transition-colors hover:bg-hover focus-visible:ring-inset ${focusRing}`}
       >
         <span className="flex items-start gap-2.5">
-          <IconTile icon={t.icon} size="sm" tone={cat?.tone} />
+          <Glyph icon={t.icon} />
           <span className="min-w-0 flex-1">
             <span className="flex items-baseline justify-between gap-2">
               <span className="text-[13px] font-medium text-fg">{t.name}</span>
@@ -858,7 +857,7 @@ function useCopy() {
 function ReferenceSkills() {
   const { copied, copy } = useCopy();
   return (
-    <section aria-labelledby="reference-skills-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section aria-labelledby="reference-skills-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       <div className="border-b border-line px-4 py-3">
         <SectionTitle
           id="reference-skills-heading"
@@ -874,7 +873,7 @@ function ReferenceSkills() {
       </div>
 
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3.5">
-        <IconTile icon={ICONS.skills} size="md" />
+        <Glyph icon={ICONS.skills} />
         <span className="min-w-0 flex-1 basis-60">
           <span className="block text-[13px] font-medium text-fg">Start here: {ENTRY_SKILL.name}</span>
           <span className="block text-[12px] text-fg-muted">{ENTRY_SKILL.description} Covers every endpoint below.</span>
@@ -913,7 +912,7 @@ function ReferenceSkillCard({ skill, copied, onCopy }: { skill: ReferenceSkill; 
   return (
     <li className="flex flex-col gap-2 bg-surface px-4 py-3 transition-colors hover:bg-hover">
       <span className="flex items-start gap-2.5">
-        <IconTile icon={REFERENCE_ICONS[skill.id] ?? ICONS.skills} size="sm" />
+        <Glyph icon={REFERENCE_ICONS[skill.id] ?? ICONS.skills} />
         <span className="min-w-0 flex-1">
           <span className="flex items-baseline justify-between gap-2">
             <span className="text-[13px] font-medium text-fg">{skill.name}</span>
@@ -930,7 +929,7 @@ function ReferenceSkillCard({ skill, copied, onCopy }: { skill: ReferenceSkill; 
           aria-label={`Copy ${skill.name} skill URL`}
           className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-[12px] font-medium text-fg-muted transition-colors hover:bg-subtle hover:text-fg sm:h-7 ${focusRing}`}
         >
-          {copied ? <Check className="h-3.5 w-3.5 text-ok" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+          {copied ? <Check className="h-3.5 w-3.5 text-ok" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5 text-fg-faint" aria-hidden="true" />}
           <span aria-hidden="true">{copied ? "Copied" : "Copy URL"}</span>
         </button>
         <a
@@ -940,7 +939,7 @@ function ReferenceSkillCard({ skill, copied, onCopy }: { skill: ReferenceSkill; 
           aria-label={`Open ${skill.name} SKILL.md (opens in a new tab)`}
           className={`inline-flex h-9 items-center gap-1.5 rounded-lg px-2 text-[12px] font-medium text-fg-muted transition-colors hover:bg-subtle hover:text-fg sm:h-7 ${focusRing}`}
         >
-          <ExternalLink className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          <ExternalLink className="h-3.5 w-3.5 text-fg-faint" aria-hidden="true" />
           <span aria-hidden="true">View</span>
         </a>
       </span>

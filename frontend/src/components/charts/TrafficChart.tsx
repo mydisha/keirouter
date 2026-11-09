@@ -69,7 +69,7 @@ const METRICS: Record<MetricKey, MetricDef> = {
     legendA: "Avg latency",
     a: (p) => p.avg_latency_ms ?? 0,
     fmt: (v) => fmtMs(v),
-    total: (d) => (d.summary.p95_latency_ms ? `p95 ${fmtMs(d.summary.p95_latency_ms)}` : "—"),
+    total: (d) => (d.summary.p95_latency_ms ? `p95 ${fmtMs(d.summary.p95_latency_ms)}` : "n/a"),
   },
 };
 const METRIC_KEYS = Object.keys(METRICS) as MetricKey[];
@@ -139,7 +139,7 @@ export function TrafficCard({ data, className }: { data: UsageInsights; classNam
   };
 
   return (
-    <section aria-label="Traffic" className={cn("flex min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
+    <section aria-label="Traffic" className={cn("flex min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-paper", className)}>
       {/* The KPI strip above already carries the headline numbers, so the
           header is just a metric switch, the selected total and a legend. */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-2.5">
@@ -164,18 +164,18 @@ export function TrafficCard({ data, className }: { data: UsageInsights; classNam
                 onClick={() => setMetric(key)}
                 className={cn(
                   "inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-[12px] font-medium transition-[background-color,color,box-shadow] duration-150 [@media(pointer:coarse)]:h-8",
-                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                  active ? "bg-surface text-fg shadow-[var(--shadow-card)] ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
+                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  active ? "bg-surface text-fg shadow-paper ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
                 )}
               >
-                <MetricIcon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-tone" : "text-fg-faint")} strokeWidth={1.75} aria-hidden="true" />
+                <MetricIcon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-brand-ink" : "text-fg-faint")} aria-hidden="true" />
                 {METRICS[key].label}
               </button>
             );
           })}
         </div>
         <p className="text-[12px] text-fg-muted">
-          {metric === "latency" ? "Overall" : "Total"} <span className="font-semibold tabular-nums text-fg">{def.total(data)}</span>
+          {metric === "latency" ? "Overall" : "Total"} <span className="font-medium tabular-nums text-fg">{def.total(data)}</span>
         </p>
         <div className="flex items-center gap-3.5 text-[12px] text-fg-muted sm:ml-auto">
           <LegendSwatch className={aClass} label={def.legendA} />
@@ -192,7 +192,7 @@ export function TrafficCard({ data, className }: { data: UsageInsights; classNam
         <div className="flex min-w-0 flex-1 flex-col gap-2">
           <div
             ref={plotRef}
-            className="relative h-[220px] touch-pan-y select-none rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-4 focus-visible:ring-offset-surface"
+            className="relative h-[220px] touch-pan-y select-none rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-surface"
             tabIndex={0}
             role="group"
             aria-roledescription="chart"
@@ -302,7 +302,7 @@ function fmtUSD(v: number): string {
 }
 
 function fmtMs(v: number): string {
-  if (!Number.isFinite(v) || v <= 0) return "—";
+  if (!Number.isFinite(v) || v <= 0) return "n/a";
   if (v < 1000) return `${Math.round(v)} ms`;
   return `${(v / 1000).toFixed(v < 10_000 ? 2 : 1)} s`;
 }

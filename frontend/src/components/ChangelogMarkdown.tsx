@@ -53,7 +53,7 @@ function InlineMarkdown({ text }: { text: string }) {
           );
         }
         if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
-          return <strong key={i} className="font-semibold text-fg">{part.slice(2, -2)}</strong>;
+          return <strong key={i} className="font-medium text-fg">{part.slice(2, -2)}</strong>;
         }
         const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
         if (link) {
@@ -174,7 +174,7 @@ export function ChangelogMarkdown({
         <section key={rel.version} className={releaseIndex > 0 ? "border-t border-line pt-4" : undefined}>
           {/* Version header */}
           <div className="mb-2.5 flex min-w-0 items-baseline gap-2">
-            <ReleaseHeading className="shrink-0 font-mono text-[13px] font-semibold text-fg">v{rel.version}</ReleaseHeading>
+            <ReleaseHeading className="shrink-0 font-mono text-[13px] font-medium text-fg">v{rel.version}</ReleaseHeading>
             {rel.date && (
               <span className="min-w-0 truncate text-[12px] tabular-nums text-fg-muted">{rel.date}</span>
             )}
@@ -188,8 +188,8 @@ export function ChangelogMarkdown({
                 const Icon = meta.icon;
                 return (
                   <div key={sec.category}>
-                    <CategoryHeading className="mb-1 flex items-center gap-1.5 text-[12.5px] font-semibold text-fg">
-                      <Icon className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                    <CategoryHeading className="mb-1 flex items-center gap-1.5 text-[12.5px] font-medium text-fg">
+                      <Icon className="h-3.5 w-3.5 text-fg-faint" aria-hidden="true" />
                       {meta.label}
                     </CategoryHeading>
                     <ul className="space-y-1">

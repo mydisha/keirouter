@@ -27,7 +27,6 @@ import {
   Loader2,
   Mic,
   MoreHorizontal,
-  Pause,
   Play,
   Plug,
   Search,
@@ -39,7 +38,7 @@ import { ProviderLogo } from "../components/ProviderLogo";
 import { useToast } from "../components/Toast";
 import { CodeBlock } from "../components/ui/code-block";
 import { useConfirm } from "../components/ui/confirm-dialog";
-import { Badge, Button, ErrorBanner, IconTile, Input, Kpi, KpiGrid, Modal, ModalFooter, SectionTitle, Select, Skeleton, TablePagination, Toggle, useClientPagination, EmptyState } from "../components/ui";
+import { Badge, Button, ErrorBanner, Glyph, Input, Kpi, KpiGrid, Modal, ModalFooter, SectionTitle, Select, Skeleton, TablePagination, Toggle, useClientPagination, EmptyState } from "../components/ui";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Segmented } from "./settings/shared";
 import { ICONS } from "../lib/icons";
@@ -125,9 +124,8 @@ export function MediaProviderDetailPage() {
       <EmptyState
         variant="card"
         titleAs="h1"
-        icon={ICONS.media}
         title="This provider doesn't exist"
-        action={<Link to={`/media/${kind}`} className="rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">Back to {meta.label.toLowerCase()}</Link>}
+        action={<Link to={`/media/${kind}`} className="rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">Back to {meta.label.toLowerCase()}</Link>}
       />
     );
   }
@@ -171,7 +169,7 @@ export function MediaProviderDetailPage() {
           <li>
             <Link
               to={`/media/${kind}`}
-              className="inline-flex min-h-6 items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="inline-flex min-h-6 items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
               {meta.label}
@@ -188,10 +186,10 @@ export function MediaProviderDetailPage() {
 
       <header className="mb-5 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 items-center gap-3">
-          <ProviderLogo icon={provider.icon} name={provider.display_name} size={40} className="rounded-lg" />
+          <ProviderLogo icon={provider.icon} name={provider.display_name} size={40} />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{provider.display_name}</h1>
+              <h1 className="text-[22px] font-medium leading-tight tracking-[-0.02em] text-fg">{provider.display_name}</h1>
               {!provider.drivable && <Badge tone="neutral">Coming soon</Badge>}
               {isNoAuth && <Badge tone="neutral">No credentials</Badge>}
             </div>
@@ -208,10 +206,10 @@ export function MediaProviderDetailPage() {
               href={provider.api_key_url}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               Get API key
-              <ExternalLink className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <ExternalLink className="h-4 w-4 text-fg-faint" aria-hidden="true" />
               <span className="sr-only">(opens in a new tab)</span>
             </a>
           )}
@@ -243,7 +241,7 @@ export function MediaProviderDetailPage() {
               tabIndex={on ? 0 : -1}
               onClick={() => setTab(value)}
               className={cn(
-                "relative -mb-px inline-flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                "relative -mb-px inline-flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 on ? "text-fg" : "text-fg-muted hover:text-fg",
               )}
             >
@@ -275,7 +273,6 @@ export function MediaProviderDetailPage() {
           <EmptyState
             variant="card"
             titleAs="h2"
-            icon={Play}
             title={provider.drivable ? "Connect an account to use the playground" : "The playground isn't available yet"}
             hint={
               provider.drivable
@@ -311,7 +308,7 @@ function CapabilityChips({ provider, current }: { provider: Provider; current: C
         return (
           <li key={c}>
             <Badge tone={on ? "secondary" : "neutral"}>
-              <Icon className={cn("h-3 w-3", on ? "text-tone" : "text-fg-faint")} strokeWidth={1.75} aria-hidden="true" />
+              <Icon className={cn("h-3 w-3", on ? "text-brand-ink" : "text-fg-faint")} aria-hidden="true" />
               {kindMeta[c].short}
               {on && <span className="sr-only"> (this page)</span>}
             </Badge>
@@ -371,7 +368,7 @@ function FormField({
 }
 
 const textareaClass =
-  "w-full rounded-lg border border-input bg-surface px-3 py-2 text-[13px] leading-5 text-fg placeholder:text-fg-faint transition-colors hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+  "w-full rounded-lg border border-input bg-surface px-3 py-2 text-[13px] leading-5 text-fg placeholder:text-fg-faint transition-colors hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function hostOf(url: string): string {
   try {
@@ -465,7 +462,7 @@ function AddAccountDialog({ provider, open, onClose }: { provider: Provider; ope
               hint={provider.api_key_url ? (
                 <>
                   Create one at{" "}
-                  <a href={provider.api_key_url} target="_blank" rel="noopener noreferrer" className="rounded-sm font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+                  <a href={provider.api_key_url} target="_blank" rel="noopener noreferrer" className="rounded-sm font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     {hostOf(provider.api_key_url)}
                     <span className="sr-only"> (opens in a new tab)</span>
                   </a>
@@ -561,7 +558,6 @@ function AccountsPanel({
       <EmptyState
         variant="card"
         titleAs="h2"
-        icon={ICONS.account}
         title={`No ${provider.display_name} accounts yet`}
         hint={provider.drivable ? "Add an account to start routing requests here." : "Routing to this provider isn't available yet, so accounts can't be added."}
         action={
@@ -583,13 +579,13 @@ function AccountsPanel({
   return (
     <div className="space-y-6">
       <KpiGrid cols={3} label={`${provider.display_name} account status`}>
-        <Kpi icon={ICONS.successRate} label="Active" value={active} hint={`of ${accounts.length}`} tone={active > 0 ? "ok" : "section"} />
-        <Kpi icon={Pause} label="Paused" value={paused} />
-        <Kpi icon={ICONS.errors} label="Reconnect needed" value={reconnect} tone={reconnect > 0 ? "warn" : "section"} />
+        <Kpi label="Active" value={active} hint={`of ${accounts.length}`} tone={active > 0 ? "ok" : undefined} />
+        <Kpi label="Paused" value={paused} />
+        <Kpi label="Reconnect needed" value={reconnect} tone={reconnect > 0 ? "warn" : undefined} />
       </KpiGrid>
       <section
         aria-labelledby="media-accounts-heading"
-        className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
+        className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper"
       >
         <div className="border-b border-line px-4 py-3">
           <SectionTitle id="media-accounts-heading" icon={ICONS.account} title="Accounts" />
@@ -616,7 +612,7 @@ function AccountsPanel({
                 <DropdownMenu>
                   <DropdownMenuTrigger
                     aria-label={`Actions for ${name}`}
-                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 md:h-8 md:w-8"
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-8 md:w-8"
                   >
                     <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
                   </DropdownMenuTrigger>
@@ -662,7 +658,6 @@ function ModelsPanel({ provider, models, loading, label }: { provider: Provider;
       <EmptyState
         variant="card"
         titleAs="h2"
-        icon={ICONS.model}
         title="No models listed"
         hint={`${provider.display_name} has no ${label.toLowerCase()} model catalog. You can still route by model id.`}
       />
@@ -672,7 +667,7 @@ function ModelsPanel({ provider, models, loading, label }: { provider: Provider;
   return (
     <section
       aria-labelledby="media-models-heading"
-      className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
+      className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper"
     >
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-line px-4 py-3">
         <SectionTitle
@@ -686,14 +681,14 @@ function ModelsPanel({ provider, models, loading, label }: { provider: Provider;
           }
         />
         <div className="relative w-full sm:ml-auto sm:w-72">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
           <input
             type="search"
             aria-label={`Filter ${provider.display_name} models`}
             placeholder="Filter models"
             value={modelSearchQuery}
             onChange={(event) => setModelSearchQuery(event.target.value)}
-            className="h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            className="h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </div>
       </div>
@@ -778,7 +773,7 @@ function RouteCopy({ route }: { route: string }) {
       onClick={copy}
       aria-label={`Copy ${route}`}
       title="Copy model name"
-      className="group inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-md font-mono text-[12px] text-fg-muted hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 md:min-h-6"
+      className="group inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-md font-mono text-[12px] text-fg-muted hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-6"
     >
       <span className="truncate">{route}</span>
       {copied ? (
@@ -799,7 +794,7 @@ function ModelRow({ model: m, route }: { model: ProviderModel; route: string }) 
       <td className="max-w-[340px] px-4 py-2">
         <ModelName model={m} />
       </td>
-      <td className="px-4 py-2 text-[12.5px] text-fg-muted">{m.kind || "—"}</td>
+      <td className="px-4 py-2 text-[12.5px] text-fg-muted">{m.kind || "n/a"}</td>
       <td className="max-w-[320px] px-4 py-2">
         <RouteCopy route={route} />
       </td>
@@ -890,7 +885,7 @@ function PlaygroundLayout({
   const baseId = useId();
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-      <section aria-labelledby={`${baseId}-request`} className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <section aria-labelledby={`${baseId}-request`} className="flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
         <div className="border-b border-line px-4 py-3">
           <SectionTitle id={`${baseId}-request`} icon={Icon} title={title} />
         </div>
@@ -901,7 +896,7 @@ function PlaygroundLayout({
       <section
         aria-labelledby={`${baseId}-response`}
         aria-busy={state.loading || undefined}
-        className="flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
+        className="flex min-h-[280px] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-paper"
       >
         <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
           <SectionTitle id={`${baseId}-response`} icon={Inbox} title="Response" />
@@ -915,7 +910,7 @@ function PlaygroundLayout({
             {done && (state.error ? <Badge tone="danger">Failed</Badge> : <Badge tone="success">Success</Badge>)}
             {done && (
               <span className="inline-flex items-center gap-1 tabular-nums">
-                <Clock3 className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                <Clock3 className="h-3.5 w-3.5 text-fg-faint" aria-hidden="true" />
                 <span className="sr-only">in</span>
                 {fmtMs(state.ms!)}
               </span>
@@ -935,7 +930,7 @@ function PlaygroundLayout({
             children
           ) : (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center">
-              <IconTile icon={Icon} size="md" />
+              <Glyph icon={Icon} />
               <p className="max-w-xs text-[12.5px] text-fg-muted">{idleHint}</p>
             </div>
           )}
@@ -1122,7 +1117,7 @@ function ImagePlayground({ provider, models }: { provider: Provider; models: Mod
       {state.result ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-3">
           <img src={state.result} alt="Generated image" className="max-h-[420px] max-w-full rounded-lg border border-line object-contain" />
-          <a href={state.result} download="image.png" className="inline-flex min-h-6 items-center gap-1.5 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+          <a href={state.result} download="image.png" className="inline-flex min-h-6 items-center gap-1.5 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <Download className="h-3.5 w-3.5" aria-hidden="true" />
             Download image
           </a>
@@ -1185,7 +1180,7 @@ function TtsPlayground({ provider, models }: { provider: Provider; models: Model
       {state.result && (
         <div className="flex flex-1 flex-col justify-center gap-3">
           <audio controls src={state.result} className="w-full" aria-label="Synthesized speech" />
-          <a href={state.result} download="speech.mp3" className="inline-flex min-h-6 items-center gap-1.5 self-start rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+          <a href={state.result} download="speech.mp3" className="inline-flex min-h-6 items-center gap-1.5 self-start rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <Download className="h-3.5 w-3.5" aria-hidden="true" />
             Download audio
           </a>
@@ -1233,8 +1228,8 @@ function SttPlayground({ provider, models }: { provider: Provider; models: Model
               Audio file
               <span className="text-[12px] font-normal text-fg-faint">Required</span>
             </span>
-            <label className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-dashed border-input bg-surface px-3 text-[13px] transition-colors hover:bg-hover focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500">
-              <FileAudio className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            <label className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-dashed border-input bg-surface px-3 text-[13px] transition-colors hover:bg-hover focus-within:border-ring focus-within:ring-2 focus-within:ring-ring">
+              <FileAudio className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
               <span className={cn("min-w-0 flex-1 truncate", file ? "text-fg" : "text-fg-muted")} aria-hidden="true">
                 {file ? file.name : "Choose an audio file"}
               </span>
@@ -1265,7 +1260,7 @@ function SttPlayground({ provider, models }: { provider: Provider; models: Model
         {typeof transcript === "string" && (
           <div>
             <p className="mb-1.5 text-[12px] font-medium text-fg-muted">Transcript</p>
-            <p className="whitespace-pre-wrap rounded-lg border border-line bg-surface p-3 text-[13px] leading-6 text-fg">{transcript || "—"}</p>
+            <p className="whitespace-pre-wrap rounded-lg border border-line bg-surface p-3 text-[13px] leading-6 text-fg">{transcript || "n/a"}</p>
           </div>
         )}
         <div className="flex flex-1 flex-col">

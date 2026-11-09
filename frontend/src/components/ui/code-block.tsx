@@ -78,20 +78,18 @@ export function CopyButton({
       title={showLabel ? undefined : label}
       className={cn(
         "inline-flex shrink-0 items-center justify-center gap-1.5 rounded-lg px-1.5 text-[12px] font-medium text-fg-muted transition-[background-color,color,transform] duration-150 hover:bg-hover hover:text-fg active:scale-95 disabled:pointer-events-none disabled:opacity-40",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:min-w-9",
+        "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:min-w-9",
         box,
-        copied && "text-ok hover:text-ok",
+        copied && "text-brand-ink hover:text-brand-ink",
         className,
       )}
     >
       <span className="relative inline-flex h-3.5 w-3.5" aria-hidden="true">
         <Copy
           className={cn("absolute inset-0 h-3.5 w-3.5 transition-[opacity,transform] duration-150", copied ? "scale-50 opacity-0" : "scale-100 opacity-100")}
-          strokeWidth={1.75}
-        />
+                  />
         <Check
-          className={cn("absolute inset-0 h-3.5 w-3.5 transition-[opacity,transform] duration-150", copied ? "scale-100 opacity-100" : "scale-50 opacity-0")}
-          strokeWidth={2.25}
+          className={cn("stroke-[2.25]", "absolute inset-0 h-3.5 w-3.5 transition-[opacity,transform] duration-150", copied ? "scale-100 opacity-100" : "scale-50 opacity-0")}
         />
       </span>
       {showLabel && <span>{copied ? "Copied" : label}</span>}
@@ -173,7 +171,7 @@ export function CodeBlock({
         role="region"
         aria-label={name}
         className={cn(
-          "overflow-auto px-3.5 py-3 font-mono text-[12.5px] leading-[1.65] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500",
+          "overflow-auto px-3.5 py-3 font-mono text-[12.5px] leading-[1.65] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
           wrap ? "whitespace-pre-wrap break-words [overflow-wrap:anywhere]" : "whitespace-pre",
           heading == null && copy && "pr-12",
           bodyClassName,

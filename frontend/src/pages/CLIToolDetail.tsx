@@ -13,7 +13,6 @@ import { useConfirm } from "../components/ui/confirm-dialog";
 import { Badge, Button, Input, SegmentedControl, Skeleton, EmptyState } from "../components/ui";
 import { HighlightedCode } from "../components/ui/code-block";
 import { detectLanguage } from "../lib/highlight";
-import { ICONS } from "../lib/icons";
 import { cn } from "@/lib/utils";
 
 // Placeholders the backend puts in manual-setup snippets.
@@ -144,9 +143,8 @@ export function CLIToolDetailPage() {
       <EmptyState
         variant="card"
         titleAs="h1"
-        icon={ICONS.cliTools}
         title="This CLI tool doesn't exist"
-        action={<Link to="/cli-tools" className="rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">Back to CLI tools</Link>}
+        action={<Link to="/cli-tools" className="rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">Back to CLI tools</Link>}
       />
     );
   }
@@ -203,7 +201,7 @@ export function CLIToolDetailPage() {
           <li>
             <Link
               to="/cli-tools"
-              className="inline-flex min-h-6 items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="inline-flex min-h-6 items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
               CLI tools
@@ -219,10 +217,10 @@ export function CLIToolDetailPage() {
       </nav>
 
       <header className="mb-5 flex min-w-0 flex-wrap items-center gap-3">
-        <ProviderLogo icon={meta?.image} name={tool.name} size={40} className="rounded-lg" />
+        <ProviderLogo icon={meta?.image} name={tool.name} size={40} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{tool.name}</h1>
+            <h1 className="text-[22px] font-medium leading-tight tracking-[-0.02em] text-fg">{tool.name}</h1>
             <Badge tone={conn.tone}>{conn.label}</Badge>
           </div>
           <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
@@ -238,14 +236,14 @@ export function CLIToolDetailPage() {
           </p>
         </div>
         <Button variant="secondary" onClick={() => rescan.mutate()} disabled={rescan.isPending}>
-          <RefreshCw className={cn(rescan.isPending && "animate-spin")} strokeWidth={1.75} aria-hidden="true" />
+          <RefreshCw className={cn(rescan.isPending && "animate-spin")} aria-hidden="true" />
           {rescan.isPending ? "Scanning…" : "Rescan"}
         </Button>
       </header>
 
       {conn.kind === "attention" && (
-        <div role="alert" className="mb-4 flex max-w-3xl items-start gap-2 rounded-xl border border-warn/30 bg-warn/10 px-3.5 py-2.5 text-[12.5px] leading-5 text-fg">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+        <div role="alert" className="mb-4 flex max-w-3xl items-start gap-2 rounded-xl border border-warn/30 bg-warn-soft px-3.5 py-2.5 text-[12.5px] leading-5 text-fg">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
           <span className="break-words">
             <span className="font-medium">{conn.label}.</span> {conn.detail}
           </span>
@@ -254,7 +252,7 @@ export function CLIToolDetailPage() {
 
       {tool.configured && stored && <CurrentConnection tool={tool} />}
 
-      <ol className="max-w-3xl divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <ol className="max-w-3xl divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
         {/* 1. Install */}
         <Step n={1} done={tool.installed} title={`Install ${tool.name}`}>
           {tool.installed ? (
@@ -275,7 +273,7 @@ export function CLIToolDetailPage() {
           ) : (
             <div className="space-y-3">
               <p className="flex items-start gap-1.5 text-[13px] leading-5 text-fg">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" aria-hidden="true" />
                 <span>Not detected here. Install it and rescan, or set it up by hand in step 4.</span>
               </p>
               {meta?.installCmd && <CodeWell code={meta.installCmd} label="Shell" copyLabel="install command" />}
@@ -437,15 +435,14 @@ export function CLIToolDetailPage() {
         {/* 4. Manual */}
         <li className="px-4 py-4 sm:px-5">
           <details className="group" open={!tool.installed}>
-            <summary className="flex cursor-pointer list-none items-center gap-3 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [&::-webkit-details-marker]:hidden">
+            <summary className="flex cursor-pointer list-none items-center gap-3 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
               <StepNumber n={4} />
-              <h2 className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] font-semibold leading-5 text-fg">
+              <h2 className="flex min-w-0 flex-1 items-center gap-1.5 text-[13px] font-medium leading-5 text-fg">
                 <span className="sr-only">Step 4: </span>
                 Or set it up by hand
                 <ChevronRight
                   className="h-3.5 w-3.5 text-fg-faint transition-transform group-open:rotate-90"
-                  strokeWidth={1.75}
-                  aria-hidden="true"
+                                    aria-hidden="true"
                 />
               </h2>
             </summary>
@@ -477,8 +474,8 @@ function CurrentConnection({ tool }: { tool: CLITool }) {
     missing: "No key stored",
   };
   return (
-    <section aria-labelledby="cli-current-heading" className="mb-4 max-w-3xl rounded-2xl border border-line bg-surface px-4 py-3.5 shadow-[var(--shadow-card)] sm:px-5">
-      <h2 id="cli-current-heading" className="text-[13px] font-semibold text-fg">
+    <section aria-labelledby="cli-current-heading" className="mb-4 max-w-3xl rounded-2xl border border-line bg-surface px-4 py-3.5 shadow-paper sm:px-5">
+      <h2 id="cli-current-heading" className="text-[13px] font-medium text-fg">
         Saved in the config
       </h2>
       <dl className="mt-2 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[12.5px]">
@@ -521,7 +518,7 @@ function StateNote({ ok, text }: { ok: boolean; text: string }) {
       {ok ? (
         <Check className="h-3.5 w-3.5" aria-hidden="true" />
       ) : (
-        <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
       )}
       {text}
     </span>
@@ -561,8 +558,8 @@ function StepNumber({ n, done }: { n: number; done?: boolean }) {
   return (
     <span
       className={cn(
-        "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[12px] font-semibold tabular-nums ring-1 ring-inset",
-        done ? "bg-ok/10 text-ok ring-ok/20" : "bg-tone-soft text-tone ring-tone-ring",
+        "flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[12px] font-medium tabular-nums ring-1 ring-inset",
+        done ? "bg-ok-soft text-ok ring-ok/20" : "bg-subtle text-fg-muted ring-line",
       )}
       aria-hidden="true"
     >
@@ -588,7 +585,7 @@ function Step({
     <li className="flex gap-3 px-4 py-4 sm:px-5">
       <StepNumber n={n} done={done} />
       <div className="min-w-0 flex-1">
-        <h2 className="mt-1 text-[13px] font-semibold leading-5 text-fg">
+        <h2 className="mt-1 text-[13px] font-medium leading-5 text-fg">
           <span className="sr-only">
             Step {n}
             {done ? " (done)" : ""}:{" "}
@@ -765,7 +762,7 @@ function SnippetWell({ files, fullText }: { files: SnippetFile[]; fullText: stri
                   title={f.path}
                   onClick={() => setActive(i)}
                   className={cn(
-                    "relative shrink-0 whitespace-nowrap px-2.5 py-2.5 font-mono text-[12px] transition-colors sm:py-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                    "relative shrink-0 whitespace-nowrap px-2.5 py-2.5 font-mono text-[12px] transition-colors sm:py-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     on ? "text-fg" : "text-fg-muted hover:text-fg",
                   )}
                 >
@@ -791,7 +788,7 @@ function SnippetWell({ files, fullText }: { files: SnippetFile[]; fullText: stri
         aria-labelledby={multi ? tabId(idx) : undefined}
         aria-label={multi ? undefined : file.path || "Config snippet"}
         tabIndex={0}
-        className="focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+        className="focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         {multi && file.path && (
           <p className="break-all border-b border-line px-3.5 py-1.5 font-mono text-[11.5px] text-fg-muted">{file.path}</p>
@@ -820,7 +817,7 @@ function CodeWell({ code, label, copyLabel }: { code: string; label: string; cop
         tabIndex={0}
         role="region"
         aria-label={`${label} command`}
-        className="overflow-x-auto bg-[var(--code-bg)] px-3.5 py-2.5 font-mono text-[12.5px] leading-[1.65] text-[var(--code-fg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+        className="overflow-x-auto bg-[var(--code-bg)] px-3.5 py-2.5 font-mono text-[12.5px] leading-[1.65] text-[var(--code-fg)] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <code>
           <HighlightedCode code={code} language="bash" />
@@ -839,7 +836,7 @@ function EnvTable({ vars }: { vars: EnvVar[] }) {
           <li key={`${v.file}:${v.name}`} className="flex items-start gap-2 py-2.5 pl-3.5 pr-1.5">
             <div className="min-w-0 flex-1">
               <p className="break-all font-mono text-[12px] font-medium text-fg">{v.name}</p>
-              <p className="mt-0.5 break-all font-mono text-[12px] text-fg-muted">{v.value || "—"}</p>
+              <p className="mt-0.5 break-all font-mono text-[12px] text-fg-muted">{v.value || "n/a"}</p>
               {v.file && <p className="mt-0.5 break-all font-mono text-[11.5px] text-fg-faint">{basename(v.file)}</p>}
             </div>
             <CopyButton text={v.value} toastLabel={`${v.name} value`} />
@@ -864,7 +861,7 @@ function EnvTable({ vars }: { vars: EnvVar[] }) {
               <tr key={`${v.file}:${v.name}`} className="transition-colors hover:bg-hover">
                 <td className="whitespace-nowrap px-3.5 py-2 font-mono text-[12px] text-fg">{v.name}</td>
                 <td className="max-w-[260px] truncate px-3.5 py-2 font-mono text-[12px] text-fg-muted" title={v.value}>{v.value}</td>
-                <td className="whitespace-nowrap px-3.5 py-2 font-mono text-[12px] text-fg-muted">{v.file ? basename(v.file) : "—"}</td>
+                <td className="whitespace-nowrap px-3.5 py-2 font-mono text-[12px] text-fg-muted">{v.file ? basename(v.file) : "n/a"}</td>
                 <td className="px-2 py-1.5 text-right">
                   <CopyButton text={v.value} toastLabel={`${v.name} value`} />
                 </td>
@@ -896,12 +893,12 @@ function CopyButton({ text, label, toastLabel }: { text: string; label?: string;
       onClick={copy}
       aria-label={label ? `${label} ${toastLabel}` : `Copy ${toastLabel}`}
       title={label ? undefined : `Copy ${toastLabel}`}
-      className="inline-flex h-9 min-w-9 items-center justify-center gap-1.5 rounded-lg px-2 text-[12px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:h-7 sm:min-w-7"
+      className="inline-flex h-9 min-w-9 items-center justify-center gap-1.5 rounded-lg px-2 text-[12px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-7 sm:min-w-7"
     >
       {copied ? (
         <Check className="h-3.5 w-3.5 text-ok" aria-hidden="true" />
       ) : (
-        <Copy className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+        <Copy className="h-3.5 w-3.5 text-fg-faint" aria-hidden="true" />
       )}
       {label && (copied ? "Copied" : label)}
     </button>

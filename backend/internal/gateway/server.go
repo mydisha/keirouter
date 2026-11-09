@@ -296,20 +296,23 @@ func (s *Server) routes() chi.Router {
 		})
 	}
 
+	// Cap concurrent in-flight requests to prevent resource exhaustion under
+	// high traffic. Each request holds argon2 goroutines, SQLite connection
+	// time, upstream connections, and buffer pool slots. /v1 and the dashboard
+	// playground share the slots.
+	maxConc := s.cfg.Server.MaxConcurrentRequests
+	if maxConc <= 0 {
+		maxConc = 100 // sensible default for AI gateway workloads
+	}
+	limitInFlight := concurrencyLimiter(maxConc, func(r *http.Request) {
+		newReqTrace(s.consoleLog, r).reject(http.StatusServiceUnavailable, "Rejected · gateway at capacity",
+			fmt.Sprintf("Limit: %d concurrent requests", maxConc),
+			"Every concurrent-request slot is busy (mostly long streams). Raise server.max_concurrent_requests or add capacity.")
+	})
+
 	// OpenAI-compatible API surface (authenticated).
 	r.Group(func(r chi.Router) {
-		// Cap concurrent in-flight requests to prevent resource exhaustion
-		// under high traffic. Each request holds argon2 goroutines, SQLite
-		// connection time, upstream connections, and buffer pool slots.
-		maxConc := s.cfg.Server.MaxConcurrentRequests
-		if maxConc <= 0 {
-			maxConc = 100 // sensible default for AI gateway workloads
-		}
-		r.Use(concurrencyLimiter(maxConc, func(r *http.Request) {
-			newReqTrace(s.consoleLog, r).reject(http.StatusServiceUnavailable, "Rejected · gateway at capacity",
-				fmt.Sprintf("Limit: %d concurrent requests", maxConc),
-				"Every concurrent-request slot is busy (mostly long streams). Raise server.max_concurrent_requests or add capacity.")
-		}))
+		r.Use(limitInFlight)
 		r.Use(s.authMiddleware)
 		r.Post("/v1/chat/completions", s.handleOpenAIChat)
 		r.Post("/v1/messages", s.handleAnthropicMessages)
@@ -366,6 +369,8 @@ func (s *Server) routes() chi.Router {
 			s.mountAuthenticatedAuth(pr)
 		})
 	})
+
+	s.mountPlayground(r, limitInFlight)
 
 	// Dashboard admin API. Guarded by loopback access AND a valid dashboard
 	// session, so provider credentials and routing config are never exposed to

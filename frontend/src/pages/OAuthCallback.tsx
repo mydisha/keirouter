@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { AlertTriangle, CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { BrandMark } from "../components/BrandMark";
-import { Button, IconTile } from "../components/ui";
+import { Button, Glyph } from "../components/ui";
 
 /**
  * OAuthCallback is the landing page after a provider redirects back to the
@@ -94,7 +94,7 @@ export function OAuthCallbackPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-canvas px-4">
       <main
-        className="w-full max-w-sm rounded-2xl border border-line bg-surface p-8 text-center shadow-[var(--shadow-pop)]"
+        className="w-full max-w-sm rounded-2xl border border-line bg-surface p-8 text-center shadow-lift"
       >
         <div className="flex justify-center">
           <BrandMark size={26} />
@@ -102,13 +102,13 @@ export function OAuthCallbackPage() {
 
         <div className="mt-6 flex flex-col items-center gap-3">
           {phase === "handoff" ? (
-            <IconTile icon={Loader2} size="lg" tone="blue" className="[&>svg]:animate-spin motion-reduce:[&>svg]:animate-none" />
+            <Glyph icon={Loader2} size="lg" tone="brand" className="animate-spin motion-reduce:animate-none" />
           ) : phase === "success" ? (
-            <IconTile icon={CheckCircle2} size="lg" tone="ok" />
+            <Glyph icon={CheckCircle2} size="lg" tone="ok" />
           ) : (
-            <IconTile icon={XCircle} size="lg" tone="bad" />
+            <Glyph icon={XCircle} size="lg" tone="bad" />
           )}
-          <h1 className="text-[15px] font-semibold tracking-[-0.01em] text-fg">
+          <h1 className="text-[15px] font-medium tracking-[-0.01em] text-fg">
             {phase === "handoff"
               ? "Finishing sign-in"
               : phase === "success"
@@ -131,8 +131,8 @@ export function OAuthCallbackPage() {
         </p>
 
         {phase === "error" && (
-          <div role="alert" className="mt-4 flex items-start gap-2 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2.5 text-left">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-bad" strokeWidth={1.75} aria-hidden="true" />
+          <div role="alert" className="mt-4 flex items-start gap-2 rounded-lg border border-bad/30 bg-bad-soft px-3 py-2.5 text-left">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-bad" aria-hidden="true" />
             <p className="break-words text-[12.5px] leading-5 text-bad">{message || errorParam || "The provider didn't return a reason."}</p>
           </div>
         )}

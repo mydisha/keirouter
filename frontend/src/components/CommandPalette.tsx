@@ -3,11 +3,11 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { Dialog } from "radix-ui";
-import { Copy, CornerDownLeft, History, Monitor, Moon, Plus, Search, Sun, type LucideIcon } from "lucide-react";
+import { Copy, CornerDownLeft, History, MessagesSquare, Monitor, Moon, Plus, Search, Sun, type LucideIcon } from "lucide-react";
 import { api } from "../lib/api";
 import { ICONS } from "../lib/icons";
 import { cn } from "@/lib/utils";
-import { IconTile } from "./ui";
+import { Glyph } from "./ui";
 import { useTheme } from "./ThemeProvider";
 import { useToast } from "./Toast";
 import { ProviderLogo } from "./ProviderLogo";
@@ -25,7 +25,6 @@ interface CommandItem {
   badge?: string;
   icon?: LucideIcon;
   /** Sidebar group hue of the page this item leads to (icon tile colour). */
-  tone: PaletteTone;
   /** Provider logo, used instead of `icon` for provider and account rows. */
   logo?: { icon?: string; name: string };
   section: string;
@@ -35,7 +34,6 @@ interface CommandItem {
 
 // Same hue per sidebar group as Layout: Monitor blue, Routing violet,
 // Providers teal, Access orange, Workspace slate.
-type PaletteTone = "blue" | "violet" | "teal" | "orange" | "slate";
 
 const RECENT_KEY = "kei-cmdk-recent";
 const RECENT_MAX = 6;
@@ -112,7 +110,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
     <>
       {text.split("").map((ch, i) =>
         idxs.has(i) ? (
-          <mark key={i} className="bg-transparent font-semibold text-fg">
+          <mark key={i} className="bg-transparent font-medium text-fg">
             {ch}
           </mark>
         ) : (
@@ -179,34 +177,34 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   // Pages and actions, grouped to mirror the sidebar.
   const staticItems: CommandItem[] = useMemo(
     () => [
-      { id: "nav-overview", label: "Overview", icon: ICONS.overview, tone: "blue", section: "Go to", run: go("/"), keywords: ["home", "dashboard"] },
-      { id: "nav-usage", label: "Usage", icon: ICONS.usage, tone: "blue", section: "Go to", run: go("/usage"), keywords: ["analytics", "tokens", "spend", "cost"] },
-      { id: "nav-console", label: "Console", icon: ICONS.console, tone: "blue", section: "Go to", run: go("/console"), keywords: ["logs", "debug", "stream"] },
-      { id: "nav-endpoints", label: "Endpoints", icon: ICONS.endpoints, tone: "violet", section: "Go to", run: go("/endpoints"), keywords: ["base url", "tunnel", "tailscale", "cloudflare"] },
-      { id: "nav-chains", label: "Chains", icon: ICONS.chains, tone: "violet", section: "Go to", run: go("/chains"), keywords: ["routing", "fallback", "failover"] },
-      { id: "nav-skills", label: "Skills", icon: ICONS.skills, tone: "violet", section: "Go to", run: go("/skills"), keywords: ["prompt", "system prompt"] },
-      { id: "nav-providers", label: "Providers", icon: ICONS.providers, tone: "teal", section: "Go to", run: go("/providers"), keywords: ["accounts", "upstream", "credentials"] },
-      { id: "nav-media", label: "Media", icon: ICONS.media, tone: "teal", section: "Go to", run: go("/media"), keywords: ["image", "video", "tts", "stt"] },
-      { id: "nav-health", label: "Provider health", icon: ICONS.health, tone: "teal", section: "Go to", run: go("/provider-health"), keywords: ["uptime", "errors", "latency", "status"] },
-      { id: "nav-quota", label: "Quota", icon: ICONS.quota, tone: "teal", section: "Go to", run: go("/quota"), keywords: ["limits", "remaining", "upstream"] },
-      { id: "nav-proxy-pools", label: "Proxy pools", icon: ICONS.proxyPools, tone: "teal", section: "Go to", run: go("/proxy-pools"), keywords: ["proxy", "egress"] },
-      { id: "nav-keys", label: "API keys", icon: ICONS.keys, tone: "orange", section: "Go to", run: go("/keys"), keywords: ["auth", "token", "bearer"] },
-      { id: "nav-plans", label: "Plans & budgets", icon: ICONS.plans, tone: "orange", section: "Go to", run: go("/plans"), keywords: ["budget", "limit", "rate limit"] },
-      { id: "nav-guardrails", label: "Guardrails", icon: ICONS.guardrails, tone: "orange", section: "Go to", run: go("/guardrails"), keywords: ["pii", "injection", "moderation"] },
-      { id: "nav-audit", label: "Audit log", icon: ICONS.audit, tone: "orange", section: "Go to", run: go("/audit"), keywords: ["audit", "history", "who changed", "compliance", "otel", "siem"] },
-      { id: "nav-cli-tools", label: "CLI tools", icon: ICONS.cliTools, tone: "slate", section: "Go to", run: go("/cli-tools"), keywords: ["claude code", "codex", "cursor", "configure"] },
-      { id: "nav-system", label: "System", icon: ICONS.system, tone: "slate", section: "Go to", run: go("/system"), keywords: ["cpu", "memory", "monitor"] },
-      { id: "nav-settings", label: "Settings", icon: ICONS.settings, tone: "slate", section: "Go to", run: go("/settings"), keywords: ["token saving", "rtk", "caveman", "branding", "backup"] },
+      { id: "nav-overview", label: "Overview", icon: ICONS.overview, section: "Go to", run: go("/"), keywords: ["home", "dashboard"] },
+      { id: "nav-usage", label: "Usage", icon: ICONS.usage, section: "Go to", run: go("/usage"), keywords: ["analytics", "tokens", "spend", "cost"] },
+      { id: "nav-console", label: "Console", icon: ICONS.console, section: "Go to", run: go("/console"), keywords: ["logs", "debug", "stream"] },
+      { id: "nav-playground", label: "Playground", icon: MessagesSquare, section: "Go to", run: go("/playground"), keywords: ["chat", "try", "test", "prompt"] },
+      { id: "nav-endpoints", label: "Endpoints", icon: ICONS.endpoints, section: "Go to", run: go("/endpoints"), keywords: ["base url", "tunnel", "tailscale", "cloudflare"] },
+      { id: "nav-chains", label: "Chains", icon: ICONS.chains, section: "Go to", run: go("/chains"), keywords: ["routing", "fallback", "failover"] },
+      { id: "nav-skills", label: "Skills", icon: ICONS.skills, section: "Go to", run: go("/skills"), keywords: ["prompt", "system prompt"] },
+      { id: "nav-providers", label: "Providers", icon: ICONS.providers, section: "Go to", run: go("/providers"), keywords: ["accounts", "upstream", "credentials"] },
+      { id: "nav-media", label: "Media", icon: ICONS.media, section: "Go to", run: go("/media"), keywords: ["image", "video", "tts", "stt"] },
+      { id: "nav-health", label: "Provider health", icon: ICONS.health, section: "Go to", run: go("/provider-health"), keywords: ["uptime", "errors", "latency", "status"] },
+      { id: "nav-quota", label: "Quota", icon: ICONS.quota, section: "Go to", run: go("/quota"), keywords: ["limits", "remaining", "upstream"] },
+      { id: "nav-proxy-pools", label: "Proxy pools", icon: ICONS.proxyPools, section: "Go to", run: go("/proxy-pools"), keywords: ["proxy", "egress"] },
+      { id: "nav-keys", label: "API keys", icon: ICONS.keys, section: "Go to", run: go("/keys"), keywords: ["auth", "token", "bearer"] },
+      { id: "nav-plans", label: "Plans & budgets", icon: ICONS.plans, section: "Go to", run: go("/plans"), keywords: ["budget", "limit", "rate limit"] },
+      { id: "nav-guardrails", label: "Guardrails", icon: ICONS.guardrails, section: "Go to", run: go("/guardrails"), keywords: ["pii", "injection", "moderation"] },
+      { id: "nav-audit", label: "Audit log", icon: ICONS.audit, section: "Go to", run: go("/audit"), keywords: ["audit", "history", "who changed", "compliance", "otel", "siem"] },
+      { id: "nav-cli-tools", label: "CLI tools", icon: ICONS.cliTools, section: "Go to", run: go("/cli-tools"), keywords: ["claude code", "codex", "cursor", "configure"] },
+      { id: "nav-system", label: "System", icon: ICONS.system, section: "Go to", run: go("/system"), keywords: ["cpu", "memory", "monitor"] },
+      { id: "nav-settings", label: "Settings", icon: ICONS.settings, section: "Go to", run: go("/settings"), keywords: ["token saving", "rtk", "caveman", "branding", "backup"] },
 
-      { id: "action-connect", label: "Connect a provider", icon: Plus, tone: "teal", section: "Actions", run: go("/providers"), keywords: ["add account", "oauth", "api key"] },
-      { id: "action-new-key", label: "Create API key", icon: Plus, tone: "orange", section: "Actions", run: go("/keys"), keywords: ["new key", "generate"] },
-      { id: "action-new-chain", label: "Create chain", icon: Plus, tone: "violet", section: "Actions", run: go("/chains/new"), keywords: ["new chain", "fallback"] },
-      { id: "action-new-plan", label: "Create plan", icon: Plus, tone: "orange", section: "Actions", run: go("/plans"), keywords: ["budget", "limit"] },
+      { id: "action-connect", label: "Connect a provider", icon: Plus, section: "Actions", run: go("/providers"), keywords: ["add account", "oauth", "api key"] },
+      { id: "action-new-key", label: "Create API key", icon: Plus, section: "Actions", run: go("/keys"), keywords: ["new key", "generate"] },
+      { id: "action-new-chain", label: "Create chain", icon: Plus, section: "Actions", run: go("/chains/new"), keywords: ["new chain", "fallback"] },
+      { id: "action-new-plan", label: "Create plan", icon: Plus, section: "Actions", run: go("/plans"), keywords: ["budget", "limit"] },
       {
         id: "action-copy-base-url",
         label: "Copy base URL",
         icon: Copy,
-        tone: "violet",
         section: "Actions",
         description: `${window.location.origin}/v1`,
         keywords: ["endpoint", "openai", "anthropic"],
@@ -217,9 +215,9 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             .catch(() => toast.error("Couldn't copy", "Your browser blocked clipboard access."));
         },
       },
-      { id: "theme-light", label: "Use light theme", icon: Sun, tone: "slate", section: "Theme", run: () => setTheme("light"), keywords: ["appearance"] },
-      { id: "theme-dark", label: "Use dark theme", icon: Moon, tone: "slate", section: "Theme", run: () => setTheme("dark"), keywords: ["appearance", "night"] },
-      { id: "theme-system", label: "Match system theme", icon: Monitor, tone: "slate", section: "Theme", run: () => setTheme("system"), keywords: ["appearance", "auto"] },
+      { id: "theme-light", label: "Use light theme", icon: Sun, section: "Theme", run: () => setTheme("light"), keywords: ["appearance"] },
+      { id: "theme-dark", label: "Use dark theme", icon: Moon, section: "Theme", run: () => setTheme("dark"), keywords: ["appearance", "night"] },
+      { id: "theme-system", label: "Match system theme", icon: Monitor, section: "Theme", run: () => setTheme("system"), keywords: ["appearance", "auto"] },
     ],
     [go, setTheme, toast],
   );
@@ -237,7 +235,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         description: p.id,
         badge: p.custom ? "Custom" : "Provider",
         icon: ICONS.providers,
-        tone: "teal",
         logo: { icon: p.icon, name: p.display_name },
         section: "Providers",
         run: go(`/providers/${p.id}`),
@@ -252,7 +249,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         description: `${p?.display_name ?? a.provider} account`,
         badge: a.disabled ? "Paused" : a.needs_reconnect ? "Reconnect" : "Account",
         icon: ICONS.account,
-        tone: "teal",
         logo: p ? { icon: p.icon, name: p.display_name } : undefined,
         section: "Accounts",
         run: go(`/providers/${a.provider}`),
@@ -266,7 +262,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         description: `${c.steps?.length ?? 0} step${(c.steps?.length ?? 0) === 1 ? "" : "s"} · ${c.strategy}`,
         badge: "Chain",
         icon: ICONS.chains,
-        tone: "violet",
         section: "Chains",
         run: go(`/chains/${c.id}/edit`),
         keywords: [c.strategy, c.fallback_model, ...(c.steps?.map((s) => s.model) ?? [])].filter(Boolean) as string[],
@@ -279,7 +274,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         description: k.display,
         badge: k.disabled ? "Disabled" : k.plan_name || "API key",
         icon: ICONS.keys,
-        tone: "orange",
         section: "API keys",
         run: go(`/keys/${k.id}`),
         keywords: [k.plan_name, k.display].filter(Boolean) as string[],
@@ -292,7 +286,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         description: pl.description || `${pl.key_count} key${pl.key_count === 1 ? "" : "s"}`,
         badge: "Plan",
         icon: ICONS.plans,
-        tone: "orange",
         section: "Plans",
         run: go("/plans"),
       });
@@ -304,7 +297,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         description: s.description || undefined,
         badge: s.enabled ? "Skill" : "Disabled",
         icon: ICONS.skills,
-        tone: "violet",
         section: "Skills",
         run: go("/skills"),
       });
@@ -316,7 +308,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         description: `${pool.type} · ${pool.is_active ? "active" : "inactive"}`,
         badge: "Proxy pool",
         icon: ICONS.proxyPools,
-        tone: "teal",
         section: "Proxy pools",
         run: go("/proxy-pools"),
         keywords: [pool.type],
@@ -367,15 +358,15 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       // Phones: a full-screen sheet (input on top, results fill the rest,
       // safe-area padded). From sm: the centred floating panel.
       className="flex min-h-0 flex-1 flex-col"
-      overlayClassName="fixed inset-0 z-[100] bg-black/45 data-[state=open]:animate-in data-[state=open]:fade-in-0"
-      contentClassName="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-surface pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] data-[state=open]:animate-in data-[state=open]:fade-in-0 sm:inset-auto sm:left-1/2 sm:top-[14vh] sm:w-[calc(100%-2rem)] sm:max-w-xl sm:-translate-x-1/2 sm:rounded-2xl sm:border sm:border-line sm:pb-0 sm:pt-0 sm:shadow-[var(--shadow-float)] sm:data-[state=open]:zoom-in-[0.98]"
+      overlayClassName="fixed inset-0 z-[100] bg-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out"
+      contentClassName="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-surface pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] data-[state=open]:animate-overlay-in sm:inset-auto sm:left-1/2 sm:top-[14vh] sm:w-[calc(100%-2rem)] sm:max-w-xl sm:-translate-x-1/2 sm:rounded-2xl sm:border sm:border-line sm:pb-0 sm:pt-0 sm:shadow-lift sm:data-[state=open]:animate-dialog-in"
     >
       <Dialog.Title className="sr-only">Command palette</Dialog.Title>
       <Dialog.Description className="sr-only">
         Type to search. Use the up and down arrow keys to move, Enter to open, Escape to close.
       </Dialog.Description>
       <div className="flex shrink-0 items-center gap-2.5 border-b border-line pl-4 pr-2 sm:pr-4">
-        <Search className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+        <Search className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
         <Command.Input
           value={query}
           onValueChange={setQuery}
@@ -386,7 +377,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         {loading && <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-line-strong border-t-fg-muted" aria-hidden="true" />}
         <kbd className="hidden shrink-0 rounded border border-line bg-subtle px-1.5 font-mono text-[10.5px] text-fg-faint sm:inline" aria-hidden="true">esc</kbd>
         {/* Touch has no Escape key: a visible way out on phones. */}
-        <Dialog.Close className="inline-flex h-9 shrink-0 items-center rounded-lg px-2.5 text-[13px] font-medium text-link hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:hidden">
+        <Dialog.Close className="inline-flex h-9 shrink-0 items-center rounded-lg px-2.5 text-[13px] font-medium text-link hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:hidden">
           Cancel
         </Dialog.Close>
       </div>
@@ -412,7 +403,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                   key={`${group.heading}-${item.id}`}
                   value={`${group.heading}-${item.id}`}
                   onSelect={() => select(item)}
-                  data-tone={item.tone}
                   className="group flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-[13px] text-fg outline-none data-[selected=true]:bg-hover [@media(pointer:coarse)]:py-2"
                 >
                   {item.logo ? (
@@ -420,7 +410,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                       <ProviderLogo icon={item.logo.icon} name={item.logo.name} size={16} />
                     </span>
                   ) : item.icon ? (
-                    <IconTile icon={item.icon} size="sm" />
+                    <Glyph icon={item.icon} />
                   ) : null}
                   <span className="flex min-w-0 flex-1 flex-col">
                     <span className="truncate">

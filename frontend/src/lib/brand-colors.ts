@@ -4,7 +4,7 @@
 // Values reference CSS custom properties defined in index.css (--color-brand-*).
 // Fallback is ink-400 (warm neutral) for unknown tools.
 
-const FALLBACK = "var(--color-ink-400)";
+const FALLBACK = "var(--color-neutral-500)";
 
 const RAW: Record<string, string> = {
   claude: "var(--color-brand-claude)",

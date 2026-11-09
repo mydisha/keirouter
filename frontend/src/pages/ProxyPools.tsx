@@ -61,7 +61,7 @@ function FormField({
 function DialogTitle({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
   return (
     <span className="inline-flex items-center gap-2">
-      <Icon className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />
+      <Icon className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
       {children}
     </span>
   );
@@ -83,7 +83,7 @@ const dialogBody = "max-h-[calc(100dvh-15rem)] overflow-y-auto sm:max-h-none sm:
 const checkboxClass = "h-4 w-4 rounded border-input accent-accent-500";
 
 const textareaClass =
-  "w-full rounded-lg border border-input bg-surface px-3 py-2 font-mono text-[12.5px] leading-5 text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+  "w-full rounded-lg border border-input bg-surface px-3 py-2 font-mono text-[12.5px] leading-5 text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 const code = "font-mono text-[12px] text-fg";
 
@@ -266,11 +266,11 @@ export function ProxyPoolsPage() {
         action={
           <>
             <Button variant="ghost" onClick={() => setShowCloudflareDeploy(true)}>
-              <Cloud className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <Cloud className="text-fg-faint" aria-hidden="true" />
               Deploy relay
             </Button>
             <Button variant="ghost" onClick={() => setShowBatch(true)}>
-              <Upload className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <Upload className="text-fg-faint" aria-hidden="true" />
               Import
             </Button>
             <Button onClick={openCreate}>
@@ -302,7 +302,6 @@ export function ProxyPoolsPage() {
         <EmptyState
           variant="card"
           titleAs="h2"
-          icon={ICONS.proxyPools}
           title="No proxy pools yet"
           hint="Without a pool, every account connects to its provider directly."
           action={
@@ -313,7 +312,7 @@ export function ProxyPoolsPage() {
           }
         />
       ) : (
-        <section aria-labelledby="proxy-pools-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        <section aria-labelledby="proxy-pools-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
           <div className="flex min-h-14 flex-wrap items-center gap-x-5 gap-y-2 border-b border-line px-4 py-3">
             <SectionTitle id="proxy-pools-title" icon={ICONS.proxyPools} title="Pools" />
             <p role="status" className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12.5px]">
@@ -333,15 +332,15 @@ export function ProxyPoolsPage() {
               {selected.size > 0 ? (
                 <>
                   <Button variant="ghost" onClick={handleBulkTest} disabled={checking} className="grow sm:grow-0">
-                    {checking ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+                    {checking ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw className="text-fg-faint" aria-hidden="true" />}
                     {checking ? "Testing…" : `Test ${selected.size}`}
                   </Button>
                   <Button variant="ghost" onClick={bulkActivate} className="grow sm:grow-0">
-                    <Power className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                    <Power className="text-fg-faint" aria-hidden="true" />
                     Enable
                   </Button>
                   <Button variant="ghost" onClick={bulkDeactivate} className="grow sm:grow-0">
-                    <PowerOff className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                    <PowerOff className="text-fg-faint" aria-hidden="true" />
                     Disable
                   </Button>
                   <Button variant="danger" onClick={bulkDelete} className="grow sm:grow-0">
@@ -352,14 +351,14 @@ export function ProxyPoolsPage() {
                     type="button"
                     onClick={() => setSelected(new Set())}
                     aria-label="Clear selection"
-                    className="flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
                     <X className="h-4 w-4" aria-hidden="true" />
                   </button>
                 </>
               ) : (
                 <Button variant="ghost" onClick={handleBulkTest} disabled={checking}>
-                  {checking ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+                  {checking ? <Loader2 className="animate-spin" aria-hidden="true" /> : <RefreshCw className="text-fg-faint" aria-hidden="true" />}
                   {checking ? "Testing…" : "Test all"}
                 </Button>
               )}
@@ -485,7 +484,7 @@ function PoolMenu({ pool, onTest, onEdit, onDelete, testing }: Pick<PoolItemProp
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={`Actions for ${pool.name}`}
-        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 md:h-8 md:w-8"
+        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-8 md:w-8"
       >
         <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
       </DropdownMenuTrigger>
@@ -517,7 +516,7 @@ function PoolCard({ pool, accounts, selected, onSelect, onEdit, onDelete, onTest
   const KindIcon = poolKindIcon(pool);
   const url = maskUrl(pool.proxy_url);
   return (
-    <li className={cn("space-y-2 px-4 py-3", selected && "bg-accent-500/5")}>
+    <li className={cn("space-y-2 px-4 py-3", selected && "bg-brand-soft")}>
       <div className="flex items-start gap-1">
         <label className="-my-1.5 -ml-2 flex h-9 w-9 shrink-0 items-center justify-center">
           <input type="checkbox" checked={selected} onChange={onSelect} className={checkboxClass} aria-label={`Select ${pool.name}`} />
@@ -529,7 +528,7 @@ function PoolCard({ pool, accounts, selected, onSelect, onEdit, onDelete, onTest
               id={`${uid}-name`}
               onClick={onEdit}
               className={cn(
-                "min-w-0 truncate rounded-sm text-left text-[13px] font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                "min-w-0 truncate rounded-sm text-left text-[13px] font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 pool.is_active ? "text-fg" : "text-fg-muted",
               )}
               title={pool.name}
@@ -541,7 +540,7 @@ function PoolCard({ pool, accounts, selected, onSelect, onEdit, onDelete, onTest
             </span>
           </div>
           <p className="flex min-w-0 items-center gap-1.5 text-[12px] text-fg-muted">
-            <KindIcon className="h-3.5 w-3.5 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            <KindIcon className="h-3.5 w-3.5 shrink-0 text-fg-faint" aria-hidden="true" />
             <span className="shrink-0">{poolKind(pool)}</span>
             <span aria-hidden="true">·</span>
             <span className="min-w-0 truncate font-mono" title={url}>{url}</span>
@@ -600,7 +599,7 @@ function PoolRow({ pool, accounts, selected, onSelect, onEdit, onDelete, onTest,
   const KindIcon = poolKindIcon(pool);
 
   return (
-    <tr className={cn("transition-colors", selected ? "bg-accent-500/5" : "hover:bg-hover", !pool.is_active && !selected && "text-fg-muted")}>
+    <tr className={cn("transition-colors", selected ? "bg-brand-soft" : "hover:bg-hover", !pool.is_active && !selected && "text-fg-muted")}>
       <td className="py-2 pl-3 pr-1 align-top">
         <span className="flex h-6 w-6 items-center justify-center">
           <input
@@ -617,7 +616,7 @@ function PoolRow({ pool, accounts, selected, onSelect, onEdit, onDelete, onTest,
           type="button"
           onClick={onEdit}
           className={cn(
-            "block max-w-full truncate rounded-sm text-left font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+            "block max-w-full truncate rounded-sm text-left font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             pool.is_active ? "text-fg" : "text-fg-muted",
           )}
           title={pool.name}
@@ -626,12 +625,12 @@ function PoolRow({ pool, accounts, selected, onSelect, onEdit, onDelete, onTest,
         </button>
         <div className="mt-1 flex flex-wrap items-center gap-1">
           <Badge>
-            <KindIcon className="h-3 w-3 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+            <KindIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
             {poolKind(pool)}
           </Badge>
           {pool.strict && (
             <Badge tone="secondary" title="Requests fail instead of connecting directly when the proxy is unreachable">
-              <Lock className="h-3 w-3 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+              <Lock className="h-3 w-3 shrink-0" aria-hidden="true" />
               Strict
             </Badge>
           )}
@@ -704,7 +703,7 @@ function SwitchRow({ icon: Icon, title, description, checked, onChange }: { icon
   return (
     <div className="flex items-center justify-between gap-4 px-3 py-2.5">
       <div className="flex min-w-0 items-start gap-2.5">
-        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
         <div className="min-w-0">
           <p id={`${id}-title`} className="text-[13px] font-medium text-fg">{title}</p>
           <p id={`${id}-desc`} className="mt-0.5 text-[12px] text-fg-muted">{description}</p>
@@ -814,7 +813,7 @@ function Step({ n, title, children }: { n: number; title: ReactNode; children?: 
       {/* The <ol> already numbers the steps for assistive tech. */}
       <span
         aria-hidden="true"
-        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-tone-soft text-[12.5px] font-semibold tabular-nums text-tone ring-1 ring-inset ring-tone-ring"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-subtle text-[12.5px] font-medium tabular-nums text-fg-muted"
       >
         {n}
       </span>
@@ -1043,7 +1042,7 @@ function BatchImport({ onClose }: { onClose: () => void }) {
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => { setResults(null); setText(""); }}>
-              <Upload className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" /> Import more
+              <Upload className="text-fg-faint" aria-hidden="true" /> Import more
             </Button>
             <Button onClick={onClose}>
               <Check aria-hidden="true" /> Done
@@ -1060,9 +1059,9 @@ function BatchImport({ onClose }: { onClose: () => void }) {
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
-                  className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line bg-surface px-2 text-[12px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line bg-surface px-2 text-[12px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <FileText className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" /> Load file
+                  <FileText className="h-3.5 w-3.5 text-fg-faint" aria-hidden="true" /> Load file
                 </button>
               }
             >
@@ -1090,7 +1089,7 @@ function BatchImport({ onClose }: { onClose: () => void }) {
                   </p>
                   {parsed.errors.slice(0, 3).map((err) => (
                     <p key={err.line} className="flex items-center gap-1.5 text-[12px] text-bad">
-                      <AlertCircle className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                      <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                       <span className="tabular-nums">Line {err.line}:</span> {err.message}
                     </p>
                   ))}

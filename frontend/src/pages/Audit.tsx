@@ -5,7 +5,7 @@ import { api, type AuditEntry, type AuditOutcome, type AuditVerifyReport } from 
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
-import { Badge, Button, ErrorBanner, IconTile, Input, Kpi, KpiGrid, SectionTitle, Select, Skeleton } from "../components/ui";
+import { Badge, Button, ErrorBanner, Glyph, Input, Kpi, KpiGrid, SectionTitle, Select, Skeleton } from "../components/ui";
 import { ICONS } from "../lib/icons";
 import { formatDateTime } from "../lib/format";
 
@@ -39,7 +39,7 @@ const OUTCOME_TONE: Record<AuditOutcome, "success" | "warning" | "danger"> = {
 const PAGE_SIZE = 100;
 
 const iconButton =
-  "flex h-9 w-9 shrink-0 items-center justify-center md:h-8 md:w-8 rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+  "flex h-9 w-9 shrink-0 items-center justify-center md:h-8 md:w-8 rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function useDebounced<T>(value: T, ms: number): T {
   const [v, setV] = useState(value);
@@ -53,11 +53,11 @@ function useDebounced<T>(value: T, ms: number): T {
 function actorLabel(e: AuditEntry): string {
   if (e.actor_type === "system") return "System";
   if (e.actor_type === "dashboard") return e.actor_id ? `Dashboard · ${e.actor_id.replace(/^session:/, "")}` : "Dashboard (signed out)";
-  return e.actor_id || "—";
+  return e.actor_id || "n/a";
 }
 
 function resourceLabel(e: AuditEntry): string {
-  if (!e.resource_type) return "—";
+  if (!e.resource_type) return "n/a";
   return e.resource_id ? `${e.resource_type}/${e.resource_id}` : e.resource_type;
 }
 
@@ -121,7 +121,6 @@ export function AuditPage() {
     <div>
       <PageHeader
         title="Audit log"
-        icon={ICONS.audit}
         description="Every dashboard sign-in and configuration change: who did it, from where, and whether it worked. Rows are hash-chained so tampering is detectable."
         action={
           <>
@@ -142,23 +141,20 @@ export function AuditPage() {
       <div className="mb-6">
         <KpiGrid cols={4} label="Audit pipeline">
           <Kpi
-            icon={ICONS.database}
             label="Recorded"
-            value={st ? st.written.toLocaleString() : "—"}
+            value={st ? st.written.toLocaleString() : "n/a"}
             hint={st && !st.enabled ? "Auditing is off (audit.enabled)" : "since this instance started"}
           />
           <Kpi
-            icon={ICONS.errors}
             label="Lost"
-            value={st ? (st.dropped + st.failed).toLocaleString() : "—"}
-            tone={st && st.dropped + st.failed > 0 ? "warn" : "section"}
+            value={st ? (st.dropped + st.failed).toLocaleString() : "n/a"}
+            tone={st && st.dropped + st.failed > 0 ? "warn" : undefined}
             hint={st ? `${st.dropped} queue full · ${st.failed} write errors` : undefined}
           />
           <Kpi
-            icon={ICONS.network}
             label="OpenTelemetry export"
             value={otlp ? otlp.exported.toLocaleString() : "Off"}
-            tone={otlp?.last_error ? "warn" : "section"}
+            tone={otlp?.last_error ? "warn" : undefined}
             hint={
               otlp ? (
                 <span title={otlp.last_error || otlp.endpoint}>{otlp.last_error ? `Error: ${otlp.last_error}` : otlp.endpoint}</span>
@@ -168,15 +164,14 @@ export function AuditPage() {
             }
           />
           <Kpi
-            icon={ICONS.uptime}
             label="Retention"
-            value={status.data ? (status.data.retention_days > 0 ? `${status.data.retention_days} days` : "Forever") : "—"}
+            value={status.data ? (status.data.retention_days > 0 ? `${status.data.retention_days} days` : "Forever") : "n/a"}
             hint="audit.retention_days"
           />
         </KpiGrid>
       </div>
 
-      <section aria-labelledby="audit-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <section aria-labelledby="audit-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
         <div className="flex flex-col gap-3 border-b border-line px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
           <SectionTitle id="audit-title" icon={ICONS.audit} title="Events" />
           <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
@@ -219,8 +214,7 @@ export function AuditPage() {
           </div>
         ) : rows.length === 0 ? (
           <div className="px-6 py-12 text-center">
-            <IconTile icon={filtered ? Search : ICONS.audit} size="lg" tone={filtered ? "slate" : "section"} className="mx-auto mb-3" />
-            <p className="text-[13px] font-semibold text-fg">{filtered ? "No events match" : "No events yet"}</p>
+            <p className="text-[13px] font-medium text-fg">{filtered ? "No events match" : "No events yet"}</p>
             <p className="mx-auto mt-1 max-w-md text-[12.5px] text-fg-muted">
               {filtered ? "Try another action, outcome or search." : "Sign-ins and configuration changes appear here as they happen."}
             </p>
@@ -295,7 +289,7 @@ export function AuditPage() {
                               }}
                               className={iconButton}
                             >
-                              <ChevronRight className={cn("h-4 w-4 text-fg-faint transition-transform", open && "rotate-90")} strokeWidth={1.75} aria-hidden="true" />
+                              <ChevronRight className={cn("h-4 w-4 text-fg-faint transition-transform", open && "rotate-90")} aria-hidden="true" />
                             </button>
                           </td>
                           <td className="whitespace-nowrap px-3 py-2 tabular-nums text-fg-muted">{when}</td>
@@ -305,7 +299,7 @@ export function AuditPage() {
                           <td className="px-3 py-2">
                             <Badge tone={OUTCOME_TONE[e.outcome] ?? "neutral"}>{OUTCOME_LABEL[e.outcome] ?? e.outcome}</Badge>
                           </td>
-                          <td className="whitespace-nowrap px-3 py-2 pr-4 font-mono text-[12px] text-fg-muted">{e.client_ip || "—"}</td>
+                          <td className="whitespace-nowrap px-3 py-2 pr-4 font-mono text-[12px] text-fg-muted">{e.client_ip || "n/a"}</td>
                         </tr>
                         {open && (
                           <tr id={detailsId} className="bg-hover">
@@ -369,12 +363,12 @@ function VerifyBanner({ report, onClose }: { report: AuditVerifyReport; onClose:
       role="status"
       className={cn(
         "mb-6 flex items-start gap-3 rounded-2xl border px-4 py-3",
-        ok ? "border-ok/25 bg-ok/8" : "border-bad/30 bg-bad/8",
+        ok ? "border-ok/25 bg-ok-soft" : "border-bad/30 bg-bad-soft",
       )}
     >
-      <IconTile icon={ok ? ShieldCheck : ShieldAlert} size="sm" tone={ok ? "ok" : "bad"} />
+      <Glyph icon={ok ? ShieldCheck : ShieldAlert} tone={ok ? "ok" : "bad"} />
       <div className="min-w-0 flex-1">
-        <p className="text-[13px] font-semibold text-fg">
+        <p className="text-[13px] font-medium text-fg">
           {ok
             ? `Integrity verified: ${report.entries.toLocaleString()} events across ${report.chains} chain${report.chains === 1 ? "" : "s"}`
             : `Integrity check failed: ${report.breaks.length}${report.truncated ? "+" : ""} problem${report.breaks.length === 1 ? "" : "s"} found`}
@@ -392,7 +386,7 @@ function VerifyBanner({ report, onClose }: { report: AuditVerifyReport; onClose:
         )}
       </div>
       <button type="button" onClick={onClose} className={iconButton} aria-label="Dismiss">
-        <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        <X className="h-4 w-4" aria-hidden="true" />
       </button>
     </div>
   );

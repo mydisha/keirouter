@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import type { LucideIcon } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, ChevronRight, FileStack, Network, RefreshCw, Workflow } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, RefreshCw, Workflow } from "lucide-react";
 import { api, type SystemResourceBucket, type SystemSample, type SystemSnapshot } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
-import { Badge, ErrorCard, IconTile, SectionTitle, SegmentedControl, Skeleton } from "../components/ui";
+import { Badge, ErrorCard, Glyph, SectionTitle, SegmentedControl, Skeleton } from "../components/ui";
 import { ChartCard, TimeLines } from "../components/charts/TimeSeries";
 import { ICONS } from "../lib/icons";
 
@@ -26,7 +25,7 @@ const C_HOST = "var(--color-accent-500)";
 const C_PEAK = "var(--color-accent-300)";
 const C_KEI = "var(--series-alt)";
 
-const FOCUS = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const FOCUS = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 type Range = "live" | "1h" | "24h" | "7d";
 const RANGES: Record<Range, { label: string; hours: number; interval: string; stepS: number }> = {
@@ -92,7 +91,7 @@ export function SystemPage() {
             aria-label="Refresh now"
             className={cn("inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg sm:h-8 sm:w-8", FOCUS)}
           >
-            <RefreshCw className={cn("h-4 w-4", (snap.isFetching || history.isFetching || stored.isFetching) && "animate-spin")} strokeWidth={1.75} aria-hidden="true" />
+            <RefreshCw className={cn("h-4 w-4", (snap.isFetching || history.isFetching || stored.isFetching) && "animate-spin")} aria-hidden="true" />
           </button>
         </>
       }
@@ -298,10 +297,10 @@ function findIssues(s: SystemSnapshot, th: typeof DEFAULT_THRESHOLDS, cpuRecent:
 function HealthBanner({ issues }: { issues: Issue[] }) {
   if (!issues.length) {
     return (
-      <div role="status" className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 shadow-[var(--shadow-card)]">
-        <IconTile icon={CheckCircle2} tone="ok" size="md" />
+      <div role="status" className="flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 shadow-paper">
+        <Glyph icon={CheckCircle2} tone="ok" />
         <div className="min-w-0">
-          <p className="text-[13px] font-semibold text-fg">Everything looks normal</p>
+          <p className="text-[13px] font-medium text-fg">Everything looks normal</p>
           <p className="text-[12.5px] text-fg-muted">CPU, memory and disk are all below their alert levels.</p>
         </div>
       </div>
@@ -309,11 +308,11 @@ function HealthBanner({ issues }: { issues: Issue[] }) {
   }
   const worst = issues[0].level;
   return (
-    <div role="status" className={cn("rounded-2xl border bg-surface px-4 py-3 shadow-[var(--shadow-card)]", worst === "bad" ? "border-bad/40" : "border-warn/40")}>
+    <div role="status" className={cn("rounded-2xl border bg-surface px-4 py-3 shadow-paper", worst === "bad" ? "border-bad/40" : "border-warn/40")}>
       <div className="flex items-start gap-3">
-        <IconTile icon={AlertTriangle} tone={worst} size="md" />
+        <Glyph icon={AlertTriangle} tone={worst} />
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold text-fg">{worst === "bad"
+          <p className="text-[13px] font-medium text-fg">{worst === "bad"
               ? `${issues.length === 1 ? "1 thing needs" : `${issues.length} things need`} attention now`
               : `${issues.length === 1 ? "1 thing" : `${issues.length} things`} to keep an eye on`}</p>
           <ul className="mt-1 space-y-1">
@@ -338,7 +337,7 @@ function MachineCard({ s, th }: { s: SystemSnapshot; th: typeof DEFAULT_THRESHOL
   const load = s.load_avg;
   const platform = [s.os, s.arch].filter(Boolean).join(" · ");
   return (
-    <section aria-labelledby="machine-title" className="min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section aria-labelledby="machine-title" className="min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       <div className="border-b border-line px-4 py-3">
         <SectionTitle
           id="machine-title"
@@ -432,7 +431,7 @@ function MachineCard({ s, th }: { s: SystemSnapshot; th: typeof DEFAULT_THRESHOL
 function ProcessCard({ s }: { s: SystemSnapshot }) {
   const fdShare = s.proc_fd_limit ? (s.proc_open_fds / s.proc_fd_limit) * 100 : 0;
   return (
-    <section aria-labelledby="process-title" className="min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section aria-labelledby="process-title" className="min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       <div className="border-b border-line px-4 py-3">
         <SectionTitle
           id="process-title"
@@ -448,33 +447,28 @@ function ProcessCard({ s }: { s: SystemSnapshot }) {
       </div>
       <dl className="grid grid-cols-1 gap-px bg-line sm:grid-cols-2">
         <Stat
-          icon={ICONS.system}
           label="CPU"
           value={fmtShare(s.proc_cpu_pct)}
           hint={`of the whole machine · ≈ ${fmtCores(s.proc_cpu_cores)} of ${s.cpu_count} cores`}
         />
         <Stat
-          icon={ICONS.memory}
           label="Memory"
           value={fmtMB(s.proc_rss_mb)}
           hint={`${fmtPct((s.proc_rss_mb / Math.max(1, s.mem_total_mb)) * 100, 1)} of machine RAM · heap ${fmtMB(s.heap_alloc_mb)}`}
         />
         <Stat
-          icon={Network}
           label="Network connections"
           value={s.proc_conns.toLocaleString("en-US")}
           hint={`${s.proc_conns_established.toLocaleString("en-US")} active · clients and upstream providers`}
         />
-        <Stat icon={Workflow} label="Goroutines" value={s.goroutines.toLocaleString("en-US")} hint={`on ${s.proc_threads.toLocaleString("en-US")} OS threads`} />
+        <Stat label="Goroutines" value={s.goroutines.toLocaleString("en-US")} hint={`on ${s.proc_threads.toLocaleString("en-US")} OS threads`} />
         <Stat
-          icon={FileStack}
           label="Open files & sockets"
           value={s.proc_open_fds.toLocaleString("en-US")}
           lvl={fdShare >= 80 ? "bad" : fdShare >= 60 ? "warn" : "ok"}
           hint={s.proc_fd_limit ? `of ${s.proc_fd_limit.toLocaleString("en-US")} allowed (${fmtShare(fdShare)})` : "no limit reported on this OS"}
         />
         <Stat
-          icon={ICONS.uptime}
           label="Garbage collection"
           value={`${s.gc_pause_last_ms.toFixed(2)} ms`}
           hint={`last pause · ${s.gc_cycles.toLocaleString("en-US")} runs since start`}
@@ -519,8 +513,8 @@ function Meter({
     <div className="px-4 py-3.5">
       <div className="flex items-baseline justify-between gap-3">
         <span className="min-w-0 text-[12.5px] font-medium text-fg-muted [overflow-wrap:anywhere]">{label}</span>
-        <span className={cn("inline-flex items-center gap-1.5 text-[18px] font-semibold leading-none tabular-nums", lvl === "bad" ? "text-bad" : lvl === "warn" ? "text-warn" : "text-fg")}>
-          {lvl !== "ok" && <AlertTriangle className="h-4 w-4" strokeWidth={2} aria-hidden="true" />}
+        <span className={cn("inline-flex items-center gap-1.5 text-[18px] font-medium leading-none tabular-nums", lvl === "bad" ? "text-bad" : lvl === "warn" ? "text-warn" : "text-fg")}>
+          {lvl !== "ok" && <AlertTriangle className="stroke-2 h-4 w-4" aria-hidden="true" />}
           {value}
           {lvl !== "ok" && <span className="sr-only">({lvl === "bad" ? "above alert level" : "close to alert level"})</span>}
         </span>
@@ -561,14 +555,11 @@ function Meter({
   );
 }
 
-function Stat({ icon, label, value, hint, lvl = "ok" }: { icon: LucideIcon; label: string; value: string; hint: string; lvl?: Level }) {
+function Stat({ label, value, hint, lvl = "ok" }: { label: string; value: string; hint: string; lvl?: Level }) {
   return (
-    <div className="relative bg-surface py-3.5 pl-[3.75rem] pr-4">
-      <dt className="text-[12px] font-medium text-fg-muted">
-        <IconTile icon={icon} size="md" tone={lvl === "ok" ? "orange" : lvl} className="absolute left-4 top-4" />
-        {label}
-      </dt>
-      <dd className={cn("mt-0.5 text-[18px] font-semibold leading-tight tabular-nums", lvl === "bad" ? "text-bad" : lvl === "warn" ? "text-warn" : "text-fg")}>{value}</dd>
+    <div className="bg-surface px-5 py-4">
+      <dt className="text-meta text-fg-muted">{label}</dt>
+      <dd className={cn("mt-1 font-display text-[1.625rem] leading-tight", lvl === "bad" ? "text-bad" : lvl === "warn" ? "text-warn" : "text-fg")}>{value}</dd>
       <dd className="mt-0.5 text-[12px] text-fg-muted">{hint}</dd>
     </div>
   );
@@ -580,7 +571,7 @@ function PerCore({ cores }: { cores: number[] }) {
   return (
     <details className="group mt-3">
       <summary className={cn("flex h-9 w-fit cursor-pointer list-none items-center gap-1 rounded-md text-[12px] font-medium text-fg-muted hover:text-fg sm:h-7 [&::-webkit-details-marker]:hidden", FOCUS)}>
-        <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" strokeWidth={1.75} aria-hidden="true" />
+        <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />
         Per core · busiest {fmtPct(busiest)}
       </summary>
       {/* At most 32 columns per strip so big machines still fit a 320px phone. */}
@@ -620,18 +611,18 @@ function SpikeList({ episodes, th, hasData, rangeLabel }: { episodes: Episode[];
   if (!episodes.length) {
     return (
       <p className="flex items-center gap-2 text-[12.5px] text-fg-muted">
-        <CheckCircle2 className="h-4 w-4 text-ok" strokeWidth={1.75} aria-hidden="true" />
+        <CheckCircle2 className="h-4 w-4 text-ok" aria-hidden="true" />
         No CPU spikes above {th.cpu_pct}% or memory above {th.mem_pct}% in {rangeLabel}.
       </p>
     );
   }
   return (
-    <section aria-labelledby="spikes-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section aria-labelledby="spikes-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       <div className="border-b border-line px-4 py-3">
         <SectionTitle id="spikes-title" icon={AlertTriangle} title={`Spikes (${episodes.length})`} subtitle={`Stretches in ${rangeLabel} when CPU went above ${th.cpu_pct}% or memory above ${th.mem_pct}%`} />
       </div>
       {/* Focusable so keyboard users can scroll it sideways on phones; "When" stays pinned. */}
-      <div className="overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500" tabIndex={0} role="region" aria-label="Spikes table">
+      <div className="overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" tabIndex={0} role="region" aria-label="Spikes table">
         <table className="w-full min-w-[520px] text-[13px]">
           <thead>
             <tr className="border-b border-line bg-subtle text-left text-[12px] text-fg-faint">
@@ -689,9 +680,9 @@ function spikeEpisodes(points: Point[], stepS: number, th: typeof DEFAULT_THRESH
 
 function TechDetails({ s }: { s: SystemSnapshot }) {
   return (
-    <details className="group overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
-      <summary className={cn("flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-0.5 px-4 py-3 text-[13px] font-semibold text-fg hover:bg-hover [&::-webkit-details-marker]:hidden", FOCUS)}>
-        <ChevronRight className="h-4 w-4 text-fg-muted transition-transform group-open:rotate-90" strokeWidth={1.75} aria-hidden="true" />
+    <details className="group overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
+      <summary className={cn("flex cursor-pointer list-none flex-wrap items-center gap-x-2 gap-y-0.5 px-4 py-3 text-[13px] font-medium text-fg hover:bg-hover [&::-webkit-details-marker]:hidden", FOCUS)}>
+        <ChevronRight className="h-4 w-4 text-fg-muted transition-transform group-open:rotate-90" aria-hidden="true" />
         Technical details
         {/* Wraps under the title on phones, aligned past the chevron. */}
         <span className="basis-full pl-6 text-[12px] font-normal text-fg-muted sm:basis-auto sm:pl-0">Go runtime and host facts, for debugging</span>
@@ -707,19 +698,19 @@ function TechDetails({ s }: { s: SystemSnapshot }) {
             ["GC runs", s.gc_cycles.toLocaleString("en-US")],
             ["Last GC pause", `${s.gc_pause_last_ms.toFixed(2)} ms`],
             ["Total GC pause", `${s.gc_pause_total_ms.toFixed(1)} ms`],
-            ["Go version", <span key="go" className="font-mono text-[12.5px]">{s.go_version || "—"}</span>],
+            ["Go version", <span key="go" className="font-mono text-[12.5px]">{s.go_version || "n/a"}</span>],
           ]}
         />
         <DetailList
           title="Host & process"
           rows={[
-            ["Hostname", <span key="h" className="font-mono text-[12.5px]">{s.host || "—"}</span>],
-            ["Platform", <span key="p" className="font-mono text-[12.5px]">{[s.os, s.arch].filter(Boolean).join(" ") || "—"}</span>],
+            ["Hostname", <span key="h" className="font-mono text-[12.5px]">{s.host || "n/a"}</span>],
+            ["Platform", <span key="p" className="font-mono text-[12.5px]">{[s.os, s.arch].filter(Boolean).join(" ") || "n/a"}</span>],
             ["CPU", s.cpu_model ? `${s.cpu_model} · ${s.cpu_count} threads` : `${s.cpu_count} threads`],
             ["Process ID", <span key="pid" className="font-mono text-[12.5px]">{s.pid}</span>],
             ["OS threads", s.proc_threads.toLocaleString("en-US")],
             ["Disk volume", <span key="d" className="font-mono text-[12.5px]">{s.disk_path}</span>],
-            ["Machine up", s.host_uptime_s > 0 ? fmtDuration(s.host_uptime_s) : "—"],
+            ["Machine up", s.host_uptime_s > 0 ? fmtDuration(s.host_uptime_s) : "n/a"],
             ["CPU measured over", `${(s.window_s || 5).toFixed(1)} s`, "Each CPU reading is the average across this window"],
           ]}
         />

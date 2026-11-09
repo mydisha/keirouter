@@ -50,7 +50,7 @@ import { useToast } from "../components/Toast";
 import { GuardrailEditor } from "../components/GuardrailEditor";
 import { GuardrailOverview, isReportPeriod } from "../components/GuardrailMonitor";
 import { SCOPE_ICONS, ScopeIDSelector, useScopeTargetLabels } from "../components/ScopeIDSelector";
-import { Button, Input, Select, Badge, Toggle, Modal, Skeleton, ErrorBanner, IconTile, SectionTitle, EmptyState } from "../components/ui";
+import { Button, Input, Select, Badge, Toggle, Modal, Skeleton, ErrorBanner, Glyph, SectionTitle, EmptyState } from "../components/ui";
 import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
@@ -118,7 +118,7 @@ function isScope(v: string | null): v is GuardrailScope {
 function DialogTitle({ icon: Icon, children }: { icon: LucideIcon; children: ReactNode }) {
   return (
     <span className="inline-flex items-center gap-2">
-      <Icon className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />
+      <Icon className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
       {children}
     </span>
   );
@@ -129,7 +129,7 @@ function ScopeLabel({ scope }: { scope: GuardrailScope }) {
   const Icon = SCOPE_ICONS[scope];
   return (
     <>
-      <Icon className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+      <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       {SCOPE_LABEL[scope] ?? scope}
     </>
   );
@@ -178,15 +178,15 @@ function FormField({
 
 const chipClass = (active: boolean) =>
   cn(
-    "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-    active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+    "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+    active ? "border-accent-500/30 bg-brand-soft text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
   );
 
 const iconButton =
-  "flex h-9 w-9 shrink-0 items-center justify-center md:h-8 md:w-8 rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+  "flex h-9 w-9 shrink-0 items-center justify-center md:h-8 md:w-8 rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 const textareaClass =
-  "w-full resize-y rounded-lg border border-input bg-surface px-3 py-2 font-mono text-[12px] leading-5 text-fg transition-[border-color,box-shadow] placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+  "w-full resize-y rounded-lg border border-input bg-surface px-3 py-2 font-mono text-[12px] leading-5 text-fg transition-[border-color,box-shadow] placeholder:text-fg-faint hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 // Arrow / Home / End move focus and selection within a role="radiogroup" or
 // role="tablist" built from buttons.
@@ -246,7 +246,7 @@ function actionBadgeTone(action: string): "danger" | "warning" | "neutral" {
 }
 
 function EnforcementBadge({ action }: { action: GuardrailAction | null }) {
-  if (!action) return <span className="text-fg-faint">—</span>;
+  if (!action) return <span className="text-fg-faint">n/a</span>;
   const label = { block: "Can block", warn: "Warns", mask: "Masks", log_only: "Logs only", allow: "Allows" }[action] ?? action;
   return <Badge tone={actionBadgeTone(action)}>{label}</Badge>;
 }
@@ -315,9 +315,9 @@ export function GuardrailsPage() {
         action={
           <>
             <DropdownMenu>
-              <DropdownMenuTrigger className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-fg transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas">
+              <DropdownMenuTrigger className="inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-[13px] font-medium text-fg transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-canvas">
                 Import / export
-                <ChevronDown className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                <ChevronDown className="h-4 w-4 text-fg-faint" aria-hidden="true" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onSelect={() => setImporting(true)}>
@@ -352,11 +352,11 @@ export function GuardrailsPage() {
               tabIndex={on ? 0 : -1}
               onClick={() => update({ tab: value })}
               className={cn(
-                "relative -mb-px inline-flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                "relative -mb-px inline-flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 on ? "text-fg" : "text-fg-muted hover:text-fg",
               )}
             >
-              <Icon className={cn("h-4 w-4 shrink-0", on ? "text-tone" : "text-fg-faint")} strokeWidth={1.75} aria-hidden="true" />
+              <Icon className={cn("h-4 w-4 shrink-0", on ? "text-brand-ink" : "text-fg-faint")} aria-hidden="true" />
               {label}
               {on && <span aria-hidden="true" className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-accent-500" />}
             </button>
@@ -573,7 +573,6 @@ function PoliciesTab({
           <EmptyState
             variant="card"
             titleAs="h2"
-            icon={ICONS.guardrails}
             title="No guardrail policies yet"
             hint="Requests pass through unchecked until a policy exists."
             action={
@@ -586,12 +585,12 @@ function PoliciesTab({
         ) : (
           <div className="space-y-3">
             {!hasGlobal && (
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2 text-[12.5px]">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2 text-[12.5px]">
                 <span className="inline-flex items-center gap-2 text-warn">
-                  <AlertTriangle className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                  <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
                   No global policy: traffic no override matches is unchecked.
                 </span>
-                <button type="button" onClick={createGlobal} className="font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+                <button type="button" onClick={createGlobal} className="font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                   Add global policy
                 </button>
               </div>
@@ -599,20 +598,20 @@ function PoliciesTab({
 
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
               <div className="relative lg:w-72">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
                 <input
                   type="search"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder="Search name, target or detector"
                   aria-label="Search policies"
-                  className="h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
                 {search && (
                   <button
                     type="button"
                     onClick={() => setSearch("")}
-                    className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                    className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     aria-label="Clear search"
                   >
                     <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -646,7 +645,7 @@ function PoliciesTab({
               </div>
             </div>
 
-            <section aria-labelledby="guardrail-policies-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+            <section aria-labelledby="guardrail-policies-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
               <div className="border-b border-line px-4 py-3">
                 <SectionTitle
                   id="guardrail-policies-title"
@@ -663,8 +662,7 @@ function PoliciesTab({
                 <div className="px-6 py-10 text-center">
                   {search.trim() ? (
                     <>
-                      <IconTile icon={Search} size="lg" tone="slate" className="mx-auto mb-3" />
-                      <p className="text-[13px] font-semibold text-fg">No policies match</p>
+                      <p className="text-[13px] font-medium text-fg">No policies match</p>
                       <p className="mt-1 text-[12.5px] text-fg-muted">Try another search or scope.</p>
                       <Button variant="ghost" className="mt-4" onClick={() => setSearch("")}>
                         Clear search
@@ -672,8 +670,7 @@ function PoliciesTab({
                     </>
                   ) : scopeFilter !== "all" ? (
                     <>
-                      <IconTile icon={SCOPE_ICONS[scopeFilter]} size="lg" className="mx-auto mb-3" />
-                      <p className="text-[13px] font-semibold text-fg">No {SCOPE_LABEL[scopeFilter].toLowerCase()} policies yet</p>
+                      <p className="text-[13px] font-medium text-fg">No {SCOPE_LABEL[scopeFilter].toLowerCase()} policies yet</p>
                       <p className="mx-auto mt-1 max-w-md text-[12.5px] text-fg-muted">
                         {scopeFilter === "global" ? "A global policy applies to all traffic." : "Add one to override the global policy here."}
                       </p>
@@ -758,7 +755,7 @@ function PolicyRow({ policy, target, pending, onEdit, onToggle, onDelete, onOpen
             onEdit();
           }}
           className={cn(
-            "block max-w-full truncate rounded-sm text-left font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+            "block max-w-full truncate rounded-sm text-left font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             policy.enabled ? "text-fg" : "text-fg-muted",
           )}
           title={policy.name}
@@ -779,7 +776,7 @@ function PolicyRow({ policy, target, pending, onEdit, onToggle, onDelete, onOpen
               {policy.scope !== "apikey" && <span className="ml-1.5 font-mono text-[12px] text-fg-muted">{policy.scope_id}</span>}
             </span>
           ) : (
-            <span className="truncate font-mono text-[12px] text-fg-muted" title={policy.scope_id}>{policy.scope_id || "—"}</span>
+            <span className="truncate font-mono text-[12px] text-fg-muted" title={policy.scope_id}>{policy.scope_id || "n/a"}</span>
           )}
         </div>
       </td>
@@ -792,7 +789,7 @@ function PolicyRow({ policy, target, pending, onEdit, onToggle, onDelete, onOpen
               const Icon = DETECTOR_BY_LABEL[d]?.icon;
               return (
                 <Badge key={d} tone="neutral">
-                  {Icon && <Icon className="h-3 w-3 shrink-0" strokeWidth={1.75} aria-hidden="true" />}
+                  {Icon && <Icon className="h-3 w-3 shrink-0" aria-hidden="true" />}
                   {d}
                 </Badge>
               );
@@ -813,7 +810,7 @@ function PolicyRow({ policy, target, pending, onEdit, onToggle, onDelete, onOpen
         </span>
       </td>
       <td className="whitespace-nowrap px-4 py-2.5 tabular-nums text-fg-muted" title={policy.updated_at ? formatDateTime(policy.updated_at) : undefined}>
-        {policy.updated_at ? formatDate(policy.updated_at, { short: true }) : "—"}
+        {policy.updated_at ? formatDate(policy.updated_at, { short: true }) : "n/a"}
       </td>
       <td className="px-2 py-2.5" onClick={stop}>
         <PolicyMenu name={policy.name} onEdit={onEdit} onOpenKey={onOpenKey} onDelete={onDelete} />
@@ -866,7 +863,7 @@ function PolicyCard({ policy, target, pending, onEdit, onToggle, onDelete, onOpe
   const cfg = policy.config ?? {};
   const detectors = enabledDetectorNames(cfg);
   const strongest = strongestAction(cfg);
-  const targetText = policy.scope === "global" ? "All traffic" : target ?? (policy.scope_id || "—");
+  const targetText = policy.scope === "global" ? "All traffic" : target ?? (policy.scope_id || "n/a");
   return (
     <li className="space-y-2 px-4 py-3">
       <div className="flex items-start justify-between gap-3">
@@ -874,7 +871,7 @@ function PolicyCard({ policy, target, pending, onEdit, onToggle, onDelete, onOpe
           type="button"
           onClick={onEdit}
           className={cn(
-            "min-w-0 truncate rounded-sm py-0.5 text-left text-[13px] font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+            "min-w-0 truncate rounded-sm py-0.5 text-left text-[13px] font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             policy.enabled ? "text-fg" : "text-fg-muted",
           )}
           title={policy.name}
@@ -937,13 +934,13 @@ function TenantFlagsCard() {
   return (
     <section
       aria-labelledby={titleId}
-      className="flex items-center justify-between gap-4 rounded-2xl border border-line bg-surface px-4 py-3 shadow-[var(--shadow-card)] sm:gap-8"
+      className="flex items-center justify-between gap-4 rounded-2xl border border-line bg-surface px-4 py-3 shadow-paper sm:gap-8"
     >
       <div className="flex min-w-0 items-start gap-3">
-        <IconTile icon={ICONS.network} size="sm" tone={allow ? "section" : "warn"} className="mt-0.5" />
+        <Glyph icon={ICONS.network} tone={allow ? "muted" : "warn"} className="mt-0.5" />
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 id={titleId} className="text-[13px] font-semibold text-fg">
+            <h2 id={titleId} className="text-[13px] font-medium text-fg">
               Allow external detector engines
             </h2>
             {!allow && <Badge tone="warning">Native only</Badge>}
@@ -1098,7 +1095,7 @@ function ImportModal({ onClose }: { onClose: () => void }) {
               {result.skipped.length > 0 && (
                 <div className={cn("px-3 py-2.5", result.imported.length > 0 && "border-t border-line")}>
                   <p className="inline-flex items-center gap-1.5 font-medium text-warn">
-                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                     Skipped <span className="tabular-nums">{result.skipped.length}</span>
                   </p>
                   <ul className="mt-1 space-y-0.5 text-fg-muted">
@@ -1139,7 +1136,7 @@ function ImportModal({ onClose }: { onClose: () => void }) {
 function DetectorsHeading({ action }: { action?: ReactNode }) {
   return (
     <div className="mb-2 flex min-h-9 items-center justify-between gap-2">
-      <h3 className="text-[13px] font-semibold text-fg">Detectors</h3>
+      <h3 className="text-[13px] font-medium text-fg">Detectors</h3>
       {action}
     </div>
   );
@@ -1290,8 +1287,8 @@ function CreatePolicyModal({
                     title={disabled ? "A global policy already exists. Edit it instead." : undefined}
                     onClick={() => changeScope(s)}
                     className={cn(
-                      "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-40",
-                      active ? "bg-surface text-fg ring-1 ring-line-strong [&_svg]:text-tone" : "text-fg-muted hover:text-fg",
+                      "inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40",
+                      active ? "bg-surface text-fg ring-1 ring-line-strong [&_svg]:text-brand-ink" : "text-fg-muted hover:text-fg",
                     )}
                   >
                     <ScopeLabel scope={s} />
@@ -1314,7 +1311,7 @@ function CreatePolicyModal({
           <DetectorsHeading
             action={
               <Button variant="ghost" onClick={() => setPickingTemplate(true)}>
-                <Sparkles className="text-tone" strokeWidth={1.75} aria-hidden="true" />
+                <Sparkles className="text-fg-faint" aria-hidden="true" />
                 Start from template
               </Button>
             }
@@ -1380,13 +1377,13 @@ function TemplatePickerModal({
                 <button
                   type="button"
                   onClick={() => onPick(tpl)}
-                  className="group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+                  className="group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="text-[13px] font-medium text-fg">{tpl.name}</p>
                     <p className="mt-0.5 text-[12px] leading-5 text-fg-muted">{tpl.description}</p>
                   </div>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-fg-faint transition-transform group-hover:translate-x-0.5" strokeWidth={1.75} aria-hidden="true" />
+                  <ChevronRight className="h-4 w-4 shrink-0 text-fg-faint transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
                 </button>
               </li>
             ))}
@@ -1534,7 +1531,7 @@ function LogsTab() {
   });
 
   return (
-    <section aria-labelledby="guardrail-log-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section aria-labelledby="guardrail-log-title" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       <div className="flex flex-col gap-3 border-b border-line px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <SectionTitle id="guardrail-log-title" icon={ICONS.console} title="Audit log" />
@@ -1578,13 +1575,13 @@ function LogsTab() {
                 type="button"
                 onClick={() => setFilter(c.key, "")}
                 aria-label={`Remove filter ${c.label}`}
-                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <X className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
+                <X className="stroke-2 h-3.5 w-3.5" aria-hidden="true" />
               </button>
             </span>
           ))}
-          <button type="button" onClick={clearFilters} className="rounded text-[12px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+          <button type="button" onClick={clearFilters} className="rounded text-[12px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             Clear all
           </button>
         </div>
@@ -1602,8 +1599,7 @@ function LogsTab() {
         </div>
       ) : rows.length === 0 ? (
         <div className="px-6 py-12 text-center">
-          <IconTile icon={filtered ? Search : ICONS.console} size="lg" tone={filtered ? "slate" : "section"} className="mx-auto mb-3" />
-          <p className="text-[13px] font-semibold text-fg">{filtered ? "No entries match" : "No audit entries yet"}</p>
+          <p className="text-[13px] font-medium text-fg">{filtered ? "No entries match" : "No audit entries yet"}</p>
           <p className="mx-auto mt-1 max-w-md text-[12.5px] text-fg-muted">
             {filtered ? "Try another filter, or clear them." : "Decisions appear here as guardrails fire."}
           </p>
@@ -1664,13 +1660,13 @@ function LogsTab() {
                           }}
                           className={iconButton}
                         >
-                          <ChevronRight className={cn("h-4 w-4 text-fg-faint transition-transform", isOpen && "rotate-90")} strokeWidth={1.75} aria-hidden="true" />
+                          <ChevronRight className={cn("h-4 w-4 text-fg-faint transition-transform", isOpen && "rotate-90")} aria-hidden="true" />
                         </button>
                       </td>
                       <td className="whitespace-nowrap px-3 py-2 tabular-nums text-fg-muted">{when}</td>
                       <td className="px-3 py-2">
                         <span className="flex items-center gap-1.5 font-mono text-[12px] text-fg">
-                          {DetectorIcon && <DetectorIcon className="h-3.5 w-3.5 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />}
+                          {DetectorIcon && <DetectorIcon className="h-3.5 w-3.5 shrink-0 text-fg-faint" aria-hidden="true" />}
                           {row.detector}
                         </span>
                         {row.severity && <span className="block text-[12px] text-fg-muted">{row.severity} severity</span>}
@@ -1687,12 +1683,12 @@ function LogsTab() {
                             {row.model ? `/${row.model}` : ""}
                           </span>
                         ) : (
-                          <span className="text-fg-faint">—</span>
+                          <span className="text-fg-faint">n/a</span>
                         )}
                       </td>
                       <td className="px-3 py-2">
                         {entityCounts.length === 0 ? (
-                          <span className="text-fg-faint">—</span>
+                          <span className="text-fg-faint">n/a</span>
                         ) : (
                           <div className="flex flex-wrap gap-1">
                             {entityCounts.map(([e, n]) => (
@@ -1745,13 +1741,13 @@ function LogCard({ row, open, onToggle }: { row: GuardrailLogEntry; open: boolea
         aria-expanded={open}
         aria-controls={open ? detailsId : undefined}
         onClick={onToggle}
-        className="flex w-full items-start gap-2 px-4 py-3 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+        className="flex w-full items-start gap-2 px-4 py-3 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
-        <ChevronRight className={cn("mt-0.5 h-4 w-4 shrink-0 text-fg-faint transition-transform", open && "rotate-90")} strokeWidth={1.75} aria-hidden="true" />
+        <ChevronRight className={cn("mt-0.5 h-4 w-4 shrink-0 text-fg-faint transition-transform", open && "rotate-90")} aria-hidden="true" />
         <span className="min-w-0 flex-1 space-y-1">
           <span className="flex items-center justify-between gap-3">
             <span className="flex min-w-0 items-center gap-1.5 font-mono text-[12.5px] text-fg">
-              {DetectorIcon && <DetectorIcon className="h-3.5 w-3.5 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />}
+              {DetectorIcon && <DetectorIcon className="h-3.5 w-3.5 shrink-0 text-fg-faint" aria-hidden="true" />}
               <span className="truncate">{row.detector}</span>
               {row.severity && <span className="shrink-0 font-sans text-[12px] text-fg-muted">· {row.severity}</span>}
             </span>
@@ -1812,7 +1808,7 @@ function FindingsDetails({
       <dl className="flex flex-wrap gap-x-6 gap-y-1 text-fg-muted">
         <div className="flex min-w-0 gap-1.5">
           <dt>Request</dt>
-          <dd className="min-w-0 break-all font-mono text-fg">{row.request_id || "—"}</dd>
+          <dd className="min-w-0 break-all font-mono text-fg">{row.request_id || "n/a"}</dd>
         </div>
         <div className="flex gap-1.5">
           <dt>Direction</dt>
@@ -1839,20 +1835,20 @@ function FindingsDetails({
                   <td className="px-3 py-1.5 text-right tabular-nums text-fg-muted">{(f.score * 100).toFixed(0)}%</td>
                   <td className="px-3 py-1.5 font-mono">
                     {f.original ? (
-                      <code className="rounded bg-bad/10 px-1.5 py-0.5 text-bad">
+                      <code className="rounded bg-bad-soft px-1.5 py-0.5 text-bad">
                         {f.original}
                       </code>
                     ) : (
-                      <span className="text-fg-faint">—</span>
+                      <span className="text-fg-faint">n/a</span>
                     )}
                   </td>
                   <td className="px-3 py-1.5 font-mono">
                     {f.redacted ? (
-                      <code className="rounded bg-ok/10 px-1.5 py-0.5 text-ok">
+                      <code className="rounded bg-ok-soft px-1.5 py-0.5 text-ok">
                         {f.redacted}
                       </code>
                     ) : (
-                      <span className="text-fg-faint">—</span>
+                      <span className="text-fg-faint">n/a</span>
                     )}
                   </td>
                 </tr>

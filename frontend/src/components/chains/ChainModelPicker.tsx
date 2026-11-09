@@ -9,7 +9,7 @@ import { Input, Select } from "../ui";
 import type { DraftChainStep } from "./chainUtils";
 import { isLLMProvider, providerIcon } from "./chainUtils";
 
-const focusRing = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const focusRing = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 export function ChainModelPicker({ value, providers, onChange, autoFocus = false, invalid = false, label, describedBy }: {
   value: DraftChainStep;
@@ -112,17 +112,17 @@ export function ChainModelPicker({ value, providers, onChange, autoFocus = false
         aria-invalid={invalid || undefined}
         aria-describedby={describedBy}
         className={cn(
-          "flex h-9 w-full items-center gap-2 rounded-lg border bg-surface px-2.5 text-left text-[13px] transition-[border-color,box-shadow] hover:border-fg-faint focus:border-accent-500",
+          "flex h-9 w-full items-center gap-2 rounded-lg border bg-surface px-2.5 text-left text-[13px] transition-[border-color,box-shadow] hover:border-fg-faint focus:border-ring",
           focusRing,
           invalid ? "border-bad" : "border-input",
-          open && "border-accent-500",
+          open && "border-ring",
         )}
       >
         {selected?.icon || value.provider ? (
           <ProviderLogo
             icon={selected?.icon || providerIcon(currentProvider, value.provider)}
             name={providerLabel}
-            size={18}
+           
           />
         ) : null}
         {value.model ? (
@@ -133,24 +133,24 @@ export function ChainModelPicker({ value, providers, onChange, autoFocus = false
         ) : (
           <span className="min-w-0 flex-1 truncate text-fg-muted">Choose a model…</span>
         )}
-        <ChevronDown className={cn("h-4 w-4 shrink-0 text-fg-faint transition-transform", open && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+        <ChevronDown className={cn("h-4 w-4 shrink-0 text-fg-faint transition-transform", open && "rotate-180")} aria-hidden="true" />
       </button>
       {open && (
         // Below sm the picker is a bottom sheet over a scrim so it always fits
         // the phone viewport; from sm up it is a popover under the trigger.
-        <div className="fixed inset-0 z-50 bg-black/45 sm:hidden" aria-hidden="true" onClick={() => close()} />
+        <div className="fixed inset-0 z-50 bg-overlay sm:hidden" aria-hidden="true" onClick={() => close()} />
       )}
       {open && (
         <div
           id={popoverId}
           role="dialog"
           aria-label={`${label ?? "Model"} picker`}
-          className="fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-2xl border border-b-0 border-line bg-surface pb-[env(safe-area-inset-bottom)] shadow-[var(--shadow-float)] sm:absolute sm:inset-x-auto sm:bottom-auto sm:left-0 sm:z-30 sm:mt-1 sm:max-h-none sm:w-full sm:min-w-[320px] sm:rounded-2xl sm:border-b sm:pb-0"
+          className="fixed inset-x-0 bottom-0 z-50 flex max-h-[85dvh] flex-col overflow-hidden rounded-t-2xl border border-b-0 border-line bg-surface pb-[env(safe-area-inset-bottom)] shadow-lift sm:absolute sm:inset-x-auto sm:bottom-auto sm:left-0 sm:z-30 sm:mt-1 sm:max-h-none sm:w-full sm:min-w-[320px] sm:rounded-2xl sm:border-b sm:pb-0"
         >
-          <p className="shrink-0 px-3 pt-3 text-[13px] font-semibold text-fg sm:hidden" aria-hidden="true">{label ?? "Model"}</p>
+          <p className="shrink-0 px-3 pt-3 text-[13px] font-medium text-fg sm:hidden" aria-hidden="true">{label ?? "Model"}</p>
           <div className="flex shrink-0 items-center gap-1.5 border-b border-line p-1.5">
-            <div className="flex h-9 min-w-0 flex-1 sm:h-8 items-center gap-2 rounded-lg border border-input bg-surface px-2.5 focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500">
-              <Search className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            <div className="flex h-9 min-w-0 flex-1 sm:h-8 items-center gap-2 rounded-lg border border-input bg-surface px-2.5 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring">
+              <Search className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
               <input
                 type="search"
                 value={query}
@@ -169,7 +169,7 @@ export function ChainModelPicker({ value, providers, onChange, autoFocus = false
               className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg sm:h-8 sm:w-8", focusRing)}
               aria-label="Close model picker"
             >
-              <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+              <X className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
           {custom ? (
@@ -195,7 +195,7 @@ export function ChainModelPicker({ value, providers, onChange, autoFocus = false
                 onClick={() => setCustom(false)}
                 className={cn("inline-flex min-h-6 items-center gap-1 rounded-md text-[12.5px] font-medium text-link hover:underline", focusRing)}
               >
-                <ArrowLeft className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
                 Back to catalog
               </button>
             </div>
@@ -217,11 +217,11 @@ export function ChainModelPicker({ value, providers, onChange, autoFocus = false
                         aria-selected={isSelected}
                         onClick={() => select(model.providerId, model.id)}
                         className={cn(
-                          "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left sm:min-h-0 transition-colors hover:bg-hover focus:outline-none focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500",
-                          isSelected && "bg-accent-500/10",
+                          "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left sm:min-h-0 transition-colors hover:bg-hover focus:outline-none focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                          isSelected && "bg-brand-soft",
                         )}
                       >
-                        <ProviderLogo icon={model.icon} name={model.providerName} size={20} />
+                        <ProviderLogo icon={model.icon} name={model.providerName} />
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-1">
                             <span className="truncate text-[13px] font-medium text-fg">{model.name}</span>
@@ -231,7 +231,7 @@ export function ChainModelPicker({ value, providers, onChange, autoFocus = false
                             {model.providerName} · <span className="font-mono">{model.id}</span>
                           </span>
                         </span>
-                        {isSelected && <Check className="h-4 w-4 shrink-0 text-link" strokeWidth={1.75} aria-hidden="true" />}
+                        {isSelected && <Check className="h-4 w-4 shrink-0 text-link" aria-hidden="true" />}
                       </button>
                     );
                   })
@@ -244,9 +244,9 @@ export function ChainModelPicker({ value, providers, onChange, autoFocus = false
                 <button
                   type="button"
                   onClick={() => setCustom(true)}
-                  className="flex h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none sm:h-8 focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+                  className="flex h-10 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none sm:h-8 focus-visible:bg-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 >
-                  <Plus className="h-3.5 w-3.5 text-tone" strokeWidth={1.75} aria-hidden="true" />
+                  <Plus className="h-3.5 w-3.5 text-fg-faint" aria-hidden="true" />
                   Use a custom model ID
                 </button>
               </div>

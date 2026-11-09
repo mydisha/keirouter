@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { fetchKeyUsage, fetchKeyUsageById, APIError, type KeyUsageData, type PortalRecentRequest } from "../lib/api";
 import { useBranding } from "../contexts/BrandingContext";
 import { AlertCircle, AlertTriangle, CalendarDays, Key, Loader2, LogOut, RefreshCw, Send, type LucideIcon } from "lucide-react";
-import { Button, Input, Select, Badge, IconTile, Kpi, KpiGrid, SectionTitle, Skeleton, TablePagination, useClientPagination, EmptyState } from "../components/ui";
+import { Button, Input, Select, Badge, Glyph, Kpi, KpiGrid, SectionTitle, Skeleton, TablePagination, useClientPagination, EmptyState } from "../components/ui";
 import { ICONS } from "../lib/icons";
 import { BrandMark } from "../components/BrandMark";
 import { ProviderLogo } from "../components/ProviderLogo";
@@ -15,16 +15,13 @@ import { formatDateTime } from "../lib/format";
 // Public key portal: a key holder opens /portal with their API key (or a
 // shared portal ID) and sees that key's usage, spend and budget limits.
 // No dashboard chrome; white-labelled through PortalBrandingProvider.
-// It renders outside Layout, so each root sets data-tone="orange" (the Access
-// section hue) itself for text-tone / IconTile / SectionTitle to resolve.
-const PORTAL_TONE = "orange";
 
 // Series colours: accent carries the data, a lighter accent shade separates
 // the second stacked series. Charts take CSS colour strings, hence the vars.
 const C_PRIMARY = "var(--color-accent-500)";
 const C_SOFT = "var(--color-accent-300)";
 
-const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 // The portal API takes a day count; these are every range it supports.
 const PERIODS = [
@@ -104,8 +101,8 @@ export function KeyPortalPage() {
     return (
       <CenteredScreen>
         <div className="flex flex-col items-center text-center" role="alert">
-          <IconTile icon={AlertCircle} size="lg" tone="bad" />
-          <h1 className="mt-3 text-[15px] font-semibold tracking-[-0.01em] text-fg">Couldn't open this key</h1>
+          <Glyph icon={AlertCircle} size="lg" tone="bad" />
+          <h1 className="mt-3 text-[15px] font-medium tracking-[-0.01em] text-fg">Couldn't open this key</h1>
           <p className="mt-1 text-[13px] text-fg-muted">{msg}</p>
           <p className="mt-1 text-[13px] text-fg-muted">Check the key is still active, or ask for a new link.</p>
         </div>
@@ -185,8 +182,7 @@ export function KeyPortalPage() {
     >
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3.5">
-          <IconTile icon={ICONS.keys} size="lg" />
-          <h1 className="min-w-0 truncate text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{d.key_name}</h1>
+          <h1 className="min-w-0 truncate text-[22px] font-medium leading-tight tracking-[-0.02em] text-fg">{d.key_name}</h1>
         </div>
         {tab === "usage" && (
           <Segmented
@@ -245,7 +241,7 @@ export function KeyPortalPage() {
 
 function PortalShell({ identity, actions, children }: { identity?: ReactNode; actions?: ReactNode; children: ReactNode }) {
   return (
-    <div data-tone={PORTAL_TONE} className="min-h-screen bg-canvas">
+    <div className="min-h-screen bg-canvas">
       <header className="sticky top-0 z-10 border-b border-line bg-surface">
         <div className="mx-auto flex h-14 max-w-[1200px] items-center gap-3 px-4 sm:px-6">
           <BrandLockup />
@@ -272,7 +268,7 @@ function BrandLockup({ large }: { large?: boolean }) {
   return (
     <span className="inline-flex shrink-0 items-center gap-2">
       <BrandMark size={large ? 26 : 22} />
-      <span className={cn("font-semibold tracking-[-0.01em] text-fg", large ? "text-[16px]" : "text-[14px]")}>{name}</span>
+      <span className={cn("font-medium tracking-[-0.01em] text-fg", large ? "text-[16px]" : "text-[14px]")}>{name}</span>
     </span>
   );
 }
@@ -281,7 +277,7 @@ function KeyIdentity({ secret, mode }: { secret: string; mode: string }) {
   return (
     <div className="hidden h-8 min-w-0 items-center overflow-hidden rounded-lg border border-line bg-surface md:inline-flex">
       <span className="flex h-full items-center gap-1.5 border-r border-line bg-subtle px-2.5 text-[12px] text-fg-muted">
-        <Key className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+        <Key className="h-3.5 w-3.5 text-fg-faint" aria-hidden="true" />
         {mode}
       </span>
       <span className="truncate px-2.5 font-mono text-[12px] text-fg-muted">{secret}</span>
@@ -300,7 +296,7 @@ function ForgetKeyButton({ onClick }: { onClick: () => void }) {
         FOCUS_RING,
       )}
     >
-      <LogOut className="h-3.5 w-3.5 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+      <LogOut className="h-3.5 w-3.5 text-fg-faint" aria-hidden="true" />
       <span className="hidden sm:inline">Forget key</span>
     </button>
   );
@@ -327,8 +323,8 @@ function LiveIndicator({ updatedAt, refreshing }: { updatedAt?: number; refreshi
 
 function CenteredScreen({ children }: { children: ReactNode }) {
   return (
-    <main data-tone={PORTAL_TONE} className="flex min-h-screen items-center justify-center bg-canvas px-4">
-      <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-[var(--shadow-pop)] sm:p-8">{children}</div>
+    <main className="flex min-h-screen items-center justify-center bg-canvas px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-lift sm:p-8">{children}</div>
     </main>
   );
 }
@@ -344,7 +340,7 @@ function SignInScreen({ value, onChange, onSubmit }: { value: string; onChange: 
     <CenteredScreen>
       <div className="mb-6 flex flex-col items-center text-center">
         <BrandLockup large />
-        <h1 className="mt-4 text-lg font-semibold tracking-tight text-fg">View your key's usage</h1>
+        <h1 className="mt-4 text-lg font-medium tracking-tight text-fg">View your key's usage</h1>
         {branding.tagline && <p className="mt-1 text-sm text-fg-muted">{branding.tagline}</p>}
       </div>
       <form onSubmit={onSubmit} className="space-y-4">
@@ -422,7 +418,7 @@ function Segmented<T extends string | number>({
 function Panel({ icon, title, count, className, children }: { icon: LucideIcon; title: string; count?: number; className?: string; children: ReactNode }) {
   const headingId = useId();
   return (
-    <section aria-labelledby={headingId} className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
+    <section aria-labelledby={headingId} className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-paper", className)}>
       <div className="border-b border-line px-4 py-3">
         <SectionTitle
           icon={icon}
@@ -440,8 +436,8 @@ function Panel({ icon, title, count, className, children }: { icon: LucideIcon; 
   );
 }
 
-function PanelEmpty({ icon, title, hint }: { icon: LucideIcon; title: string; hint?: string }) {
-  return <EmptyState icon={icon} title={title} hint={hint} size="sm" className="justify-center" />;
+function PanelEmpty({ title, hint }: { title: string; hint?: string }) {
+  return <EmptyState title={title} hint={hint} size="sm" className="justify-center" />;
 }
 
 // ── Budget alert banner ──────────────────────────────────────────────────────
@@ -453,8 +449,8 @@ function BudgetNotice({ budgets }: { budgets: Budget[] }) {
   const blocked = reached.length > 0;
   const list = (blocked ? reached : near).map((b) => `${periodLabel(b.period)} ${Math.round(budgetPct(b))}%`).join(" · ");
   return (
-    <div role="status" className={cn("flex items-center gap-3 rounded-2xl border px-4 py-2.5 text-[13px]", blocked ? "border-bad/30 bg-bad/5" : "border-warn/30 bg-warn/5")}>
-      <AlertTriangle className={cn("h-4 w-4 shrink-0", blocked ? "text-bad" : "text-warn")} strokeWidth={1.75} aria-hidden="true" />
+    <div role="status" className={cn("flex items-center gap-3 rounded-2xl border px-4 py-2.5 text-[13px]", blocked ? "border-bad/30 bg-bad-soft" : "border-warn/30 bg-warn-soft")}>
+      <AlertTriangle className={cn("h-4 w-4 shrink-0", blocked ? "text-bad" : "text-warn")} aria-hidden="true" />
       <p className="min-w-0 flex-1">
         <span className="font-medium text-fg">{blocked ? "Budget used up. Requests may be rejected until it resets." : "Budget alert threshold crossed."}</span>{" "}
         <span className="tabular-nums text-fg-muted">{list}</span>
@@ -480,7 +476,7 @@ function KpiStrip({ d }: { d: KeyUsageData }) {
   return (
     <KpiGrid cols={4} label="Key metrics">
       {items.map((item) => (
-        <Kpi key={item.label} icon={item.icon} label={item.label} value={item.value} hint={item.sub} valueClassName="whitespace-nowrap" />
+        <Kpi key={item.label} label={item.label} value={item.value} hint={item.sub} valueClassName="whitespace-nowrap" />
       ))}
     </KpiGrid>
   );
@@ -664,7 +660,7 @@ function ModelsCard({ models }: { models: ModelRow[] }) {
   return (
     <Panel icon={ICONS.model} title="Models" count={sorted.length}>
       {sorted.length === 0 ? (
-        <PanelEmpty icon={ICONS.model} title="No model usage in this period" />
+        <PanelEmpty title="No model usage in this period" />
       ) : (
         <>
         {/* Phones: one card per model, cost on the right. */}
@@ -763,7 +759,7 @@ function ModelsCard({ models }: { models: ModelRow[] }) {
 function ModelCell({ provider, model }: { provider: string; model: string }) {
   return (
     <span className="flex min-w-0 items-center gap-2.5">
-      <ProviderLogo icon={`/providers/${provider}.png`} name={provider} size={20} />
+      <ProviderLogo icon={`/providers/${provider}.png`} name={provider} />
       <span className="flex min-w-0 flex-col leading-tight">
         <span className="truncate font-mono text-[12.5px] text-fg" title={`${provider}/${model}`}>{model}</span>
         <span className="truncate text-[11.5px] capitalize text-fg-muted">{provider}</span>
@@ -780,7 +776,7 @@ function RecentRequestsCard({ recent }: { recent: PortalRecentRequest[] }) {
   return (
     <Panel icon={ICONS.console} title="Recent requests" count={recent.length}>
       {recent.length === 0 ? (
-        <PanelEmpty icon={ICONS.console} title="No requests in this period" />
+        <PanelEmpty title="No requests in this period" />
       ) : (
         <>
           {/* Phones: one card per request. */}
@@ -798,7 +794,7 @@ function RecentRequestsCard({ recent }: { recent: PortalRecentRequest[] }) {
                   </div>
                   <p className="mt-1.5 text-[12px] tabular-nums text-fg-muted">
                     <time dateTime={r.created_at} className="font-mono text-fg">{formatDateTime(r.created_at, { seconds: false })}</time>
-                    {rel !== "—" && <> · {rel} ago</>}
+                    {rel !== "n/a" && <> · {rel} ago</>}
                   </p>
                   <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] tabular-nums text-fg-muted">
                     <span>
@@ -835,7 +831,7 @@ function RecentRequestsCard({ recent }: { recent: PortalRecentRequest[] }) {
                     <tr key={r.id} className="transition-colors hover:bg-hover">
                       <td className="whitespace-nowrap px-4 py-2" title={new Date(r.created_at).toLocaleString()}>
                         <span className="font-mono text-[12px] text-fg">{formatDateTime(r.created_at, { seconds: false })}</span>
-                        {rel !== "—" && <span className="ml-2 text-[12px] text-fg-muted">{rel} ago</span>}
+                        {rel !== "n/a" && <span className="ml-2 text-[12px] text-fg-muted">{rel} ago</span>}
                       </td>
                       <td className="max-w-[320px] px-4 py-2">
                         <ModelCell provider={r.provider} model={r.model} />
@@ -845,7 +841,7 @@ function RecentRequestsCard({ recent }: { recent: PortalRecentRequest[] }) {
                       </td>
                       <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums text-fg">{fmtUSD(r.cost_usd)}</td>
                       <td className="whitespace-nowrap px-4 py-2 text-right tabular-nums text-fg" title={r.ttft_ms ? `First token after ${r.ttft_ms}ms` : undefined}>
-                        {r.latency_ms > 0 ? `${r.latency_ms}ms` : r.cache_hit ? <Badge>Cache</Badge> : <span className="text-fg-muted">—</span>}
+                        {r.latency_ms > 0 ? `${r.latency_ms}ms` : r.cache_hit ? <Badge>Cache</Badge> : <span className="text-fg-muted">n/a</span>}
                       </td>
                       <td className="px-4 py-2">
                         {opts.length > 0 ? (
@@ -855,7 +851,7 @@ function RecentRequestsCard({ recent }: { recent: PortalRecentRequest[] }) {
                             ))}
                           </div>
                         ) : (
-                          <span className="text-fg-muted">—</span>
+                          <span className="text-fg-muted">n/a</span>
                         )}
                       </td>
                     </tr>
@@ -940,7 +936,7 @@ function PlaygroundSection({
             rows={4}
             required
             aria-describedby={`${uid}-note`}
-            className={cn("w-full resize-y rounded-lg border border-input bg-surface px-3 py-2 text-[13px] text-fg transition-[border-color,box-shadow] placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500", FOCUS_RING)}
+            className={cn("w-full resize-y rounded-lg border border-input bg-surface px-3 py-2 text-[13px] text-fg transition-[border-color,box-shadow] placeholder:text-fg-faint hover:border-fg-faint focus:border-ring", FOCUS_RING)}
             placeholder="Enter your message…"
           />
         </div>
@@ -1104,7 +1100,7 @@ function relativeTime(ts: number): string {
 
 function relTime(iso: string): string {
   const t = new Date(iso).getTime();
-  if (Number.isNaN(t)) return "—";
+  if (Number.isNaN(t)) return "n/a";
   const diff = Date.now() - t;
   const s = Math.floor(diff / 1000);
   if (s < 60) return `${s}s`;

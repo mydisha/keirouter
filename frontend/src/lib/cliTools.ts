@@ -1,7 +1,7 @@
 import type { CLITool } from "./api";
 
 // Tool metadata shared by the CLI tools list and detail pages — descriptions,
-// logos (bundled /providers/*.png assets) and install commands.
+// logos (the image path names the mark in the provider sprite) and install commands.
 export const cliToolMeta: Record<string, { description: string; image: string; installCmd?: string }> = {
   claude:   { description: "Anthropic's CLI coding agent", image: "/providers/claude.png", installCmd: "npm install -g @anthropic-ai/claude-code" },
   codex:    { description: "OpenAI Codex CLI", image: "/providers/codex.png", installCmd: "npm install -g @openai/codex" },

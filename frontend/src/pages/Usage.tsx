@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Copy, Hash, Inbox, Info, RefreshCw, Search, Tag, X, type LucideIcon } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Copy, Hash, Info, RefreshCw, Search, Tag, X, type LucideIcon } from "lucide-react";
 import {
   api,
   connectUsageStream,
@@ -34,9 +34,9 @@ const HEALTH_RANGE: Record<string, string> = { today: "24h", "24h": "24h", "3d":
 const TREND_BUCKETS: Record<string, number> = { today: 24, "24h": 24, "3d": 36, "7d": 42, "30d": 30, "90d": 45 };
 const USAGE_REFRESH_DEBOUNCE_MS = 8_000;
 
-const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const SEARCH_INPUT =
-  "h-9 w-full rounded-lg border border-input bg-surface pl-8 sm:h-8 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+  "h-9 w-full rounded-lg border border-input bg-surface pl-8 sm:h-8 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 type Tab = "overview" | "providers" | "models" | "requests";
 const TABS: { value: Tab; label: string }[] = [
@@ -182,7 +182,7 @@ export function UsagePage() {
               aria-busy={refreshing}
               className={cn("inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg sm:h-8 sm:w-8", FOCUS_RING)}
             >
-              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} strokeWidth={1.75} aria-hidden="true" />
+              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} aria-hidden="true" />
             </button>
           </>
         }
@@ -287,7 +287,7 @@ function KpiStrip({ data, period }: { data: UsageInsights; period: string }) {
       value: fmtInteger(s.total_requests),
       hint: (
         <>
-          <span className={cn(lowSuccess && "text-warn")}>{s.total_requests ? fmtRatio(s.success_rate) : "—"} success</span> · {fmtInteger(s.failed_requests)} failed
+          <span className={cn(lowSuccess && "text-warn")}>{s.total_requests ? fmtRatio(s.success_rate) : "n/a"} success</span> · {fmtInteger(s.failed_requests)} failed
           {s.blocked_requests > 0 && <> · {fmtInteger(s.blocked_requests)} blocked</>}
         </>
       ),
@@ -329,7 +329,7 @@ function KpiStrip({ data, period }: { data: UsageInsights; period: string }) {
       <h2 id={headingId} className="sr-only">Key metrics</h2>
       <KpiGrid cols={4}>
         {cells.map((c) => (
-          <Kpi key={c.label} icon={c.icon} label={c.label} value={c.value} delta={c.delta} deltaLabel={prevLabel} trend={c.trend} hint={c.hint} />
+          <Kpi key={c.label} label={c.label} value={c.value} delta={c.delta} deltaLabel={prevLabel} hint={c.hint} />
         ))}
       </KpiGrid>
     </section>
@@ -369,13 +369,13 @@ function PricingCoverageNotice({ summary }: { summary: UsageInsights["summary"] 
       <summary
         className={cn(
           "flex min-h-10 cursor-pointer list-none flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl px-4 py-2 [&::-webkit-details-marker]:hidden",
-          "focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500",
+          "focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
         )}
       >
         {caution ? (
-          <AlertTriangle className="h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+          <AlertTriangle className="h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
         ) : (
-          <Info className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          <Info className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
         )}
         <span className="flex-1 text-[13px] font-medium text-fg">
           Accounting notes <span className="ml-1 rounded-md bg-subtle px-1.5 text-[11.5px] font-normal tabular-nums text-fg-muted">{notices.length}</span>
@@ -406,7 +406,7 @@ function PricingCoverageNotice({ summary }: { summary: UsageInsights["summary"] 
 function Panel({ icon, title, action, children, className }: { icon: LucideIcon; title: string; action?: ReactNode; children: ReactNode; className?: string }) {
   const id = useId();
   return (
-    <section aria-labelledby={id} className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
+    <section aria-labelledby={id} className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-paper", className)}>
       {/* Toolbar sits in this wrapping row, not SectionTitle's non-shrinking
           action slot, so search + filters can reflow at 320px. */}
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
@@ -418,8 +418,8 @@ function Panel({ icon, title, action, children, className }: { icon: LucideIcon;
   );
 }
 
-function Empty({ icon = Inbox, title, hint, action }: { icon?: LucideIcon; title: string; hint?: string; action?: ReactNode }) {
-  return <EmptyState icon={icon} title={title} hint={hint} action={action} size="sm" />;
+function Empty({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
+  return <EmptyState title={title} hint={hint} action={action} size="sm" />;
 }
 
 const TH = "px-4 py-2 font-medium";
@@ -437,13 +437,13 @@ function ProviderDistribution({ providers, onShowAll }: { providers: ProviderUsa
   return (
     <Panel icon={ICONS.route} title="Where requests went">
       {active.length === 0 ? (
-        <Empty icon={ICONS.route} title="No provider traffic in this period" hint="Pick a longer period, or send a request through KeiRouter." />
+        <Empty title="No provider traffic in this period" hint="Pick a longer period, or send a request through KeiRouter." />
       ) : (
         <>
           <ul className="space-y-3 px-4 py-4">
             {active.slice(0, 8).map((p) => (
               <li key={p.provider} className="flex items-center gap-3">
-                <ProviderLogo icon={p.icon} name={p.display_name || p.provider} size={22} />
+                <ProviderLogo icon={p.icon} name={p.display_name || p.provider} />
                 <div className="min-w-0 flex-1">
                   <div className="flex items-baseline justify-between gap-3 text-[13px]">
                     <span className="truncate font-medium text-fg">{p.display_name || p.provider}</span>
@@ -492,8 +492,8 @@ function ProviderAccounting({
     <div className="space-y-4">
       {healthError && <ErrorBanner message="Health data is unavailable right now. Usage figures below are complete." />}
       {dropped > 0 && (
-        <p role="status" className="flex items-start gap-2 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-2.5 text-[12.5px] text-fg">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+        <p role="status" className="flex items-start gap-2 rounded-2xl border border-warn/30 bg-warn-soft px-4 py-2.5 text-[12.5px] text-fg">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
           {fmtInteger(dropped)} health events were dropped, so health may be incomplete. Usage figures are unaffected.
         </p>
       )}
@@ -507,7 +507,7 @@ function ProviderAccounting({
         }
       >
         {rows.length === 0 ? (
-          <Empty icon={ICONS.providers} title="No provider usage in this period" hint="Pick a longer period to see per-provider accounting." />
+          <Empty title="No provider usage in this period" hint="Pick a longer period to see per-provider accounting." />
         ) : (
           <div className="overflow-x-auto" role="region" aria-label="Provider accounting table">
             <table className="w-full min-w-[860px] text-[13px]">
@@ -529,7 +529,7 @@ function ProviderAccounting({
                     <tr key={p.provider} className="group transition-colors hover:bg-hover">
                       <td className={cn("px-4 py-2.5", STICKY_TD)}>
                         <div className="flex items-center gap-2.5">
-                          <ProviderLogo icon={p.icon} name={p.display_name || p.provider} size={22} />
+                          <ProviderLogo icon={p.icon} name={p.display_name || p.provider} />
                           <div className="min-w-0 max-w-[160px] sm:max-w-none">
                             <Link to={`/providers/${p.provider}`} className={cn("block truncate rounded-sm font-medium text-fg hover:underline", FOCUS_RING)}>
                               {p.display_name || p.provider}
@@ -628,7 +628,7 @@ function ModelUsageTable({ models, loading, error }: { models: ModelUsage[]; loa
       title="Model accounting"
       action={
         <div className="relative w-full sm:w-64">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
           <input
             type="search"
             aria-label="Filter models by provider or name"
@@ -659,7 +659,6 @@ function ModelUsageTable({ models, loading, error }: { models: ModelUsage[]; loa
         </div>
       ) : filtered.length === 0 ? (
         <Empty
-          icon={models.length === 0 ? ICONS.model : Search}
           title={models.length === 0 ? "No model usage in this period" : "No models match"}
           hint={models.length === 0 ? "Pick a longer period to compare models." : `Nothing matches “${search.trim()}”. Try a provider or a shorter model name.`}
           action={models.length > 0 ? <Button variant="secondary" onClick={() => setSearch("")}>Clear filter</Button> : undefined}
@@ -683,7 +682,7 @@ function ModelUsageTable({ models, loading, error }: { models: ModelUsage[]; loa
                   <tr key={`${m.provider}/${m.model}`} className="group transition-colors hover:bg-hover">
                     <td className={cn("px-4 py-2.5", STICKY_TD)}>
                       <div className="flex items-center gap-2.5">
-                        <ProviderLogo icon={m.provider_icon} name={m.provider_name || m.provider} size={22} />
+                        <ProviderLogo icon={m.provider_icon} name={m.provider_name || m.provider} />
                         <div className="min-w-0">
                           <div className="max-w-[160px] truncate font-mono text-[12.5px] text-fg sm:max-w-xs" title={m.model}>
                             {m.model}
@@ -822,7 +821,7 @@ function RecentRequests({
         action={
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
             <div className="relative w-full sm:w-56">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
               <input
                 type="search"
                 aria-label="Filter requests by model, key, client or request ID"
@@ -855,7 +854,7 @@ function RecentRequests({
                   className={cn(
                     "h-9 rounded-lg border px-2.5 text-[12px] font-medium transition-colors sm:h-8",
                     FOCUS_RING,
-                    status === f.value ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
+                    status === f.value ? "border-accent-500/30 bg-brand-soft text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
                   )}
                 >
                   {f.label}
@@ -871,7 +870,6 @@ function RecentRequests({
         </p>
         {filtered.length === 0 ? (
           <Empty
-            icon={records.length === 0 ? ICONS.requests : Search}
             title={records.length === 0 ? "No requests in this period" : "No requests match"}
             hint={records.length === 0 ? "Requests appear here a few seconds after they finish." : "Try another status, or search by model, key, client or request ID."}
             action={records.length > 0 ? <Button variant="secondary" onClick={clearFilters}>Clear filters</Button> : undefined}
@@ -885,13 +883,13 @@ function RecentRequests({
                   <button
                     type="button"
                     onClick={() => setSelected(r)}
-                    className="block w-full px-4 py-3 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+                    className="block w-full px-4 py-3 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                   >
                     <span className="flex items-center gap-2.5">
-                      <ProviderLogo icon={r.provider_icon} name={r.provider_name || r.provider} size={20} />
+                      <ProviderLogo icon={r.provider_icon} name={r.provider_name || r.provider} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate font-mono text-[12.5px] text-fg" title={`${r.provider}/${r.model}`}>
-                          {r.model || "—"}
+                          {r.model || "n/a"}
                         </span>
                         {(r.api_key_name || r.client) && (
                           <span className="block truncate text-[11.5px] text-fg-muted">
@@ -968,10 +966,10 @@ function RecentRequests({
                         </td>
                         <td className="max-w-[300px] px-4 py-2.5">
                           <div className="flex items-center gap-2.5">
-                            <ProviderLogo icon={r.provider_icon} name={r.provider_name || r.provider} size={20} />
+                            <ProviderLogo icon={r.provider_icon} name={r.provider_name || r.provider} />
                             <div className="min-w-0">
                               <div className="truncate font-mono text-[12.5px] text-fg" title={`${r.provider}/${r.model}`}>
-                                {r.model || "—"}
+                                {r.model || "n/a"}
                               </div>
                               {(r.api_key_name || r.client) && (
                                 <div className="truncate text-[11.5px] text-fg-muted">
@@ -1067,8 +1065,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
   );
 
   return (
-    // The Sheet portals outside <main data-tone>, so restate the Monitor tone for the group icons.
-    <div data-tone="blue" className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <div className="border-b border-line px-4 pb-0 pt-4 sm:px-5">
         <div className="flex items-start gap-3">
           <ProviderLogo icon={record.provider_icon} name={record.provider_name || record.provider} size={32} className="mt-0.5" />
@@ -1122,7 +1119,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
         role="tabpanel"
         aria-labelledby={`${tabsId}-tab-${tab}`}
         tabIndex={0}
-        className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 focus:outline-none sm:px-5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+        className="min-h-0 flex-1 space-y-4 overflow-y-auto px-4 py-4 focus:outline-none sm:px-5 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <NoticeList notices={shown} />
         {tab === "overview" ? (
@@ -1145,12 +1142,12 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
                         <CopyButton value={record.request_id} label="Copy request ID" />
                       </span>
                     ) : (
-                      "—"
+                      "n/a"
                     ),
                   ],
-                  ["API key", mono(record.api_key_name || record.api_key_id || "—", "k")],
-                  ["Client", record.client ? prettyClient(record.client) : "—"],
-                  ["Account", record.account_label || mono(record.account_id || "—", "a")],
+                  ["API key", mono(record.api_key_name || record.api_key_id || "n/a", "k")],
+                  ["Client", record.client ? prettyClient(record.client) : "n/a"],
+                  ["Account", record.account_label || mono(record.account_id || "n/a", "a")],
                 ]}
               />
             </Group>
@@ -1262,9 +1259,9 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
               <Rows
                 rows={[
                   ["Status", <PricingBadge key="s" status={record.pricing_status} />],
-                  ["Source", record.pricing_source || "—"],
-                  ["Match", humanize(record.pricing_match_kind) || "—"],
-                  ["Resolved key", mono(record.pricing_key || "—", "k")],
+                  ["Source", record.pricing_source || "n/a"],
+                  ["Match", humanize(record.pricing_match_kind) || "n/a"],
+                  ["Resolved key", mono(record.pricing_key || "n/a", "k")],
                   [
                     "Source URL",
                     record.pricing_source_url ? (
@@ -1276,10 +1273,10 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
                         <span key="u" className="break-all font-mono text-[12px]">{record.pricing_source_url}</span>
                       )
                     ) : (
-                      "—"
+                      "n/a"
                     ),
                   ],
-                  ["Pricing as of", record.pricing_as_of ? formatDateTime(record.pricing_as_of) : "—"],
+                  ["Pricing as of", record.pricing_as_of ? formatDateTime(record.pricing_as_of) : "n/a"],
                   ["Backfilled", record.pricing_backfilled ? <Badge key="b" tone="warning">Historical estimate</Badge> : "No"],
                 ]}
               />
@@ -1307,7 +1304,7 @@ function RequestDetail({ record, onClose }: { record: RecentActivity; onClose: (
               <Rows
                 rows={[
                   ["Usage row", mono(record.id, "u")],
-                  ["Provider", mono(record.provider || "—", "p")],
+                  ["Provider", mono(record.provider || "n/a", "p")],
                   ["Recorded at", formatDateTime(record.created_at)],
                 ]}
               />
@@ -1336,7 +1333,7 @@ function CopyButton({ value, label }: { value: string; label: string }) {
       aria-label={label}
       className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-hover hover:text-fg sm:h-6 sm:w-6", FOCUS_RING)}
     >
-      <Copy className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+      <Copy className="h-3.5 w-3.5" aria-hidden="true" />
     </button>
   );
 }
@@ -1345,11 +1342,11 @@ function NoticeList({ notices }: { notices: RequestNotice[] }) {
   if (!notices.length) return null;
   const tone = notices.some((n) => n.tone === "danger") ? "danger" : notices.some((n) => n.tone === "warning") ? "warning" : "info";
   return (
-    <div className={cn("flex items-start gap-2.5 rounded-xl border px-3.5 py-3", tone === "danger" ? "border-bad/30 bg-bad/5" : tone === "warning" ? "border-warn/30 bg-warn/5" : "border-line bg-subtle")}>
+    <div className={cn("flex items-start gap-2.5 rounded-xl border px-3.5 py-3", tone === "danger" ? "border-bad/30 bg-bad-soft" : tone === "warning" ? "border-warn/30 bg-warn-soft" : "border-line bg-subtle")}>
       {tone === "info" ? (
-        <Info className="mt-0.5 h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
       ) : (
-        <AlertTriangle className={cn("mt-0.5 h-4 w-4 shrink-0", tone === "danger" ? "text-bad" : "text-warn")} strokeWidth={1.75} aria-hidden="true" />
+        <AlertTriangle className={cn("mt-0.5 h-4 w-4 shrink-0", tone === "danger" ? "text-bad" : "text-warn")} aria-hidden="true" />
       )}
       <ul className="min-w-0 space-y-1 text-[12.5px] leading-5 text-fg-muted">
         {notices.map((n) => (
@@ -1369,8 +1366,8 @@ function Group({ icon: Icon, title, hint, children }: { icon: LucideIcon; title:
   return (
     <section aria-labelledby={id} className="border-t border-line pt-4">
       <div className="mb-2.5 flex items-baseline justify-between gap-3">
-        <h3 id={id} className="inline-flex items-center gap-2 text-[13px] font-semibold text-fg">
-          <Icon className="h-3.5 w-3.5 shrink-0 self-center text-tone" strokeWidth={1.75} aria-hidden="true" />
+        <h3 id={id} className="inline-flex items-center gap-2 text-[13px] font-medium text-fg">
+          <Icon className="h-3.5 w-3.5 shrink-0 self-center text-fg-faint" aria-hidden="true" />
           {title}
         </h3>
         {hint && <p className="text-[12px] text-fg-muted">{hint}</p>}
@@ -1386,7 +1383,7 @@ function Rows({ head, rows }: { head?: [string, string]; rows: [string, ReactNod
       {head && (
         <div className="mb-1.5 flex items-baseline justify-between gap-3">
           <span className="text-[12px] font-medium text-fg-muted">{head[0]}</span>
-          <span className="text-[16px] font-semibold tabular-nums text-fg">{head[1]}</span>
+          <span className="text-[16px] font-medium tabular-nums text-fg">{head[1]}</span>
         </div>
       )}
       <dl className="divide-y divide-line">
@@ -1405,7 +1402,7 @@ function Metric({ label, value, hint }: { label: string; value: string; hint: st
   return (
     <div className="min-w-0 bg-surface px-3.5 py-2.5">
       <dt className="text-[12px] font-medium text-fg-muted">{label}</dt>
-      <dd className="mt-0.5 truncate text-[16px] font-semibold tabular-nums text-fg">{value}</dd>
+      <dd className="mt-0.5 truncate text-[16px] font-medium tabular-nums text-fg">{value}</dd>
       <dd className="truncate text-[11.5px] text-fg-muted" title={hint}>
         {hint}
       </dd>
@@ -1418,7 +1415,7 @@ function Unavailable({ label, value, message }: { label: string; value: string; 
     <div className="rounded-lg bg-subtle px-3.5 py-3">
       <div className="flex items-baseline justify-between gap-3 text-[12.5px]">
         <span className="font-medium text-fg-muted">{label}</span>
-        <span className="font-semibold tabular-nums text-fg">{value}</span>
+        <span className="font-medium tabular-nums text-fg">{value}</span>
       </div>
       <p className="mt-1.5 text-[12px] leading-5 text-fg-muted">{message}</p>
     </div>
@@ -1479,12 +1476,12 @@ function safeExternalURL(value: string) {
 }
 
 function fmtInteger(value: number) {
-  if (!Number.isFinite(value)) return "—";
+  if (!Number.isFinite(value)) return "n/a";
   return Math.round(value).toLocaleString("en-US");
 }
 
 function fmtCompact(value: number) {
-  if (!Number.isFinite(value)) return "—";
+  if (!Number.isFinite(value)) return "n/a";
   const a = Math.abs(value);
   if (a >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
   if (a >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
@@ -1495,7 +1492,7 @@ function fmtCompact(value: number) {
 // Money reads with two decimals; sub-cent values keep enough precision to be
 // non-zero (a cheap request is "$0.0013", not "$0.00").
 function fmtUSD(value: number) {
-  if (!Number.isFinite(value)) return "—";
+  if (!Number.isFinite(value)) return "n/a";
   if (value === 0) return "$0.00";
   const a = Math.abs(value);
   if (a < 0.0001) return value > 0 ? "<$0.0001" : ">-$0.0001";
@@ -1504,24 +1501,24 @@ function fmtUSD(value: number) {
 }
 
 function fmtRate(value: number) {
-  if (!Number.isFinite(value)) return "—";
+  if (!Number.isFinite(value)) return "n/a";
   return `$${value.toLocaleString("en-US", { maximumFractionDigits: 6 })}`;
 }
 
 function fmtRatio(value?: number | null) {
-  if (value == null || !Number.isFinite(value)) return "—";
+  if (value == null || !Number.isFinite(value)) return "n/a";
   return `${(value * 100).toFixed(1)}%`;
 }
 
 function fmtMs(value?: number) {
-  if (value == null || !Number.isFinite(value) || value <= 0) return "—";
+  if (value == null || !Number.isFinite(value) || value <= 0) return "n/a";
   if (value < 1) return "<1 ms";
   if (value < 1_000) return `${Math.round(value)} ms`;
   return `${(value / 1_000).toFixed(2)} s`;
 }
 
 function fmtBytes(value: number) {
-  if (!Number.isFinite(value)) return "—";
+  if (!Number.isFinite(value)) return "n/a";
   if (value >= 1_048_576) return `${(value / 1_048_576).toFixed(1)} MB`;
   if (value >= 1_024) return `${(value / 1_024).toFixed(1)} KB`;
   return `${fmtInteger(value)} B`;
@@ -1530,7 +1527,7 @@ function fmtBytes(value: number) {
 
 function relativeTime(value: string) {
   const t = new Date(value).getTime();
-  if (Number.isNaN(t)) return "—";
+  if (Number.isNaN(t)) return "n/a";
   const s = Math.max(0, Math.floor((Date.now() - t) / 1_000));
   if (s < 60) return `${s}s ago`;
   const m = Math.floor(s / 60);

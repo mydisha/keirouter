@@ -88,7 +88,7 @@ function SavingsCardContent({ data }: { data: SavingsCardData }) {
         overflow: "hidden",
         boxSizing: "border-box",
         fontFamily:
-          "'IBM Plex Sans Variable', 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, sans-serif",
+          "'Geist Variable', -apple-system, BlinkMacSystemFont, sans-serif",
         background: `linear-gradient(150deg, ${C.bg} 0%, ${C.bgGradientTo} 100%)`,
         color: C.text,
         padding: "44px 52px",
@@ -136,7 +136,6 @@ function SavingsCardContent({ data }: { data: SavingsCardData }) {
       />
 
       <div style={{ position: "relative", zIndex: 1, flex: 1, display: "flex", flexDirection: "column" }}>
-        
         {/* Header */}
         <div
           style={{
@@ -198,7 +197,6 @@ function SavingsCardContent({ data }: { data: SavingsCardData }) {
 
         {/* Main Content Layout */}
         <div style={{ flex: 1, display: "flex", alignItems: "stretch", gap: "36px", paddingTop: "32px" }}>
-          
           {/* Left: Big Hero Metric — gradient panel */}
           <div
             style={{
@@ -253,7 +251,6 @@ function SavingsCardContent({ data }: { data: SavingsCardData }) {
             >
               ${formatCost(costSaved)}
             </span>
-            
             {costSaved > 0 && (
               <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 12 }}>
                 <div style={{
@@ -280,7 +277,6 @@ function SavingsCardContent({ data }: { data: SavingsCardData }) {
 
           {/* Right: Data Cards */}
           <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "20px" }}>
-            
             {/* Bento Grid */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "20px" }}>
               <DataCard label="Tokens Saved" value={fmtNum(tokensSaved)} accent={cardAccents[0]} />
@@ -504,11 +500,11 @@ export function SavingsCardShareButton({
         onClick={handleShare}
         disabled={generating || summary.total_requests === 0}
         aria-busy={generating || undefined}
-        className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-line-strong bg-surface px-3 text-[12.5px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg border border-line-strong bg-surface px-3 text-[12.5px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
       >
         {done ? (
           <>
-            <Check className="h-4 w-4 text-ok" strokeWidth={1.75} aria-hidden="true" />
+            <Check className="h-4 w-4 text-ok" aria-hidden="true" />
             <span className="hidden sm:inline">Downloaded</span>
           </>
         ) : generating ? (
@@ -518,7 +514,7 @@ export function SavingsCardShareButton({
           </>
         ) : (
           <>
-            <Download className="h-4 w-4 text-tone" strokeWidth={1.75} aria-hidden="true" />
+            <Download className="h-4 w-4 text-fg-faint" aria-hidden="true" />
             <span className="hidden sm:inline">Savings card</span>
           </>
         )}

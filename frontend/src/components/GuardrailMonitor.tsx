@@ -2,15 +2,11 @@ import { useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
-  Ban,
-  EyeOff,
   Fingerprint,
-  Gavel,
   MessageSquareWarning,
   NotebookPen,
   Scale,
   ShieldAlert,
-  ShieldCheck,
   Tags,
   TriangleAlert,
   X,
@@ -31,7 +27,7 @@ import { ErrorCard, EmptyState, Kpi, KpiGrid, SectionTitle, SegmentedControl, Sk
 // each), so they are true rates; detector rows come from the audit log, where
 // one request can produce several decisions.
 
-const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 // Series colours are CSS variables so they follow the theme.
 const C = {
@@ -135,7 +131,7 @@ export function GuardrailOverview({
                 aria-label={`Remove filter ${c.label}`}
                 className={cn("inline-flex h-5 w-5 items-center justify-center rounded text-fg-faint hover:bg-hover hover:text-fg", FOCUS_RING)}
               >
-                <X className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
+                <X className="stroke-2 h-3.5 w-3.5" aria-hidden="true" />
               </button>
             </span>
           ))}
@@ -190,7 +186,6 @@ function OverviewBody({
     return (
       <EmptyState
         variant="card"
-        icon={ICONS.guardrails}
         title={`No traffic ${PERIOD_TEXT[period]}`}
         hint="Guardrail activity appears here once requests flow through the gateway."
       />
@@ -203,34 +198,29 @@ function OverviewBody({
 
       <KpiGrid cols={6} label="Guardrail summary">
         <Kpi
-          icon={ShieldCheck}
           label="Checked"
           value={compactNumber(t.evaluated)}
           hint={`of ${compactNumber(t.requests)} requests (${pct(t.requests ? t.evaluated / t.requests : 0)})`}
         />
         <Kpi
-          icon={Ban}
           label="Blocked"
           value={compactNumber(t.blocked)}
-          tone={t.blocked > 0 ? "bad" : "section"}
+          tone={t.blocked > 0 ? "bad" : undefined}
           hint={`${pct(t.block_rate)} · ${t.blocked_inbound} in · ${t.blocked_outbound} out`}
         />
-        <Kpi icon={EyeOff} label="Masked" value={compactNumber(t.masked)} hint={`${pct(t.mask_rate)} of requests`} />
+        <Kpi label="Masked" value={compactNumber(t.masked)} hint={`${pct(t.mask_rate)} of requests`} />
         <Kpi
-          icon={TriangleAlert}
           label="Warned"
           value={compactNumber(t.warned)}
-          tone={t.warned > 0 ? "warn" : "section"}
+          tone={t.warned > 0 ? "warn" : undefined}
           hint={`${pct(t.warn_rate)} · ${compactNumber(t.log_only)} log only`}
         />
         <Kpi
-          icon={ICONS.latency}
           label="Overhead p95"
-          value={t.evaluated ? fmtMs(t.overhead_p95_ms) : "—"}
+          value={t.evaluated ? fmtMs(t.overhead_p95_ms) : "n/a"}
           hint={t.evaluated ? `p50 ${fmtMs(t.overhead_p50_ms)} · avg ${fmtMs(t.overhead_avg_ms)}` : "No checked requests"}
         />
         <Kpi
-          icon={Gavel}
           label="LLM judge"
           value={formatSpendUSD(stats.judge.cost_nanos / 1e9)}
           hint={`${compactNumber(stats.judge.calls)} calls · ${formatTokens(stats.judge.tokens)} tokens`}
@@ -238,8 +228,8 @@ function OverviewBody({
       </KpiGrid>
 
       {t.blocked_mid_stream > 0 && (
-        <p role="status" className="flex items-start gap-2 rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-fg">
-          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+        <p role="status" className="flex items-start gap-2 rounded-xl border border-warn/30 bg-warn-soft px-3.5 py-2.5 text-[12.5px] text-fg">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
           <span>
             <span className="font-medium">{t.blocked_mid_stream.toLocaleString()} streamed {t.blocked_mid_stream === 1 ? "answer was" : "answers were"} cut mid-stream.</span>{" "}
             <span className="text-fg-muted">The client had already received part of the response before the block.</span>
@@ -296,7 +286,7 @@ function DataQualityNotes({ stats }: { stats: GuardrailStats }) {
     <div role="status" className="space-y-1.5 rounded-xl border border-line bg-subtle px-3.5 py-2.5 text-[12.5px] text-fg-muted">
       {notes.map((n, i) => (
         <p key={i} className="flex items-start gap-2">
-          <NotebookPen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          <NotebookPen className="mt-0.5 h-3.5 w-3.5 shrink-0 text-fg-faint" aria-hidden="true" />
           <span>{n}</span>
         </p>
       ))}
@@ -358,7 +348,7 @@ function TrendCard({ stats, period }: { stats: GuardrailStats; period: ReportPer
 // Card chrome for the breakdown lists.
 function ListCard({ title, icon, subtitle, className, children }: { title: string; icon: LucideIcon; subtitle?: ReactNode; className?: string; children: ReactNode }) {
   return (
-    <section className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
+    <section className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-paper", className)}>
       <div className="border-b border-line px-4 py-3">
         <SectionTitle icon={icon} title={title} subtitle={subtitle} />
       </div>
@@ -396,7 +386,7 @@ function DetectorCard({ rows, onDrill }: { rows: GuardrailStats["by_detector"]; 
                   onClick={() => onDrill({ detector: r.detector, action: r.action, direction: r.direction })}
                   aria-label={`${meta?.label ?? r.detector} ${r.direction} ${ACTION_LABEL[r.action] ?? r.action}: ${r.requests} requests. Open in audit log`}
                 >
-                  <Icon className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                  <Icon className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2 text-[13px] text-fg">
                       <span className="font-medium">{meta?.label ?? r.detector}</span>
@@ -555,10 +545,10 @@ export function GuardrailKeyStats({ apiKeyId }: { apiKeyId: string }) {
         <ErrorCard message="Couldn't load guardrail stats for this key." />
       ) : (
         <KpiGrid cols={4} label="Guardrail impact on this key">
-          <Kpi icon={Ban} label="Blocked" value={compactNumber(t.blocked)} tone={t.blocked > 0 ? "bad" : "section"} hint={`${pct(t.block_rate)} of ${compactNumber(t.requests)} requests`} />
-          <Kpi icon={EyeOff} label="Masked" value={compactNumber(t.masked)} hint={pct(t.mask_rate)} />
-          <Kpi icon={TriangleAlert} label="Warned" value={compactNumber(t.warned + t.log_only)} hint={`${compactNumber(t.log_only)} log only`} />
-          <Kpi icon={ICONS.latency} label="Overhead p95" value={t.evaluated ? fmtMs(t.overhead_p95_ms) : "—"} hint={t.evaluated ? `avg ${fmtMs(t.overhead_avg_ms)}` : "No checked requests"} />
+          <Kpi label="Blocked" value={compactNumber(t.blocked)} tone={t.blocked > 0 ? "bad" : undefined} hint={`${pct(t.block_rate)} of ${compactNumber(t.requests)} requests`} />
+          <Kpi label="Masked" value={compactNumber(t.masked)} hint={pct(t.mask_rate)} />
+          <Kpi label="Warned" value={compactNumber(t.warned + t.log_only)} hint={`${compactNumber(t.log_only)} log only`} />
+          <Kpi label="Overhead p95" value={t.evaluated ? fmtMs(t.overhead_p95_ms) : "n/a"} hint={t.evaluated ? `avg ${fmtMs(t.overhead_avg_ms)}` : "No checked requests"} />
         </KpiGrid>
       )}
     </section>
@@ -577,8 +567,8 @@ export function GuardrailsNotice({ period, periodText }: { period: ReportPeriod;
   ].filter(Boolean) as string[];
   const summary = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
   return (
-    <div role="status" className="mb-6 flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-2.5 text-[13px] shadow-[var(--shadow-card)]">
-      <ICONS.guardrails className={cn("h-4 w-4 shrink-0", t.blocked > 0 ? "text-bad" : "text-tone")} strokeWidth={1.75} aria-hidden="true" />
+    <div role="status" className="mb-6 flex items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-2.5 text-[13px] shadow-paper">
+      <ICONS.guardrails className={cn("h-4 w-4 shrink-0", t.blocked > 0 ? "text-bad" : "text-fg-faint")} aria-hidden="true" />
       <p className="min-w-0 flex-1 truncate">
         <span className="font-medium text-fg">Guardrails {summary} requests</span> <span className="text-fg-muted">{periodText.toLowerCase()}.</span>
       </p>

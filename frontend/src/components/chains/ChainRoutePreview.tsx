@@ -36,9 +36,9 @@ function CompactRoute({ steps, hiddenCount, fallback, providerMap, roundRobin }:
         const provider = providerMap.get(step.provider);
         return (
           <span key={`${step.provider}/${step.model}/${index}`} className="inline-flex items-center gap-1">
-            {index > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-fg-faint" strokeWidth={1.75} />}
+            {index > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-fg-faint" />}
             <span className="inline-flex" title={`${index + 1}. ${providerName(provider, step.provider)} · ${step.model}`}>
-              <ProviderLogo icon={providerIcon(provider, step.provider)} name={providerName(provider, step.provider)} size={20} />
+              <ProviderLogo icon={providerIcon(provider, step.provider)} name={providerName(provider, step.provider)} />
             </span>
           </span>
         );
@@ -46,17 +46,17 @@ function CompactRoute({ steps, hiddenCount, fallback, providerMap, roundRobin }:
       {hiddenCount > 0 && <span className="ml-0.5 text-[12px] tabular-nums text-fg-muted">+{hiddenCount}</span>}
       {roundRobin && (
         <span title="Starting model rotates" className="inline-flex">
-          <Repeat2 className="ml-0.5 h-3.5 w-3.5 shrink-0 text-tone" strokeWidth={1.75} />
+          <Repeat2 className="ml-0.5 h-3.5 w-3.5 shrink-0 text-fg-faint" />
         </span>
       )}
       {fallback && (
         <span className="inline-flex items-center gap-1">
-          <ChevronRight className="h-3 w-3 shrink-0 text-fg-faint" strokeWidth={1.75} />
+          <ChevronRight className="h-3 w-3 shrink-0 text-fg-faint" />
           <span
-            className="inline-flex h-5 items-center gap-1 rounded-md border border-dashed border-warn/50 bg-warn/5 px-1 text-warn"
+            className="inline-flex h-5 items-center gap-1 rounded-md border border-dashed border-warn/50 bg-warn-soft px-1 text-warn"
             title={`Final fallback · ${providerName(providerMap.get(fallback.provider), fallback.provider)} · ${fallback.model}`}
           >
-            <Shield className="h-3 w-3 shrink-0" strokeWidth={1.75} />
+            <Shield className="h-3 w-3 shrink-0" />
             <ProviderLogo
               icon={providerIcon(providerMap.get(fallback.provider), fallback.provider)}
               name={providerName(providerMap.get(fallback.provider), fallback.provider)}
@@ -73,7 +73,7 @@ function CompactRoute({ steps, hiddenCount, fallback, providerMap, roundRobin }:
 // StepNumber is the tone-tinted position circle shared by the editor and preview.
 export function StepNumber({ n }: { n: number }) {
   return (
-    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-tone-soft text-[12px] font-semibold tabular-nums text-tone ring-1 ring-inset ring-tone-ring">
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-subtle text-[12px] font-medium tabular-nums text-fg-muted">
       <span className="sr-only">Step </span>{n}
     </span>
   );
@@ -90,8 +90,8 @@ function FullRoute({ steps, fallback, providerMap, roundRobin }: {
   if (steps.length === 0 && !fallback) {
     return (
       <div className="rounded-lg border border-dashed border-line-strong px-3 py-5 text-center">
-        <span className="mx-auto mb-2 flex h-7 w-7 items-center justify-center rounded-lg bg-tone-soft text-tone ring-1 ring-inset ring-tone-ring" aria-hidden="true">
-          <Route className="h-4 w-4" strokeWidth={1.75} />
+        <span className="mx-auto mb-2 flex h-7 w-7 items-center justify-center rounded-lg bg-subtle text-fg-muted" aria-hidden="true">
+          <Route className="h-4 w-4" />
         </span>
         <p className="text-[12.5px] text-fg-muted">Choose a model to see the route.</p>
       </div>
@@ -104,7 +104,7 @@ function FullRoute({ steps, fallback, providerMap, roundRobin }: {
         return (
           <li key={`${step.provider}/${step.model}/${index}`} className="flex min-w-0 items-center gap-2.5 rounded-lg border border-line bg-surface px-2.5 py-2">
             <StepNumber n={index + 1} />
-            <ProviderLogo icon={providerIcon(provider, step.provider)} name={providerName(provider, step.provider)} size={20} />
+            <ProviderLogo icon={providerIcon(provider, step.provider)} name={providerName(provider, step.provider)} />
             <span className="min-w-0 flex-1">
               <span className="block truncate font-mono text-[12px] text-fg" title={step.model}>{step.model}</span>
               <span className="block truncate text-[12px] text-fg-muted">{providerName(provider, step.provider)}</span>
@@ -114,19 +114,19 @@ function FullRoute({ steps, fallback, providerMap, roundRobin }: {
       })}
       {roundRobin && steps.length > 1 && (
         <li className="flex items-center gap-1.5 px-2.5 text-[12px] text-fg-muted">
-          <Repeat2 className="h-3.5 w-3.5 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />
+          <Repeat2 className="h-3.5 w-3.5 shrink-0 text-fg-faint" aria-hidden="true" />
           Starting model rotates
         </li>
       )}
       {fallback && (
-        <li className="flex min-w-0 items-center gap-2.5 rounded-lg border border-dashed border-warn/50 bg-warn/5 px-2.5 py-2">
-          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-warn/12 text-warn ring-1 ring-inset ring-warn/25" aria-hidden="true">
-            <Shield className="h-3.5 w-3.5" strokeWidth={1.75} />
+        <li className="flex min-w-0 items-center gap-2.5 rounded-lg border border-dashed border-warn/50 bg-warn-soft px-2.5 py-2">
+          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-warn-soft text-warn ring-1 ring-inset ring-warn/25" aria-hidden="true">
+            <Shield className="h-3.5 w-3.5" />
           </span>
           <ProviderLogo
             icon={providerIcon(providerMap.get(fallback.provider), fallback.provider)}
             name={providerName(providerMap.get(fallback.provider), fallback.provider)}
-            size={20}
+           
           />
           <span className="min-w-0 flex-1">
             <span className="block truncate font-mono text-[12px] text-fg" title={fallback.model}>{fallback.model}</span>

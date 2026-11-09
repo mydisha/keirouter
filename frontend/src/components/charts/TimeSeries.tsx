@@ -168,7 +168,7 @@ export function PlotTooltip({ leftPct, children }: { leftPct: number; children: 
     <div
       ref={ref}
       aria-hidden="true"
-      className="pointer-events-none absolute top-1 z-10 w-max min-w-36 max-w-full rounded-xl border border-line bg-surface px-2.5 py-2 text-[12px] shadow-[var(--shadow-pop)]"
+      className="pointer-events-none absolute top-1 z-10 w-max min-w-36 max-w-full rounded-xl border border-line bg-surface px-2.5 py-2 text-[12px] shadow-lift"
       style={{ left: 0, visibility: "hidden" }}
     >
       {children}
@@ -314,7 +314,7 @@ function Frame<T>({
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div
           ref={plotRef}
-          className="relative touch-pan-y select-none rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-4 focus-visible:ring-offset-surface"
+          className="relative touch-pan-y select-none rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-surface"
           style={{ height }}
           tabIndex={0}
           role="group"
@@ -425,7 +425,7 @@ export function TimeLines<T>({ data, x, series, format = compact, xFormat = cloc
         {paths.map((p) =>
           p.segments.map((pts, i) =>
             pts.length > 1 ? (
-              <polyline key={`${p.key}-${i}`} points={pts.join(" ")} fill="none" stroke={p.color} strokeWidth={1.75} vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
+              <polyline key={`${p.key}-${i}`} points={pts.join(" ")} fill="none" stroke={p.color} vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
             ) : (
               <circle key={`${p.key}-${i}`} cx={pts[0].split(",")[0]} cy={pts[0].split(",")[1]} r={0.8} fill={p.color} />
             ),
@@ -457,12 +457,12 @@ export function ChartCard({
 }) {
   const titleId = useId();
   return (
-    <section aria-labelledby={titleId} className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
+    <section aria-labelledby={titleId} className={cn("min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-paper", className)}>
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-4 py-3">
         <div className="flex min-w-0 items-start gap-2.5">
-          {Icon && <Icon className="mt-px h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />}
+          {Icon && <Icon className="mt-px h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />}
           <div className="min-w-0">
-            <h2 id={titleId} className="text-[13px] font-semibold text-fg">{title}</h2>
+            <h2 id={titleId} className="text-[13px] font-medium text-fg">{title}</h2>
             {subtitle && <p className="mt-0.5 text-[12px] text-fg-muted">{subtitle}</p>}
           </div>
         </div>

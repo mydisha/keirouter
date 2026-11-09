@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { AlertTriangle, ArrowRight, Check, Inbox, Plus, RefreshCw, type LucideIcon } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, Plus, RefreshCw, type LucideIcon } from "lucide-react";
 import {
   api,
   connectUsageStream,
@@ -17,7 +17,7 @@ import { PageHeader } from "../components/Layout";
 import { ProviderLogo } from "../components/ProviderLogo";
 import { TrafficCard } from "../components/charts/TrafficChart";
 import { GuardrailsNotice } from "../components/GuardrailMonitor";
-import { Badge, DeltaBadge, ErrorCard, IconTile, Kpi, KpiGrid, SectionTitle, Skeleton, EmptyState } from "../components/ui";
+import { Badge, DeltaBadge, ErrorCard, Glyph, Kpi, KpiGrid, SectionTitle, Skeleton, EmptyState } from "../components/ui";
 import { formatDateTime, ptsDelta, relDelta, type Delta } from "../lib/format";
 import { ICONS } from "../lib/icons";
 import { CopyButton, HighlightedCode } from "../components/ui/code-block";
@@ -39,7 +39,7 @@ const PERIOD_KEYS = Object.keys(PERIODS) as PeriodKey[];
 // window that scans weeks of usage; earlier stored choices start over once.
 const PERIOD_STORAGE_KEY = "kr.overview.period.v2";
 
-const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function readStoredPeriod(): PeriodKey {
   try {
@@ -182,7 +182,7 @@ export function OverviewPage() {
                     FOCUS_RING,
                   )}
                 >
-                  <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} strokeWidth={1.75} aria-hidden="true" />
+                  <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} aria-hidden="true" />
                 </button>
                 <Link
                   to="/providers"
@@ -191,7 +191,7 @@ export function OverviewPage() {
                     FOCUS_RING,
                   )}
                 >
-                  <Plus className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
+                  <Plus className="stroke-2 h-4 w-4" aria-hidden="true" />
                   <span>
                     Connect<span className="sr-only sm:not-sr-only"> provider</span>
                   </span>
@@ -296,10 +296,10 @@ function BudgetNotice({ budgets }: { budgets: BudgetStatus[] }) {
       role="status"
       className={cn(
         "mb-6 flex items-center gap-3 rounded-2xl border px-4 py-2.5 text-[13px]",
-        blocked ? "border-bad/30 bg-bad/5" : "border-warn/30 bg-warn/5",
+        blocked ? "border-bad/30 bg-bad-soft" : "border-warn/30 bg-warn-soft",
       )}
     >
-      <AlertTriangle className={cn("h-4 w-4 shrink-0", blocked ? "text-bad" : "text-warn")} strokeWidth={1.75} aria-hidden="true" />
+      <AlertTriangle className={cn("h-4 w-4 shrink-0", blocked ? "text-bad" : "text-warn")} aria-hidden="true" />
       <p className="min-w-0 flex-1 truncate">
         <span className="font-medium text-fg">{blocked ? "Budget limit reached, requests are blocked." : "Budget alert threshold reached."}</span>{" "}
         <span className="text-fg-muted" title={list}>{list}</span>
@@ -330,7 +330,7 @@ function Panel({
 }) {
   const id = useId();
   return (
-    <section aria-labelledby={id} className={cn("flex min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
+    <section aria-labelledby={id} className={cn("flex min-w-0 flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-paper", className)}>
       <div className="border-b border-line px-4 py-3">
         <SectionTitle
           id={id}
@@ -361,8 +361,8 @@ function PanelLink({ to, children }: { to: string; children: ReactNode }) {
   );
 }
 
-function PanelEmpty({ icon = Inbox, title, hint, action }: { icon?: LucideIcon; title: string; hint?: string; action?: ReactNode }) {
-  return <EmptyState icon={icon} title={title} hint={hint} action={action} size="sm" className="flex-1 justify-center" />;
+function PanelEmpty({ title, hint, action }: { title: string; hint?: string; action?: ReactNode }) {
+  return <EmptyState title={title} hint={hint} action={action} size="sm" className="flex-1 justify-center" />;
 }
 
 const TH = "px-4 py-2 font-medium";
@@ -378,13 +378,13 @@ function KpiStrip({ data, prevLabel }: { data: UsageInsights; prevLabel: string 
 
   const successSeries = series.filter((pt) => pt.requests > 0).map((pt) => 1 - pt.failures / pt.requests);
   // Success rate is the one health value in the strip, so only it gets a status tone.
-  const successTone = s.total_requests ? (s.success_rate >= 0.99 ? "ok" : s.success_rate >= 0.95 ? "warn" : "bad") : "section";
+  const successTone = s.total_requests ? (s.success_rate >= 0.99 ? "ok" : s.success_rate >= 0.95 ? "warn" : "bad") : undefined;
   // Four numbers answer "is it healthy and what does it cost". Optimizer
   // savings live in the Savings and budgets card (and as the Spend hint).
   const items: {
     label: string;
     icon: LucideIcon;
-    tone?: "ok" | "warn" | "bad" | "section";
+    tone?: "ok" | "warn" | "bad";
     value: string;
     sub?: string;
     delta: Delta | null;
@@ -401,7 +401,7 @@ function KpiStrip({ data, prevLabel }: { data: UsageInsights; prevLabel: string 
       label: "Success rate",
       icon: ICONS.successRate,
       tone: successTone,
-      value: s.total_requests ? fmtPct(s.success_rate, 2) : "—",
+      value: s.total_requests ? fmtPct(s.success_rate, 2) : "n/a",
       delta: p && p.total_requests && s.total_requests ? ptsDelta(s.success_rate, p.success_rate) : null,
       spark: successSeries,
     },
@@ -430,14 +430,12 @@ function KpiStrip({ data, prevLabel }: { data: UsageInsights; prevLabel: string 
         {items.map((item) => (
           <Kpi
             key={item.label}
-            icon={item.icon}
             tone={item.tone}
             label={item.label}
             value={<span className="whitespace-nowrap">{item.value}</span>}
             delta={item.delta}
             deltaLabel={`vs ${prevLabel}`}
             hint={item.sub}
-            trend={item.spark}
           />
         ))}
       </KpiGrid>
@@ -472,7 +470,7 @@ function ProviderHealthCard({ providers, loading }: { providers?: HealthTimeline
           {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-11 w-full" />)}
         </div>
       ) : rows.length === 0 ? (
-        <PanelEmpty icon={ICONS.health} title="No provider traffic in the last 24 hours" />
+        <PanelEmpty title="No provider traffic in the last 24 hours" />
       ) : (
         <ul className="divide-y divide-line">
           {rows.map((p) => {
@@ -481,7 +479,7 @@ function ProviderHealthCard({ providers, loading }: { providers?: HealthTimeline
               <li key={p.provider}>
                 <Link
                   to={`/provider-health/${encodeURIComponent(p.provider)}`}
-                  className="block px-4 py-2.5 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+                  className="block px-4 py-2.5 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 >
                   <div className="flex items-center gap-2.5">
                     <ProviderLogo icon={p.icon} name={p.display_name} />
@@ -492,7 +490,7 @@ function ProviderHealthCard({ providers, loading }: { providers?: HealthTimeline
                         {state.label}
                       </Badge>
                       <p className="text-[11.5px] tabular-nums text-fg-muted">
-                        {p.requests ? `${fmtPct(p.success_rate, 1)} ok` : "—"} · p95 {fmtMs(p.worst_p95_ms)}
+                        {p.requests ? `${fmtPct(p.success_rate, 1)} ok` : "n/a"} · p95 {fmtMs(p.worst_p95_ms)}
                       </p>
                     </div>
                   </div>
@@ -529,7 +527,7 @@ function TopModelsCard({ models, loading, className }: { models?: ModelUsage[]; 
           {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-8 w-full" />)}
         </div>
       ) : rows.length === 0 ? (
-        <PanelEmpty icon={ICONS.model} title="No model traffic in this period" />
+        <PanelEmpty title="No model traffic in this period" />
       ) : (
         <>
           {/* Phones: one stacked card per model instead of a sideways-scrolling table. */}
@@ -539,7 +537,7 @@ function TopModelsCard({ models, loading, className }: { models?: ModelUsage[]; 
               return (
                 <li key={`${m.provider}/${m.model}`} className="px-4 py-3">
                   <div className="flex items-center gap-2.5">
-                    <ProviderLogo icon={m.provider_icon} name={m.provider_name || m.provider} size={18} />
+                    <ProviderLogo icon={m.provider_icon} name={m.provider_name || m.provider} />
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-mono text-[12.5px] text-fg" title={m.model}>{m.model || "unknown"}</p>
                       <p className="truncate font-mono text-[11.5px] text-fg-muted">{m.provider}</p>
@@ -551,7 +549,7 @@ function TopModelsCard({ models, loading, className }: { models?: ModelUsage[]; 
                   </div>
                   <p className="mt-1.5 text-[12px] tabular-nums text-fg-muted">
                     {fmtInt(m.total_requests)} requests · {fmtCompact(m.total_tokens)} tokens
-                    {modelCost(m) !== "—" && <> · {modelCost(m)}</>}
+                    {modelCost(m) !== "n/a" && <> · {modelCost(m)}</>}
                   </p>
                   <div className="mt-2 h-1 overflow-hidden rounded-full bg-track" aria-hidden="true">
                     <div className="h-full rounded-full bg-accent-500" style={{ width: `${share}%` }} />
@@ -561,7 +559,7 @@ function TopModelsCard({ models, loading, className }: { models?: ModelUsage[]; 
             })}
           </ul>
           <div
-            className="hidden overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500 md:block"
+            className="hidden overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:block"
             tabIndex={0}
             role="region"
             aria-label="Top models table"
@@ -583,7 +581,7 @@ function TopModelsCard({ models, loading, className }: { models?: ModelUsage[]; 
                     <tr key={`${m.provider}/${m.model}`} className="transition-colors hover:bg-hover">
                       <td className="max-w-[280px] px-4 py-2">
                         <span className="flex min-w-0 items-center gap-2.5">
-                          <ProviderLogo icon={m.provider_icon} name={m.provider_name || m.provider} size={18} />
+                          <ProviderLogo icon={m.provider_icon} name={m.provider_name || m.provider} />
                           <span className="min-w-0">
                             <span className="block truncate font-mono text-fg" title={m.model}>{m.model || "unknown"}</span>
                             <span className="block truncate font-mono text-[11.5px] text-fg-muted">{m.provider}</span>
@@ -622,7 +620,7 @@ function fmtShare(share: number): string {
 }
 
 function modelCost(m: ModelUsage): string {
-  return m.cost_usd > 0 ? fmtUSD(m.cost_usd) : m.pricing_status === "free" ? "Free" : "—";
+  return m.cost_usd > 0 ? fmtUSD(m.cost_usd) : m.pricing_status === "free" ? "Free" : "n/a";
 }
 
 // ── Savings and budgets ──────────────────────────────────────────────────────
@@ -652,7 +650,7 @@ function CostCard({ data, budgets, budgetsLoading }: { data: UsageInsights; budg
           </PanelLink>
         </div>
         <p className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
-          <span className="text-[22px] font-semibold leading-none tracking-[-0.02em] tabular-nums text-fg">{fmtUSD(sv.usd_saved)}</span>
+          <span className="text-[22px] font-medium leading-none tracking-[-0.02em] tabular-nums text-fg">{fmtUSD(sv.usd_saved)}</span>
           {gross > 0 && <span className="text-[12px] tabular-nums text-fg-muted">{fmtPct(sv.usd_saved / gross, 1)} of gross</span>}
           {sv.usd_saved_estimate && <span className="text-[12px] text-fg-muted">· estimated</span>}
           {savedDelta && <DeltaBadge delta={savedDelta} className="ml-auto" />}
@@ -749,7 +747,6 @@ function ChainsCard({ chains, loading, className }: { chains?: ChainUsage[]; loa
       ) : rows.length === 0 ? (
         // The page's single next-step callout.
         <PanelEmpty
-          icon={ICONS.chains}
           title="No fallback chains yet"
           hint="A chain tries models in order, so one rate-limited provider never stops your tools."
           action={
@@ -770,7 +767,7 @@ function ChainsCard({ chains, loading, className }: { chains?: ChainUsage[]; loa
               <li key={c.chain_id}>
                 <Link
                   to={`/chains/${c.chain_id}/edit`}
-                  className="flex flex-col gap-2 px-4 py-3 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+                  className="flex flex-col gap-2 px-4 py-3 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 >
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="font-mono text-[13px] font-medium text-fg">{c.name}</span>
@@ -851,7 +848,7 @@ function RecentRequestsCard({ recent, period, className }: { recent: RecentActiv
   return (
     <Panel icon={ICONS.requests} title="Recent requests" action={<PanelLink to={`/usage?period=${period}&tab=requests`}>All requests</PanelLink>} className={className}>
       {recent.length === 0 ? (
-        <PanelEmpty icon={ICONS.requests} title="No requests in this period" />
+        <PanelEmpty title="No requests in this period" />
       ) : (
         <>
           {/* Phones: stacked cards — model and status first, then the numbers. */}
@@ -861,9 +858,9 @@ function RecentRequestsCard({ recent, period, className }: { recent: RecentActiv
               const caller = [r.api_key_name, r.client].filter(Boolean).join(" · ");
               return (
                 <li key={r.id}>
-                  <Link to={detailHref(r)} className="block px-4 py-3 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500">
+                  <Link to={detailHref(r)} className="block px-4 py-3 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
                     <div className="flex items-center gap-2.5">
-                      <ProviderLogo icon={r.provider_icon} name={r.provider_name || r.provider} size={18} />
+                      <ProviderLogo icon={r.provider_icon} name={r.provider_name || r.provider} />
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-mono text-[12.5px] text-fg" title={`${r.provider}/${r.model}`}>{r.model || "unknown"}</p>
                         {caller && <p className="truncate font-mono text-[11.5px] text-fg-muted">{caller}</p>}
@@ -889,7 +886,7 @@ function RecentRequestsCard({ recent, period, className }: { recent: RecentActiv
                           </span>
                         </>
                       )}
-                      {requestCost(r) !== "—" && (
+                      {requestCost(r) !== "n/a" && (
                         <>
                           <span aria-hidden="true">·</span>
                           <span className="text-fg">{requestCost(r)}</span>
@@ -902,7 +899,7 @@ function RecentRequestsCard({ recent, period, className }: { recent: RecentActiv
             })}
           </ul>
           <div
-            className="hidden overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500 md:block"
+            className="hidden overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:block"
             tabIndex={0}
             role="region"
             aria-label="Recent requests table"
@@ -938,7 +935,7 @@ function RecentRequestsCard({ recent, period, className }: { recent: RecentActiv
                       </td>
                       <td className="max-w-[300px] px-4 py-2">
                         <span className="flex min-w-0 items-center gap-2.5">
-                          <ProviderLogo icon={r.provider_icon} name={r.provider_name || r.provider} size={18} />
+                          <ProviderLogo icon={r.provider_icon} name={r.provider_name || r.provider} />
                           <span className="min-w-0">
                             <span className="block truncate font-mono text-fg" title={`${r.provider}/${r.model}`}>{r.model || "unknown"}</span>
                             {caller && <span className="block truncate font-mono text-[11.5px] text-fg-muted">{caller}</span>}
@@ -965,11 +962,11 @@ function requestStatusLabel(r: RecentActivity, fallback: string): string {
 }
 
 function requestTokens(r: RecentActivity): string {
-  return r.prompt_tokens || r.completion_tokens ? `${fmtCompact(r.prompt_tokens)} → ${fmtCompact(r.completion_tokens)}` : "—";
+  return r.prompt_tokens || r.completion_tokens ? `${fmtCompact(r.prompt_tokens)} → ${fmtCompact(r.completion_tokens)}` : "n/a";
 }
 
 function requestCost(r: RecentActivity): string {
-  return r.cache_hit ? "$0" : r.cost_usd > 0 ? fmtUSD(r.cost_usd) : "—";
+  return r.cache_hit ? "$0" : r.cost_usd > 0 ? fmtUSD(r.cost_usd) : "n/a";
 }
 
 function humanError(kind: string): string {
@@ -1029,7 +1026,7 @@ function FirstRun() {
 
   return (
     <div className="grid gap-4 xl:grid-cols-3">
-      <section aria-labelledby={setupId} className="min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] xl:col-span-2">
+      <section aria-labelledby={setupId} className="min-w-0 overflow-hidden rounded-2xl border border-line bg-surface shadow-paper xl:col-span-2">
         <div className="border-b border-line px-4 py-3">
           <SectionTitle
             id={setupId}
@@ -1148,7 +1145,7 @@ function FirstRun() {
         </p>
       </section>
 
-      <section aria-labelledby={gatewayId} className="min-w-0 self-start overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <section aria-labelledby={gatewayId} className="min-w-0 self-start overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
         <div className="border-b border-line px-4 py-3">
           <SectionTitle
             id={gatewayId}
@@ -1166,11 +1163,11 @@ function FirstRun() {
           <dt className="text-fg-muted">Endpoint</dt>
           <dd className="min-w-0 break-all text-right font-mono text-fg">{origin}/v1</dd>
           <dt className="text-fg-muted">Listening on</dt>
-          <dd className="min-w-0 break-all text-right font-mono text-fg">{info.data?.listen_addr ?? "—"}</dd>
+          <dd className="min-w-0 break-all text-right font-mono text-fg">{info.data?.listen_addr ?? "n/a"}</dd>
           <dt className="text-fg-muted">Storage</dt>
-          <dd className="text-right text-fg">{info.data ? (info.data.dialect === "postgres" ? "Postgres" : "SQLite") : "—"}</dd>
+          <dd className="text-right text-fg">{info.data ? (info.data.dialect === "postgres" ? "Postgres" : "SQLite") : "n/a"}</dd>
           <dt className="text-fg-muted">Version</dt>
-          <dd className="text-right font-mono text-fg">{info.data?.version ?? "—"}</dd>
+          <dd className="text-right font-mono text-fg">{info.data?.version ?? "n/a"}</dd>
           <dt className="text-fg-muted">Remote access</dt>
           <dd className="text-right">
             <Link to="/endpoints" className={cn("inline-flex min-h-6 items-center rounded-md text-[12px] font-medium text-link hover:underline", FOCUS_RING)}>
@@ -1207,11 +1204,11 @@ function SetupStep({
     <li className={cn("flex gap-3 px-4 py-4 sm:gap-3.5", isCurrent && "bg-subtle")} aria-current={isCurrent ? "step" : undefined}>
       {/* Done steps turn into a green check; the current step carries the page
           tone; later steps stay neutral. The sr-only text in the heading says which. */}
-      <IconTile icon={done ? Check : icon} size="md" tone={done ? "ok" : isCurrent ? "section" : "slate"} />
+      <Glyph icon={done ? Check : icon} tone={done ? "ok" : "muted"} />
       <div className="min-w-0 flex-1 pt-0.5">
         <div className="flex flex-wrap items-start gap-3">
           <div className="min-w-[min(100%,220px)] flex-1">
-            <h3 className={cn("text-[13px]", done ? "font-medium text-fg-muted line-through decoration-line-strong" : isCurrent ? "font-semibold text-fg" : "font-medium text-fg")}>
+            <h3 className={cn("text-[13px]", done ? "font-medium text-fg-muted line-through decoration-line-strong" : isCurrent ? "font-medium text-fg" : "font-medium text-fg")}>
               <span className="sr-only">Step {index + 1}: </span>
               {title}
               <span className="sr-only">{done ? " (done)" : isCurrent ? " (current step)" : ""}</span>
@@ -1285,7 +1282,7 @@ function fmtUSD(v: number): string {
 }
 
 function fmtMs(v: number): string {
-  if (!Number.isFinite(v) || v <= 0) return "—";
+  if (!Number.isFinite(v) || v <= 0) return "n/a";
   if (v < 1000) return `${Math.round(v)} ms`;
   return `${(v / 1000).toFixed(v < 10_000 ? 2 : 1)} s`;
 }

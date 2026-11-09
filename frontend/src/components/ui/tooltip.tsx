@@ -29,8 +29,8 @@ export function TooltipContent({
         sideOffset={sideOffset}
         collisionPadding={collisionPadding}
         className={cn(
-          "z-[110] max-w-[min(20rem,calc(100vw-1rem))] rounded-lg bg-primary px-2 py-1 text-[12px] leading-snug text-primary-fg shadow-[var(--shadow-pop)]",
-          "animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
+          "z-[110] max-w-[min(20rem,calc(100vw-1rem))] rounded-lg bg-primary px-2.5 py-1.5 text-[12px] leading-snug text-primary-fg shadow-lift",
+          "animate-pop-in data-[state=closed]:animate-pop-out",
           className,
         )}
         {...props}
@@ -73,7 +73,7 @@ export function InfoTip({
             aria-label={`More about ${label}`}
             aria-describedby={descId}
             className={cn(
-              "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+              "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               className,
             )}
             // Touch has no hover: a tap toggles the tooltip (tap outside or
@@ -88,7 +88,7 @@ export function InfoTip({
               setOpen(!wasOpen);
             }}
           >
-            <Info className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+            <Info className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         </TooltipTrigger>
         <TooltipContent side={side}>{children}</TooltipContent>

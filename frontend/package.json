@@ -7,22 +7,35 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "sprite": "node scripts/provider-sprite.mjs",
+    "sprite:check": "node scripts/provider-sprite.mjs --check",
+    "contrast": "node scripts/contrast.mjs",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@fontsource-variable/ibm-plex-sans": "^5.3.0",
-    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
     "@tanstack/react-query": "^5.104.1",
     "@tanstack/react-virtual": "^3.14.14",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "html-to-image": "^1.11.13",
+    "katex": "^0.16.47",
     "lucide-react": "^1.55.0",
+    "mermaid": "^12.2.0",
+    "motion": "^14.6.0",
+    "pdfjs-dist": "^6.5.438",
     "radix-ui": "^1.7.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.4",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
+    "shiki": "^4.5.0",
     "sonner": "^2.0.8",
     "tailwind-merge": "^3.7.0",
     "zustand": "^5.0.15"
@@ -33,9 +46,11 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "svgo": "^4.1.0",
     "tailwindcss": "^4.3.3",
     "tw-animate-css": "^1.4.0",
     "typescript": "^6.0.3",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "vitest": "^5.1.0"
   }
 }

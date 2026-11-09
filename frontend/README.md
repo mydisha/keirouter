@@ -24,9 +24,10 @@ In production, the backend serves these assets from a standard install path
 
 ## Design
 
-The UI uses a calm, warm-neutral palette (zinc) with a single muted sage/teal
-accent — deliberately avoiding the violet/fuchsia gradients common to generic AI
-dashboards. Tokens live in `src/index.css`; primitives in `src/components/ui.tsx`.
+Paper and ink with the brand blue as the one signal. The rules are in
+[`DESIGN.md`](../DESIGN.md) at the repository root; tokens live in
+`src/index.css` and primitives in `src/components/ui/`. After changing a colour
+token run `npm run contrast`; after adding a provider mark run `npm run sprite`.
 
 ## Structure
 

@@ -43,7 +43,7 @@ export function FormattedTokenInput({
         onChange(raw);
       }}
       placeholder={placeholder ? formatTokenLimit(placeholder) : undefined}
-      className="h-9 w-full rounded-lg border border-input bg-surface px-3 text-[13px] tabular-nums text-fg placeholder:text-fg-faint transition-colors hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+      className="h-9 w-full rounded-lg border border-input bg-surface px-3 text-[13px] tabular-nums text-fg placeholder:text-fg-faint transition-colors hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     />
   );
 }
@@ -138,7 +138,7 @@ function readViewport() {
     : { width: window.innerWidth, height: window.innerHeight, top: 0, left: 0 };
 }
 
-function ProviderIcon({ option, size = 20 }: { option?: ModelCatalogOption; size?: number }) {
+function ProviderIcon({ option, size = 16 }: { option?: ModelCatalogOption; size?: number }) {
   return <ProviderLogo icon={option?.icon} name={option?.providerName || "Custom"} size={size} />;
 }
 
@@ -150,12 +150,12 @@ function CapabilityGlyphs({ capabilities }: { capabilities?: ModelCapabilities }
     <span className="inline-flex shrink-0 items-center gap-1 text-fg-faint" role="group" aria-label="Model capabilities">
       {capabilities.vision && (
         <span title="Vision — supports image input" role="img" aria-label="Vision" className="inline-flex">
-          <Eye className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+          <Eye className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
       )}
       {capabilities.reasoning && (
         <span title="Reasoning — supports extended thinking" role="img" aria-label="Reasoning" className="inline-flex">
-          <Brain className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+          <Brain className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
       )}
     </span>
@@ -215,17 +215,17 @@ const ModelOptionRow = memo(function ModelOptionRow({
       onClick={() => onSelect(index, model.id)}
       onMouseMove={active ? undefined : () => onHover(index)}
       className={`flex h-full w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] ${
-        active ? "bg-hover ring-1 ring-inset ring-accent-500" : selected ? "bg-accent-500/10 hover:bg-accent-500/15" : "hover:bg-hover"
+        active ? "bg-hover ring-1 ring-inset ring-ring" : selected ? "bg-brand-soft hover:bg-brand-soft" : "hover:bg-hover"
       }`}
     >
       {/* Selected state is a check mark, not just a tint. */}
       <span
         aria-hidden="true"
         className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-md border ${
-          selected ? "border-accent-500 bg-accent-500 text-white" : "border-input bg-surface"
+          selected ? "border-action bg-action text-action-fg" : "border-input bg-surface"
         }`}
       >
-        {selected && <Check className="h-3 w-3" strokeWidth={2.5} />}
+        {selected && <Check className="stroke-[2.5] h-3 w-3" />}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
@@ -377,7 +377,7 @@ export function ModelAccessList({ value, limit = 12 }: { value: string[]; limit?
         const option = lookup.get(id);
         return (
           <div key={id} className="flex min-w-0 items-center gap-2.5 rounded-lg border border-line bg-surface px-3 py-2">
-            <ProviderIcon option={option} size={24} />
+            <ProviderIcon option={option} />
             <div className="min-w-0">
               <p className="truncate text-[13px] font-medium text-fg" title={id}>{option?.name || id}</p>
               <p className="mt-0.5 truncate text-[12px] text-fg-muted">
@@ -727,14 +727,14 @@ export function ModelMultiSelect({
           data-floating-layer
           onMouseDown={(e) => e.stopPropagation()}
           onKeyDown={onDropdownKeyDown}
-          className="fixed z-[100] flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-pop)]"
+          className="fixed z-[100] flex flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-lift"
           style={panelStyle}
         >
           {/* Search */}
           <div className="shrink-0 space-y-2 border-b border-line p-2">
             <div className="flex flex-col gap-2 sm:flex-row">
-              <div className="flex h-9 flex-1 items-center gap-2 rounded-lg border border-input bg-surface px-3 transition-colors focus-within:border-accent-500 focus-within:ring-2 focus-within:ring-accent-500">
-                <Search className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <div className="flex h-9 flex-1 items-center gap-2 rounded-lg border border-input bg-surface px-3 transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring">
+                <Search className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
                 <input
                   ref={inputRef}
                   value={query}
@@ -755,7 +755,7 @@ export function ModelMultiSelect({
                 value={providerFilter}
                 onChange={(event) => setProviderFilter(event.target.value)}
                 aria-label="Filter models by provider"
-                className="h-9 rounded-lg border border-input bg-surface px-2.5 text-[13px] text-fg outline-none transition-colors hover:border-fg-faint focus:border-accent-500 focus-visible:ring-2 focus-visible:ring-accent-500 sm:w-48"
+                className="h-9 rounded-lg border border-input bg-surface px-2.5 text-[13px] text-fg outline-none transition-colors hover:border-fg-faint focus:border-ring focus-visible:ring-2 focus-visible:ring-ring sm:w-48"
               >
                 <option value="all">All providers</option>
                 {providerOptions.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}
@@ -776,7 +776,7 @@ export function ModelMultiSelect({
                 <button
                   type="button"
                   onClick={() => close(true)}
-                  className="inline-flex h-9 shrink-0 items-center rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="inline-flex h-9 shrink-0 items-center rounded-lg border border-line-strong bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   Done
                 </button>
@@ -815,15 +815,15 @@ export function ModelMultiSelect({
                 }}
                 aria-label="Custom model pattern"
                 placeholder="Add custom pattern (e.g. claude-*)"
-                className="h-9 min-w-0 flex-1 rounded-lg border border-input bg-surface px-3 font-mono text-[12.5px] text-fg outline-none transition-colors placeholder:font-sans placeholder:text-[13px] placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="h-9 min-w-0 flex-1 rounded-lg border border-input bg-surface px-3 font-mono text-[12.5px] text-fg outline-none transition-colors placeholder:font-sans placeholder:text-[13px] placeholder:text-fg-faint hover:border-fg-faint focus:border-ring focus-visible:ring-2 focus-visible:ring-ring"
               />
               <button
                 type="button"
                 onClick={addCustom}
                 disabled={!customText.trim()}
-                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-transparent bg-action px-3 text-[13px] font-medium text-action-fg transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-subtle"
+                className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-transparent bg-action px-3 text-[13px] font-medium text-action-fg transition-colors hover:bg-action-hover disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-subtle"
               >
-                <Plus className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                <Plus className="h-4 w-4" aria-hidden="true" />
                 Add
               </button>
             </div>
@@ -851,9 +851,9 @@ export function ModelMultiSelect({
                   type="button"
                   onClick={(e) => { e.stopPropagation(); removeChip(id); }}
                   aria-label={`Remove ${id}`}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="flex h-7 w-7 items-center justify-center rounded-lg text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <X className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
               </li>
             );
@@ -896,9 +896,9 @@ export function ModelMultiSelect({
           aria-controls={open ? listboxId : undefined}
           aria-labelledby={nameRef ? `${nameRef} ${valueId}` : undefined}
           aria-describedby={describedBy}
-          className="flex h-9 w-full items-center gap-2 rounded-lg border border-input bg-surface px-3 text-left text-[13px] text-fg transition-colors hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+          className="flex h-9 w-full items-center gap-2 rounded-lg border border-input bg-surface px-3 text-left text-[13px] text-fg transition-colors hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <Search className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          <Search className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
           {nameRef === nameId && <span id={nameId} hidden>{label ?? "Models"}</span>}
           <span id={valueId} className={`flex-1 truncate ${value.length > 0 ? "tabular-nums" : "text-fg-faint"}`}>
             {value.length > 0
@@ -907,8 +907,7 @@ export function ModelMultiSelect({
           </span>
           <ChevronDown
             className={`h-4 w-4 shrink-0 text-fg-faint transition-transform ${open ? "rotate-180" : ""}`}
-            strokeWidth={1.75}
-            aria-hidden="true"
+                        aria-hidden="true"
           />
         </button>
       </div>

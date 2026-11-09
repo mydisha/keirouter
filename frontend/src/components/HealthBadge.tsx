@@ -34,9 +34,9 @@ export function fmtIssue(issue?: string): string {
 
 const STATUS_TONE: Record<HealthStatus, string> = {
   // Mirrors ui Badge tones (success / warning / danger / neutral).
-  healthy: "border-ok/20 bg-ok/10 text-ok",
-  degraded: "border-warn/25 bg-warn/12 text-warn",
-  unhealthy: "border-bad/20 bg-bad/10 text-bad",
+  healthy: "border-ok/20 bg-ok-soft text-ok",
+  degraded: "border-warn/25 bg-warn-soft text-warn",
+  unhealthy: "border-bad/20 bg-bad-soft text-bad",
   unknown: "border-line bg-subtle text-fg-muted",
   disabled: "border-line bg-subtle text-fg-muted",
 };

@@ -125,7 +125,7 @@ function SettingsTabs({ active, onChange }: { active: SettingsTab; onChange: (t:
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(value)}
             className={cn(
-              "relative -mb-px inline-flex shrink-0 items-center whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+              "relative -mb-px inline-flex shrink-0 items-center whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               on ? "text-fg" : "text-fg-muted hover:text-fg",
             )}
           >
