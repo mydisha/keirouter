@@ -72,7 +72,7 @@ function SelectBox({ checked, onChange, label, className }: { checked: boolean; 
 export function QuotaPage() {
   const confirm = useConfirm();
   const navigate = useNavigate();
-  const [period, setPeriod] = useState<string>("30d");
+  const [period, setPeriod] = useState<string>("3d");
   const [search, setSearch] = useState("");
   const [providerFilter, setProviderFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");

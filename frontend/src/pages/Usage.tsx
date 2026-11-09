@@ -29,9 +29,9 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "../components
 import { useToast } from "../components/Toast";
 
 // Health telemetry is windowed differently from usage; pick the closest range.
-const HEALTH_RANGE: Record<string, string> = { today: "24h", "24h": "24h", "7d": "7d", "30d": "30d", "90d": "30d" };
+const HEALTH_RANGE: Record<string, string> = { today: "24h", "24h": "24h", "3d": "7d", "7d": "7d", "30d": "30d", "90d": "30d" };
 // Trend granularity per period, matching the Overview chart.
-const TREND_BUCKETS: Record<string, number> = { today: 24, "24h": 24, "7d": 42, "30d": 30, "90d": 45 };
+const TREND_BUCKETS: Record<string, number> = { today: 24, "24h": 24, "3d": 36, "7d": 42, "30d": 30, "90d": 45 };
 const USAGE_REFRESH_DEBOUNCE_MS = 8_000;
 
 const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
