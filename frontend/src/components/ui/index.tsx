@@ -1129,7 +1129,6 @@ export function Kpi({
   delta,
   deltaLabel,
   tone,
-  live,
   valueClassName = "",
 }: {
   label: ReactNode;
@@ -1142,17 +1141,12 @@ export function Kpi({
   deltaLabel?: string;
   /** Only when the value itself is a status. */
   tone?: "ok" | "warn" | "bad";
-  /** The figure updates live: a pulsing brand dot beside the label. */
-  live?: boolean;
   valueClassName?: string;
 }) {
   const footer = delta !== undefined || hint;
   return (
     <div className="bg-surface px-5 py-4">
-      <dt className="flex items-center gap-1.5 truncate text-meta text-fg-muted">
-        {label}
-        {live && <span className="size-1.5 shrink-0 animate-pulse-dot rounded-full bg-brand text-brand" aria-hidden="true" />}
-      </dt>
+      <dt className="truncate text-meta text-fg-muted">{label}</dt>
       <dd className={`mt-1 min-w-0 font-display text-[1.625rem] leading-tight text-fg ${tone ? kpiTone[tone] : ""} ${valueClassName}`}>{value}</dd>
       {footer && (
         <dd className="mt-1.5 flex min-h-5 min-w-0 items-center gap-2 text-[12px] text-fg-muted">
