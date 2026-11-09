@@ -105,6 +105,9 @@ func TestAuditLoginAndAPI(t *testing.T) {
 	authSvc := auth.New(db.Settings(), cfg.Security.JWTSecret, cfg.Security.SessionTTL)
 	_, err := authSvc.EnsureDefaults(ctx)
 	require.NoError(t, err)
+	// The admin API stays locked while the published default is active.
+	const operatorPassword = "operator-secret"
+	require.NoError(t, authSvc.SetPassword(ctx, operatorPassword))
 	rec := audit.New(db.Audit(), nil, audit.Config{DefaultTenantID: store.DefaultTenantID, Key: []byte("k")})
 	t.Cleanup(func() { rec.Stop(time.Second) })
 	gw := New(Deps{Config: cfg, Auth: authSvc, DB: db, Settings: db.Settings(), Audit: rec})
@@ -120,7 +123,7 @@ func TestAuditLoginAndAPI(t *testing.T) {
 	resp.Body.Close()
 	require.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 
-	resp, err = http.Post(srv.URL+"/api/auth/login", "application/json", strings.NewReader(`{"password":"`+auth.DefaultPassword+`"}`))
+	resp, err = http.Post(srv.URL+"/api/auth/login", "application/json", strings.NewReader(`{"password":"`+operatorPassword+`"}`))
 	require.NoError(t, err)
 	resp.Body.Close()
 	session := findCookie(resp.Cookies(), sessionCookie)

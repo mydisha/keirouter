@@ -144,7 +144,12 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	if seeded {
 		log.Warn("seeded default dashboard password",
 			"password", auth.DefaultPassword,
-			"note", "change it on first login via the onboarding flow")
+			"note", "the admin API stays locked until it is changed on first login")
+	}
+	if !cfg.Security.BindLoopbackOnly && authSvc.UsingDefaultPassword(ctx) {
+		log.Warn("dashboard reachable from the network with the default password",
+			"host", cfg.Server.Host,
+			"note", "sign in and set a new password now; anyone who reaches this port can try the published default")
 	}
 
 	pricing := buildPricing()

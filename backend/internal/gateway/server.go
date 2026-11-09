@@ -246,6 +246,7 @@ func (s *Server) routes() chi.Router {
 	r.Use(middleware.RequestID)
 	r.Use(echoRequestID)
 	r.Use(recoverPanics)
+	r.Use(s.securityHeaders)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: s.cfg.Server.CORSOrigins,
 		AllowedMethods: []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
@@ -253,17 +254,22 @@ func (s *Server) routes() chi.Router {
 		ExposedHeaders: []string{"X-KeiRouter-Provider", "X-KeiRouter-Model", "X-KeiRouter-Account", "X-Request-Id", "Retry-After"},
 	}))
 
+	// Crawlers are asked to skip the whole instance; see securityHeaders for
+	// the matching X-Robots-Tag.
+	r.Get("/robots.txt", serveRobots)
+
 	// Health check (unauthenticated).
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// Version / info endpoint (unauthenticated).
+	// Info endpoint (unauthenticated). It deliberately omits the build version:
+	// an exact version lets scanners match a public instance to known issues.
+	// The signed-in dashboard still shows it.
 	r.Get("/v1", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"name":    "KeiRouter",
-			"version": s.versionString(),
-			"status":  "ok",
+			"name":   "KeiRouter",
+			"status": "ok",
 			"endpoints": []string{
 				"/v1/chat/completions",
 				"/v1/messages",
@@ -367,6 +373,7 @@ func (s *Server) routes() chi.Router {
 	r.Route("/api", func(r chi.Router) {
 		r.Use(s.loopbackOnly)
 		r.Use(s.sessionMiddleware)
+		r.Use(s.passwordChangedRequired)
 		r.Use(s.auditAdmin)
 		s.mountAdmin(r)
 	})

@@ -175,23 +175,77 @@ func extractToken(r *http.Request) string {
 	return ""
 }
 
-// loopbackOnly rejects non-loopback clients when bind-loopback-only is set. This
+// loopbackOnly rejects non-local clients when bind-loopback-only is set. This
 // guards the dashboard/admin surface in local single-user mode.
+//
+// A loopback RemoteAddr alone is not proof of a local client: the built-in
+// tunnels (cloudflared, Tailscale Funnel) and any reverse proxy on the same
+// host forward internet traffic from 127.0.0.1. Those hops stamp the request
+// with forwarding headers, so their presence marks the request as remote. A
+// local client that sends such a header only gets itself rejected, which is
+// the safe direction. The Host check blocks DNS rebinding: a hostile page
+// whose name re-resolves to 127.0.0.1 still sends its own name as Host.
 func (s *Server) loopbackOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.cfg.Security.BindLoopbackOnly {
 			next.ServeHTTP(w, r)
 			return
 		}
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			host = r.RemoteAddr
-		}
-		ip := net.ParseIP(host)
-		if ip == nil || !ip.IsLoopback() {
+		if !isLocalRequest(r) {
 			writeError(w, http.StatusForbidden, "dashboard is restricted to loopback access")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// forwardedHeaders are set by proxies and tunnels that relay remote clients
+// to a loopback listener.
+var forwardedHeaders = []string{
+	"Forwarded",
+	"X-Forwarded-For",
+	"X-Real-Ip",
+	"Cf-Connecting-Ip",
+	"Cf-Ray",
+	"Tailscale-Funnel-Request",
+	"Tailscale-User-Login",
+}
+
+// isLocalRequest reports whether r comes straight from a client on this
+// machine: a loopback peer, no proxy forwarding headers, and a Host header
+// that names the loopback interface.
+func isLocalRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		return false
+	}
+	for _, h := range forwardedHeaders {
+		if r.Header.Get(h) != "" {
+			return false
+		}
+	}
+	return isLoopbackHost(r.Host)
+}
+
+// isLoopbackHost reports whether a Host header value (with or without port)
+// names the local machine: localhost, *.localhost, or a loopback IP literal.
+// An empty Host only comes from HTTP/1.0 clients, which browsers are not, so
+// it is treated as local.
+func isLoopbackHost(hostport string) bool {
+	if hostport == "" {
+		return true
+	}
+	host := hostport
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		host = h
+	}
+	host = strings.TrimSuffix(strings.Trim(host, "[]"), ".")
+	if strings.EqualFold(host, "localhost") || strings.HasSuffix(strings.ToLower(host), ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }

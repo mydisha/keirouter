@@ -46,7 +46,10 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (!s.authenticated) {
     return <LoginScreen />;
   }
-  if (s.using_default && !s.onboarding_complete) {
+  // The seeded default password is public (README, startup log), so the
+  // dashboard stays locked until it is replaced; the admin API enforces the
+  // same rule with a 403.
+  if (s.using_default) {
     return <OnboardingScreen />;
   }
   return <>{children}</>;
@@ -192,11 +195,6 @@ function OnboardingScreen() {
     onError: (e: Error) => setError(e.message),
   });
 
-  const skip = useMutation({
-    mutationFn: () => api.completeOnboarding(),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["auth-status"] }),
-  });
-
   const valid = password.length >= 6 && password === confirm;
   const uid = useId();
   const ids = {
@@ -215,7 +213,7 @@ function OnboardingScreen() {
         <AuthGateLogo className="h-8 object-contain" />
         <h1 className="mt-5 text-[15px] font-semibold tracking-[-0.01em] text-fg">Welcome to <AuthGateName /></h1>
         <p className="mt-1 text-[13px] leading-5 text-fg-muted">
-          You're using the default password. Set a new one to secure this dashboard.
+          You're signed in with the default password. Set a new one to open the dashboard.
         </p>
         <form
           className="mt-5 space-y-4"
@@ -263,11 +261,8 @@ function OnboardingScreen() {
             )}
           </div>
           {error && <p id={ids.error} role="alert" className="text-[12px] text-bad">{error}</p>}
-          {/* Phones: full-width stacked, primary last, matching tab order. */}
-          <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center sm:justify-between">
-            <Button variant="ghost" type="button" className="w-full sm:w-auto" onClick={() => skip.mutate()} disabled={skip.isPending}>
-              Keep default for now
-            </Button>
+          {/* Phones: full-width button. */}
+          <div className="flex flex-col gap-2 pt-1 sm:flex-row sm:items-center sm:justify-end">
             <Button type="submit" className="w-full sm:w-auto" disabled={save.isPending || !valid}>
               {save.isPending ? "Saving…" : "Set password"}
             </Button>
