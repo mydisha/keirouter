@@ -272,6 +272,17 @@
   --code-flag: #0b56b3;
   --code-fn: #7034c9;
   --code-punc: var(--color-neutral-600);
+  /* Shiki's css-variables theme (playground code fences). */
+  --code-foreground: var(--code-fg);
+  --code-token-keyword: oklch(0.5 0.13 300);
+  --code-token-string: oklch(0.47 0.09 150);
+  --code-token-string-expression: oklch(0.47 0.09 150);
+  --code-token-function: oklch(0.49 0.11 257);
+  --code-token-constant: oklch(0.52 0.12 55);
+  --code-token-parameter: var(--color-neutral-925);
+  --code-token-punctuation: var(--color-neutral-700);
+  --code-token-comment: var(--color-neutral-600);
+  --code-token-link: oklch(0.49 0.11 257);
 
   /* Two elevations only: paper for resting surfaces, lift for floating ones. */
   --shadow-paper: 0 1px 2px oklch(0.2 0.025 257 / 0.06);
@@ -336,6 +347,16 @@
   --code-flag: #7cb7ff;
   --code-fn: #c5a3ff;
   --code-punc: var(--color-neutral-350);
+  --code-foreground: var(--code-fg);
+  --code-token-keyword: oklch(0.78 0.11 300);
+  --code-token-string: oklch(0.8 0.09 150);
+  --code-token-string-expression: oklch(0.8 0.09 150);
+  --code-token-function: oklch(0.78 0.09 257);
+  --code-token-constant: oklch(0.82 0.1 70);
+  --code-token-parameter: oklch(0.92 0.005 257);
+  --code-token-punctuation: var(--color-neutral-300);
+  --code-token-comment: var(--color-neutral-350);
+  --code-token-link: oklch(0.78 0.09 257);
 
   --shadow-paper: 0 1px 2px oklch(0.08 0.01 257 / 0.4);
   --shadow-lift: 0 0 0 1px oklch(0.98 0.004 257 / 0.06), 0 16px 40px -12px oklch(0.08 0.01 257 / 0.7);
@@ -582,6 +603,12 @@ select:disabled,
   overflow-y-auto` modal overlays into in-flow blocks.
 */
 @layer base {
+  /* A bare `border` draws a hairline, not currentColor. */
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
   :where(.overflow-auto, .overflow-x-auto, .overflow-x-scroll, .overflow-y-auto) {
     position: relative;
   }

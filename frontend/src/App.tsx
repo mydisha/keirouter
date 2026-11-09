@@ -25,6 +25,7 @@ const MediaProviderDetailPage = lazy(routeLoaders["/media-detail"]);
 const ProxyPoolsPage = lazy(routeLoaders["/proxy-pools"]);
 const SkillsPage = lazy(routeLoaders["/skills"]);
 const ConsoleLogPage = lazy(routeLoaders["/console"]);
+const PlaygroundPage = lazy(routeLoaders["/playground"]);
 const SystemPage = lazy(routeLoaders["/system"]);
 const OAuthCallbackPage = lazy(routeLoaders["/oauth-callback"]);
 const KeyPortalPage = lazy(routeLoaders["/portal"]);
@@ -74,6 +75,7 @@ export function App() {
                 <Route path="proxy-pools" element={<ProxyPoolsPage />} />
                 <Route path="skills" element={<SkillsPage />} />
                 <Route path="console" element={<ConsoleLogPage />} />
+                <Route path="playground" element={<PlaygroundPage />} />
                 <Route path="keys" element={<KeysPage />} />
                 <Route path="keys/:id" element={<KeyDetailPage />} />
                 <Route path="guardrails" element={<GuardrailsPage />} />

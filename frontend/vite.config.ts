@@ -1,4 +1,5 @@
-import { defineConfig } from "vite";
+import { readdirSync, readFileSync } from "node:fs";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath, URL } from "node:url";
@@ -7,10 +8,30 @@ import { fileURLToPath, URL } from "node:url";
 // throwaway backend on another port) without editing this file.
 const BACKEND = process.env.KEIROUTER_BACKEND ?? "http://127.0.0.1:20180";
 
+const PDFJS = fileURLToPath(new URL("./node_modules/pdfjs-dist/", import.meta.url));
+
+// pdf.js fetches CMaps, standard fonts, ICC profiles and its decoders by file
+// name from a directory (features/playground/pdf-reader.ts), so a build ships
+// them unhashed under pdfjs/. Nothing loads them until a PDF is attached in
+// the playground.
+function pdfjsAssets(): Plugin {
+  return {
+    name: "keirouter:pdfjs-assets",
+    apply: "build",
+    generateBundle() {
+      for (const dir of ["cmaps", "standard_fonts", "iccs", "wasm"]) {
+        for (const file of readdirSync(PDFJS + dir)) {
+          this.emitFile({ type: "asset", fileName: `pdfjs/${dir}/${file}`, source: readFileSync(`${PDFJS}${dir}/${file}`) });
+        }
+      }
+    },
+  };
+}
+
 // During development the dashboard talks to the Go backend on :20180.
 // In production the built assets are served by the backend itself.
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: [react(), tailwindcss(), pdfjsAssets()],
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },

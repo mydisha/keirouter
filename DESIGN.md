@@ -105,7 +105,7 @@ Motion is feedback, not decoration. 150 to 450ms, `ease-out-soft`, no bounce.
 | Kind | Format |
 | --- | --- |
 | Cost | USD, up to 6 decimals per request, mono |
-| Tokens | `9,812` / `12.4k` / `1.2M` |
+| Tokens | `9,812` / `12.4K` / `1.2M` |
 | Latency | `840 ms` / `1.2 s` |
 | Percent | One decimal |
 | Missing value | Muted `n/a` |

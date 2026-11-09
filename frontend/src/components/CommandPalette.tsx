@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Command } from "cmdk";
 import { Dialog } from "radix-ui";
-import { Copy, CornerDownLeft, History, Monitor, Moon, Plus, Search, Sun, type LucideIcon } from "lucide-react";
+import { Copy, CornerDownLeft, History, MessagesSquare, Monitor, Moon, Plus, Search, Sun, type LucideIcon } from "lucide-react";
 import { api } from "../lib/api";
 import { ICONS } from "../lib/icons";
 import { cn } from "@/lib/utils";
@@ -180,6 +180,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: "nav-overview", label: "Overview", icon: ICONS.overview, section: "Go to", run: go("/"), keywords: ["home", "dashboard"] },
       { id: "nav-usage", label: "Usage", icon: ICONS.usage, section: "Go to", run: go("/usage"), keywords: ["analytics", "tokens", "spend", "cost"] },
       { id: "nav-console", label: "Console", icon: ICONS.console, section: "Go to", run: go("/console"), keywords: ["logs", "debug", "stream"] },
+      { id: "nav-playground", label: "Playground", icon: MessagesSquare, section: "Go to", run: go("/playground"), keywords: ["chat", "try", "test", "prompt"] },
       { id: "nav-endpoints", label: "Endpoints", icon: ICONS.endpoints, section: "Go to", run: go("/endpoints"), keywords: ["base url", "tunnel", "tailscale", "cloudflare"] },
       { id: "nav-chains", label: "Chains", icon: ICONS.chains, section: "Go to", run: go("/chains"), keywords: ["routing", "fallback", "failover"] },
       { id: "nav-skills", label: "Skills", icon: ICONS.skills, section: "Go to", run: go("/skills"), keywords: ["prompt", "system prompt"] },
