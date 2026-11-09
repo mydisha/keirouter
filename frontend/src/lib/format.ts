@@ -44,7 +44,7 @@ function toDate(value: string | number | Date | null | undefined): Date | null {
 /** "Oct 12, 2026" (the year is dropped for dates in the current year when `short`). */
 export function formatDate(value: string | number | Date | null | undefined, opts: { short?: boolean } = {}): string {
   const d = toDate(value);
-  if (!d) return "—";
+  if (!d) return "n/a";
   const sameYear = d.getFullYear() === new Date().getFullYear();
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(opts.short && sameYear ? {} : { year: "numeric" }) });
 }
@@ -52,7 +52,7 @@ export function formatDate(value: string | number | Date | null | undefined, opt
 /** "Oct 12, 2026, 14:03:22": the full timestamp, for tooltips and detail rows. */
 export function formatDateTime(value: string | number | Date | null | undefined, opts: { seconds?: boolean } = { seconds: true }): string {
   const d = toDate(value);
-  if (!d) return "—";
+  if (!d) return "n/a";
   return d.toLocaleString(undefined, {
     month: "short",
     day: "numeric",

@@ -27,7 +27,7 @@ const PING_MAX_MS = 300000;
 const REACHABLE_MISS_THRESHOLD = 5;
 
 const LINK_BUTTON =
-  "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-fg transition-colors duration-150 hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [&_svg]:size-4 [&_svg]:shrink-0";
+  "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-fg transition-colors duration-150 hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-4 [&_svg]:shrink-0";
 
 // ---------------------------------------------------------------------------
 // Brand SVG logos (monochrome; colour is reserved for meaning)
@@ -125,7 +125,7 @@ export function EndpointsPage() {
         description="One base URL and API key for every provider."
         action={
           <Link to="/keys" className={LINK_BUTTON}>
-            <KeyRound strokeWidth={1.75} aria-hidden="true" />
+            <KeyRound aria-hidden="true" />
             Manage keys
           </Link>
         }
@@ -170,7 +170,7 @@ function TargetRadios({ value, onChange }: { value: Target; onChange: (next: Tar
             aria-checked={active}
             tabIndex={active ? 0 : -1}
             onClick={() => onChange(option.value)}
-            className={`h-8 rounded-lg px-3 text-[12px] font-medium sm:h-7 sm:px-2.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 ${
+            className={`h-8 rounded-lg px-3 text-[12px] font-medium sm:h-7 sm:px-2.5 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
               active ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg"
             }`}
           >
@@ -206,7 +206,7 @@ function ConnectionCard({
           url={localUrl}
           loading={loading}
           primary
-          icon={<ICONS.server className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+          icon={<ICONS.server className="h-4 w-4 text-fg-faint" aria-hidden="true" />}
         />
         {tunnelUrl && (
           <EndpointRow
@@ -270,7 +270,7 @@ function EndpointRow({
           className="min-h-8 shrink-0"
           aria-label={`Copy ${label.toLowerCase()} base URL`}
         >
-          {copied ? <Check strokeWidth={1.75} aria-hidden="true" /> : <Copy strokeWidth={1.75} aria-hidden="true" />}
+          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
           <span aria-hidden="true">{copied ? "Copied" : "Copy"}</span>
         </Button>
         <span className="sr-only" role="status">{copied ? "Copied" : ""}</span>
@@ -407,11 +407,11 @@ function QuickStartCard({ apiBase, action }: { apiBase: string; action: ReactNod
               aria-controls={panelId}
               tabIndex={active ? 0 : -1}
               onClick={() => setTab(t.value)}
-              className={`relative inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500 ${
+              className={`relative inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring ${
                 active ? "text-fg" : "text-fg-muted hover:text-fg"
               }`}
             >
-              <t.icon className={`h-3.5 w-3.5 shrink-0 ${active ? "text-link" : "text-fg-faint"}`} strokeWidth={1.75} aria-hidden="true" />
+              <t.icon className={`h-3.5 w-3.5 shrink-0 ${active ? "text-link" : "text-fg-faint"}`} aria-hidden="true" />
               {t.label}
               {active && <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent-500" aria-hidden="true" />}
             </button>
@@ -430,10 +430,10 @@ function QuickStartCard({ apiBase, action }: { apiBase: string; action: ReactNod
           <p className="text-pretty">{snippet.note}</p>
           <Link
             to="/cli-tools"
-            className="inline-flex min-h-6 shrink-0 items-center gap-1 rounded-md text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            className="inline-flex min-h-6 shrink-0 items-center gap-1 rounded-md text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Set up other CLI tools
-            <ArrowUpRight className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+            <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" />
           </Link>
         </div>
       </div>
@@ -523,7 +523,7 @@ function CatalogueCard({ apiBase }: { apiBase: string }) {
             <button
               type="button"
               onClick={() => setOpenGroups(allOpen ? new Set() : new Set(CATALOGUE.map((g) => g.group)))}
-              className="min-h-6 shrink-0 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="min-h-6 shrink-0 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               {allOpen ? "Collapse all" : "Expand all"}
             </button>
@@ -542,12 +542,11 @@ function CatalogueCard({ apiBase }: { apiBase: string }) {
                   aria-expanded={expanded}
                   aria-controls={regionId}
                   onClick={() => toggleGroup(g.group)}
-                  className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+                  className="flex w-full items-center gap-2 px-4 py-2.5 text-left transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 >
                   <ChevronRight
                     className={`h-4 w-4 shrink-0 text-fg-faint transition-transform ${expanded ? "rotate-90" : ""}`}
-                    strokeWidth={1.75}
-                    aria-hidden="true"
+                                        aria-hidden="true"
                   />
                   <span className="font-medium text-fg">{g.group}</span>
                   <span className="text-[12px] tabular-nums text-fg-muted">{g.entries.length}</span>
@@ -1009,11 +1008,11 @@ function TunnelRow({
                 href={displayUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex min-h-6 min-w-0 items-center gap-1 rounded-md font-mono text-[12px] text-fg-muted transition-colors hover:text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="flex min-h-6 min-w-0 items-center gap-1 rounded-md font-mono text-[12px] text-fg-muted transition-colors hover:text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 title={displayUrl}
               >
                 <span className="min-w-0 break-all sm:truncate">{displayUrl}</span>
-                <ArrowUpRight className="h-3 w-3 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                <ArrowUpRight className="h-3 w-3 shrink-0" aria-hidden="true" />
                 <span className="sr-only"> (opens in a new tab)</span>
               </a>
             </div>
@@ -1078,12 +1077,12 @@ function TunnelBadge({ reachable }: { reachable: boolean | null }) {
 // status in text, so the tile itself is decorative.
 function LogoTile({ running, reachable, children }: { running: boolean; reachable: boolean | null; children: ReactNode }) {
   const colours = !running
-    ? "bg-tone-soft text-tone ring-tone-ring"
+    ? "bg-subtle text-fg-muted ring-line"
     : reachable === true
-      ? "bg-ok/10 text-ok ring-ok/20"
+      ? "bg-ok-soft text-ok ring-ok/20"
       : reachable === false
-        ? "bg-bad/10 text-bad ring-bad/20"
-        : "bg-warn/12 text-warn ring-warn/25";
+        ? "bg-bad-soft text-bad ring-bad/20"
+        : "bg-warn-soft text-warn ring-warn/25";
   return (
     <span aria-hidden="true" className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ring-1 ring-inset ${colours}`}>
       {children}

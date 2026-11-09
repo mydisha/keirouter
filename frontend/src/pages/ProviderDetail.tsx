@@ -23,7 +23,6 @@ import {
   Plus,
   RefreshCw,
   Search,
-  SearchX,
   Trash2,
   X,
 } from "lucide-react";
@@ -44,7 +43,7 @@ import { ProviderLogo } from "../components/ProviderLogo";
 import { useToast } from "../components/Toast";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { ConnectProviderDialog, connectOptions, type ConnectMode } from "../components/connect";
-import { Badge, Button, IconTile, Kpi, KpiGrid, SectionTitle, Skeleton, TablePagination, Toggle, useClientPagination, EmptyState } from "../components/ui";
+import { Badge, Button, Kpi, KpiGrid, SectionTitle, Skeleton, TablePagination, Toggle, useClientPagination, EmptyState } from "../components/ui";
 import { ICONS } from "../lib/icons";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../components/ui/tooltip";
@@ -74,9 +73,9 @@ function InfoTip({ label, children }: { label: string; children: ReactNode }) {
           <button
             type="button"
             aria-label={label}
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-fg-faint transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Info className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+            <Info className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         </TooltipTrigger>
         <TooltipContent>{children}</TooltipContent>
@@ -150,10 +149,9 @@ export function ProviderDetailPage() {
       <EmptyState
         variant="card"
         titleAs="h1"
-        icon={ICONS.providers}
         title="Provider not found"
         hint="It may have been deleted."
-        action={<Link to="/providers" className="rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">Back to providers</Link>}
+        action={<Link to="/providers" className="rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">Back to providers</Link>}
       />
     );
   }
@@ -191,7 +189,7 @@ export function ProviderDetailPage() {
   return (
     <>
       <nav aria-label="Breadcrumb" className="mb-3 flex items-center gap-1.5 text-[13px] text-fg-muted">
-        <Link to="/providers" className="inline-flex min-h-6 items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+        <Link to="/providers" className="inline-flex min-h-6 items-center gap-1.5 rounded-md hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
           Providers
         </Link>
@@ -203,10 +201,10 @@ export function ProviderDetailPage() {
 
       <header className="mb-5 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 items-center gap-3">
-          <ProviderLogo icon={provider.icon} name={provider.display_name} size={40} className="rounded-lg" />
+          <ProviderLogo icon={provider.icon} name={provider.display_name} size={40} />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{provider.display_name}</h1>
+              <h1 className="text-[22px] font-medium leading-tight tracking-[-0.02em] text-fg">{provider.display_name}</h1>
               {provider.custom && <Badge tone="neutral">Custom</Badge>}
               {provider.deprecated && <Badge tone="warning">Unofficial</Badge>}
             </div>
@@ -238,7 +236,7 @@ export function ProviderDetailPage() {
             <DropdownMenu>
               <DropdownMenuTrigger
                 aria-label="More provider actions"
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
               </DropdownMenuTrigger>
@@ -271,7 +269,7 @@ export function ProviderDetailPage() {
       </header>
 
       {provider.deprecated && provider.notice && (
-        <div role="note" className="mb-5 flex items-start gap-2.5 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3 text-[13px] leading-5 text-fg">
+        <div role="note" className="mb-5 flex items-start gap-2.5 rounded-2xl border border-warn/30 bg-warn-soft px-4 py-3 text-[13px] leading-5 text-fg">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
           <span>{provider.notice}</span>
         </div>
@@ -294,7 +292,7 @@ export function ProviderDetailPage() {
               tabIndex={selected ? 0 : -1}
               onClick={() => setTab(value)}
               className={cn(
-                "relative -mb-px inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                "relative -mb-px inline-flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 selected ? "text-fg" : "text-fg-muted hover:text-fg",
               )}
             >
@@ -335,34 +333,31 @@ const TICK_CLASS: Record<string, string> = { ok: "bg-ok/70", degraded: "bg-warn"
 
 function ProviderSummary({ provider, health }: { provider: Provider; health?: HealthTimelineProvider }) {
   const hasTraffic = !!health && health.requests > 0;
-  const successTone = !hasTraffic ? "section" : health.success_rate >= 0.99 ? "ok" : health.success_rate >= 0.95 ? "warn" : "bad";
+  const successTone = !hasTraffic ? undefined : health.success_rate >= 0.99 ? "ok" : health.success_rate >= 0.95 ? "warn" : "bad";
   const badHours = health ? health.buckets.filter((b) => b.status === "degraded" || b.status === "down").length : 0;
 
   return (
     <KpiGrid cols={4} label="Last 24 hours">
       <Kpi
-        icon={ICONS.requests}
         label="Requests · 24h"
         value={health ? health.requests.toLocaleString("en-US") : <NoData />}
         hint={health && health.fallbacks ? `${health.fallbacks.toLocaleString("en-US")} fell over` : undefined}
       />
       <Kpi
-        icon={ICONS.successRate}
         label="Success"
         tone={successTone}
         value={hasTraffic ? `${(health.success_rate * 100).toFixed(1)}%` : <NoData />}
         valueClassName={successTone === "bad" ? "text-bad" : successTone === "warn" ? "text-warn" : ""}
       />
-      <Kpi icon={ICONS.latency} label="Worst p95" value={health && health.worst_p95_ms ? fmtMs(health.worst_p95_ms) : <NoData />} />
-      <div className="relative bg-surface py-3.5 pl-[3.75rem] pr-4">
-        <dt className="text-[12px] font-medium text-fg-muted">
-          <IconTile icon={ICONS.health} size="md" className="absolute left-4 top-4" />
+      <Kpi label="Worst p95" value={health && health.worst_p95_ms ? fmtMs(health.worst_p95_ms) : <NoData />} />
+      <div className="relative bg-surface px-5 py-4">
+        <dt className="text-meta text-fg-muted">
           Hourly health
         </dt>
         <dd className="absolute right-4 top-3">
             <Link
               to={`/provider-health/${encodeURIComponent(provider.id)}`}
-              className="-my-1 inline-flex min-h-6 items-center rounded-md text-[12px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="-my-1 inline-flex min-h-6 items-center rounded-md text-[12px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={`${provider.display_name} health details`}
             >
               Details
@@ -391,7 +386,7 @@ function ProviderSummary({ provider, health }: { provider: Provider; health?: He
 function NoData() {
   return (
     <>
-      <span aria-hidden="true">—</span>
+      <span aria-hidden="true">n/a</span>
       <span className="sr-only">No data</span>
     </>
   );
@@ -399,7 +394,7 @@ function NoData() {
 
 // ── Accounts ─────────────────────────────────────────────────────────────────
 
-const checkboxClass = "h-4 w-4 shrink-0 rounded border-input accent-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const checkboxClass = "h-4 w-4 shrink-0 rounded border-input accent-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function AccountsPanel({
   provider,
@@ -559,7 +554,6 @@ function AccountsPanel({
       <EmptyState
         variant="card"
         titleAs="h2"
-        icon={ICONS.account}
         title="No accounts yet"
         hint={`Add one to start routing to ${provider.display_name}.`}
         action={
@@ -575,7 +569,7 @@ function AccountsPanel({
   return (
     <div className="space-y-3">
       {needsReconnect > 0 && (
-        <div className="flex items-start gap-2.5 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3 text-[13px] leading-5 text-fg">
+        <div className="flex items-start gap-2.5 rounded-2xl border border-warn/30 bg-warn-soft px-4 py-3 text-[13px] leading-5 text-fg">
           <RefreshCw className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
           <span>
             {needsReconnect} account{needsReconnect === 1 ? "'s sign-in was" : "s' sign-ins were"} revoked. Remove {needsReconnect === 1 ? "it" : "them"} and connect again.
@@ -583,7 +577,7 @@ function AccountsPanel({
         </div>
       )}
 
-      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
         <div className="flex min-h-12 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-2">
           <SectionTitle icon={ICONS.account} title="Accounts" />
           <p className="text-[12.5px] text-fg-muted" role="status" aria-live="polite">
@@ -630,7 +624,7 @@ function AccountsPanel({
                   type="button"
                   onClick={() => setSelected(new Set())}
                   aria-label="Clear selection"
-                  className="flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   <X className="h-4 w-4" aria-hidden="true" />
                 </button>
@@ -795,7 +789,7 @@ function useAccountRow(a: Account, pools: ProxyPool[], test: TestResult | undefi
 type AccountRowState = ReturnType<typeof useAccountRow>;
 
 const iconBtn =
-  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-40 md:h-8 md:w-8";
+  "flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40 md:h-8 md:w-8";
 
 function AccountName({ a, row }: { a: Account; row: AccountRowState }) {
   return (
@@ -814,7 +808,7 @@ function AccountName({ a, row }: { a: Account; row: AccountRowState }) {
             }
           }}
           aria-label={`Label for ${row.name}`}
-          className="h-9 w-full rounded-lg border border-accent-500 bg-surface px-2 text-[13px] text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 md:h-8 md:max-w-56"
+          className="h-9 w-full rounded-lg border border-ring bg-surface px-2 text-[13px] text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-8 md:max-w-56"
         />
       ) : (
         <span className="block truncate font-medium text-fg" title={row.name}>
@@ -868,7 +862,7 @@ function AccountTestStatus({ test, testing, className }: { test?: TestResult; te
 
 function PriorityStepper({ row, index, total, onMove }: { row: AccountRowState; index: number; total: number; onMove: (dir: -1 | 1) => void }) {
   const stepBtn =
-    "flex h-full w-9 items-center justify-center text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500 disabled:opacity-30 md:w-7";
+    "flex h-full w-9 items-center justify-center text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:opacity-30 md:w-7";
   return (
     <div className="inline-flex h-9 items-center overflow-hidden rounded-lg border border-input bg-surface md:h-8">
       <button type="button" onClick={() => onMove(-1)} disabled={index === 0} aria-label={`Move ${row.name} up`} className={stepBtn}>
@@ -881,7 +875,7 @@ function PriorityStepper({ row, index, total, onMove }: { row: AccountRowState; 
         onBlur={row.commitPriority}
         onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
         aria-label={`Priority for ${row.name}`}
-        className="h-full w-11 border-x border-input bg-transparent text-center font-mono text-[12.5px] text-fg focus:bg-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+        className="h-full w-11 border-x border-input bg-transparent text-center font-mono text-[12.5px] text-fg focus:bg-subtle focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       />
       <button type="button" onClick={() => onMove(1)} disabled={index === total - 1} aria-label={`Move ${row.name} down`} className={stepBtn}>
         <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
@@ -967,7 +961,7 @@ function AccountDetails({ a, row, pools, onPatch }: { a: Account; row: AccountRo
           value={a.proxy_pool_id || ""}
           onChange={(e) => onPatch({ proxy_pool_id: e.target.value })}
           className={cn(
-            "h-9 w-full rounded-lg border bg-surface px-2 text-[12.5px] text-fg focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:w-56 md:h-8",
+            "h-9 w-full rounded-lg border bg-surface px-2 text-[12.5px] text-fg focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-56 md:h-8",
             pool?.test_status === "error" ? "border-bad" : "border-input",
           )}
         >
@@ -1003,7 +997,7 @@ function AccountDetails({ a, row, pools, onPatch }: { a: Account; row: AccountRo
 
 function AccountRow({ account: a, index, total, pools, selected, test, batchTesting, onToggleSelect, onMove, onPatch, onTest, onRemove }: AccountRowProps) {
   const row = useAccountRow(a, pools, test, onPatch);
-  const rowTone = selected ? "bg-accent-500/5" : a.disabled ? "bg-subtle/60" : "";
+  const rowTone = selected ? "bg-brand-soft" : a.disabled ? "bg-subtle/60" : "";
   const cell = "px-3 py-2.5 align-middle";
 
   return (
@@ -1057,7 +1051,7 @@ function AccountRow({ account: a, index, total, pools, selected, test, batchTest
 function AccountCard({ account: a, index, total, pools, selected, test, batchTesting, onToggleSelect, onMove, onPatch, onTest, onRemove }: AccountRowProps) {
   const row = useAccountRow(a, pools, test, onPatch);
   return (
-    <li className={cn("px-4 py-3", selected ? "bg-accent-500/5" : a.disabled && "bg-subtle/60")}>
+    <li className={cn("px-4 py-3", selected ? "bg-brand-soft" : a.disabled && "bg-subtle/60")}>
       <div className="flex items-start gap-1">
         <label className="-ml-2.5 flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center">
           <input type="checkbox" checked={selected} onChange={onToggleSelect} aria-label={`Select ${row.name}`} className={checkboxClass} />
@@ -1119,7 +1113,7 @@ function AccountQuotaPanel({
     <div className="rounded-xl border border-line bg-subtle p-3">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-[13px] font-medium text-fg">{planName || "Plan"}</h3>
-        <button type="button" onClick={onRefresh} disabled={loading || disabled} aria-label="Refresh usage" className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-40">
+        <button type="button" onClick={onRefresh} disabled={loading || disabled} aria-label="Refresh usage" className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40">
           <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} aria-hidden="true" />
         </button>
       </div>
@@ -1203,7 +1197,7 @@ function CodexResetCreditsSection({ accountId }: { accountId: string }) {
           <h3 className="text-[13px] font-medium text-fg">Codex limits</h3>
           {data?.usage_data?.plan_type && <Badge tone={data.usage_data.limit_reached ? "danger" : "neutral"}>{data.usage_data.plan_type}</Badge>}
         </div>
-        <button type="button" onClick={() => details.refetch()} disabled={details.isFetching} aria-label="Refresh Codex usage" className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-40">
+        <button type="button" onClick={() => details.refetch()} disabled={details.isFetching} aria-label="Refresh Codex usage" className="flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40">
           <RefreshCw className={cn("h-4 w-4", details.isFetching && "animate-spin")} aria-hidden="true" />
         </button>
       </div>
@@ -1363,7 +1357,7 @@ function ModelsPanel({
               tabIndex={view === v ? 0 : -1}
               onClick={() => setView(v)}
               className={cn(
-                "h-full rounded-lg px-3 text-[12.5px] font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                "h-full rounded-lg px-3 text-[12.5px] font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 view === v ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
               )}
             >
@@ -1387,12 +1381,11 @@ function ModelsPanel({
         <EmptyState
           variant="card"
           titleAs="h2"
-          icon={ICONS.model}
           title="No models yet"
           hint={provider.custom ? "Sync the endpoint's /models list, or add them under Custom models." : "Add them under Custom models."}
         />
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-4 py-2.5">
             <SectionTitle icon={ICONS.model} title="Catalog" />
             <div className="relative w-full sm:w-64">
@@ -1403,7 +1396,7 @@ function ModelsPanel({
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Filter models"
                 aria-label="Filter models"
-                className="h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </div>
             <div className="flex gap-1" role="radiogroup" aria-label="Status" onKeyDown={onRadioKeys}>
@@ -1416,8 +1409,8 @@ function ModelsPanel({
                   tabIndex={filter === f ? 0 : -1}
                   onClick={() => setFilter(f)}
                   className={cn(
-                    "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium capitalize focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                    filter === f ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
+                    "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium capitalize focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    filter === f ? "border-accent-500/30 bg-brand-soft text-link" : "border-line text-fg-muted hover:border-line-strong hover:text-fg",
                   )}
                 >
                   {f}
@@ -1436,7 +1429,7 @@ function ModelsPanel({
                   <Button variant="ghost" disabled={setDisabled.isPending} onClick={() => setDisabled.mutate({ ids: [...selected], disable: true }, { onSuccess: () => setSelected(new Set()) })}>
                     Disable
                   </Button>
-                  <button type="button" onClick={() => setSelected(new Set())} aria-label="Clear selection" className="flex h-9 w-9 items-center md:h-8 md:w-8 justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+                  <button type="button" onClick={() => setSelected(new Set())} aria-label="Clear selection" className="flex h-9 w-9 items-center md:h-8 md:w-8 justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     <X className="h-4 w-4" aria-hidden="true" />
                   </button>
                 </>
@@ -1449,7 +1442,6 @@ function ModelsPanel({
           </div>
           {filtered.length === 0 ? (
             <div className="px-6 py-10 text-center">
-              <IconTile icon={SearchX} size="md" className="mx-auto mb-2.5" />
               <p className="text-[13px] text-fg-muted">No models match.</p>
             </div>
           ) : (
@@ -1539,7 +1531,7 @@ function RouteCopy({ route }: { route: string }) {
         type="button"
         onClick={copy}
         aria-label={`Copy ${route}`}
-        className="group inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-md font-mono text-[12px] text-fg-muted hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 md:min-h-6"
+        className="group inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-md font-mono text-[12px] text-fg-muted hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring md:min-h-6"
       >
         <span className="truncate">{route}</span>
         {copied ? (
@@ -1576,7 +1568,7 @@ function ModelName({ m, disabled }: { m: ProviderModel; disabled: boolean }) {
 
 function ModelRow({ model: m, route, disabled, selected, onSelect, onToggle }: ModelRowProps) {
   return (
-    <tr className={cn("transition-colors", selected ? "bg-accent-500/5" : "hover:bg-hover/60", disabled && "text-fg-muted")}>
+    <tr className={cn("transition-colors", selected ? "bg-brand-soft" : "hover:bg-hover/60", disabled && "text-fg-muted")}>
       <td className="px-4 py-2">
         <input type="checkbox" checked={selected} onChange={onSelect} aria-label={`Select ${m.name || m.id}`} className={checkboxClass} />
       </td>
@@ -1599,7 +1591,7 @@ function ModelRow({ model: m, route, disabled, selected, onSelect, onToggle }: M
 // ModelCard is the phone layout of ModelRow.
 function ModelCard({ model: m, route, disabled, selected, onSelect, onToggle }: ModelRowProps) {
   return (
-    <li className={cn("px-4 py-2.5 text-[13px]", selected && "bg-accent-500/5")}>
+    <li className={cn("px-4 py-2.5 text-[13px]", selected && "bg-brand-soft")}>
       <div className="flex items-start gap-1">
         <label className="-ml-2.5 flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center">
           <input type="checkbox" checked={selected} onChange={onSelect} aria-label={`Select ${m.name || m.id}`} className={checkboxClass} />
@@ -1679,7 +1671,7 @@ function RoutingForm({
   const rotates = mode === "round-robin" || mode === "smart-round-robin";
 
   return (
-    <section aria-labelledby="strategy-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section aria-labelledby="strategy-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       <div className="border-b border-line px-4 py-3">
         <SectionTitle id="strategy-heading" icon={ICONS.route} title="Account strategy" subtitle={accountCount < 2 ? "Takes effect with two or more accounts" : undefined} />
       </div>
@@ -1696,11 +1688,11 @@ function RoutingForm({
               disabled={saving}
               onClick={() => setMode(s.value)}
               className={cn(
-                "flex items-start gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-60",
-                on ? "border-accent-500 bg-accent-500/5" : "border-line hover:border-line-strong hover:bg-hover",
+                "flex items-start gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60",
+                on ? "border-ring bg-brand-soft" : "border-line hover:border-line-strong hover:bg-hover",
               )}
             >
-              <span className={cn("mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border", on ? "border-accent-500" : "border-input")} aria-hidden="true">
+              <span className={cn("mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border", on ? "border-ring" : "border-input")} aria-hidden="true">
                 {on && <span className="h-2 w-2 rounded-full bg-accent-500" />}
               </span>
               <span>
@@ -1779,7 +1771,7 @@ function NumberSetting({
         disabled={disabled}
         aria-describedby={`${id}-hint`}
         onChange={(e) => onChange(Math.min(max, Math.max(min, parseInt(e.target.value, 10) || min)))}
-        className="h-9 w-32 rounded-lg border border-input bg-surface px-3 font-mono text-[13px] text-fg hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-60"
+        className="h-9 w-32 rounded-lg border border-input bg-surface px-3 font-mono text-[13px] text-fg hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
       />
       <p id={`${id}-hint`} className="text-[12px] text-fg-muted">
         {hint}

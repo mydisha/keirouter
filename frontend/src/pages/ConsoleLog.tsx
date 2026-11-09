@@ -3,9 +3,8 @@ import { useSearchParams } from "react-router-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Trash2, Search, X, Copy, Check, ChevronRight, ArrowDown, Download, HelpCircle, Lightbulb, RefreshCw } from "lucide-react";
 import { PageHeader } from "../components/Layout";
-import { Card, Button, IconTile, Skeleton, Toggle, SegmentedControl } from "../components/ui";
+import { Card, Button, Skeleton, Toggle, SegmentedControl } from "../components/ui";
 import { HighlightedCode } from "../components/ui/code-block";
-import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { useToast } from "../components/Toast";
 import { cn } from "@/lib/utils";
@@ -49,9 +48,9 @@ const LEVEL_DOT: Record<LogLevel, string> = {
 
 const LEVEL_PRESSED: Record<LogLevel, string> = {
   DEBUG: "border-line-strong bg-subtle text-fg",
-  INFO: "border-accent-500/30 bg-accent-500/10 text-link",
-  WARN: "border-warn/30 bg-warn/12 text-warn",
-  ERROR: "border-bad/25 bg-bad/10 text-bad",
+  INFO: "border-accent-500/30 bg-brand-soft text-link",
+  WARN: "border-warn/30 bg-warn-soft text-warn",
+  ERROR: "border-bad/25 bg-bad-soft text-bad",
   LOG: "border-line-strong bg-subtle text-fg",
 };
 
@@ -255,9 +254,9 @@ function Highlight({ text, terms }: { text: string; terms: string[] }) {
 
 function statusTone(status: number): string {
   if (status === 499) return "border-line-strong bg-subtle text-fg-muted";
-  if (status >= 500) return "border-bad/25 bg-bad/10 text-bad";
-  if (status >= 400) return "border-warn/30 bg-warn/12 text-warn";
-  return "border-ok/25 bg-ok/10 text-ok";
+  if (status >= 500) return "border-bad/25 bg-bad-soft text-bad";
+  if (status >= 400) return "border-warn/30 bg-warn-soft text-warn";
+  return "border-ok/25 bg-ok-soft text-ok";
 }
 
 function RowBadge({ row, view }: { row: Row; view: View }) {
@@ -270,7 +269,7 @@ function RowBadge({ row, view }: { row: Row; view: View }) {
           ?
         </span>
       ) : (
-        <span className="inline-flex h-[18px] items-center gap-1 rounded border border-accent-500/30 bg-accent-500/10 px-1 text-[11px] text-link" title="In flight">
+        <span className="inline-flex h-[18px] items-center gap-1 rounded border border-accent-500/30 bg-brand-soft px-1 text-[11px] text-link" title="In flight">
           <span className="live-dot h-1.5 w-1.5 rounded-full bg-accent-500" aria-hidden="true" />
           <span className="sr-only">In flight</span>…
         </span>
@@ -298,7 +297,7 @@ function SourceTag({ entry, onFilter }: { entry: ConsoleLogEntry; onFilter: (tok
           onFilter(tag);
         }}
         title={`Show only request ${tag}`}
-        className="mr-1.5 rounded px-1 text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+        className="mr-1.5 rounded px-1 text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {tag}
       </button>
@@ -349,9 +348,9 @@ const LogRow = memo(
             aria-expanded={expanded}
             aria-controls={expanded ? detailId : undefined}
             aria-label={`Details: ${time} ${h.msg.slice(0, 80)}`}
-            className="-my-[3px] flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+            className="-my-[3px] flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
           >
-            <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-90")} strokeWidth={2} aria-hidden="true" />
+            <ChevronRight className={cn("stroke-2", "h-3.5 w-3.5 transition-transform", expanded && "rotate-90")} aria-hidden="true" />
           </button>
           <span className="w-[88px] shrink-0 whitespace-nowrap tabular-nums text-fg-faint" title={fullTime(showTimeline ? first : h)}>
             {time}
@@ -405,7 +404,7 @@ function FilterValue({ field, value, label, terms, onFilter }: { field: string; 
       type="button"
       onClick={() => onFilter(field === "#" ? value : queryToken(field, value))}
       title={`Filter by ${field === "#" ? "this request" : `${field}: ${value}`}`}
-      className="rounded text-left text-fg underline decoration-line-strong decoration-dotted underline-offset-2 hover:decoration-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+      className="rounded text-left text-fg underline decoration-line-strong decoration-dotted underline-offset-2 hover:decoration-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <Highlight text={label ?? value} terms={terms} />
     </button>
@@ -446,7 +445,7 @@ function RowDetail({ row, view, terms, onFilter, onCopy, onOpenRequest }: Omit<R
     <div className="space-y-3 border-l border-line-strong pl-3 font-sans text-[12.5px]">
       {h.hint && (
         <p className="flex gap-2 rounded-lg border border-line bg-surface px-2.5 py-2 leading-5 text-fg">
-          <Lightbulb className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+          <Lightbulb className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" aria-hidden="true" />
           <span>
             <span className="font-medium">What this means: </span>
             {h.hint}
@@ -479,7 +478,7 @@ function RowDetail({ row, view, terms, onFilter, onCopy, onOpenRequest }: Omit<R
       {showTimeline && parsed.body && row.lines.length <= 1 && <DetailBody body={parsed.body} json={parsed.json} terms={terms} />}
 
       <div className="flex flex-wrap gap-1">
-        <SmallAction onClick={() => onCopy(row)} icon={<Copy className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />}>
+        <SmallAction onClick={() => onCopy(row)} icon={<Copy className="h-3.5 w-3.5" aria-hidden="true" />}>
           {showTimeline ? "Copy request" : "Copy line"}
         </SmallAction>
         {!showTimeline && h.req && <SmallAction onClick={() => onOpenRequest(h.req!)}>Open whole request {shortReq(h.req)}</SmallAction>}
@@ -522,7 +521,7 @@ function Timeline({ lines, terms }: { lines: ConsoleLogEntry[]; terms: string[] 
             <li key={l.seq}>
               <details className="group">
                 <summary className="flex cursor-pointer list-none items-start gap-0 rounded hover:bg-hover [&::-webkit-details-marker]:hidden">
-                  <ChevronRight className="mt-[3px] h-3 w-4 shrink-0 text-fg-faint transition-transform group-open:rotate-90" strokeWidth={2} aria-hidden="true" />
+                  <ChevronRight className="stroke-2 mt-[3px] h-3 w-4 shrink-0 text-fg-faint transition-transform group-open:rotate-90" aria-hidden="true" />
                   {head}
                 </summary>
                 <div className="ml-[88px] mt-0.5 space-y-1 border-l border-line pl-2">
@@ -550,7 +549,7 @@ function SmallAction({ onClick, icon, children }: { onClick: () => void; icon?: 
         e.stopPropagation();
         onClick();
       }}
-      className="inline-flex h-9 items-center gap-1 rounded-md px-1.5 text-[12px] text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:h-6"
+      className="inline-flex h-9 items-center gap-1 rounded-md px-1.5 text-[12px] text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-6"
     >
       {icon}
       {children}
@@ -570,7 +569,7 @@ function IconButton({ label, onClick, disabled, children, tone = "neutral", pres
       aria-pressed={pressed}
       title={label}
       className={cn(
-        "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8 [&_svg]:h-4 [&_svg]:w-4",
+        "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:w-8 [&_svg]:h-4 [&_svg]:w-4",
         tone === "danger" ? "hover:text-bad" : "hover:text-fg",
         pressed && "border-line-strong bg-subtle text-fg",
       )}
@@ -592,7 +591,6 @@ function StreamStatus({ status, className }: { status: { label: string; dot: str
 function BodyMessage({ title, hint, action }: { title: string; hint: string; action?: ReactNode }) {
   return (
     <div className="flex h-full min-h-[240px] flex-col items-center justify-center px-6 py-12 text-center font-sans">
-      <IconTile icon={ICONS.console} size="lg" className="mb-3" />
       <p className="text-[13px] font-medium text-fg">{title}</p>
       <p className="mx-auto mt-1 max-w-sm text-[12.5px] leading-5 text-fg-muted">{hint}</p>
       {action && <div className="mt-4">{action}</div>}
@@ -1079,7 +1077,7 @@ export function ConsoleLogPage() {
         {/* ── Toolbar ─────────────────────────────────────────────────────── */}
         <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5">
           <div className="relative w-full sm:w-auto sm:min-w-[260px] sm:flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
             <input
               ref={searchRef}
               type="search"
@@ -1096,7 +1094,7 @@ export function ConsoleLogPage() {
               aria-keyshortcuts="/"
               aria-describedby={showHelp ? `${autoScrollId}-help` : undefined}
               spellCheck={false}
-              className="h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-16 font-mono text-[12.5px] text-fg placeholder:font-sans placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:h-8 [&::-webkit-search-cancel-button]:hidden"
+              className="h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-16 font-mono text-[12.5px] text-fg placeholder:font-sans placeholder:text-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-8 [&::-webkit-search-cancel-button]:hidden"
             />
             <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
               {search ? (
@@ -1106,7 +1104,7 @@ export function ConsoleLogPage() {
                     setSearch("");
                     searchRef.current?.focus();
                   }}
-                  className="flex h-7 w-7 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label="Clear search"
                 >
                   <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1123,7 +1121,7 @@ export function ConsoleLogPage() {
                 aria-controls={`${autoScrollId}-help`}
                 aria-label="Search syntax"
                 title="Search syntax"
-                className={cn("flex h-7 w-7 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500", showHelp && "bg-hover text-fg")}
+                className={cn("flex h-7 w-7 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring", showHelp && "bg-hover text-fg")}
               >
                 <HelpCircle className="h-3.5 w-3.5" aria-hidden="true" />
               </button>
@@ -1150,13 +1148,13 @@ export function ConsoleLogPage() {
             </span>
             <span className="ml-auto mr-0.5 h-5 w-px bg-line sm:ml-0.5" aria-hidden="true" />
             <IconButton label={copied ? "Copied" : `Copy visible ${unit}s`} onClick={handleCopy} disabled={filtered.length === 0}>
-              {copied ? <Check className="text-ok" strokeWidth={1.75} aria-hidden="true" /> : <Copy strokeWidth={1.75} aria-hidden="true" />}
+              {copied ? <Check className="text-ok" aria-hidden="true" /> : <Copy aria-hidden="true" />}
             </IconButton>
             <IconButton label={`Download visible ${unit}s as .log`} onClick={handleDownload} disabled={filtered.length === 0}>
-              <Download strokeWidth={1.75} aria-hidden="true" />
+              <Download aria-hidden="true" />
             </IconButton>
             <IconButton label="Clear log" onClick={handleClear} disabled={entries.length === 0} tone="danger">
-              <Trash2 strokeWidth={1.75} aria-hidden="true" />
+              <Trash2 aria-hidden="true" />
             </IconButton>
           </div>
 
@@ -1174,7 +1172,7 @@ export function ConsoleLogPage() {
                         setSearch(ex.q);
                         searchRef.current?.focus();
                       }}
-                      className="shrink-0 rounded border border-line bg-surface px-1.5 font-mono text-[12px] text-fg hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                      className="shrink-0 rounded border border-line bg-surface px-1.5 font-mono text-[12px] text-fg hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       {ex.q}
                     </button>
@@ -1197,7 +1195,7 @@ export function ConsoleLogPage() {
                   aria-pressed={active}
                   onClick={() => toggleLevel(level)}
                   className={cn(
-                    "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:h-7",
+                    "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-7",
                     active ? LEVEL_PRESSED[level] : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
                   )}
                 >
@@ -1208,7 +1206,7 @@ export function ConsoleLogPage() {
               );
             })}
             {filtersActive && (
-              <button type="button" onClick={resetFilters} className="ml-1 h-8 rounded-md px-1.5 text-[12.5px] text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:h-7">
+              <button type="button" onClick={resetFilters} className="ml-1 h-8 rounded-md px-1.5 text-[12.5px] text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-7">
                 Reset filters
               </button>
             )}
@@ -1216,7 +1214,7 @@ export function ConsoleLogPage() {
         </div>
 
         {state === "signedout" && (
-          <div className="flex flex-wrap items-center gap-2 border-b border-bad/25 bg-bad/10 px-3 py-2 text-[12.5px] text-fg" role="alert">
+          <div className="flex flex-wrap items-center gap-2 border-b border-bad/25 bg-bad-soft px-3 py-2 text-[12.5px] text-fg" role="alert">
             Your dashboard session expired, so the live log stopped. Lines below are what was received before that.
             <Button type="button" variant="secondary" className="ml-auto" onClick={() => window.location.reload()}>
               Sign in again
@@ -1238,7 +1236,7 @@ export function ConsoleLogPage() {
           <div
             ref={scrollContainerRef}
             onScroll={handleScroll}
-            className="h-full overflow-y-auto bg-surface font-mono text-[12px] leading-[18px] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+            className="h-full overflow-y-auto bg-surface font-mono text-[12px] leading-[18px] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
             role="log"
             aria-live="off"
             aria-label="Console output"
@@ -1313,9 +1311,9 @@ export function ConsoleLogPage() {
               <button
                 type="button"
                 onClick={scrollToBottom}
-                className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-full border border-transparent bg-action px-3 text-[12.5px] font-medium text-action-fg shadow-[var(--shadow-pop)] transition-colors hover:bg-action-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
+                className="pointer-events-auto inline-flex h-8 items-center gap-1.5 rounded-full border border-transparent bg-action px-3 text-[12.5px] font-medium text-action-fg shadow-lift transition-colors hover:bg-action-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-surface"
               >
-                <ArrowDown className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
+                <ArrowDown className="stroke-2 h-3.5 w-3.5" aria-hidden="true" />
                 Jump to latest
                 {newSincePause > 0 && <span className="font-normal tabular-nums">· {newSincePause.toLocaleString()} new</span>}
               </button>
@@ -1334,12 +1332,12 @@ export function ConsoleLogPage() {
             </span>
             <span>{grouped.stats.requests.toLocaleString()} requests</span>
             {grouped.stats.failed > 0 && (
-              <button type="button" onClick={() => addFilter("is:failed")} className="rounded text-bad hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+              <button type="button" onClick={() => addFilter("is:failed")} className="rounded text-bad hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {grouped.stats.failed.toLocaleString()} failed
               </button>
             )}
             {grouped.stats.inflight > 0 && (
-              <button type="button" onClick={() => addFilter("is:inflight")} className="rounded text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+              <button type="button" onClick={() => addFilter("is:inflight")} className="rounded text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {grouped.stats.inflight.toLocaleString()} in flight
               </button>
             )}

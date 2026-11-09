@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
-import { IconTile, type TileTone } from "./ui";
+import { Glyph, type GlyphTone } from "./ui";
 
 // Toast system: a lightweight, dependency-free notifier styled with the
 // KeiRouter design system. Wrap the app in <ToastProvider> and call useToast()
@@ -111,10 +111,10 @@ function ToastViewport({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id:
 
 // Status is carried by a small tinted icon tile plus sr-only tone text; the
 // card itself stays neutral.
-const toneMeta: Record<ToastTone, { icon: typeof Info; tile: TileTone; srLabel: string }> = {
+const toneMeta: Record<ToastTone, { icon: typeof Info; tile: GlyphTone; srLabel: string }> = {
   success: { icon: CheckCircle2, tile: "ok", srLabel: "Success" },
   error: { icon: AlertCircle, tile: "bad", srLabel: "Error" },
-  info: { icon: Info, tile: "blue", srLabel: "Info" },
+  info: { icon: Info, tile: "brand", srLabel: "Info" },
 };
 
 // ToastCard owns its timer: it pauses while hovered or focused (WCAG 2.2.1)
@@ -144,7 +144,7 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
 
   return (
     <li
-      className="pointer-events-auto relative overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-pop)] motion-safe:animate-[toast-in_0.2s_ease-out]"
+      className="pointer-events-auto relative overflow-hidden rounded-2xl border border-line bg-surface shadow-lift motion-safe:animate-[toast-in_0.2s_ease-out]"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       onFocus={() => setFocused(true)}
@@ -159,7 +159,7 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
       }}
     >
       <div className="flex items-start gap-3 py-3 pl-3 pr-2">
-        <IconTile icon={meta.icon} size="sm" tone={meta.tile} />
+        <Glyph icon={meta.icon} tone={meta.tile} />
         <div className="min-w-0 flex-1 pt-[5px]">
           <p className="text-[13px] font-medium leading-snug text-fg">
             <span className="sr-only">{meta.srLabel}: </span>
@@ -172,10 +172,10 @@ function ToastCard({ toast, onDismiss }: { toast: Toast; onDismiss: () => void }
         <button
           type="button"
           onClick={onDismiss}
-          className="-my-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md [@media(pointer:coarse)]:-my-1.5 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9 text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+          className="-my-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-md [@media(pointer:coarse)]:-my-1.5 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9 text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={`Dismiss notification: ${toast.title}`}
         >
-          <X className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+          <X className="h-3.5 w-3.5" aria-hidden="true" />
         </button>
       </div>
       {/* Auto-dismiss progress: a neutral hairline that freezes while paused.

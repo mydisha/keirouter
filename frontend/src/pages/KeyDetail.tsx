@@ -32,7 +32,7 @@ import { GuardrailEditor } from "../components/GuardrailEditor";
 import { GuardrailKeyStats } from "../components/GuardrailMonitor";
 import { useModelCatalog, type ModelCatalogOption } from "../components/ModelSelect";
 import { ProviderLogo } from "../components/ProviderLogo";
-import { Badge, Button, IconTile, Kpi, KpiGrid, SectionTitle, Select, Skeleton, TablePagination, Toggle, useClientPagination, EmptyState } from "../components/ui";
+import { Badge, Button, Kpi, KpiGrid, SectionTitle, Select, Skeleton, TablePagination, Toggle, useClientPagination, EmptyState } from "../components/ui";
 import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
@@ -41,7 +41,7 @@ type Tab = "general" | "models" | "guardrails";
 const TAB_VALUES: Tab[] = ["general", "models", "guardrails"];
 const TAB_LABELS: Record<Tab, string> = { general: "Overview", models: "Models", guardrails: "Guardrails" };
 
-const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const USAGE_DAYS = 30;
 
 // ── Local helpers ────────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ function CopyIconButton({ label, value, title, description }: { label: string; v
       title={label}
       className={cn("flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg sm:h-7 sm:w-7", FOCUS_RING)}
     >
-      {copied ? <Check className="h-3.5 w-3.5 text-ok" strokeWidth={1.75} aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />}
+      {copied ? <Check className="h-3.5 w-3.5 text-ok" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
     </button>
   );
 }
@@ -134,7 +134,7 @@ function SettingsRow({ label, labelId, description, children }: { label: string;
 function PanelCard({ icon, title, action, children, footer }: { icon: LucideIcon; title: ReactNode; action?: ReactNode; children: ReactNode; footer?: ReactNode }) {
   const headingId = useId();
   return (
-    <section aria-labelledby={headingId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section aria-labelledby={headingId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       <div className="border-b border-line px-4 py-3 sm:px-5">
         <SectionTitle icon={icon} title={title} id={headingId} action={action} />
       </div>
@@ -239,7 +239,6 @@ export function KeyDetailPage() {
       <EmptyState
         variant="card"
         titleAs="h1"
-        icon={ICONS.keys}
         title="API key not found"
         hint="It may have been revoked."
         action={<Button onClick={() => navigate("/keys")}>Back to API keys</Button>}
@@ -285,10 +284,9 @@ export function KeyDetailPage() {
 
       <header className="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 items-center gap-3.5">
-          <IconTile icon={ICONS.keys} size="lg" />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="min-w-0 max-w-full truncate text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{key.name}</h1>
+              <h1 className="min-w-0 max-w-full truncate text-[22px] font-medium leading-tight tracking-[-0.02em] text-fg">{key.name}</h1>
               {key.disabled ? <Badge tone="neutral">Disabled</Badge> : <Badge tone="success">Active</Badge>}
             </div>
             <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[13px] text-fg-muted">
@@ -428,7 +426,7 @@ function GeneralTab({
     [usage.data],
   );
   const rows = limitRows(usage.data?.budgets ?? []);
-  const dash = usage.isLoading ? "…" : usage.isError ? "—" : null;
+  const dash = usage.isLoading ? "…" : usage.isError ? "n/a" : null;
 
   const daily = usage.data?.daily ?? [];
   const kpis: { label: string; icon: LucideIcon; value: string; hint?: string; title?: string; trend?: number[] }[] = [
@@ -470,11 +468,9 @@ function GeneralTab({
             {kpis.map((k) => (
               <Kpi
                 key={k.label}
-                icon={k.icon}
                 label={k.label}
                 value={<span title={k.title}>{k.value}</span>}
                 hint={k.hint}
-                trend={k.trend}
               />
             ))}
           </KpiGrid>
@@ -716,22 +712,21 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
     >
       {!editing && source === "all" ? (
         <div className="px-6 py-10 text-center">
-          <IconTile icon={ICONS.model} size="lg" className="mx-auto mb-3" />
-          <h3 className="text-[13px] font-semibold text-fg">No model restriction</h3>
+          <h3 className="text-[13px] font-medium text-fg">No model restriction</h3>
           <p className="mx-auto mt-1 max-w-md text-[12.5px] text-fg-muted">Every routable model works with this key.</p>
         </div>
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5 sm:px-5">
             <div className="relative w-full sm:w-64">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
               <input
                 type="search"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Filter models"
                 aria-label="Filter models"
-                className={cn("h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500", FOCUS_RING)}
+                className={cn("h-8 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-ring", FOCUS_RING)}
               />
             </div>
             {providerOptions.length > 1 && (
@@ -754,7 +749,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                     className={cn(
                       "h-8 rounded-lg border px-2.5 text-[12.5px] font-medium",
                       FOCUS_RING,
-                      show === f ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
+                      show === f ? "border-accent-500/30 bg-brand-soft text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
                     )}
                   >
                     {f === "all" ? "All" : `Selected · ${models.length}`}
@@ -781,7 +776,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                   }
                 }}
                 placeholder="e.g. gpt-4o*"
-                className={cn("h-8 w-full min-w-0 flex-1 rounded-lg border border-input bg-surface px-2.5 font-mono text-[12.5px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 sm:max-w-xs", FOCUS_RING)}
+                className={cn("h-8 w-full min-w-0 flex-1 rounded-lg border border-input bg-surface px-2.5 font-mono text-[12.5px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-ring sm:max-w-xs", FOCUS_RING)}
               />
               <Button variant="ghost" className="min-h-8 py-1" onClick={addPattern} disabled={!pattern.trim()}>
                 <Plus aria-hidden="true" />
@@ -808,7 +803,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                 const checked = selectedSet.has(r.id);
                 const isPattern = !r.option;
                 return (
-                  <li key={`${r.option?.providerId ?? "custom"}:${r.id}`} className={cn("flex items-center gap-1 pr-2", editing && checked && "bg-accent-500/5")}>
+                  <li key={`${r.option?.providerId ?? "custom"}:${r.id}`} className={cn("flex items-center gap-1 pr-2", editing && checked && "bg-brand-soft")}>
                     {editing ? (
                       <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-2.5 pl-4">
                         <input
@@ -869,7 +864,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                     return (
                       <tr
                         key={`${r.option?.providerId ?? "custom"}:${r.id}`}
-                        className={cn("transition-colors", editing && "cursor-pointer", editing && checked ? "bg-accent-500/5" : "hover:bg-hover")}
+                        className={cn("transition-colors", editing && "cursor-pointer", editing && checked ? "bg-brand-soft" : "hover:bg-hover")}
                         onClick={editing ? () => toggleModel(r.id) : undefined}
                       >
                         {editing && (
@@ -892,7 +887,7 @@ function ModelsTab({ apiKey, plan, plansLoading }: { apiKey: APIKey; plan?: Plan
                         <td className="px-4 py-2">
                           {r.option ? (
                             <span className="inline-flex min-w-0 items-center gap-2 text-fg-muted">
-                              <ProviderLogo icon={r.option.icon} name={r.option.providerName} size={18} />
+                              <ProviderLogo icon={r.option.icon} name={r.option.providerName} />
                               <span className="truncate">{r.option.providerName}</span>
                             </span>
                           ) : (
@@ -944,7 +939,7 @@ function ModelSummary({ row: r, resolving }: { row: ModelRowData; resolving: boo
   }
   return (
     <span className="flex min-w-0 flex-1 items-center gap-2.5">
-      <ProviderLogo icon={r.option.icon} name={r.option.providerName} size={18} />
+      <ProviderLogo icon={r.option.icon} name={r.option.providerName} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium text-fg" title={r.option.name}>{r.option.name}</span>
         <span className="block truncate text-[12px] text-fg-muted">
@@ -1046,8 +1041,6 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
       <EmptyState
         variant="card"
         titleAs="h2"
-        icon={ICONS.errors}
-        tone="bad"
         title="Couldn't load key guardrails"
         hint="Retry before making changes."
         action={<Button variant="secondary" onClick={() => policies.refetch()}>Retry</Button>}
@@ -1140,7 +1133,7 @@ function GuardrailsTab({ apiKey }: { apiKey: APIKey }) {
               className={cn("flex min-h-10 w-full items-center justify-between px-4 py-2.5 text-left text-[12.5px] font-medium text-fg-muted transition-colors hover:bg-hover hover:text-fg sm:px-5", FOCUS_RING)}
             >
               Merged configuration
-              <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showMerged && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+              <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showMerged && "rotate-180")} aria-hidden="true" />
             </button>
             {showMerged && (
               <div id={mergedId} className="border-t border-line">

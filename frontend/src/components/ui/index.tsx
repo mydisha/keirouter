@@ -22,7 +22,7 @@ import type {
   TextareaHTMLAttributes,
 } from "react";
 import { createPortal } from "react-dom";
-import { AlertCircle, ArrowDownRight, ArrowRight, ArrowUpRight, Inbox, X, type LucideIcon } from "lucide-react";
+import { AlertCircle, ArrowDownRight, ArrowRight, ArrowUpRight, Loader2, X, type LucideIcon } from "lucide-react";
 import type { Delta } from "@/lib/format";
 
 // joinIds merges space-separated id lists (aria-describedby etc.), dropping blanks.
@@ -71,7 +71,7 @@ export function VisuallyHidden({ children, id, as = "span" }: { children: ReactN
 export function Card({ children, className = "" }: { children: ReactNode; className?: string }) {
   return (
     <div
-      className={`overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)] ${className}`}
+      className={`overflow-hidden rounded-2xl border border-line bg-surface shadow-paper ${className}`}
     >
       {children}
     </div>
@@ -81,11 +81,11 @@ export function Card({ children, className = "" }: { children: ReactNode; classN
 // Skeleton is a shimmering placeholder block sized via className. Showing a
 // page's shape while its data loads reads as faster than a centered spinner and
 // avoids layout shift when the real content arrives. The shimmer animation and
-// reduced-motion handling live in index.css (.skeleton).
+// reduced-motion handling live in index.css (skeleton-shimmer).
 // Skeletons are aria-hidden; put aria-busy="true" on the region they fill (or
 // render <LoadingRegion>) so assistive tech knows content is still loading.
 export function Skeleton({ className = "" }: { className?: string }) {
-  return <div className={`skeleton ${className}`} aria-hidden="true" />;
+  return <div className={`skeleton-shimmer rounded-lg ${className}`} aria-hidden="true" />;
 }
 
 // SkeletonText renders a stack of skeleton lines for paragraph-like content.
@@ -142,9 +142,9 @@ export function SectionHeader({
   return (
     <div className="flex flex-col gap-3 px-4 pb-3 pt-4 sm:flex-row sm:items-start sm:justify-between sm:px-5">
       <div className="flex min-w-0 items-start gap-2.5">
-        {Icon && <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${iconColor}`} strokeWidth={1.75} aria-hidden="true" />}
+        {Icon && <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${iconColor}`} aria-hidden="true" />}
         <div>
-          <h2 className="text-[14px] font-semibold tracking-[-0.005em]">{title}</h2>
+          <h2 className="text-heading font-medium">{title}</h2>
           {description && <p className="mt-0.5 text-[13px] text-fg-muted">{description}</p>}
         </div>
       </div>
@@ -166,7 +166,7 @@ export function CardHeader({
   return (
     <div className="flex flex-col gap-3 border-b border-line px-4 py-3.5 sm:flex-row sm:items-center sm:justify-between sm:px-5">
       <div className="min-w-0">
-        <h2 className="text-[14px] font-semibold tracking-[-0.005em]">{title}</h2>
+        <h2 className="text-heading font-medium">{title}</h2>
         {description && <p className="mt-0.5 max-w-2xl text-[13px] leading-5 text-fg-muted">{description}</p>}
       </div>
       {action && <div className="flex min-w-0 flex-wrap items-center gap-2">{action}</div>}
@@ -188,8 +188,8 @@ export function SettingsSection({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2.5 pt-2">
-        {Icon && <Icon className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
-        <h3 className="text-[13px] font-semibold text-fg-muted">
+        {Icon && <Icon className="h-4 w-4 text-fg-faint" aria-hidden="true" />}
+        <h3 className="text-[13px] font-medium text-fg-muted">
           {title}
         </h3>
         <div className="flex-1 border-t border-line" />
@@ -202,22 +202,20 @@ export function SettingsSection({
 }
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: "primary" | "secondary" | "ghost" | "danger";
+  variant?: "primary" | "secondary" | "ghost" | "quiet" | "danger";
 };
 
+// Every button is ink or paper; the brand blue never fills a button. One
+// primary per view, outlined secondaries, quiet for toolbar icon buttons.
 export function Button({ variant = "primary", className = "", ...props }: ButtonProps) {
   const base =
-    "inline-flex min-h-9 select-none items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition-[background-color,border-color,color,opacity,transform] duration-150 active:scale-[0.97] disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas [&_svg]:size-4 [&_svg]:shrink-0";
-  // Primary is the brand blue action colour; secondary and ghost stay neutral
-  // so there is one obvious next step per view.
+    "press inline-flex min-h-9 select-none items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium disabled:pointer-events-none disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-canvas pointer-coarse:min-h-11 [&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0";
   const variants = {
-    primary: "border border-transparent bg-action text-action-fg shadow-[var(--shadow-card)] hover:bg-action-hover",
-    secondary:
-      "border border-line-strong bg-surface text-fg hover:bg-hover",
-    ghost:
-      "border border-line bg-surface text-fg hover:border-line-strong hover:bg-hover",
-    danger:
-      "border border-bad/35 bg-surface text-bad hover:bg-bad/10",
+    primary: "border border-transparent bg-action text-action-fg shadow-paper hover:bg-action-hover",
+    secondary: "border border-input bg-surface text-fg shadow-paper hover:bg-hover",
+    ghost: "border border-line-strong bg-surface text-fg hover:bg-hover",
+    quiet: "border border-transparent text-fg-muted hover:bg-hover hover:text-fg",
+    danger: "border border-transparent bg-bad-soft text-bad hover:bg-bad hover:text-white",
   };
   return <button className={`${base} ${variants[variant]} ${className}`} {...props} />;
 }
@@ -241,7 +239,7 @@ export function Input({ className = "", ...props }: InputHTMLAttributes<HTMLInpu
   const fieldAria = useFieldAria(props);
   return (
     <input
-      className={`min-h-9 w-full rounded-lg border border-input bg-surface px-3 py-1.5 text-[13px] transition-[border-color,box-shadow,background-color] placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:bg-subtle disabled:opacity-60 ${invalidControl} ${className}`}
+      className={`min-h-9 w-full rounded-lg border border-input bg-surface px-3 py-1.5 text-[13px] shadow-paper transition-[border-color,box-shadow,background-color] placeholder:text-fg-faint hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-tone-ring pointer-coarse:min-h-11 disabled:cursor-not-allowed disabled:bg-subtle disabled:opacity-60 ${invalidControl} ${className}`}
       {...props}
       {...fieldAria}
     />
@@ -252,7 +250,7 @@ export function Select({ className = "", children, ...props }: SelectHTMLAttribu
   const fieldAria = useFieldAria(props);
   return (
     <select
-      className={`min-h-9 w-full rounded-lg border border-input bg-surface px-3 py-1.5 text-[13px] transition-[border-color,box-shadow,background-color] hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:bg-subtle disabled:opacity-60 ${invalidControl} ${className}`}
+      className={`min-h-9 w-full rounded-lg border border-input bg-surface px-3 py-1.5 text-[13px] shadow-paper transition-[border-color,box-shadow,background-color] hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-tone-ring pointer-coarse:min-h-11 disabled:cursor-not-allowed disabled:bg-subtle disabled:opacity-60 ${invalidControl} ${className}`}
       {...props}
       {...fieldAria}
     >
@@ -266,7 +264,7 @@ export function Textarea({ className = "", ...props }: TextareaHTMLAttributes<HT
   const fieldAria = useFieldAria(props);
   return (
     <textarea
-      className={`min-h-20 w-full rounded-lg border border-input bg-surface px-3 py-2 text-[13px] leading-5 transition-[border-color,box-shadow,background-color] placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:bg-subtle disabled:opacity-60 ${invalidControl} ${className}`}
+      className={`min-h-20 w-full rounded-lg border border-input bg-surface px-3 py-2 text-[13px] leading-5 shadow-paper transition-[border-color,box-shadow,background-color] placeholder:text-fg-faint hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-tone-ring disabled:cursor-not-allowed disabled:bg-subtle disabled:opacity-60 ${invalidControl} ${className}`}
       {...props}
       {...fieldAria}
     />
@@ -358,7 +356,7 @@ export function Field({
       )}
       {error && (
         <p id={errorId} className="flex items-start gap-1.5 text-[12px] leading-5 text-bad">
-          <AlertCircle className="mt-[3px] h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+          <AlertCircle className="mt-[3px] h-3.5 w-3.5 shrink-0" aria-hidden="true" />
           <span>{error}</span>
         </p>
       )}
@@ -378,16 +376,16 @@ export function Badge({
   className?: string;
 }) {
   const tones = {
-    neutral: "border-line bg-subtle text-fg-muted",
-    accent: "border-accent-500/20 bg-accent-500/10 text-link",
-    secondary: "border-tone-ring bg-tone-soft text-tone",
-    danger: "border-bad/20 bg-bad/10 text-bad",
-    warning: "border-warn/25 bg-warn/12 text-warn",
-    success: "border-ok/20 bg-ok/10 text-ok",
+    neutral: "bg-subtle text-fg-muted",
+    accent: "bg-brand-soft text-brand-ink",
+    secondary: "bg-brand-soft text-brand-ink",
+    danger: "bg-bad-soft text-bad",
+    warning: "bg-warn-soft text-warn",
+    success: "bg-ok-soft text-ok",
   };
   return (
     <span
-      className={`inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-md border px-1.5 text-[11.5px] font-medium ${tones[tone]} ${className}`}
+      className={`inline-flex h-5 items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-[11.5px] font-medium [&>svg]:size-3 ${tones[tone]} ${className}`}
       title={title}
     >
       {children}
@@ -434,12 +432,12 @@ export function StatusDot({
 }
 
 /**
- * EmptyState is the one "nothing here yet" surface: a tone-coloured icon, a
- * title that says what is missing, one line on why it matters or what to do,
- * and at most one primary plus one secondary action.
+ * EmptyState is the one "nothing here yet" surface: a title that says what is
+ * missing, one line on what to do, and at most one primary plus one quieter
+ * action. No icon: the sentence and the action carry it.
  *
- * - `variant="inline"` (default) sits inside an existing card.
- * - `variant="card"` is a standalone dashed card (a whole page/section is empty).
+ * - `variant="inline"` (default) sits inside an existing surface.
+ * - `variant="card"` is a standalone dashed surface (a whole page/section is empty).
  * - `size="sm"` is the compact form for dashboard panels.
  */
 export function EmptyState({
@@ -447,8 +445,6 @@ export function EmptyState({
   hint,
   action,
   secondaryAction,
-  icon: Icon = Inbox,
-  tone,
   variant = "inline",
   size = "md",
   titleAs: Title = "p",
@@ -460,8 +456,6 @@ export function EmptyState({
   action?: ReactNode;
   /** A quieter follow-up, e.g. a docs or "Clear filters" link. */
   secondaryAction?: ReactNode;
-  icon?: LucideIcon;
-  tone?: TileTone;
   variant?: "inline" | "card";
   size?: "md" | "sm";
   /** Heading level when the empty state is the page's main content (e.g. "not found"). */
@@ -471,12 +465,11 @@ export function EmptyState({
   const sm = size === "sm";
   return (
     <div
-      className={`flex flex-col items-center text-center ${sm ? "px-6 py-9" : "px-6 py-12"} ${
+      className={`flex flex-col items-center text-center ${sm ? "px-5 py-7" : "px-6 py-10"} ${
         variant === "card" ? "rounded-2xl border border-dashed border-line-strong bg-surface" : ""
       } ${className}`}
     >
-      <IconTile icon={Icon} size="lg" tone={tone} className={`${sm ? "mb-2.5" : "mb-3.5"} shadow-[0_0_0_6px_color-mix(in_srgb,var(--tone-fg)_5%,transparent)]`} />
-      <Title className={`font-semibold tracking-[-0.005em] text-fg ${sm ? "text-[13px]" : "text-[14px]"}`}>{title}</Title>
+      <Title className={`font-medium text-fg ${sm ? "text-[13px]" : "text-heading"}`}>{title}</Title>
       {hint && <p className={`mx-auto mt-1 max-w-md text-pretty leading-5 text-fg-muted ${sm ? "text-[12.5px]" : "text-[13px]"}`}>{hint}</p>}
       {(action || secondaryAction) && (
         <div className={`flex flex-wrap items-center justify-center gap-x-4 gap-y-2 ${sm ? "mt-3" : "mt-4"}`}>
@@ -508,9 +501,9 @@ export function ErrorBanner({
     <div
       role="alert"
       id={id}
-      className={`flex items-start gap-2.5 rounded-lg border border-bad/30 bg-bad/10 px-3.5 py-2.5 ${className}`}
+      className={`flex items-start gap-2.5 rounded-xl bg-bad-soft px-3.5 py-2.5 ${className}`}
     >
-      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-bad" strokeWidth={1.75} aria-hidden="true" />
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-bad" aria-hidden="true" />
       <p className="min-w-0 flex-1 overflow-hidden break-words text-[13px] leading-snug text-bad">{message}</p>
       {action && <div className="-my-1 shrink-0">{action}</div>}
     </div>
@@ -522,7 +515,7 @@ export function ErrorCard({ message, action }: { message: string; action?: React
   return (
     <Card className="flex flex-col items-center gap-2 px-6 py-12 text-center">
       <div role="alert" className="flex flex-col items-center gap-2">
-        <AlertCircle className="h-5 w-5 text-bad" strokeWidth={1.75} aria-hidden="true" />
+        <AlertCircle className="h-5 w-5 text-bad" aria-hidden="true" />
         <p className="text-[13px] text-bad">{message}</p>
       </div>
       {action && <div className="mt-2">{action}</div>}
@@ -533,7 +526,7 @@ export function ErrorCard({ message, action }: { message: string; action?: React
 export function Spinner({ label = "Loading" }: { label?: string }) {
   return (
     <div className="flex items-center justify-center py-10" role="status">
-      <div className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-fg-muted" aria-hidden="true" />
+      <Loader2 className="size-5 animate-spin text-fg-muted" aria-hidden="true" />
       <span className="sr-only">{label}</span>
     </div>
   );
@@ -587,7 +580,7 @@ export function SegmentedControl<T extends string>({
   return (
     <div
       ref={groupRef}
-      className={`inline-flex max-w-full overflow-x-auto overscroll-x-contain rounded-xl border border-line bg-subtle p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}
+      className={`inline-flex max-w-full overflow-x-auto overscroll-x-contain rounded-xl bg-subtle p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${className}`}
       role="radiogroup"
       aria-label={label}
       aria-labelledby={labelledBy}
@@ -605,10 +598,10 @@ export function SegmentedControl<T extends string>({
             disabled={opt.disabled}
             tabIndex={opt.value === focusValue ? 0 : -1}
             onClick={() => onChange(opt.value)}
-            className={`h-7 shrink-0 whitespace-nowrap rounded-lg px-2.5 text-[12px] font-medium transition-colors [@media(pointer:coarse)]:h-8 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-50 ${
+            className={`press h-7 shrink-0 whitespace-nowrap rounded-lg px-2.5 text-[12px] font-medium [@media(pointer:coarse)]:h-8 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 ${
               checked
-                ? "bg-surface text-fg shadow-[var(--shadow-card)] ring-1 ring-line-strong"
-                : "text-fg-muted hover:bg-surface/60 hover:text-fg"
+                ? "bg-surface text-fg shadow-paper ring-1 ring-line"
+                : "text-fg-muted hover:text-fg"
             }`}
           >
             {opt.label}
@@ -774,7 +767,7 @@ export function Modal({
   // context would otherwise trap the `fixed` backdrop within the page content.
   return createPortal(
     <div
-      className="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/45 animate-in fade-in-0 duration-150"
+      className="fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-overlay animate-overlay-in"
       onClick={onClose}
     >
       {/* The overlay can still scroll as a last resort (e.g. 400% zoom). */}
@@ -792,13 +785,13 @@ export function Modal({
         aria-labelledby={titleId}
         aria-describedby={subtitle ? subtitleId : undefined}
         tabIndex={-1}
-        className={`flex max-h-[calc(100dvh-2rem)] w-full ${maxWidth} flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-float)] animate-in fade-in-0 zoom-in-[0.98] duration-150`}
+        className={`flex max-h-[calc(100dvh-2rem)] w-full ${maxWidth} flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-lift animate-dialog-in`}
         style={{ maxHeight: "calc(100dvh - max(1rem, env(safe-area-inset-top)) - max(1rem, env(safe-area-inset-bottom)))" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line py-3.5 pl-5 pr-3 sm:pr-5">
           <div className="min-w-0">
-            <h2 id={titleId} className="text-[15px] font-semibold tracking-[-0.01em]">{title}</h2>
+            <h2 id={titleId} className="text-title font-medium">{title}</h2>
             {subtitle && <p id={subtitleId} className="mt-0.5 text-[13px] text-fg-muted">{subtitle}</p>}
           </div>
           <button
@@ -807,7 +800,7 @@ export function Modal({
             aria-label="Close"
             data-modal-autofocus
             data-modal-close
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9"
+            className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11"
           >
             <X className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -889,19 +882,19 @@ export function TabBar<T extends string>({
             aria-selected={isActive}
             tabIndex={isActive || (!hasActive && i === 0) ? 0 : -1}
             onClick={() => onChange(tab.value)}
-            className={`relative flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 ${
+            className={`relative flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium transition-colors duration-150 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
               isActive
                 ? "text-fg"
                 : "text-fg-muted hover:text-fg"
             }`}
           >
-            {tab.icon && <tab.icon className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />}
+            {tab.icon && <tab.icon className="h-4 w-4 shrink-0" aria-hidden="true" />}
             {tab.label}
             {tab.count != null && (
               <span className="rounded-md bg-subtle px-1.5 text-[11.5px] tabular-nums text-fg-muted">{tab.count}</span>
             )}
             {isActive && (
-              <span className="absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent-500" aria-hidden="true" />
+              <span className="absolute inset-x-2 -bottom-px h-0.5 bg-brand-ink" aria-hidden="true" />
             )}
           </button>
         );
@@ -964,13 +957,13 @@ export function Toggle({
       onClick={() => onChange(!checked)}
       // The visible track is 36×20; an invisible ::before extends the hit
       // area to 44×32 (44×40 on touch) without changing the visuals.
-      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 before:absolute before:-inset-x-1 before:-inset-y-1.5 before:content-[''] [@media(pointer:coarse)]:before:-inset-y-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-50 ${
-        checked ? "bg-accent-500" : "bg-input"
+      className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors duration-200 before:absolute before:-inset-x-1 before:-inset-y-1.5 before:content-[''] [@media(pointer:coarse)]:before:-inset-y-2.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-canvas disabled:cursor-not-allowed disabled:opacity-50 ${
+        checked ? "bg-action" : "bg-input"
       } ${className}`}
     >
       <span
         aria-hidden="true"
-        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-[0_1px_2px_rgba(0,0,0,0.18)] transition-transform duration-200 ease-[cubic-bezier(0.3,1.4,0.5,1)] ${
+        className={`inline-block h-4 w-4 transform rounded-full bg-surface shadow-paper transition-transform duration-200 ease-out-soft ${
           checked ? "translate-x-[18px]" : "translate-x-0.5"
         }`}
       />
@@ -997,7 +990,7 @@ export function TablePagination({
 }) {
   if (pages <= 1) return null;
   const btn =
-    "inline-flex h-9 items-center justify-center rounded-lg border border-transparent px-3 font-medium text-fg-muted transition-colors hover:border-line hover:bg-surface hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-40";
+    "inline-flex h-9 items-center justify-center rounded-lg border border-transparent px-3 font-medium text-fg-muted transition-colors hover:border-line hover:bg-surface hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40";
   return (
     <nav aria-label={label} className="flex flex-col gap-2 border-t border-line bg-subtle px-4 py-2.5 text-xs sm:flex-row sm:items-center sm:justify-between">
       <span className="text-fg-muted">{total.toLocaleString()} total</span>
@@ -1031,43 +1024,33 @@ export function useClientPagination<T>(items: T[], pageSize = 10) {
   return { page: clampedPage, pages, paged, setPage, total: items.length };
 }
 
-// ── Icon tiles & section titles ──────────────────────────────────────────────
-// The tone comes from the nearest [data-tone] ancestor (Layout sets the page's
-// section tone on <main>); pass `tone` to override for one tile, e.g. a status.
+// ── Glyphs & section titles ──────────────────────────────────────────────────
+// Icons sit bare beside their text, never in a tinted tile. Colour only when
+// the icon itself is a status.
 
-export type TileTone = "section" | "blue" | "violet" | "teal" | "orange" | "slate" | "ok" | "warn" | "bad";
+export type GlyphTone = "muted" | "brand" | "ok" | "warn" | "bad";
 
-const statusTile: Partial<Record<TileTone, string>> = {
-  ok: "bg-ok/10 text-ok ring-ok/20",
-  warn: "bg-warn/12 text-warn ring-warn/25",
-  bad: "bg-bad/10 text-bad ring-bad/20",
+const glyphTone: Record<GlyphTone, string> = {
+  muted: "text-fg-faint",
+  brand: "text-brand-ink",
+  ok: "text-ok",
+  warn: "text-warn",
+  bad: "text-bad",
 };
 
-export function IconTile({
+export function Glyph({
   icon: Icon,
   size = "md",
-  tone = "section",
+  tone = "muted",
   className = "",
 }: {
   icon: LucideIcon;
-  /** sm 28px (card headers, rows) · md 32px (KPI cells) · lg 40px (page header, empty states). */
-  size?: "sm" | "md" | "lg";
-  tone?: TileTone;
+  /** md 16px (rows, headers) · lg 20px (a status that is the whole message). */
+  size?: "md" | "lg";
+  tone?: GlyphTone;
   className?: string;
 }) {
-  const box = size === "sm" ? "h-7 w-7 rounded-lg" : size === "md" ? "h-8 w-8 rounded-lg" : "h-10 w-10 rounded-xl";
-  const glyph = size === "lg" ? "h-5 w-5" : "h-4 w-4";
-  const colours = statusTile[tone] ?? "bg-tone-soft text-tone ring-tone-ring";
-  const dataTone = tone !== "section" && !statusTile[tone] ? tone : undefined;
-  return (
-    <span
-      data-tone={dataTone}
-      aria-hidden="true"
-      className={`inline-flex shrink-0 items-center justify-center ring-1 ring-inset ${box} ${colours} ${className}`}
-    >
-      <Icon className={glyph} strokeWidth={1.75} />
-    </span>
-  );
+  return <Icon aria-hidden="true" className={`shrink-0 ${size === "lg" ? "size-5" : "size-4"} ${glyphTone[tone]} ${className}`} />;
 }
 
 /**
@@ -1093,9 +1076,9 @@ export function SectionTitle({
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex min-w-0 items-center gap-2.5">
-        {Icon && <Icon className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />}
+        {Icon && <Icon className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />}
         <div className="min-w-0">
-          <Heading id={id} className="text-[13px] font-semibold text-fg">
+          <Heading id={id} className="text-heading font-medium text-fg">
             {title}
           </Heading>
           {subtitle && <p className="mt-0.5 text-[12px] text-fg-muted">{subtitle}</p>}
@@ -1107,15 +1090,14 @@ export function SectionTitle({
 }
 
 /**
- * KpiGrid + Kpi: the standard metric strip. One bordered card split by
- * hairlines; each cell has a tone-coloured icon tile, a 12px label, the value
- * and an optional hint (delta / "of N"). Pass `tone="ok" | "warn" | "bad"` only
- * when the value itself is a status.
+ * KpiGrid + Kpi: the metric strip. One surface split by hairlines; each cell
+ * has a label, the figure and an optional hint (delta / "of N"). Pass
+ * `tone="ok" | "warn" | "bad"` only when the value itself is a status.
  */
 export function KpiGrid({ children, cols = 4, label }: { children: ReactNode; cols?: 2 | 3 | 4 | 5 | 6; label?: string }) {
   const grid = { 2: "sm:grid-cols-2", 3: "sm:grid-cols-3", 4: "sm:grid-cols-2 xl:grid-cols-4", 5: "sm:grid-cols-3 xl:grid-cols-5", 6: "sm:grid-cols-3 xl:grid-cols-6" }[cols];
   return (
-    <dl aria-label={label} className={`grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-line bg-line shadow-[var(--shadow-card)] ${grid}`}>
+    <dl aria-label={label} className={`grid grid-cols-1 gap-px overflow-hidden rounded-2xl border border-line bg-line shadow-paper ${grid}`}>
       {children}
     </dl>
   );
@@ -1124,10 +1106,10 @@ export function KpiGrid({ children, cols = 4, label }: { children: ReactNode; co
 /** A period-over-period change: arrow, signed text, coloured by whether it is good. */
 export function DeltaBadge({ delta, label = "vs previous period", className = "" }: { delta: Delta; label?: string; className?: string }) {
   const Arrow = delta.dir === "up" ? ArrowUpRight : delta.dir === "down" ? ArrowDownRight : ArrowRight;
-  const tone = delta.tone === "good" ? "bg-ok/10 text-ok" : delta.tone === "bad" ? "bg-bad/10 text-bad" : "bg-subtle text-fg-muted";
+  const tone = delta.tone === "good" ? "bg-ok-soft text-ok" : delta.tone === "bad" ? "bg-bad-soft text-bad" : "bg-subtle text-fg-muted";
   return (
     <span className={`inline-flex h-5 shrink-0 items-center gap-0.5 whitespace-nowrap rounded-md px-1.5 text-[11.5px] font-medium tabular-nums ${tone} ${className}`}>
-      <Arrow className="h-3 w-3" strokeWidth={2.25} aria-hidden="true" />
+      <Arrow className="size-3" aria-hidden="true" />
       {delta.text}
       <span className="sr-only">
         {" "}
@@ -1138,35 +1120,18 @@ export function DeltaBadge({ delta, label = "vs previous period", className = ""
   );
 }
 
-/** A 72×24 trend line. Renders an empty box (keeps rows aligned) when there is nothing to draw. */
-export function Sparkline({ values, className = "" }: { values: number[]; className?: string }) {
-  if (values.length < 2 || values.every((v) => v === values[0])) return <span className={`inline-block h-6 w-[72px] shrink-0 ${className}`} aria-hidden="true" />;
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const span = max - min || 1;
-  const pts = values.map((v, i) => [(i / (values.length - 1)) * 100, 25 - ((v - min) / span) * 21] as const);
-  const line = pts.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
-  const area = `0,28 ${line} 100,28`;
-  return (
-    <svg width="72" height="24" viewBox="0 0 100 28" preserveAspectRatio="none" aria-hidden="true" className={`shrink-0 overflow-visible ${className}`}>
-      <polygon points={area} className="fill-accent-500/10" />
-      <polyline points={line} fill="none" className="stroke-accent-500" strokeWidth="1.5" vectorEffect="non-scaling-stroke" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
-  );
-}
+const kpiTone: Partial<Record<GlyphTone, string>> = { ok: "text-ok", warn: "text-warn", bad: "text-bad" };
 
 export function Kpi({
-  icon,
   label,
   value,
   hint,
   delta,
   deltaLabel,
-  trend,
-  tone = "section",
+  tone,
+  live,
   valueClassName = "",
 }: {
-  icon?: LucideIcon;
   label: ReactNode;
   value: ReactNode;
   /** Secondary line: a breakdown or context ("6.2M in · 514k out"). */
@@ -1175,26 +1140,22 @@ export function Kpi({
   delta?: Delta | null;
   /** Screen-reader context for the delta, e.g. "vs previous 7 days". */
   deltaLabel?: string;
-  /** Values for a sparkline drawn beside the number. */
-  trend?: number[];
-  tone?: TileTone;
+  /** Only when the value itself is a status. */
+  tone?: "ok" | "warn" | "bad";
+  /** The figure updates live: a pulsing brand dot beside the label. */
+  live?: boolean;
   valueClassName?: string;
 }) {
-  // dl > div > (dt, dd…) is the only valid nesting, so the tile lives inside
-  // the <dt> and is positioned into the cell's left gutter.
   const footer = delta !== undefined || hint;
   return (
-    <div className={`relative bg-surface py-3.5 pr-4 ${icon ? "pl-[3.75rem]" : "pl-4"}`}>
-      <dt className="truncate text-[12px] font-medium text-fg-muted">
-        {icon && <IconTile icon={icon} size="md" tone={tone} className="absolute left-4 top-4" />}
+    <div className="bg-surface px-5 py-4">
+      <dt className="flex items-center gap-1.5 truncate text-meta text-fg-muted">
         {label}
+        {live && <span className="size-1.5 shrink-0 animate-pulse-dot rounded-full bg-brand text-brand" aria-hidden="true" />}
       </dt>
-      <dd className="mt-0.5 flex items-end justify-between gap-3">
-        <span className={`min-w-0 text-[20px] font-semibold leading-tight tracking-[-0.01em] tabular-nums text-fg ${valueClassName}`}>{value}</span>
-        {trend && <Sparkline values={trend} className="mb-0.5" />}
-      </dd>
+      <dd className={`mt-1 min-w-0 font-display text-[1.625rem] leading-tight text-fg ${tone ? kpiTone[tone] : ""} ${valueClassName}`}>{value}</dd>
       {footer && (
-        <dd className="mt-1 flex min-h-5 min-w-0 items-center gap-2 text-[12px] text-fg-muted">
+        <dd className="mt-1.5 flex min-h-5 min-w-0 items-center gap-2 text-[12px] text-fg-muted">
           {delta ? <DeltaBadge delta={delta} label={deltaLabel} /> : delta === null ? <span className="shrink-0 text-fg-faint">No prior data</span> : null}
           {hint && <span className="min-w-0 truncate tabular-nums">{hint}</span>}
         </dd>

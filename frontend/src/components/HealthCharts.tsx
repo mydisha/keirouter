@@ -69,7 +69,7 @@ export function bucketSnapshots(snapshots: HealthSnapshot[], range: string, coun
 }
 
 export function fmtMs(v: number): string {
-  if (!Number.isFinite(v) || v <= 0) return "—";
+  if (!Number.isFinite(v) || v <= 0) return "n/a";
   return v < 1000 ? `${Math.round(v)} ms` : `${(v / 1000).toFixed(v < 10_000 ? 2 : 1)} s`;
 }
 
@@ -98,7 +98,7 @@ export function HealthTrends({ snapshots, range }: { snapshots: HealthSnapshot[]
   );
   if (!snapshots.length) {
     return (
-      <EmptyState variant="card" size="sm" icon={ICONS.trend} title="No trend data in this range" hint="Trends appear once requests or probes run." />
+      <EmptyState variant="card" size="sm" title="No trend data in this range" hint="Trends appear once requests or probes run." />
     );
   }
   return (
@@ -183,7 +183,7 @@ export function ErrorTypeBreakdown({ breakdown }: { breakdown: Record<string, nu
   const total = rows.reduce((n, [, v]) => n + v, 0);
   const titleId = useId();
   return (
-    <section aria-labelledby={titleId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <section aria-labelledby={titleId} className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       <div className="border-b border-line px-4 py-3">
         <SectionTitle
           id={titleId}

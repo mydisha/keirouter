@@ -20,7 +20,7 @@ export function ModelCapabilityIcons({
           aria-label="Vision: supports image input"
           className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-line bg-subtle text-fg-muted"
         >
-          <Eye size={size} strokeWidth={1.75} aria-hidden="true" />
+          <Eye size={size} aria-hidden="true" />
         </span>
       )}
       {capabilities.reasoning && (
@@ -30,7 +30,7 @@ export function ModelCapabilityIcons({
           aria-label="Reasoning: supports extended thinking"
           className="inline-flex h-6 w-6 items-center justify-center rounded-md border border-line bg-subtle text-fg-muted"
         >
-          <Brain size={size} strokeWidth={1.75} aria-hidden="true" />
+          <Brain size={size} aria-hidden="true" />
         </span>
       )}
     </span>

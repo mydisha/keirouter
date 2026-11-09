@@ -40,7 +40,7 @@ function capabilityList(p: Provider): string {
 // CapabilityTags renders a provider's media capabilities as small icon chips.
 function CapabilityTags({ provider: p }: { provider: Provider }) {
   const kinds = p.service_kinds.filter((k) => k !== "llm");
-  if (!kinds.length) return <span className="text-fg-faint">—</span>;
+  if (!kinds.length) return <span className="text-fg-faint">n/a</span>;
   return (
     <ul className="flex flex-wrap gap-1" aria-label="Capabilities">
       {kinds.map((k) => {
@@ -48,7 +48,7 @@ function CapabilityTags({ provider: p }: { provider: Provider }) {
         return (
           <li key={k}>
             <Badge tone="neutral">
-              {Icon && <Icon className="h-3 w-3 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+              {Icon && <Icon className="h-3 w-3 text-fg-faint" aria-hidden="true" />}
               {kindLabels[k] ?? k}
             </Badge>
           </li>
@@ -147,31 +147,31 @@ export function MediaProvidersPage() {
                 title={k.description}
                 onClick={() => setActiveFilter(k.id)}
                 className={cn(
-                  "inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors sm:h-8 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                  active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+                  "inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors sm:h-8 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  active ? "border-accent-500/30 bg-brand-soft text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
                 )}
               >
-                <Icon className={cn("h-4 w-4 shrink-0", active ? "text-link" : "text-fg-faint")} strokeWidth={1.75} aria-hidden="true" />
+                <Icon className={cn("h-4 w-4 shrink-0", active ? "text-link" : "text-fg-faint")} aria-hidden="true" />
                 {k.label}
               </button>
             );
           })}
         </div>
         <div className="relative lg:ml-auto lg:w-64">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
           <input
             type="search"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder={`Search ${kindLower} providers`}
             aria-label={`Search ${kindLower} providers`}
-            className="h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            className="h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           {searchQuery && (
             <button
               type="button"
               onClick={() => setSearchQuery("")}
-              className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="absolute right-2 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label="Clear search"
             >
               <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -191,10 +191,9 @@ export function MediaProvidersPage() {
         <EmptyState
           variant="card"
           titleAs="h2"
-          icon={activeKind.icon}
           title={`No ${kindLower} providers`}
           hint="Pick another capability, or add an account on the Providers page."
-          action={<Link to="/providers" className="rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">Go to providers</Link>}
+          action={<Link to="/providers" className="rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">Go to providers</Link>}
         />
       ) : (
         <div className="space-y-6">
@@ -216,7 +215,6 @@ export function MediaProvidersPage() {
               <EmptyState
                 variant="card"
                 size="sm"
-                icon={searchQuery ? Search : PlugZap}
                 title={searchQuery ? "No connected provider matches" : `No ${kindLower} provider connected`}
                 hint={searchQuery ? "Clear the search to see all of them." : "Pick one below and add an account."}
               />
@@ -270,7 +268,7 @@ function ConnectedTable({
 }) {
   const navigate = useNavigate();
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       <ul className="divide-y divide-line md:hidden" aria-label="Connected providers">
         {providers.map((p) => {
           const accs = accountsByProvider.get(p.id) ?? [];
@@ -280,9 +278,9 @@ function ConnectedTable({
               <div className="flex items-center justify-between gap-3">
                 <Link
                   to={`/media/${kind}/${p.id}`}
-                  className="flex min-w-0 items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="flex min-w-0 items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <ProviderLogo icon={p.icon} name={p.display_name} size={24} />
+                  <ProviderLogo icon={p.icon} name={p.display_name} />
                   <span className="min-w-0">
                     <span className="block truncate text-[13px] font-medium text-fg">{p.display_name}</span>
                     <span className="block truncate font-mono text-[11.5px] text-fg-muted">{p.id}</span>
@@ -323,10 +321,10 @@ function ConnectedTable({
                   <td className="px-4 py-2.5">
                     <Link
                       to={href}
-                      className="flex items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                      className="flex items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <ProviderLogo icon={p.icon} name={p.display_name} size={24} />
+                      <ProviderLogo icon={p.icon} name={p.display_name} />
                       <span className="min-w-0">
                         <span className="flex items-center gap-1.5">
                           <span className="truncate font-medium text-fg">{p.display_name}</span>
@@ -360,7 +358,7 @@ function CatalogCard({ provider: p, kind }: { provider: Provider; kind: string }
   return (
     <Link
       to={`/media/${kind}/${p.id}`}
-      className="group flex h-full items-center gap-3 rounded-2xl border border-line bg-surface px-3 py-2.5 transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+      className="group flex h-full items-center gap-3 rounded-2xl border border-line bg-surface px-3 py-2.5 transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <ProviderLogo icon={p.icon} name={p.display_name} size={28} />
       <span className="min-w-0 flex-1">

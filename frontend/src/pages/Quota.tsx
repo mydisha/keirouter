@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
-  BatteryLow,
   ChevronDown,
   Loader2,
   MoreHorizontal,
@@ -13,7 +12,6 @@ import {
   RefreshCw,
   Search,
   SlidersHorizontal,
-  TimerReset,
   Trash2,
 } from "lucide-react";
 import { api, connectUsageStream, type QuotaAccount, type UpstreamQuota } from "../lib/api";
@@ -21,7 +19,7 @@ import { REPORT_PERIODS } from "../lib/periods";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { ProviderLogo } from "../components/ProviderLogo";
-import { Badge, Button, Card, EmptyState, ErrorCard, IconTile, Input, Kpi, KpiGrid, SectionTitle, Select, Skeleton, TablePagination, Toggle, useClientPagination } from "../components/ui";
+import { Badge, Button, Card, EmptyState, ErrorCard, Glyph, Input, Kpi, KpiGrid, SectionTitle, Select, Skeleton, TablePagination, Toggle, useClientPagination } from "../components/ui";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { useToast } from "../components/Toast";
 import { useConfirm } from "../components/ui/confirm-dialog";
@@ -55,7 +53,7 @@ const STATUS_CHIPS = [
 ];
 
 const iconButton =
-  "inline-flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:cursor-not-allowed disabled:opacity-35";
+  "inline-flex h-8 w-8 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-35";
 
 const checkboxClass = "h-4 w-4 rounded border-input accent-accent-500";
 // Pads the native checkbox to a 24×24 target (WCAG 2.5.8).
@@ -320,7 +318,7 @@ export function QuotaPage() {
               aria-pressed={autoRefresh}
               title={autoRefresh ? "Pause automatic refresh" : "Refresh every 10 seconds"}
               className={cn(
-                "inline-flex h-8 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 text-[12px] font-medium transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                "inline-flex h-8 items-center gap-2 rounded-lg border border-line bg-surface px-2.5 text-[12px] font-medium transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 autoRefresh ? "text-fg" : "text-fg-muted",
               )}
             >
@@ -337,9 +335,9 @@ export function QuotaPage() {
               disabled={quota.isFetching}
               aria-label="Refresh quota data"
               title="Refresh quota data"
-              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 disabled:opacity-60"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
             >
-              <RefreshCw className={cn("h-3.5 w-3.5", quota.isFetching && "animate-spin")} strokeWidth={1.75} aria-hidden="true" />
+              <RefreshCw className={cn("h-3.5 w-3.5", quota.isFetching && "animate-spin")} aria-hidden="true" />
             </button>
           </>
         }
@@ -353,7 +351,6 @@ export function QuotaPage() {
         <EmptyState
           variant="card"
           titleAs="h2"
-          icon={ICONS.quota}
           title="No connected accounts"
           hint="Connect a provider account to track its usage and limits."
           action={
@@ -376,7 +373,6 @@ export function QuotaPage() {
 
           <KpiGrid cols={4} label="Quota summary">
             <Kpi
-              icon={ICONS.errors}
               label="Needs attention"
               value={fmtInteger(totals.attention)}
               hint={`of ${fmtInteger(accounts.length)} accounts`}
@@ -384,7 +380,6 @@ export function QuotaPage() {
               valueClassName={totals.attention > 0 ? "text-bad" : ""}
             />
             <Kpi
-              icon={ICONS.quota}
               label="Near limit"
               value={fmtInteger(totals.nearLimit)}
               hint={`${NEAR_LIMIT_USED}%+ of a window used`}
@@ -392,7 +387,6 @@ export function QuotaPage() {
               valueClassName={totals.nearLimit > 0 ? "text-warn" : ""}
             />
             <Kpi
-              icon={BatteryLow}
               label="Exhausted"
               value={fmtInteger(totals.exhausted)}
               hint={depletedAccounts.length > 0 ? `${fmtInteger(depletedAccounts.length)} still routing` : undefined}
@@ -400,11 +394,10 @@ export function QuotaPage() {
               valueClassName={totals.exhausted > 0 ? "text-bad" : ""}
             />
             <Kpi
-              icon={TimerReset}
               label="Next reset"
               value={
                 <span title={totals.nextReset ? new Date(totals.nextReset.at).toLocaleString() : undefined}>
-                  {totals.nextReset ? formatCountdown(totals.nextReset.at).replace(/^in /, "") : "—"}
+                  {totals.nextReset ? formatCountdown(totals.nextReset.at).replace(/^in /, "") : "n/a"}
                 </span>
               }
               hint={totals.nextReset ? totals.nextReset.account.label || totals.nextReset.account.provider_name : undefined}
@@ -430,7 +423,7 @@ export function QuotaPage() {
               <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
                 <label className="relative min-w-0 lg:w-60">
                   <span className="sr-only">Search accounts</span>
-                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
                   <Input
                     type="search"
                     value={search}
@@ -450,8 +443,8 @@ export function QuotaPage() {
                         aria-checked={active}
                         onClick={() => setStatusFilter(chip.value)}
                         className={cn(
-                          "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                          active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
+                          "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          active ? "border-accent-500/30 bg-brand-soft text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
                         )}
                       >
                         {chip.label}
@@ -465,7 +458,7 @@ export function QuotaPage() {
                     <button
                       type="button"
                       onClick={resetFilters}
-                      className="inline-flex h-8 items-center rounded-lg px-2 text-[12px] text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                      className="inline-flex h-8 items-center rounded-lg px-2 text-[12px] text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                       Reset
                     </button>
@@ -476,11 +469,11 @@ export function QuotaPage() {
                     aria-expanded={filtersOpen}
                     aria-controls="quota-filters"
                     className={cn(
-                      "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                      "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                       filtersOpen ? "border-line-strong bg-hover text-fg" : "border-line bg-surface text-fg-muted hover:text-fg",
                     )}
                   >
-                    <SlidersHorizontal className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                    <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
                     Filters
                     {activeFilterCount > 0 && (
                       <span className="rounded-md bg-subtle px-1.5 text-[11.5px] tabular-nums text-fg">
@@ -518,21 +511,21 @@ export function QuotaPage() {
                 <span role="status" className="w-full font-medium tabular-nums text-fg sm:mr-1 sm:w-auto">{selected.size} selected</span>
                 {selectedCanEnable.length > 0 && (
                   <Button variant="secondary" className="h-8 min-h-8 text-[12.5px]" onClick={() => applyBulkState(selectedCanEnable, false)}>
-                    <Power strokeWidth={1.75} aria-hidden="true" /> Enable
+                    <Power aria-hidden="true" /> Enable
                   </Button>
                 )}
                 {selectedCanPause.length > 0 && (
                   <Button variant="secondary" className="h-8 min-h-8 text-[12.5px]" onClick={() => applyBulkState(selectedCanPause, true)}>
-                    <PowerOff strokeWidth={1.75} aria-hidden="true" /> Pause
+                    <PowerOff aria-hidden="true" /> Pause
                   </Button>
                 )}
                 <Button variant="danger" className="h-8 min-h-8 text-[12.5px]" onClick={handleBulkDelete}>
-                  <Trash2 strokeWidth={1.75} aria-hidden="true" /> Delete
+                  <Trash2 aria-hidden="true" /> Delete
                 </Button>
                 <button
                   type="button"
                   onClick={() => setSelected(new Set())}
-                  className="inline-flex h-8 items-center rounded-lg px-2 text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="inline-flex h-8 items-center rounded-lg px-2 text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
                   Clear selection
                 </button>
@@ -626,7 +619,7 @@ function PeriodRadios({ value, onChange }: { value: string; onChange: (value: st
             aria-checked={active}
             onClick={() => onChange(option.value)}
             className={cn(
-              "h-full rounded-lg px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+              "h-full rounded-lg px-2.5 text-[12px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               active ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
             )}
           >
@@ -653,7 +646,7 @@ function QuotaSkeleton() {
           </div>
         ))}
       </div>
-      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
         <div className="flex items-center gap-2.5 border-b border-line px-4 py-3">
           <Skeleton className="h-4 w-4 rounded" />
           <Skeleton className="h-3.5 w-24" />
@@ -692,9 +685,9 @@ function CapacityActions({
   onResumeAvailable: () => void;
 }) {
   return (
-    <section aria-label="Accounts needing attention" className="flex flex-col gap-3 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3 sm:flex-row sm:items-center">
+    <section aria-label="Accounts needing attention" className="flex flex-col gap-3 rounded-2xl border border-warn/30 bg-warn-soft px-4 py-3 sm:flex-row sm:items-center">
       <span className="hidden sm:block">
-        <IconTile icon={AlertTriangle} size="sm" tone="warn" />
+        <Glyph icon={AlertTriangle} tone="warn" />
       </span>
       <div className="min-w-0 flex-1 text-[13px] leading-5">
         <p role="status" className="font-medium text-fg">
@@ -707,12 +700,12 @@ function CapacityActions({
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
         {depleted > 0 && (
           <Button variant="danger" className="h-9 min-h-9 w-full text-[12.5px] sm:h-8 sm:min-h-8 sm:w-auto" onClick={onPauseDepleted}>
-            <PowerOff strokeWidth={1.75} aria-hidden="true" /> Pause depleted ({depleted})
+            <PowerOff aria-hidden="true" /> Pause depleted ({depleted})
           </Button>
         )}
         {resumable > 0 && (
           <Button variant="secondary" className="h-9 min-h-9 w-full text-[12.5px] sm:h-8 sm:min-h-8 sm:w-auto" onClick={onResumeAvailable}>
-            <Power strokeWidth={1.75} aria-hidden="true" /> Resume available ({resumable})
+            <Power aria-hidden="true" /> Resume available ({resumable})
           </Button>
         )}
       </div>
@@ -778,7 +771,7 @@ function AccountIdentity({ account }: { account: QuotaAccount }) {
   const providerName = account.provider_name || account.provider;
   return (
     <div className="flex min-w-0 items-center gap-2.5">
-      <ProviderLogo icon={`/providers/${account.provider}.png`} name={providerName} size={24} />
+      <ProviderLogo icon={`/providers/${account.provider}.png`} name={providerName} />
       <div className="min-w-0">
         <div className="flex min-w-0 items-center gap-1.5">
           <span className="max-w-48 truncate font-medium text-fg" title={providerName}>{providerName}</span>
@@ -814,8 +807,8 @@ function RefreshQuotaButton({ account, refreshQuota, touch }: Pick<ActionProps, 
       className={cn(iconButton, touch && "h-9 w-9")}
     >
       {refreshQuota.isPending
-        ? <Loader2 className="h-4 w-4 animate-spin" strokeWidth={1.75} aria-hidden="true" />
-        : <RefreshCw className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />}
+        ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+        : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
     </button>
   );
 }
@@ -835,7 +828,7 @@ function AccountMenu({ account, onDelete, touch }: Pick<ActionProps, "account" |
   return (
     <DropdownMenu>
       <DropdownMenuTrigger aria-label={`Actions for ${accountName(account)}`} className={cn(iconButton, touch && "h-9 w-9")}>
-        <MoreHorizontal className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem tone="danger" onSelect={onDelete}>
@@ -988,7 +981,7 @@ function QuotaWindowsCell({ account, expanded, onExpand, detailsId }: { account:
         onClick={onExpand}
         aria-expanded={expanded}
         aria-controls={expanded ? detailsId : undefined}
-        className="inline-flex min-h-6 items-center gap-1 rounded text-[12px] text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+        className="inline-flex min-h-6 items-center gap-1 rounded text-[12px] text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {expanded
           ? "Hide details"
@@ -996,7 +989,7 @@ function QuotaWindowsCell({ account, expanded, onExpand, detailsId }: { account:
             ? `${hidden} more limit${hidden === 1 ? "" : "s"}`
             : "Details"}
         <span className="sr-only"> for {accountName(account)}</span>
-        <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+        <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", expanded && "rotate-180")} aria-hidden="true" />
       </button>
     </div>
   );
@@ -1013,7 +1006,7 @@ function WindowBar({ quota }: { quota: UpstreamQuota }) {
       <div className="grid grid-cols-[minmax(0,7.5rem)_minmax(0,1fr)_2.75rem] items-center gap-2">
         <span className="truncate text-[12px] text-fg-muted" title={humanize(quota.resource_type)}>{humanize(quota.resource_type)}</span>
         <UsageBar quota={quota} />
-        <span className={cn("text-right text-[12px] tabular-nums", tone.text)}>{limited ? `${used}%` : "—"}</span>
+        <span className={cn("text-right text-[12px] tabular-nums", tone.text)}>{limited ? `${used}%` : "n/a"}</span>
       </div>
       <div className="mt-0.5 truncate text-[11.5px] tabular-nums text-fg-faint">
         {limited ? `${fmtCompact(quota.used)} of ${fmtCompact(quota.limit)}` : `${fmtCompact(quota.used)} used · unlimited`}
@@ -1049,7 +1042,7 @@ function QuotaDetails({ account }: { account: QuotaAccount }) {
     <div className="overflow-hidden rounded-2xl border border-line bg-surface">
       <div className="flex flex-col gap-1 border-b border-line px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h3 className="text-[13px] font-semibold text-fg">Upstream limits</h3>
+          <h3 className="text-[13px] font-medium text-fg">Upstream limits</h3>
           {account.message && <p className="text-[12px] text-fg-muted">{account.message}</p>}
         </div>
         <span className="shrink-0 text-[12px] text-fg-faint">Updated {relativeTime(account.updated_at)}</span>
@@ -1113,7 +1106,7 @@ function QuotaDetailRow({ quota }: { quota: UpstreamQuota }) {
       </td>
       <td className={cn("px-3 py-2.5 text-right tabular-nums", tone.text)}>{quota.limit > 0 ? `${remaining}%` : "Unlimited"}</td>
       <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-fg-muted" title={quota.reset_at ? formatDateTime(quota.reset_at) : undefined}>
-        {quota.reset_at ? formatCountdown(quota.reset_at) : "—"}
+        {quota.reset_at ? formatCountdown(quota.reset_at) : "n/a"}
       </td>
     </tr>
   );
@@ -1190,7 +1183,7 @@ function accountAttentionScore(account: QuotaAccount): number {
 
 function formatCountdown(value: string | number): string {
   const timestamp = typeof value === "number" ? value : new Date(value).getTime();
-  if (!Number.isFinite(timestamp)) return "—";
+  if (!Number.isFinite(timestamp)) return "n/a";
   const difference = timestamp - Date.now();
   if (difference <= 0) return "now";
   const days = Math.floor(difference / 86_400_000);

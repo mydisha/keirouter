@@ -354,7 +354,7 @@ headroom doctor                   # verify it's working`}
               className="inline-flex items-center gap-1 font-medium text-link hover:underline"
             >
               Headroom installation guide
-              <ExternalLink className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
               <span className="sr-only">(opens in a new tab)</span>
             </a>
           </div>

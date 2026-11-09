@@ -304,7 +304,7 @@ export function PlansPage() {
               tabIndex={active ? 0 : -1}
               onClick={() => setTab(value)}
               className={cn(
-                "relative -mb-px inline-flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                "relative -mb-px inline-flex items-center gap-1.5 px-3 py-2.5 text-[13px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 active ? "text-fg" : "text-fg-muted hover:text-fg",
               )}
             >
@@ -355,7 +355,7 @@ function EnforcementBadge({ hardCutoff, blocking = false }: { hardCutoff: boolea
   if (blocking)
     return (
       <Badge tone="danger">
-        <Ban className="h-3 w-3" strokeWidth={2} aria-hidden="true" />
+        <Ban className="stroke-2 h-3 w-3" aria-hidden="true" />
         Blocking requests
       </Badge>
     );
@@ -366,8 +366,8 @@ function EnforcementBadge({ hardCutoff, blocking = false }: { hardCutoff: boolea
   );
 }
 
-function EmptyPanel({ icon, title, body, action }: { icon: LucideIcon; title: string; body: string; action?: ReactNode }) {
-  return <EmptyState variant="card" titleAs="h2" icon={icon} title={title} hint={body} action={action} />;
+function EmptyPanel({ title, body, action }: { title: string; body: string; action?: ReactNode }) {
+  return <EmptyState variant="card" titleAs="h2" title={title} hint={body} action={action} />;
 }
 
 function PanelSkeleton() {
@@ -401,11 +401,11 @@ function RowMenu({
       <DropdownMenuTrigger
         aria-label={label}
         className={cn(
-          "flex shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+          "flex shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           touch ? "h-9 w-9" : "h-8 w-8",
         )}
       >
-        <MoreHorizontal className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+        <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <DropdownMenuItem onSelect={onEdit}>
@@ -465,7 +465,6 @@ function PlansPanel({
   if (plans.length === 0) {
     return (
       <EmptyPanel
-        icon={ICONS.plans}
         title="No plans yet"
         body="A plan gives new keys the same budget, rate limits and models in one click."
         action={
@@ -485,12 +484,12 @@ function PlansPanel({
   return (
     <div className="space-y-6">
       <KpiGrid cols={3} label="Plan summary">
-        <Kpi icon={ICONS.keys} label="Keys assigned" value={totalKeys.toLocaleString()} />
-        <Kpi icon={Ban} label="Hard cutoff" value={enforcedCount.toLocaleString()} hint={`of ${plans.length} plans`} />
-        <Kpi icon={ICONS.plans} label="Unused plans" value={unusedCount.toLocaleString()} hint={`of ${plans.length}`} valueClassName={kpiValueClass(unusedCount)} />
+        <Kpi label="Keys assigned" value={totalKeys.toLocaleString()} />
+        <Kpi label="Hard cutoff" value={enforcedCount.toLocaleString()} hint={`of ${plans.length} plans`} />
+        <Kpi label="Unused plans" value={unusedCount.toLocaleString()} hint={`of ${plans.length}`} valueClassName={kpiValueClass(unusedCount)} />
       </KpiGrid>
 
-      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
         <div className="border-b border-line px-4 py-3">
           <SectionTitle icon={ICONS.plans} title="Plan templates" />
         </div>
@@ -536,7 +535,7 @@ function PlanCard({ plan: p, onEdit, onDelete }: { plan: Plan; onEdit: () => voi
           <button
             type="button"
             onClick={onEdit}
-            className="block max-w-full truncate rounded text-left font-medium text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            className="block max-w-full truncate rounded text-left font-medium text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title={p.name}
             aria-label={`Edit plan ${p.name}`}
           >
@@ -581,7 +580,7 @@ function PlanRow({ plan: p, onEdit, onDelete }: { plan: Plan; onEdit: () => void
             stop(e);
             onEdit();
           }}
-          className="block max-w-full truncate rounded text-left font-medium text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+          className="block max-w-full truncate rounded text-left font-medium text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title={p.name}
           aria-label={`Edit plan ${p.name}`}
         >
@@ -682,7 +681,6 @@ function BudgetsPanel({
   if (budgets.length === 0) {
     return (
       <EmptyPanel
-        icon={ICONS.budget}
         title="No budgets yet"
         body="Cap spend or tokens for a key, a project or all traffic."
         action={
@@ -723,8 +721,8 @@ function BudgetsPanel({
             aria-checked={active}
             onClick={() => setScope(s)}
             className={cn(
-              "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-              active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+              "inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              active ? "border-accent-500/30 bg-brand-soft text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
             )}
           >
             {s === "all" ? "All" : scopeLabels[s]}
@@ -739,7 +737,6 @@ function BudgetsPanel({
     <div className="space-y-6">
       <KpiGrid cols={3} label="Budget summary">
         <Kpi
-          icon={ICONS.errors}
           label="Past alert threshold"
           value={nearLimit.toLocaleString()}
           hint={`of ${budgets.length}`}
@@ -747,14 +744,12 @@ function BudgetsPanel({
           valueClassName={kpiValueClass(nearLimit, "warn")}
         />
         <Kpi
-          icon={ICONS.budget}
           label="Exhausted"
           value={exhausted.toLocaleString()}
           tone={exhausted > 0 ? "bad" : undefined}
           valueClassName={kpiValueClass(exhausted, "bad")}
         />
         <Kpi
-          icon={Ban}
           label="Blocking requests"
           value={blocking.toLocaleString()}
           tone={blocking > 0 ? "bad" : undefined}
@@ -762,7 +757,7 @@ function BudgetsPanel({
         />
       </KpiGrid>
 
-      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
         <div className="border-b border-line px-4 py-3">
           <SectionTitle
             icon={ICONS.budget}
@@ -828,7 +823,7 @@ function budgetView(b: BudgetStatus) {
 function BudgetScopeName({ budget: b, name }: { budget: BudgetStatus; name: string }) {
   if (b.scope_kind === "api_key" && b.scope_id) {
     return (
-      <Link to={`/keys/${b.scope_id}`} className="block truncate font-medium text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500" title={name}>
+      <Link to={`/keys/${b.scope_id}`} className="block truncate font-medium text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring" title={name}>
         {name}
       </Link>
     );
@@ -966,8 +961,8 @@ function FormField({
 function FormSection({ title, icon: Icon, id, children }: { title: string; icon: LucideIcon; id?: string; children: ReactNode }) {
   return (
     <section className="space-y-3 px-5 py-4" aria-labelledby={id}>
-      <h3 id={id} className="flex items-center gap-2 text-[13px] font-semibold text-fg">
-        <Icon className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />
+      <h3 id={id} className="flex items-center gap-2 text-[13px] font-medium text-fg">
+        <Icon className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
         {title}
       </h3>
       {children}
@@ -1268,15 +1263,15 @@ function PlanForm({ plan, onClose }: { plan?: Plan; onClose: () => void }) {
               aria-expanded={showAdvanced}
               aria-controls={`${ids}-advanced`}
               onClick={() => setAdvancedOpen((v) => !v)}
-              className="flex w-full items-center justify-between gap-3 rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="flex w-full items-center justify-between gap-3 rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <span className="flex items-center gap-2 text-[13px] font-semibold text-fg">
-                <ICONS.requests className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />
+              <span className="flex items-center gap-2 text-[13px] font-medium text-fg">
+                <ICONS.requests className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
                 Advanced: rate limits
               </span>
               <span className="flex items-center gap-2 text-[12px] font-normal tabular-nums text-fg-muted">
                 {!showAdvanced && (rateSummary || "None")}
-                <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showAdvanced && "rotate-180")} strokeWidth={1.75} aria-hidden="true" />
+                <ChevronDown className={cn("h-4 w-4 text-fg-faint transition-transform", showAdvanced && "rotate-180")} aria-hidden="true" />
               </span>
             </button>
           </h3>

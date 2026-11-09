@@ -7,15 +7,18 @@ import {
   Boxes,
   Cpu,
   Gauge,
-  GraduationCap,
   History,
   Image,
-  Key,
+  KeyRound,
   LayoutGrid,
   Layers,
+  Loader2,
   LogOut,
   Menu,
   Monitor,
+  NotebookPen,
+  PanelLeftClose,
+  PanelLeftOpen,
   Moon,
   Plug,
   ReceiptText,
@@ -35,6 +38,8 @@ import { useBranding } from "../contexts/BrandingContext";
 import { useTheme, type Theme } from "./ThemeProvider";
 import { BrandMark } from "./BrandMark";
 import { UpdateNotification } from "./UpdateNotification";
+import { NavIndicator } from "./NavIndicator";
+import { ThemeToggle } from "./ThemeToggle";
 import { preloadRoute, type RoutePreloadKey } from "../routePreload";
 
 // The command palette (and cmdk) stays out of the shell bundle: it is fetched
@@ -63,12 +68,8 @@ interface NavItem {
   indicator?: "live" | "health";
 }
 
-export type SectionTone = "blue" | "violet" | "teal" | "orange" | "slate";
-
 interface NavGroup {
   heading?: string;
-  /** One hue per group; drives the page header tile and section accents. */
-  tone: SectionTone;
   items: NavItem[];
 }
 
@@ -76,7 +77,6 @@ interface NavGroup {
 // traffic, shape routing, manage upstreams, control access, run the instance.
 const navGroups: NavGroup[] = [
   {
-    tone: "blue",
     items: [
       { to: "/", label: "Overview", icon: LayoutGrid, end: true, preload: "/" },
       { to: "/usage", label: "Usage", icon: BarChart3, preload: "/usage" },
@@ -85,16 +85,14 @@ const navGroups: NavGroup[] = [
   },
   {
     heading: "Routing",
-    tone: "violet",
     items: [
       { to: "/endpoints", label: "Endpoints", icon: Plug, preload: "/endpoints" },
       { to: "/chains", label: "Chains", icon: Layers, preload: "/chains" },
-      { to: "/skills", label: "Skills", icon: GraduationCap, preload: "/skills" },
+      { to: "/skills", label: "Skills", icon: NotebookPen, preload: "/skills" },
     ],
   },
   {
     heading: "Providers",
-    tone: "teal",
     items: [
       { to: "/providers", label: "Providers", icon: Boxes, preload: "/providers" },
       { to: "/media", label: "Media", icon: Image, preload: "/media" },
@@ -105,9 +103,8 @@ const navGroups: NavGroup[] = [
   },
   {
     heading: "Access",
-    tone: "orange",
     items: [
-      { to: "/keys", label: "API keys", icon: Key, preload: "/keys" },
+      { to: "/keys", label: "API keys", icon: KeyRound, preload: "/keys" },
       { to: "/plans", label: "Plans & budgets", icon: ReceiptText, preload: "/plans" },
       { to: "/guardrails", label: "Guardrails", icon: Shield, preload: "/guardrails" },
       { to: "/audit", label: "Audit log", icon: History, preload: "/audit" },
@@ -115,7 +112,6 @@ const navGroups: NavGroup[] = [
   },
   {
     heading: "Workspace",
-    tone: "slate",
     items: [
       { to: "/cli-tools", label: "CLI tools", icon: TerminalSquare, preload: "/cli-tools" },
       { to: "/system", label: "System", icon: Cpu, preload: "/system" },
@@ -124,14 +120,14 @@ const navGroups: NavGroup[] = [
   },
 ];
 
-// activeSection finds the nav item (and its group tone) that owns a path, so
-// detail pages such as /providers/:id inherit their list page's icon and hue.
-export function activeSection(pathname: string): { item: NavItem; tone: SectionTone } | null {
-  let best: { item: NavItem; tone: SectionTone } | null = null;
+// activeSection finds the nav item (and its group) that owns a path, so detail
+// pages such as /providers/:id inherit their list page's place in the nav.
+function activeSection(pathname: string): { item: NavItem; heading?: string } | null {
+  let best: { item: NavItem; heading?: string } | null = null;
   for (const group of navGroups) {
     for (const item of group.items) {
       const matches = item.to === "/" ? pathname === "/" : pathname === item.to || pathname.startsWith(item.to + "/");
-      if (matches && (!best || item.to.length > best.item.to.length)) best = { item, tone: group.tone };
+      if (matches && (!best || item.to.length > best.item.to.length)) best = { item, heading: group.heading };
     }
   }
   return best;
@@ -178,28 +174,26 @@ function titleForPath(pathname: string): string {
 
 export function Layout() {
   const location = useLocation();
-  const section = activeSection(location.pathname);
-  const pageTone = section?.tone ?? "blue";
-
-  // Dialogs, sheets and menus render in portals outside <main>; putting the
-  // page tone on <html> lets them inherit the section hue too.
-  useEffect(() => {
-    document.documentElement.dataset.tone = pageTone;
-  }, [pageTone]);
   const { branding } = useBranding();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [collapsed, setCollapsed] = useCollapsedSidebar();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteMounted, setPaletteMounted] = useState(false);
   useEffect(() => {
     if (paletteOpen) setPaletteMounted(true);
   }, [paletteOpen]);
 
-  // Cmd+K / Ctrl+K to open command palette.
+  // Cmd+K / Ctrl+K opens the command palette; Cmd+B / Ctrl+B folds the sidebar.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const key = e.key.toLowerCase();
+      if (key === "k") {
         e.preventDefault();
         setPaletteOpen((v) => !v);
+      } else if (key === "b") {
+        e.preventDefault();
+        setCollapsed((v) => !v);
       }
     };
     document.addEventListener("keydown", onKey);
@@ -240,44 +234,45 @@ export function Layout() {
 
   return (
     // The shell is locked to the viewport: only <main> (and the sidebar nav)
-    // scroll. `relative` + `overflow-hidden` keep absolutely positioned
-    // descendants such as sr-only text from extending the document, which
-    // otherwise lets the whole layout scroll away past the end of a page.
-    <div className="relative flex h-full overflow-hidden bg-canvas">
+    // scroll. The sidebar sits on the desk; from lg the content is a sheet of
+    // paper floating on it with a hairline and a 1px lip.
+    <div className="relative flex h-full overflow-hidden bg-sidebar">
       <SkipLink />
-      {/* Desktop sidebar — hidden below lg. */}
       <div className="hidden lg:flex">
-        <Sidebar />
+        <Sidebar collapsed={collapsed} />
       </div>
 
       {/* Mobile navigation drawer. */}
       <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-        <SheetContent id={MOBILE_NAV_ID} side="left" className="w-60 lg:hidden" aria-describedby={undefined}>
+        <SheetContent id={MOBILE_NAV_ID} side="left" className="w-64 bg-sidebar lg:hidden" aria-describedby={undefined}>
           <SheetTitle className="sr-only">Navigation</SheetTitle>
           <SheetClose
-            className="absolute right-2 top-[calc(env(safe-area-inset-top)+0.625rem)] z-10 flex h-9 w-9 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            className="press absolute right-2 top-[calc(env(safe-area-inset-top)+0.5rem)] z-10 flex size-10 items-center justify-center rounded-lg text-fg-muted hover:bg-sidebar-accent hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Close navigation"
           >
-            <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+            <X className="size-4" aria-hidden="true" />
           </SheetClose>
-          <Sidebar />
+          <Sidebar collapsed={false} drawer />
         </SheetContent>
       </Sheet>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-canvas lg:my-2 lg:mr-2 lg:rounded-2xl lg:border lg:border-line lg:shadow-paper">
         <RouteProgress />
-        <TopBar menuOpen={sidebarOpen} onMenuToggle={() => setSidebarOpen(true)} onSearchOpen={() => setPaletteOpen(true)} />
+        <TopBar
+          menuOpen={sidebarOpen}
+          onMenuToggle={() => setSidebarOpen(true)}
+          collapsed={collapsed}
+          onCollapseToggle={() => setCollapsed((v) => !v)}
+          onSearchOpen={() => setPaletteOpen(true)}
+        />
         {/* tabIndex -1: the skip link moves focus here; no ring on a landmark. */}
-        {/* Safe-area padding keeps content clear of notches / the home
-            indicator (needs viewport-fit=cover to take effect). */}
         <main
           id="main"
           tabIndex={-1}
-          data-tone={pageTone}
-          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] lg:pl-0"
+          className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)] lg:pl-0 lg:pr-0"
           style={{ outline: "none" }}
         >
-          <div className="mx-auto w-full max-w-[1400px] px-4 py-6 sm:px-6 lg:px-8">
+          <div className="mx-auto w-full max-w-6xl px-4 py-6 md:px-6 md:py-8">
             <Suspense fallback={<PageOutletFallback />}>
               <Outlet />
             </Suspense>
@@ -292,6 +287,27 @@ export function Layout() {
       )}
     </div>
   );
+}
+
+const COLLAPSED_KEY = "keirouter-sidebar-collapsed";
+
+// useCollapsedSidebar keeps the desktop sidebar folded to icons across visits.
+function useCollapsedSidebar() {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(COLLAPSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(COLLAPSED_KEY, collapsed ? "1" : "0");
+    } catch {
+      // Storage blocked: the choice lasts for this visit only.
+    }
+  }, [collapsed]);
+  return [collapsed, setCollapsed] as const;
 }
 
 const MOBILE_NAV_ID = "mobile-navigation";
@@ -309,7 +325,7 @@ function SkipLink() {
         main?.focus();
         main?.scrollTo({ top: 0 });
       }}
-      className="fixed left-3 top-3 z-[120] -translate-y-[200%] rounded-lg bg-primary px-3 py-2 text-[13px] font-medium text-primary-fg shadow-[var(--shadow-pop)] focus:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
+      className="fixed left-3 top-3 z-[120] -translate-y-[200%] rounded-lg bg-primary px-3 py-2 text-[13px] font-medium text-primary-fg shadow-lift focus:translate-y-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-canvas"
     >
       Skip to main content
     </a>
@@ -319,7 +335,7 @@ function SkipLink() {
 function PageOutletFallback() {
   return (
     <div className="flex min-h-[240px] items-center justify-center py-16" role="status">
-      <div className="h-5 w-5 animate-spin rounded-full border-2 border-line-strong border-t-fg-muted" aria-hidden="true" />
+      <Loader2 className="size-5 animate-spin text-fg-muted" aria-hidden="true" />
       <span className="sr-only">Loading page</span>
     </div>
   );
@@ -343,7 +359,7 @@ function useGatewayInfo() {
   });
 }
 
-function Sidebar() {
+function Sidebar({ collapsed, drawer = false }: { collapsed: boolean; /** Inside the mobile sheet, beside its close button. */ drawer?: boolean }) {
   const health = useQuery({
     queryKey: ["health-overview-nav"],
     queryFn: () => api.healthOverview("1h"),
@@ -356,85 +372,102 @@ function Sidebar() {
   const navId = useId();
 
   return (
-    <aside className="relative flex h-full w-60 shrink-0 flex-col border-r border-line bg-surface">
-      <SidebarBrand />
+    <aside
+      className={cn(
+        "relative flex h-full shrink-0 flex-col bg-sidebar transition-[width] duration-200 ease-out-soft",
+        collapsed ? "w-[3.75rem]" : "w-60",
+      )}
+    >
+      <SidebarBrand collapsed={collapsed} drawer={drawer} />
 
-      <nav aria-label="Primary" className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 pb-4 pt-2">
-        {navGroups.map((group, gi) => (
-          <div key={gi} data-tone={group.tone} className={gi > 0 ? "mt-4" : undefined}>
-            {group.heading && (
-              <h2 id={`${navId}-group-${gi}`} className="px-2.5 pb-1.5 text-[11.5px] font-medium text-fg-faint">
-                {group.heading}
-              </h2>
-            )}
-            <ul className="space-y-px" aria-labelledby={group.heading ? `${navId}-group-${gi}` : undefined}>
-              {group.items.map((item) => (
-                <li key={item.to}>
-                  <NavLink
-                    to={item.to}
-                    end={item.end}
-                    aria-current="page"
-                    onMouseEnter={() => item.preload && preloadRoute(item.preload)}
-                    onFocus={() => item.preload && preloadRoute(item.preload)}
-                    onTouchStart={() => item.preload && preloadRoute(item.preload)}
-                    className={({ isActive }) =>
-                      cn(
-                        "group flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium [@media(pointer:coarse)]:h-10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                        isActive ? "bg-tone-soft text-fg" : "text-fg-muted hover:bg-hover hover:text-fg",
-                      )
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        <item.icon
-                          className={cn("h-4 w-4 shrink-0 transition-colors", isActive ? "text-tone" : "text-fg-faint group-hover:text-tone")}
-                          strokeWidth={1.75}
-                          aria-hidden="true"
-                        />
-                        <span className="truncate">{item.label}</span>
-                        {item.indicator === "live" && (
-                          <span className="live-dot ml-auto h-1.5 w-1.5 rounded-full bg-ok" role="img" aria-label="Live" />
-                        )}
-                        {item.indicator === "health" && healthTone && (
-                          <span
-                            className={cn("ml-auto h-1.5 w-1.5 rounded-full", healthTone === "bad" ? "bg-bad" : "bg-warn")}
-                            role="img"
-                            aria-label={healthTone === "bad" ? "A provider is unhealthy" : "A provider is degraded"}
+      <nav aria-label="Primary" className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain px-2.5 pb-4 pt-1">
+        <div className="relative">
+          <NavIndicator className="border border-line bg-surface shadow-paper" />
+          {navGroups.map((group, gi) => (
+            <div key={gi} className={gi > 0 ? "mt-5" : undefined}>
+              {group.heading &&
+                (collapsed ? (
+                  <div className="mx-2 mb-2 border-t border-line" aria-hidden="true" />
+                ) : (
+                  <h2 id={`${navId}-group-${gi}`} className="px-2.5 pb-1.5 text-[12px] font-medium text-fg-faint">
+                    {group.heading}
+                  </h2>
+                ))}
+              <ul className="space-y-px" aria-labelledby={group.heading && !collapsed ? `${navId}-group-${gi}` : undefined}>
+                {group.items.map((item) => (
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      end={item.end}
+                      aria-current="page"
+                      aria-label={collapsed ? item.label : undefined}
+                      title={collapsed ? item.label : undefined}
+                      onMouseEnter={() => item.preload && preloadRoute(item.preload)}
+                      onFocus={() => item.preload && preloadRoute(item.preload)}
+                      onTouchStart={() => item.preload && preloadRoute(item.preload)}
+                      className={({ isActive }) =>
+                        cn(
+                          "group relative flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors pointer-coarse:h-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          isActive ? "text-fg" : "text-fg-muted hover:bg-sidebar-accent hover:text-fg",
+                        )
+                      }
+                    >
+                      {({ isActive }) => (
+                        <>
+                          <item.icon
+                            className={cn("size-4 shrink-0 transition-colors", isActive ? "text-brand-ink" : "text-fg-faint group-hover:text-fg-muted")}
+                            aria-hidden="true"
                           />
-                        )}
-                      </>
-                    )}
-                  </NavLink>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+                          {!collapsed && <span className="truncate">{item.label}</span>}
+                          {item.indicator === "live" && (
+                            <span
+                              className={cn("live-dot size-1.5 rounded-full bg-ok text-ok", collapsed ? "absolute right-1.5 top-1.5" : "ml-auto")}
+                              role="img"
+                              aria-label="Live"
+                            />
+                          )}
+                          {item.indicator === "health" && healthTone && (
+                            <span
+                              className={cn("size-1.5 rounded-full", healthTone === "bad" ? "bg-bad" : "bg-warn", collapsed ? "absolute right-1.5 top-1.5" : "ml-auto")}
+                              role="img"
+                              aria-label={healthTone === "bad" ? "A provider is unhealthy" : "A provider is degraded"}
+                            />
+                          )}
+                        </>
+                      )}
+                    </NavLink>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
       </nav>
 
-      <GatewayStatus />
+      {!collapsed && <GatewayStatus />}
     </aside>
   );
 }
 
-function SidebarBrand() {
+function SidebarBrand({ collapsed, drawer }: { collapsed: boolean; drawer: boolean }) {
   const { branding } = useBranding();
   const info = useGatewayInfo();
   const name = branding.name || "KeiRouter";
   return (
     <Link
       to="/"
-      className="flex h-14 shrink-0 items-center gap-2.5 border-b border-line px-4 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500"
+      aria-label={collapsed ? name : undefined}
+      className={cn("mx-2.5 mt-2 flex h-12 shrink-0 items-center gap-2.5 rounded-lg px-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring", drawer && "mr-12")}
     >
-      {branding.logo_url ? (
+      {branding.logo_url && !collapsed ? (
         <img src={branding.logo_url} alt={name} className="h-7 max-w-[150px] object-contain object-left" />
       ) : (
         <>
           <BrandMark />
-          <span className="text-[14px] font-semibold tracking-[-0.01em] text-fg">{name}</span>
+          {!collapsed && <span className="text-[15px] font-medium tracking-[-0.02em] text-fg">{name}</span>}
         </>
       )}
-      {info.data?.version && (
+      {info.data?.version && !collapsed && (
         <span className="ml-auto font-mono text-[11px] text-fg-faint">{shortVersion(info.data.version)}</span>
       )}
     </Link>
@@ -447,7 +480,7 @@ function GatewayStatus() {
   // The state is always written out; the dot only repeats it.
   const label = info.isError ? "Gateway unreachable" : data ? "Gateway running" : "Checking gateway…";
   return (
-    <section aria-label="Gateway status" className="m-2.5 mt-0 rounded-xl border border-line bg-subtle px-3 py-2">
+    <section aria-label="Gateway status" className="mx-2.5 mb-2.5 border-t border-line px-2.5 pb-1 pt-3">
       <div className="flex items-center gap-2 text-[12px] font-medium text-fg" role="status">
         <span
           className={cn("h-1.5 w-1.5 shrink-0 rounded-full", info.isError ? "bg-bad" : data ? "live-dot bg-ok" : "bg-fg-faint")}
@@ -468,13 +501,28 @@ function GatewayStatus() {
   );
 }
 
-function TopBar({ menuOpen, onMenuToggle, onSearchOpen }: { menuOpen: boolean; onMenuToggle: () => void; onSearchOpen: () => void }) {
+function TopBar({
+  menuOpen,
+  onMenuToggle,
+  collapsed,
+  onCollapseToggle,
+  onSearchOpen,
+}: {
+  menuOpen: boolean;
+  onMenuToggle: () => void;
+  collapsed: boolean;
+  onCollapseToggle: () => void;
+  onSearchOpen: () => void;
+}) {
   const { branding } = useBranding();
+  const { pathname } = useLocation();
   const name = branding.name || "KeiRouter";
+  const section = activeSection(pathname);
+  const iconButton =
+    "press flex size-9 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11";
   return (
-    // Phones: menu · brand … search icon · update · account. From sm the
-    // search field is shown in full. Padded for notches / the status bar.
-    <header className="flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-line bg-surface pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] pt-[env(safe-area-inset-top)] sm:gap-3 sm:pl-[max(1.5rem,env(safe-area-inset-left))] sm:pr-[max(1.5rem,env(safe-area-inset-right))] lg:pl-8 lg:pr-[max(2rem,env(safe-area-inset-right))]">
+    // Solid, no blur: the header is part of the paper. Padded for notches.
+    <header className="flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-center gap-2 border-b border-line bg-canvas pl-[max(0.75rem,env(safe-area-inset-left))] pr-[max(0.75rem,env(safe-area-inset-right))] pt-[env(safe-area-inset-top)] md:gap-3 md:px-4">
       <button
         type="button"
         onClick={onMenuToggle}
@@ -482,43 +530,62 @@ function TopBar({ menuOpen, onMenuToggle, onSearchOpen }: { menuOpen: boolean; o
         aria-expanded={menuOpen}
         aria-controls={MOBILE_NAV_ID}
         aria-haspopup="dialog"
-        className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 lg:hidden"
+        className={cn(iconButton, "lg:hidden")}
       >
-        <Menu className="h-[18px] w-[18px]" aria-hidden="true" />
+        <Menu className="size-[18px]" aria-hidden="true" />
       </button>
-
-      {/* Phones only: the product identity, since the sidebar is hidden. */}
-      <Link
-        to="/"
-        className="flex min-w-0 items-center gap-2 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:hidden"
+      <button
+        type="button"
+        onClick={onCollapseToggle}
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        aria-keyshortcuts="Meta+B Control+B"
+        className={cn(iconButton, "hidden lg:flex")}
       >
+        {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
+      </button>
+      <span className="hidden h-5 w-px bg-line lg:block" aria-hidden="true" />
+
+      {/* Phones: the product identity, since the sidebar is hidden. From sm:
+          where you are, in sentence case. */}
+      <Link to="/" className="flex min-w-0 items-center gap-2 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:hidden">
         {branding.logo_url ? (
           <img src={branding.logo_url} alt={name} className="h-6 max-w-[120px] object-contain object-left" />
         ) : (
           <>
             <BrandMark />
-            <span className="truncate text-[14px] font-semibold tracking-[-0.01em] text-fg">{name}</span>
+            <span className="truncate text-[14px] font-medium text-fg">{name}</span>
           </>
         )}
       </Link>
+      {section && (
+        <p className="hidden min-w-0 items-center gap-1.5 truncate text-[13px] sm:flex">
+          {section.heading && section.heading !== section.item.label && (
+            <>
+              <span className="text-fg-faint">{section.heading}</span>
+              <span className="text-fg-faint" aria-hidden="true">/</span>
+            </>
+          )}
+          <span className="truncate font-medium text-fg">{section.item.label}</span>
+        </p>
+      )}
 
-      {/* Name contains the visible text (WCAG 2.5.3); below sm it is an icon
-          button named by the same label. The shortcut is exposed separately. */}
-      <button
-        type="button"
-        onClick={onSearchOpen}
-        aria-label={`Search ${name}`}
-        aria-haspopup="dialog"
-        aria-keyshortcuts="Meta+K Control+K"
-        className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 sm:ml-0 sm:w-auto sm:min-w-0 sm:max-w-sm sm:flex-1 sm:shrink sm:justify-start sm:gap-2 sm:border sm:border-input sm:bg-subtle sm:px-3 sm:text-left sm:text-[13px] sm:text-fg-faint sm:hover:border-fg-faint sm:hover:bg-subtle sm:hover:text-fg-faint"
-      >
-        <Search className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
-        <span className="hidden truncate sm:inline">Search {name}…</span>
-        <kbd className="ml-auto hidden rounded border border-line bg-surface px-1.5 font-mono text-[10.5px] text-fg-faint sm:inline" aria-hidden="true">⌘K</kbd>
-      </button>
-
-      <div className="flex shrink-0 items-center gap-1.5 sm:ml-auto">
+      <div className="ml-auto flex shrink-0 items-center gap-1">
+        {/* Name contains the visible text (WCAG 2.5.3); below md it is an icon
+            button named by the same label. */}
+        <button
+          type="button"
+          onClick={onSearchOpen}
+          aria-label={`Search ${name}`}
+          aria-haspopup="dialog"
+          aria-keyshortcuts="Meta+K Control+K"
+          className="press flex size-9 shrink-0 items-center justify-center gap-2 rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11 md:mr-1 md:h-8 md:w-56 md:justify-start md:border md:border-line md:bg-surface md:px-2.5 md:text-[13px] md:text-fg-faint md:shadow-paper md:hover:border-input md:hover:bg-surface"
+        >
+          <Search className="size-4 shrink-0" aria-hidden="true" />
+          <span className="hidden truncate md:inline">Search…</span>
+          <kbd className="ml-auto hidden rounded-md border border-line px-1.5 font-mono text-[10.5px] text-fg-faint md:inline" aria-hidden="true">⌘K</kbd>
+        </button>
         <UpdateNotification />
+        <ThemeToggle />
         <AccountMenu />
       </div>
     </header>
@@ -542,7 +609,7 @@ function AccountMenu() {
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label="Account and theme"
-        className="flex h-8 w-8 items-center justify-center rounded-full border border-line bg-subtle text-[12px] font-semibold [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9 text-fg transition-colors hover:border-line-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+        className="ml-1 flex size-8 items-center justify-center rounded-full bg-brand-soft font-display text-[13px] text-brand-ink transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-10"
       >
         <span aria-hidden="true">{initial}</span>
       </DropdownMenuTrigger>
@@ -583,34 +650,24 @@ function AccountMenu() {
   );
 }
 
-// PageHeader is the title row at the top of every page. `icon` is accepted for
-// backwards compatibility with existing pages but intentionally not rendered:
-// page titles carry no decorative icon chip.
-export function PageHeader(props: {
-  title: string;
-  description?: string;
-  /** Overrides the icon of the nav item that owns the current route. */
-  icon?: LucideIcon;
-  action?: ReactNode;
-}) {
-  const { title, description, action } = props;
+// PageHeader is the title row at the top of every page: an eyebrow naming
+// the nav group (with the brand rule), the title, one line of description and
+// the page's actions. No icon chip.
+export function PageHeader({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
   const { pathname } = useLocation();
-  const Icon = props.icon ?? activeSection(pathname)?.item.icon;
+  const heading = activeSection(pathname)?.heading;
+  const eyebrow = heading && heading !== title ? heading : undefined;
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-x-6 gap-y-3">
-      <div className="flex min-w-[min(100%,280px)] flex-1 items-center gap-3.5">
-        {Icon && (
-          <span
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-tone-soft text-tone ring-1 ring-inset ring-tone-ring"
-            aria-hidden="true"
-          >
-            <Icon className="h-5 w-5" strokeWidth={1.75} />
-          </span>
+    <div className="mb-8 flex flex-wrap items-end justify-between gap-x-6 gap-y-4 md:mb-10">
+      <div className="min-w-[min(100%,280px)] flex-1">
+        {eyebrow && (
+          <p className="mb-2 flex items-center gap-2 text-meta text-fg-muted">
+            <span className="h-px w-5 bg-brand-ink" aria-hidden="true" />
+            {eyebrow}
+          </p>
         )}
-        <div className="min-w-0">
-          <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{title}</h1>
-          {description && <p className="mt-0.5 max-w-3xl text-[13.5px] leading-5 text-fg-muted">{description}</p>}
-        </div>
+        <h1 className="font-display text-display-2 text-balance text-fg">{title}</h1>
+        {description && <p className="mt-2 max-w-2xl text-body-lg text-fg-muted">{description}</p>}
       </div>
       {action && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{action}</div>}
     </div>
@@ -623,7 +680,7 @@ function shortVersion(version: string): string {
 }
 
 export function formatUptime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds <= 0) return "—";
+  if (!Number.isFinite(seconds) || seconds <= 0) return "n/a";
   const d = Math.floor(seconds / 86_400);
   const h = Math.floor((seconds % 86_400) / 3_600);
   const m = Math.floor((seconds % 3_600) / 60);

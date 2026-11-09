@@ -2,44 +2,39 @@
 @import "tw-animate-css";
 
 /*
-  KeiRouter design system — "precision instrument".
+  KeiRouter design tokens. The rules behind them live in DESIGN.md at the
+  repository root; `npm run contrast` resolves every text/surface pair below
+  and checks it against WCAG 2.2 AA. Change a value, rerun it.
 
-  Neutral greys carry the interface (warm "paper" in light mode, cool in
-  dark); colour only ever means something.
-  Primary actions are monochrome (ink on light, paper on dark). The brand
-  accent (blue by default, swappable through the white-label palette system)
-  is reserved for data, links, focus and active state. Green / amber / red
-  are status only. IBM Plex Sans for UI, IBM Plex Mono for every identifier (models,
-  keys, chains, endpoints) and tabular figures for every number.
-
-  ── Radius scale (overrides Tailwind defaults) ─────────────────────
-    rounded-md   (4px)  — chips, kbd, tiny badges
-    rounded-lg   (6px)  — buttons, inputs, selects, menu items
-    rounded-xl   (7px)  — segmented controls, tabs
-    rounded-2xl  (8px)  — cards, modals, popovers
-    rounded-full        — dots, avatars, toggles
-
-  ── Typography ─────────────────────────────────────────────────────
-    text-[11px]/xs — captions, axis labels, meta
-    text-[13px]    — dense UI: tables, lists, controls
-    text-sm (14px) — body copy, descriptions
-    text-base      — card titles in roomy layouts
-    text-[22px]    — page titles
-    text-2xl       — hero metrics
-
-  ── Elevation ──────────────────────────────────────────────────────
-    Borders do the work. shadow-card is a hairline lift; shadow-pop and
-    shadow-float are for menus and dialogs only.
-
-  ── Z-index ────────────────────────────────────────────────────────
-    z-10 sticky headers · z-50 overlays · z-60 toasts
+  Paper and ink: a near-white paper with a faint blue cast, a blue-black ink
+  for text and buttons, and the brand blue as the one thin signal (links,
+  focus, the active nav item, live data). Status colours mean status only.
 */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Local fonts scaled to Geist's metrics, so the swap to Geist moves no text. */
+@font-face {
+  font-family: "Geist Fallback";
+  src: local("Arial"), local("Liberation Sans"), local("Helvetica");
+  size-adjust: 101.9%;
+  ascent-override: 98.6%;
+  descent-override: 28.95%;
+  line-gap-override: 0%;
+}
+
+@font-face {
+  font-family: "Geist Mono Fallback";
+  src: local("Courier New"), local("Liberation Mono"), local("Menlo");
+  size-adjust: 100%;
+  ascent-override: 100.5%;
+  descent-override: 29.5%;
+  line-gap-override: 0%;
+}
+
 @theme {
-  /* ── Accent: brand blue. Runtime palettes (BrandingContext) overwrite these
-        shade variables on <html>, so everything keyed off accent-* follows
-        the white-label palette. */
+  /* ── Brand blue. Runtime palettes (BrandingContext) overwrite these shade
+        variables on <html>, so everything keyed off accent-* follows the
+        white-label palette. */
   --color-accent-50: #edf4fe;
   --color-accent-100: #d8e7fd;
   --color-accent-200: #b0d0fa;
@@ -51,47 +46,47 @@
   --color-accent-800: #052f60;
   --color-accent-900: #042144;
 
-  /* ── Secondary: brand orange (the dot in the logo). Kept for brand marks and
-        legacy call sites; not used for UI chrome in new components. */
-  --color-secondary-50: #fef4ee;
-  --color-secondary-100: #fde5d6;
-  --color-secondary-200: #fac7aa;
-  --color-secondary-300: #f5a173;
-  --color-secondary-400: #f0844b;
+  /* ── The logo's dot. Only the brand mark uses it. */
   --color-secondary-500: #ec6a2c;
-  --color-secondary-600: #c9531c;
-  --color-secondary-700: #a03f15;
-  --color-secondary-800: #7c3213;
-  --color-secondary-900: #612911;
 
-  /* ── Neutrals: cool zinc. */
-  --color-ink-50: #fafafb;
-  --color-ink-100: #f4f4f5;
-  --color-ink-200: #e7e7ea;
-  --color-ink-300: #d6d6db;
-  --color-ink-400: #a1a1aa;
-  --color-ink-500: #73737d;
-  --color-ink-600: #5f5f69;
-  --color-ink-700: #3f3f46;
-  --color-ink-800: #27272a;
-  --color-ink-900: #18181b;
-  --color-ink-950: #0d0d0f;
+  /* ── Neutral ladder: the brand hue at very low chroma. 0–250 are paper and
+        rules, 300–700 are muted text and input borders, 750–975 are ink and
+        dark surfaces. Components use the semantic tokens below, not these. */
+  --color-neutral-0: oklch(0.997 0.002 257);
+  --color-neutral-50: oklch(0.985 0.003 257);
+  --color-neutral-100: oklch(0.966 0.004 257);
+  --color-neutral-150: oklch(0.946 0.005 257);
+  --color-neutral-200: oklch(0.912 0.006 257);
+  --color-neutral-250: oklch(0.872 0.008 257);
+  --color-neutral-300: oklch(0.75 0.01 257);
+  --color-neutral-350: oklch(0.71 0.011 257);
+  --color-neutral-500: oklch(0.6 0.013 257);
+  --color-neutral-600: oklch(0.52 0.014 257);
+  --color-neutral-700: oklch(0.465 0.015 257);
+  --color-neutral-750: oklch(0.31 0.014 257);
+  --color-neutral-800: oklch(0.275 0.013 257);
+  --color-neutral-825: oklch(0.255 0.012 257);
+  --color-neutral-850: oklch(0.235 0.012 257);
+  --color-neutral-900: oklch(0.205 0.011 257);
+  --color-neutral-925: oklch(0.2 0.025 257);
+  --color-neutral-950: oklch(0.17 0.01 257);
+  --color-neutral-975: oklch(0.15 0.009 257);
 
-  /* ── Semantic status. */
+  /* ── Status, kept as named colours for the Badge/Alert tone props. */
   --color-success: #146d3b;
   --color-warning: #8c4b05;
   --color-danger: #b02e24;
   --color-info: #0a72ef;
 
-  /* ── Chart palette: accent first, then a lightness-separated orange so
-        two-series charts survive colour-vision deficiency. */
+  /* ── Charts: brand first, then a lightness-separated slate, so two-series
+        charts survive colour-vision deficiency without a second hue. */
   --color-chart-1: #0a72ef;
   --color-chart-2: #84b6f7;
-  --color-chart-3: #ea7a3a;
+  --color-chart-3: oklch(0.55 0.02 257);
   --color-chart-4: #c2362b;
-  --color-chart-5: #73737d;
+  --color-chart-5: oklch(0.6 0.013 257);
 
-  /* ── Brand colors for CLI tools / providers. */
+  /* ── CLI tool colours (tool picker tiles only). */
   --color-brand-claude: #d97706;
   --color-brand-codex: #10b981;
   --color-brand-cline: #3b82f6;
@@ -104,39 +99,105 @@
   --color-brand-deepseek: #0ea5e9;
   --color-brand-jcode: #f97316;
   --color-brand-qoder: #ec4899;
-  --color-brand-cursor: #00D4AA;
-  --color-brand-codebuddy: #006EFF;
-  --color-brand-kimchi: #FF521D;
-  --color-brand-gemini: #4285F4;
+  --color-brand-cursor: #00d4aa;
+  --color-brand-codebuddy: #006eff;
+  --color-brand-kimchi: #ff521d;
+  --color-brand-gemini: #4285f4;
 
-  /* ── Typography (self-hosted via @fontsource, works offline). */
-  --font-sans: "IBM Plex Sans Variable", "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  /* ── Typography: Geist + Geist Mono, self-hosted (works offline). */
+  --font-sans: "Geist Variable", "Geist Fallback", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", "Geist Mono Fallback", ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* ── Radius: tighter than Tailwind's defaults. */
+  /* Type scale. Display sizes are fluid between mobile and sm+. */
+  --text-display-2: clamp(1.75rem, 1.4rem + 1.4vw, 2.375rem);
+  --text-display-2--line-height: 1.12;
+  --text-figure: clamp(1.75rem, 1.6rem + 0.6vw, 2rem);
+  --text-figure--line-height: 1.08;
+  --text-title: 1.125rem;
+  --text-title--line-height: 1.625rem;
+  --text-heading: 0.9375rem;
+  --text-heading--line-height: 1.375rem;
+  --text-body-lg: 0.9375rem;
+  --text-body-lg--line-height: 1.5rem;
+  --text-meta: 0.8125rem;
+  --text-meta--line-height: 1.125rem;
+
+  /* ── Radius. Class names keep their roles:
+        rounded-md  4px  badges, chips, kbd
+        rounded-lg  6px  buttons, inputs, menu items
+        rounded-xl  8px  popovers, tabs, code
+        rounded-2xl 12px cards, tables, dialogs, sheets */
+  --radius-sm: 0.1875rem;
   --radius-md: 0.25rem;
   --radius-lg: 0.375rem;
-  --radius-xl: 0.4375rem;
-  --radius-2xl: 0.5rem;
+  --radius-xl: 0.5rem;
+  --radius-2xl: 0.75rem;
   --radius-3xl: 0.75rem;
-  --radius-card: 0.5rem;
+
+  /* ── Motion: short, decelerating, never bouncy. */
+  --ease-out-soft: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out-soft: cubic-bezier(0.65, 0, 0.35, 1);
+  --animate-fade: fade 240ms var(--ease-out-soft) both;
+  --animate-pulse-dot: pulse-dot 2.4s var(--ease-in-out-soft) infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+
+  /* Overlays: one quiet recipe. Radix waits for the exit animation before
+     unmounting, so every *-out is a real keyframe. */
+  --animate-overlay-in: fade 180ms var(--ease-out-soft) both;
+  --animate-overlay-out: fade-out 120ms ease-in both;
+  --animate-dialog-in: dialog-in 180ms var(--ease-out-soft) both;
+  --animate-dialog-out: dialog-out 120ms ease-in both;
+  --animate-pop-in: pop-in 160ms var(--ease-out-soft) both;
+  --animate-pop-out: fade-out 100ms ease-in both;
+
+  @keyframes shimmer {
+    from { background-position: 150% 0; }
+    to { background-position: -50% 0; }
+  }
+  @keyframes fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  @keyframes fade-out {
+    to { opacity: 0; }
+  }
+  @keyframes dialog-in {
+    from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  }
+  @keyframes dialog-out {
+    to { opacity: 0; transform: scale(0.98); }
+  }
+  /* Slides 4px away from the trigger; --pop-x/--pop-y are set per data-side. */
+  @keyframes pop-in {
+    from { opacity: 0; transform: translate(var(--pop-x, 0), var(--pop-y, 0)) scale(0.98); }
+  }
+  @keyframes pulse-dot {
+    0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 45%, transparent); }
+    60% { box-shadow: 0 0 0 5px color-mix(in oklab, currentColor 0%, transparent); }
+  }
 }
 
-/* Semantic surface tokens as utilities: bg-surface, border-line, text-fg-muted… */
+/* Semantic tokens as utilities: bg-surface, border-line, text-fg-muted… */
 @theme inline {
   --color-canvas: var(--bg);
   --color-surface: var(--bg-elevated);
   --color-subtle: var(--bg-subtle);
   --color-hover: var(--bg-hover);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-accent: var(--sidebar-accent);
   --color-line: var(--border);
   --color-line-strong: var(--border-strong);
   --color-input: var(--border-input);
   --color-link: var(--link);
+  --color-ring: var(--ring);
   --color-action: var(--action);
   --color-action-hover: var(--action-hover);
   --color-action-fg: var(--action-fg);
-  --color-tone: var(--tone-fg);
-  --color-tone-soft: var(--tone-soft);
+  --color-brand: var(--brand);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-soft: var(--brand-soft);
+  --color-tone: var(--brand-ink);
+  --color-tone-soft: var(--brand-soft);
   --color-tone-ring: var(--tone-ring);
   --color-fg: var(--text);
   --color-fg-muted: var(--text-muted);
@@ -144,139 +205,196 @@
   --color-primary: var(--primary);
   --color-primary-fg: var(--primary-fg);
   --color-track: var(--track);
+  --color-overlay: var(--overlay);
+  --color-code-bg: var(--code-bg);
   --color-ok: var(--status-ok);
+  --color-ok-soft: var(--status-ok-soft);
   --color-warn: var(--status-warn);
+  --color-warn-soft: var(--status-warn-soft);
   --color-bad: var(--status-bad);
+  --color-bad-soft: var(--status-bad-soft);
 }
 
 :root {
   color-scheme: light;
 
-  /* Light mode is "paper", not "screen": a faintly warm, slightly dimmed
-     canvas with off-white cards and softened ink. Pure #fff cards on a
-     near-white canvas read as one glaring sheet, and near-black on pure
-     white (≈18:1) halates on long sessions. Everything below still clears
-     WCAG AA: body text ≈15:1, muted ≥ 6:1, faint ≥ 4.7:1 on every surface. */
-  --bg: #f1f0ec;
-  --bg-elevated: #fbfaf8;
-  --bg-subtle: #f6f5f2;
-  --bg-hover: #eeede8;
-  --border: #e2e0da;
-  --border-strong: #d0cdc5;
-  --text: #23221f;
-  --text-muted: #5b5953;
-  --text-faint: #6a6862;
-  --primary: #23221f;
-  --primary-fg: #fbfaf8;
-  --track: #e7e5df;
-  --status-ok: #146d3b;
-  --status-warn: #8c4b05;
-  --status-bad: #b02e24;
-  --series-alt: #ea7a3a;
-  /* WCAG: form-control borders ≥ 3:1 against surface; link text ≥ 4.5:1. */
-  --border-input: #8b8880;
-  --link: var(--color-accent-600);
-  /* Primary actions: brand blue (white text ≥ 6.5:1). */
-  --action: var(--color-accent-600);
-  --action-hover: var(--color-accent-700);
-  --action-fg: #ffffff;
+  --bg: var(--color-neutral-50);
+  --bg-elevated: var(--color-neutral-0);
+  --bg-subtle: var(--color-neutral-100);
+  --bg-hover: var(--color-neutral-150);
+  /* The desk under the floating content panel. */
+  --sidebar: var(--color-neutral-100);
+  --sidebar-accent: var(--color-neutral-150);
+  --border: var(--color-neutral-200);
+  --border-strong: var(--color-neutral-250);
+  /* Form-control borders ≥ 3:1 against the surface. */
+  --border-input: var(--color-neutral-500);
+  --text: var(--color-neutral-925);
+  --text-muted: var(--color-neutral-700);
+  --text-faint: var(--color-neutral-600);
+  --primary: var(--color-neutral-925);
+  --primary-fg: var(--color-neutral-50);
+  --track: var(--color-neutral-150);
 
-  /* Syntax highlighting (CodeBlock). Every colour clears 4.5:1 on --code-bg. */
-  --code-bg: #f6f5f2;
-  --code-fg: #23221f;
+  /* Every button is ink; the brand blue never fills more than a dot or a tint. */
+  --action: var(--color-neutral-925);
+  --action-hover: oklch(0.3 0.03 257);
+  --action-fg: var(--color-neutral-50);
+
+  --brand: var(--color-accent-500);
+  --brand-ink: var(--color-accent-600);
+  --brand-soft: var(--color-accent-50);
+  --link: var(--color-accent-600);
+  --ring: var(--color-accent-500);
+  --tone-ring: color-mix(in srgb, var(--color-accent-500) 22%, transparent);
+  --selection: var(--color-accent-100);
+
+  --status-ok: #146d3b;
+  --status-ok-soft: oklch(0.955 0.03 155);
+  --status-warn: #8c4b05;
+  --status-warn-soft: oklch(0.96 0.035 70);
+  --status-bad: #b02e24;
+  --status-bad-soft: oklch(0.955 0.025 25);
+  --series-alt: oklch(0.55 0.02 257);
+
+  --overlay: oklch(0.17 0.02 257 / 0.32);
+  --skeleton-sheen: oklch(1 0 0 / 0.7);
+
+  /* Syntax highlighting. Every colour clears 4.5:1 on --code-bg. */
+  --code-bg: var(--color-neutral-100);
+  --code-fg: var(--color-neutral-925);
   --code-key: #0b56b3;
   --code-str: #116329;
   --code-num: #a14a00;
   --code-kw: #7034c9;
-  --code-com: #6a6862;
+  --code-com: var(--color-neutral-600);
   --code-var: #9a3c00;
   --code-flag: #0b56b3;
   --code-fn: #7034c9;
-  --code-punc: #6a6862;
+  --code-punc: var(--color-neutral-600);
 
-  --shadow-card: 0 1px 2px rgba(40, 32, 20, 0.05);
-  --shadow-pop: 0 0 0 1px rgba(16, 16, 20, 0.04), 0 6px 16px -4px rgba(16, 16, 20, 0.1);
-  --shadow-float: 0 0 0 1px rgba(16, 16, 20, 0.05), 0 18px 40px -12px rgba(16, 16, 20, 0.22);
-
-  --duration-fast: 100ms;
-  --duration-normal: 150ms;
-  --duration-slow: 250ms;
+  /* Two elevations only: paper for resting surfaces, lift for floating ones. */
+  --shadow-paper: 0 1px 2px oklch(0.2 0.025 257 / 0.06);
+  --shadow-lift: 0 0 0 1px oklch(0.2 0.025 257 / 0.04), 0 12px 32px -12px oklch(0.2 0.025 257 / 0.18);
 }
 
 .dark {
   color-scheme: dark;
 
-  --bg: #0d0d0f;
-  --bg-elevated: #141417;
-  --bg-subtle: #18181c;
-  --bg-hover: #1d1d22;
-  --border: #25252b;
-  --border-strong: #34343b;
-  --text: #ededf0;
-  --text-muted: #a1a1ab;
-  --text-faint: #8a8a94;
-  --primary: #ededf0;
-  --primary-fg: #0d0d0f;
-  --track: #24242a;
+  /* Charcoal with a blue cast, never pure black. */
+  --bg: var(--color-neutral-950);
+  --bg-elevated: var(--color-neutral-900);
+  --bg-subtle: var(--color-neutral-850);
+  --bg-hover: var(--color-neutral-800);
+  --sidebar: var(--color-neutral-975);
+  --sidebar-accent: var(--color-neutral-850);
+  --border: var(--color-neutral-750);
+  --border-strong: oklch(0.37 0.014 257);
+  --border-input: oklch(0.52 0.014 257);
+  --text: oklch(0.955 0.004 257);
+  --text-muted: var(--color-neutral-300);
+  --text-faint: var(--color-neutral-350);
+  --primary: oklch(0.955 0.004 257);
+  --primary-fg: var(--color-neutral-925);
+  --track: var(--color-neutral-825);
+
+  --action: oklch(0.955 0.004 257);
+  --action-hover: oklch(0.88 0.006 257);
+  --action-fg: var(--color-neutral-925);
+
+  --brand: var(--color-accent-400);
+  --brand-ink: var(--color-accent-300);
+  --brand-soft: color-mix(in oklab, var(--color-accent-500) 16%, var(--color-neutral-900));
+  --link: var(--color-accent-300);
+  --ring: var(--color-accent-400);
+  --tone-ring: color-mix(in srgb, var(--color-accent-400) 28%, transparent);
+  --selection: color-mix(in oklab, var(--color-accent-500) 35%, transparent);
+
   --status-ok: #3fb872;
+  --status-ok-soft: oklch(0.26 0.04 155);
   --status-warn: #e3a347;
+  --status-warn-soft: oklch(0.27 0.045 70);
   --status-bad: #f0675b;
-  --series-alt: #f08a4b;
-  --border-input: #6b6b75;
-  --link: var(--color-accent-400);
-  --action: var(--color-accent-600);
-  --action-hover: var(--color-accent-500);
-  --action-fg: #ffffff;
+  --status-bad-soft: oklch(0.27 0.05 25);
+  --series-alt: oklch(0.7 0.015 257);
 
   --color-success: #3fb872;
   --color-warning: #e3a347;
   --color-danger: #f0675b;
 
-  --code-bg: #101013;
-  --code-fg: #e4e4e8;
+  --overlay: oklch(0.08 0.01 257 / 0.6);
+  --skeleton-sheen: oklch(1 0 0 / 0.05);
+
+  --code-bg: var(--color-neutral-950);
+  --code-fg: oklch(0.92 0.005 257);
   --code-key: #7cb7ff;
   --code-str: #7fd6a0;
   --code-num: #f2a46b;
   --code-kw: #c5a3ff;
-  --code-com: #8a8a94;
+  --code-com: var(--color-neutral-350);
   --code-var: #ffb37a;
   --code-flag: #7cb7ff;
   --code-fn: #c5a3ff;
-  --code-punc: #8a8a94;
+  --code-punc: var(--color-neutral-350);
 
-  --shadow-card: none;
-  --shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.04), 0 8px 24px -6px rgba(0, 0, 0, 0.6);
-  --shadow-float: 0 0 0 1px rgba(255, 255, 255, 0.05), 0 24px 48px -12px rgba(0, 0, 0, 0.7);
+  --shadow-paper: 0 1px 2px oklch(0.08 0.01 257 / 0.4);
+  --shadow-lift: 0 0 0 1px oklch(0.98 0.004 257 / 0.06), 0 16px 40px -12px oklch(0.08 0.01 257 / 0.7);
 }
 
 .dark * {
-  scrollbar-color: #34343b transparent;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+@utility shadow-paper {
+  box-shadow: var(--shadow-paper);
+}
+
+@utility shadow-lift {
+  box-shadow: var(--shadow-lift);
+}
+
+/* Loading placeholder: a light band sweeps across the muted block. */
+@utility skeleton-shimmer {
+  background-color: var(--bg-subtle);
+  background-image: linear-gradient(100deg, transparent 30%, var(--skeleton-sheen) 50%, transparent 70%);
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  animation: var(--animate-shimmer);
+}
+
+/* Large titles and figures: Geist 500, tighter tracking, tabular figures. */
+@utility font-display {
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.03em;
 }
 
 html,
 body {
-  background-color: var(--bg);
+  background-color: var(--sidebar);
   color: var(--text);
   font-family: var(--font-sans);
+  -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Display heading — tight tracking, no decoration. */
-.font-display {
-  font-family: var(--font-sans);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
 /* Every number in the dashboard lines up. */
+.tnum,
 .tabular-nums,
 table td,
 table th {
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums slashed-zero;
 }
 
-/* Syntax token colours, rendered by <CodeBlock> / <HighlightedCode>. */
+/* Icons: Lucide at stroke 1.75 everywhere, so call sites never set it. Zero
+   specificity, so a `stroke-2` utility still thickens a checkmark. */
+:where(svg.lucide) {
+  stroke-width: 1.75;
+}
+
+/* Syntax token colours, rendered by <CodeBlock>. */
 .tok-key { color: var(--code-key); }
 .tok-str { color: var(--code-str); }
 .tok-num { color: var(--code-num); }
@@ -287,13 +405,9 @@ table th {
 .tok-fn { color: var(--code-fn); font-weight: 500; }
 .tok-punc { color: var(--code-punc); }
 
-/* Live indicator pulse (status dots on streaming data). */
-@keyframes live-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
-}
+/* Live data: a soft ring pulse. The only loop the dashboard allows. */
 .live-dot {
-  animation: live-pulse 1.8s ease-in-out infinite;
+  animation: var(--animate-pulse-dot);
 }
 
 /* Thin scrollbars. */
@@ -302,14 +416,15 @@ table th {
   scrollbar-color: var(--border-strong) transparent;
 }
 
-/* Clickable elements get pointer cursor and a consistent tap target response. */
-a, button, select, summary, [role="button"], [role="switch"], [role="radio"], [role="tab"], [type="checkbox"], [type="radio"], [type="submit"] {
+/* Clickable elements get the hand; disabled controls say they will not act. */
+a, button, select, summary, label[for], [role="button"], [role="switch"], [role="radio"], [role="tab"], [role="menuitem"], [role="option"], [type="checkbox"], [type="radio"], [type="submit"] {
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
 
 button:disabled,
 select:disabled,
+[aria-disabled="true"],
 [type="checkbox"]:disabled,
 [type="radio"]:disabled,
 [type="submit"]:disabled {
@@ -317,7 +432,7 @@ select:disabled,
 }
 
 ::selection {
-  background: color-mix(in srgb, var(--color-accent-400) 30%, transparent);
+  background: var(--selection);
   color: var(--text);
 }
 
@@ -339,92 +454,31 @@ select:disabled,
   border-width: 0;
 }
 
-/* Mobile sidebar overlay backdrop. */
-@keyframes overlay-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+/* Pressable controls give a little under the finger. Not on popup triggers:
+   Radix measures the trigger as the overlay opens, so a shrunken trigger puts
+   the menu a few px off. */
+.press {
+  transition:
+    transform 160ms var(--ease-out-soft),
+    background-color 160ms var(--ease-out-soft),
+    color 160ms var(--ease-out-soft),
+    box-shadow 160ms var(--ease-out-soft),
+    border-color 160ms var(--ease-out-soft);
+}
+.press:active:not(:disabled, [aria-expanded]) {
+  transform: scale(0.97);
 }
 
-@keyframes drawer-in {
-  from { transform: translateX(-100%); }
-  to { transform: translateX(0); }
-}
-
-/* Toast entrance: slide up + fade in. */
+/* Toast entrance and auto-dismiss bar. */
 @keyframes toast-in {
-  from {
-    opacity: 0;
-    transform: translateY(8px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
 }
-
-/* Toast auto-dismiss progress bar. */
 @keyframes toast-progress {
-  from {
-    width: 100%;
-  }
-  to {
-    width: 0%;
-  }
+  from { width: 100%; }
+  to { width: 0%; }
 }
 
-/* Page content entrance — subtle, purposeful. */
-@keyframes page-in {
-  from {
-    opacity: 0;
-    transform: translateY(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-/* A single, restrained transition when switching operational workspaces.
-   The default is fully visible; motion is only a short confirmation of context. */
-@keyframes workspace-panel-in {
-  from {
-    opacity: 0;
-    transform: translateY(3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.provider-workspace-panel {
-  animation: workspace-panel-in var(--duration-normal) ease-out;
-}
-
-/* Skeleton shimmer — a moving highlight over a neutral block while data loads.
-   Used by the <Skeleton> placeholder so pages show their shape immediately
-   instead of an empty spinner, which makes loads feel faster. */
-@keyframes skeleton-shimmer {
-  from { background-position: 200% 0; }
-  to { background-position: -200% 0; }
-}
-
-.skeleton {
-  border-radius: 8px;
-  background-color: var(--bg-subtle);
-  background-image: linear-gradient(
-    90deg,
-    transparent 0%,
-    color-mix(in srgb, var(--text-muted) 12%, transparent) 50%,
-    transparent 100%
-  );
-  background-size: 200% 100%;
-  animation: skeleton-shimmer 1.4s ease-in-out infinite;
-}
-
-/* Top-of-page loading bar — an indeterminate sweep shown during route/data
-   transitions so a navigation click gives instant feedback even before the
-   next page's chunk and data are ready. */
+/* Top-of-page loading bar during route and data transitions. */
 @keyframes route-bar-sweep {
   0% { transform: translateX(-100%) scaleX(0.4); }
   50% { transform: translateX(0%) scaleX(0.6); }
@@ -446,69 +500,70 @@ select:disabled,
   content: "";
   position: absolute;
   inset: 0;
-  background: var(--color-accent-500);
+  background: var(--brand);
   transform-origin: left center;
   animation: route-bar-sweep 1s ease-in-out infinite;
 }
 
-/* Card press/hover micro-interactions. Apply `.interactive` to clickable
-   cards/rows for a subtle lift on hover and a gentle press on click. Pure CSS,
-   no JS, and disabled under prefers-reduced-motion via the guard below. */
-.interactive {
-  transition:
-    transform 0.15s ease-out,
-    box-shadow 0.15s ease-out,
-    background-color 0.15s ease-out;
-}
-.interactive:hover {
-  transform: translateY(-1px);
-}
-.interactive:active {
-  transform: translateY(0);
+/* Sidebar active pill (components/NavIndicator.tsx sets the duration per
+   move). Standard ease: ease-out-soft covers half a long move in the first
+   frame, which reads as a jump. */
+.nav-indicator {
+  transition-property: transform, opacity, height;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: transform;
 }
 
-/* Respect user motion preferences. */
+/* Theme switch (lib/theme-transition.ts): one cross-fade of the page
+   snapshot. Element transitions are held during the swap; the toggle's own
+   sun/moon morph keeps running. */
+:root.theme-switching *:not([data-theme-icon]),
+:root.theme-switching ::before,
+:root.theme-switching ::after {
+  transition: none !important;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 200ms;
+  animation-timing-function: var(--ease-out-soft);
+}
+
+[data-side="bottom"] { --pop-y: -4px; }
+[data-side="top"] { --pop-y: 4px; }
+[data-side="left"] { --pop-x: 4px; }
+[data-side="right"] { --pop-x: -4px; }
+
+/* Page content entrance: a short fade, never holding the first paint. */
 @media (prefers-reduced-motion: no-preference) {
   main > div {
-    animation: page-in 0.2s ease-out;
+    animation: fade 200ms var(--ease-out-soft);
   }
 }
 
+/* WCAG 2.3.3: under reduced motion nothing moves or loops; colour and
+   opacity changes stay, capped at 150ms. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
-}
-
-/* Mobile content padding — tighter on small screens. */
-@media (max-width: 639px) {
-  main > div {
-    padding-left: 1rem;
-    padding-right: 1rem;
-    padding-top: 1.25rem;
-    padding-bottom: 1.25rem;
-  }
-}
-
-/* WCAG 2.3.3 / 2.2.2 — honour reduced-motion: no pulsing, sliding or smooth scrolling. */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
+    transition-property: opacity, color, background-color, border-color, box-shadow !important;
+    transition-duration: 150ms !important;
     scroll-behavior: auto !important;
   }
+  .press:active:not(:disabled) {
+    transform: none;
+  }
+  .nav-indicator {
+    transition: none !important;
+  }
 }
 
-/* WCAG 2.4.7 — a visible focus indicator for anything that does not draw its own ring. */
+/* WCAG 2.4.7: a visible focus indicator for anything that does not draw its own ring. */
 :where(a, button, [role="button"], [role="tab"], [role="radio"], [role="switch"], [role="menuitem"], summary, input, select, textarea, [tabindex]):focus-visible {
-  outline: 2px solid var(--color-accent-500);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -516,61 +571,6 @@ select:disabled,
 ::placeholder {
   color: var(--text-faint);
   opacity: 1;
-}
-
-/*
-  Section tones. Each sidebar group has one hue; Layout sets data-tone on the
-  group and on <main>, so page header tiles, section icons and empty states
-  pick it up through text-tone / bg-tone-soft / ring-tone-ring without any
-  page knowing its colour. Icon colours are ≥ 4.4:1 on their soft tile.
-*/
-:root,
-[data-tone="blue"] {
-  --tone-fg: var(--color-accent-600);
-}
-[data-tone="violet"] {
-  --tone-fg: #6941c6;
-}
-[data-tone="teal"] {
-  --tone-fg: #0d7268;
-}
-[data-tone="orange"] {
-  --tone-fg: #b54a17;
-}
-[data-tone="slate"] {
-  --tone-fg: #52525b;
-}
-.dark,
-.dark[data-tone="blue"],
-.dark [data-tone="blue"] {
-  --tone-fg: var(--color-accent-400);
-}
-.dark[data-tone="violet"],
-.dark [data-tone="violet"] {
-  --tone-fg: #a78bfa;
-}
-.dark[data-tone="teal"],
-.dark [data-tone="teal"] {
-  --tone-fg: #2fc4b2;
-}
-.dark[data-tone="orange"],
-.dark [data-tone="orange"] {
-  --tone-fg: #f2925b;
-}
-.dark[data-tone="slate"],
-.dark [data-tone="slate"] {
-  --tone-fg: #a1a1aa;
-}
-:root,
-[data-tone] {
-  --tone-soft: color-mix(in srgb, var(--tone-fg) 10%, var(--bg-elevated));
-  --tone-ring: color-mix(in srgb, var(--tone-fg) 22%, transparent);
-}
-.dark,
-.dark[data-tone],
-.dark [data-tone] {
-  --tone-soft: color-mix(in srgb, var(--tone-fg) 15%, var(--bg-elevated));
-  --tone-ring: color-mix(in srgb, var(--tone-fg) 28%, transparent);
 }
 
 /*

@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Pencil, Trash2, Check, Search, Copy, X, MoreHorizontal } from "lucide-react";
 
 import { api, type CustomModel, type CustomModelInput, type Provider } from "../lib/api";
-import { Card, Button, Field, IconTile, Input, Select, Modal, ModalFooter, SectionTitle, TablePagination } from "./ui";
+import { Card, Button, Field, Input, Select, Modal, ModalFooter, SectionTitle, TablePagination } from "./ui";
 import { ICONS } from "../lib/icons";
 import { useConfirm } from "./ui/confirm-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
@@ -118,7 +118,7 @@ export function CustomModelsSection({ provider }: { provider: Provider }) {
           subtitle="Models not in the provider catalog"
           action={
             <Button variant="secondary" onClick={openAdd}>
-              <Plus strokeWidth={1.75} />
+              <Plus />
               Add custom model
             </Button>
           }
@@ -127,14 +127,13 @@ export function CustomModelsSection({ provider }: { provider: Provider }) {
 
       {models.length === 0 ? (
         <div className="px-6 py-10 text-center">
-          <IconTile icon={ICONS.model} size="lg" className="mx-auto mb-3" />
           <p className="text-[13px] font-medium text-fg">No custom models</p>
           <p className="mx-auto mt-1 max-w-md text-[13px] text-fg-muted">
             Route any upstream model ID as{" "}
             <span className="font-mono text-[12.5px] text-fg">{provider.alias || provider.id}/&lt;model&gt;</span>.
           </p>
           <Button className="mt-4" onClick={openAdd}>
-            <Plus strokeWidth={1.75} />
+            <Plus />
             Add custom model
           </Button>
         </div>
@@ -142,7 +141,7 @@ export function CustomModelsSection({ provider }: { provider: Provider }) {
         <>
           <div className="flex flex-col gap-2 border-b border-line px-4 py-2.5 sm:flex-row sm:items-center sm:justify-between">
             <div className="relative w-full sm:max-w-xs">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
               <Input
                 aria-label="Search custom models"
                 placeholder="Search custom models…"
@@ -155,9 +154,9 @@ export function CustomModelsSection({ provider }: { provider: Provider }) {
                   type="button"
                   onClick={() => setSearchQuery("")}
                   aria-label="Clear search"
-                  className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-faint transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <X className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
               )}
             </div>
@@ -269,7 +268,7 @@ function CustomModelActions({ model: m, provider, onEdit, onDelete, deleting }: 
   const fullModel = fullModelPath(provider, m);
   const { copied, copy } = useModelPathCopy(fullModel);
   const iconBtn =
-    "flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9";
+    "flex h-8 w-8 items-center justify-center rounded-lg transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring [@media(pointer:coarse)]:h-9 [@media(pointer:coarse)]:w-9";
   return (
     <div className="flex items-center justify-end gap-0.5 [@media(pointer:coarse)]:gap-2">
       <button
@@ -279,11 +278,11 @@ function CustomModelActions({ model: m, provider, onEdit, onDelete, deleting }: 
         title="Copy model path"
         aria-label={`Copy model path ${fullModel}`}
       >
-        {copied ? <Check className="h-4 w-4 text-ok" strokeWidth={1.75} aria-hidden="true" /> : <Copy className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />}
+        {copied ? <Check className="h-4 w-4 text-ok" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
       </button>
       <DropdownMenu>
         <DropdownMenuTrigger aria-label={`Actions for ${m.name || m.id}`} className={`${iconBtn} text-fg-muted`}>
-          <MoreHorizontal className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+          <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem onSelect={onEdit}>
@@ -321,10 +320,10 @@ function CustomModelRow(props: CustomModelItemProps) {
         <KindChip kind={m.kind} />
       </td>
       <td className="px-4 py-2.5 text-right tabular-nums text-fg-muted">
-        {m.context_window > 0 ? m.context_window.toLocaleString() : <span className="text-fg-faint">—</span>}
+        {m.context_window > 0 ? m.context_window.toLocaleString() : <span className="text-fg-faint">n/a</span>}
       </td>
       <td className="px-4 py-2.5 text-right tabular-nums text-fg-muted">
-        {price ?? <span className="text-fg-faint">—</span>}
+        {price ?? <span className="text-fg-faint">n/a</span>}
       </td>
       <td className="px-3 py-2.5">
         <CustomModelActions {...props} />

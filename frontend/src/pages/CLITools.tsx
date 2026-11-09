@@ -37,7 +37,7 @@ export function CLIToolsPage() {
         description="Point your coding tools at this gateway."
         action={
           <Button variant="secondary" onClick={() => tools.refetch()} disabled={tools.isFetching} aria-label="Scan this machine for CLI tools again">
-            <RefreshCw className={cn(rescanning && "animate-spin")} strokeWidth={1.75} aria-hidden="true" />
+            <RefreshCw className={cn(rescanning && "animate-spin")} aria-hidden="true" />
             {rescanning ? "Scanning…" : "Rescan"}
           </Button>
         }
@@ -60,7 +60,6 @@ export function CLIToolsPage() {
         <EmptyState
           variant="card"
           titleAs="h2"
-          icon={ICONS.cliTools}
           title="No CLI tools available"
           hint="This KeiRouter build doesn't ship any CLI tool integrations."
         />
@@ -103,7 +102,7 @@ function ToolCard({ tool: t }: { tool: CLITool }) {
     <Link
       to={`/cli-tools/${t.id}`}
       className={cn(
-        "group flex h-full items-start gap-3 rounded-2xl border bg-surface px-3.5 py-3 transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+        "group flex h-full items-start gap-3 rounded-2xl border bg-surface px-3.5 py-3 transition-colors hover:border-line-strong hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         conn.kind === "attention" ? "border-warn/35" : "border-line",
       )}
     >

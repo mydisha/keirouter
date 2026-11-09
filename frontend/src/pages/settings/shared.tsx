@@ -15,11 +15,11 @@ import {
 } from "react";
 import { AlertTriangle, ChevronRight, Info, Loader2, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button, IconTile, Toggle } from "../../components/ui";
+import { Button, Glyph, Toggle } from "../../components/ui";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../components/ui/tooltip";
 
 // Shared focus ring for local interactive elements.
-export const focusRing = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+export const focusRing = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 // ids derived from a control id: SettingRow renders its label, description
 // and error with these so the control can point at them.
@@ -64,7 +64,7 @@ export function SettingsCard({
       aria-labelledby={title ? headingId : undefined}
       aria-busy={busy || undefined}
       className={cn(
-        "overflow-hidden rounded-2xl border bg-surface shadow-[var(--shadow-card)]",
+        "overflow-hidden rounded-2xl border bg-surface shadow-paper",
         tone === "danger" ? "border-bad/40" : "border-line",
         className,
       )}
@@ -74,12 +74,12 @@ export function SettingsCard({
           <div className="flex min-w-0 max-w-3xl items-center gap-2.5">
             {Icon &&
               (tone === "danger" ? (
-                <IconTile icon={Icon} size="sm" tone="bad" />
+                <Glyph icon={Icon} tone="bad" />
               ) : (
-                <Icon className="h-4 w-4 shrink-0 text-tone" strokeWidth={1.75} aria-hidden="true" />
+                <Icon className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
               ))}
             <div className="min-w-0">
-              <h2 id={headingId} className={cn("text-[13px] font-semibold", tone === "danger" ? "text-bad" : "text-fg")}>
+              <h2 id={headingId} className={cn("text-[13px] font-medium", tone === "danger" ? "text-bad" : "text-fg")}>
                 {title}
               </h2>
               {description && <p className="mt-0.5 text-[12px] leading-5 text-fg-muted">{description}</p>}
@@ -240,7 +240,7 @@ export function InfoTip({ label, children }: { label: string; children: ReactNod
               focusRing,
             )}
           >
-            <Info className="h-3.5 w-3.5" strokeWidth={1.75} aria-hidden="true" />
+            <Info className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         </TooltipTrigger>
         <TooltipContent side="top" className="max-w-xs">
@@ -271,7 +271,7 @@ export function Disclosure({
           focusRing,
         )}
       >
-        <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" strokeWidth={1.75} aria-hidden="true" />
+        <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" aria-hidden="true" />
         {summary}
       </summary>
       <div className="mt-2">{children}</div>
@@ -408,15 +408,14 @@ export function Note({
       className={cn(
         "flex items-start gap-2.5 rounded-lg border px-3 py-2.5 text-[12px] leading-5",
         tone === "neutral" && "border-line bg-subtle text-fg-muted",
-        tone === "warn" && "border-warn/30 bg-warn/5 text-fg",
-        tone === "bad" && "border-bad/30 bg-bad/5 text-fg",
+        tone === "warn" && "border-warn/30 bg-warn-soft text-fg",
+        tone === "bad" && "border-bad/30 bg-bad-soft text-fg",
         className,
       )}
     >
       <Icon
         className={cn("mt-0.5 h-4 w-4 shrink-0", tone === "neutral" ? "text-fg-faint" : tone === "warn" ? "text-warn" : "text-bad")}
-        strokeWidth={1.75}
-        aria-hidden="true"
+                aria-hidden="true"
       />
       <div className="min-w-0">{children}</div>
     </div>
@@ -491,7 +490,7 @@ export function UnitInput({
       <input
         type="number"
         {...props}
-        className="h-9 w-full rounded-lg border border-input bg-surface pl-3 pr-11 text-right text-[13px] tabular-nums text-fg placeholder:text-fg-faint transition-colors hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 aria-[invalid=true]:border-bad disabled:opacity-60"
+        className="h-9 w-full rounded-lg border border-input bg-surface pl-3 pr-11 text-right text-[13px] tabular-nums text-fg placeholder:text-fg-faint transition-colors hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-[invalid=true]:border-bad disabled:opacity-60"
       />
       <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[12px] text-fg-muted" aria-hidden="true">
         {unit}
@@ -574,4 +573,4 @@ export function NumberUnitInput({
 }
 
 export const inputClass =
-  "h-9 w-full rounded-lg border border-input bg-surface px-3 text-[13px] text-fg placeholder:text-fg-faint transition-colors hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500 aria-[invalid=true]:border-bad disabled:opacity-60";
+  "h-9 w-full rounded-lg border border-input bg-surface px-3 text-[13px] text-fg placeholder:text-fg-faint transition-colors hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-[invalid=true]:border-bad disabled:opacity-60";

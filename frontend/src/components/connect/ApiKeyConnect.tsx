@@ -476,7 +476,7 @@ export function BulkKeyImport({ provider, onClose }: { provider: Provider; onClo
             <button
               type="button"
               onClick={() => fileRef.current?.click()}
-              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12px] sm:h-7 sm:px-2 text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12px] sm:h-7 sm:px-2 text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Upload className="h-3.5 w-3.5" aria-hidden="true" />
               Load file

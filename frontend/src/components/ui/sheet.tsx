@@ -21,10 +21,10 @@ export function SheetContent({
 }: ComponentProps<typeof SheetPrimitive.Content> & { side?: "left" | "right" }) {
   return (
     <SheetPrimitive.Portal>
-      <SheetPrimitive.Overlay className="fixed inset-0 z-50 bg-black/45 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0" />
+      <SheetPrimitive.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
       <SheetPrimitive.Content
         className={cn(
-          "fixed inset-y-0 z-50 flex max-w-full flex-col bg-surface pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-[var(--shadow-float)] outline-none duration-200",
+          "fixed inset-y-0 z-50 flex max-w-full flex-col bg-surface pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-lift outline-none ease-out-soft data-[state=closed]:duration-150 data-[state=open]:duration-250",
           "data-[state=open]:animate-in data-[state=closed]:animate-out",
           side === "left"
             ? "left-0 border-r border-line data-[state=open]:slide-in-from-left data-[state=closed]:slide-out-to-left"

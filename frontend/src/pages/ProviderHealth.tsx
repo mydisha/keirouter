@@ -1,7 +1,7 @@
 import { useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, CircleAlert, CircleX, CornerDownRight, Lightbulb, Play, RefreshCw, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ChevronRight, CornerDownRight, Lightbulb, Play, RefreshCw, X } from "lucide-react";
 import {
   api,
   type HealthStatus,
@@ -58,20 +58,20 @@ const STATUS_FILTERS = [
 const STATUS_RANK: Record<string, number> = { unhealthy: 0, degraded: 1, healthy: 2, unknown: 3, disabled: 4 };
 
 function fmtMs(ms?: number) {
-  if (ms == null || ms <= 0) return "—";
+  if (ms == null || ms <= 0) return "n/a";
   if (ms < 1000) return `${Math.round(ms)} ms`;
   return `${(ms / 1000).toFixed(2)} s`;
 }
 
 function fmtPct(v?: number) {
-  if (v == null) return "—";
+  if (v == null) return "n/a";
   return `${v.toFixed(1)}%`;
 }
 
 function fmtTime(t?: string) {
-  if (!t) return "—";
+  if (!t) return "n/a";
   const d = new Date(t);
-  if (isNaN(d.getTime())) return "—";
+  if (isNaN(d.getTime())) return "n/a";
   const diff = Date.now() - d.getTime();
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
@@ -79,7 +79,7 @@ function fmtTime(t?: string) {
   return formatDateTime(d);
 }
 
-const FOCUS = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const FOCUS = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 // Arrow / Home / End move focus and selection inside a radiogroup or tablist.
 function rovingKeyDown(role: "radio" | "tab") {
@@ -213,7 +213,7 @@ function Overview() {
               aria-label="Refresh health"
               className={cn("inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line bg-surface text-fg-muted transition-colors hover:bg-hover hover:text-fg sm:h-8 sm:w-8", FOCUS)}
             >
-              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} strokeWidth={1.75} aria-hidden="true" />
+              <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} aria-hidden="true" />
             </button>
           </>
         }
@@ -270,7 +270,7 @@ function Overview() {
                       className={cn(
                         "h-8 rounded-lg border px-2.5 text-[12px] font-medium transition-colors sm:h-7",
                         FOCUS,
-                        active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
+                        active ? "border-accent-500/30 bg-brand-soft text-link" : "border-line bg-surface text-fg-muted hover:text-fg",
                       )}
                     >
                       {f.label}
@@ -297,11 +297,10 @@ function SummaryStrip({ summary, rows }: { summary: HealthSummary; rows: HealthP
   const total = summary.healthy + summary.degraded + summary.unhealthy + summary.unknown + summary.disabled;
   const requests = rows.reduce((n, r) => n + (r.requests ?? 0), 0);
   // Status cells are green when clear, tinted when something needs attention.
-  const statusTone = (n: number, bad: "warn" | "bad") => (!total ? "section" : n ? bad : "ok");
+  const statusTone = (n: number, bad: "warn" | "bad") => (!total ? undefined : n ? bad : "ok");
   return (
     <KpiGrid cols={4} label="Health summary">
       <Kpi
-        icon={CircleX}
         label="Unhealthy"
         value={String(summary.unhealthy)}
         tone={statusTone(summary.unhealthy, "bad")}
@@ -309,7 +308,6 @@ function SummaryStrip({ summary, rows }: { summary: HealthSummary; rows: HealthP
         hint={total ? `of ${total} providers` : "No telemetry yet"}
       />
       <Kpi
-        icon={CircleAlert}
         label="Degraded"
         value={String(summary.degraded)}
         tone={statusTone(summary.degraded, "warn")}
@@ -317,14 +315,13 @@ function SummaryStrip({ summary, rows }: { summary: HealthSummary; rows: HealthP
         hint={total ? `${summary.healthy} healthy` : undefined}
       />
       <Kpi
-        icon={ICONS.fallbacks}
         label="Fallbacks"
         value={summary.fallbacks.toLocaleString("en-US")}
-        tone={summary.fallbacks ? "warn" : "section"}
+        tone={summary.fallbacks ? "warn" : undefined}
         valueClassName={summary.fallbacks ? "text-warn" : ""}
         hint={requests ? `of ${requests.toLocaleString("en-US")} requests` : undefined}
       />
-      <Kpi icon={ICONS.latency} label="Avg p95 latency" value={fmtMs(summary.avg_p95_latency_ms)} />
+      <Kpi label="Avg p95 latency" value={fmtMs(summary.avg_p95_latency_ms)} />
     </KpiGrid>
   );
 }
@@ -367,7 +364,7 @@ function ProviderTable({
   const sorted = [...rows].sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9));
   const { page, pages, paged, setPage, total } = useClientPagination(sorted, 15);
   if (rows.length === 0) {
-    return <EmptyPanel icon={ICONS.health} title="No provider telemetry in this range" hint="Health appears once requests flow or a probe runs." />;
+    return <EmptyPanel title="No provider telemetry in this range" hint="Health appears once requests flow or a probe runs." />;
   }
   return (
     <TableCard
@@ -385,7 +382,7 @@ function ProviderTable({
                 <div className="flex items-start justify-between gap-3">
                   {/* The link's overlay makes the whole card a tap target. */}
                   <Link to={href} className={cn("flex min-w-0 items-center gap-2.5 rounded-md after:absolute after:inset-0 after:content-['']", FOCUS)}>
-                    <ProviderLogo icon={p?.icon} name={name} size={22} />
+                    <ProviderLogo icon={p?.icon} name={name} />
                     <span className="min-w-0">
                       <span className="block truncate text-[13px] font-medium text-fg">{name}</span>
                       <span className="block truncate font-mono text-[11.5px] text-fg-faint">
@@ -399,7 +396,7 @@ function ProviderTable({
                 </div>
                 {strip && <UptimeStrip name={name} strip={strip} className="mt-2.5" />}
                 <p className="mt-2 flex flex-wrap gap-x-1.5 text-[12px] tabular-nums text-fg-muted">
-                  <span>{r.requests != null ? r.requests.toLocaleString("en-US") : "—"} requests</span>
+                  <span>{r.requests != null ? r.requests.toLocaleString("en-US") : "n/a"} requests</span>
                   <span aria-hidden="true">·</span>
                   <span className={successClass(r.success_rate)}>{fmtPct(r.success_rate)} success</span>
                   <span aria-hidden="true">·</span>
@@ -447,7 +444,7 @@ function ProviderTable({
               <tr key={r.provider} className="cursor-pointer transition-colors hover:bg-hover" onClick={() => navigate(href)}>
                 <td className="px-4 py-2.5">
                   <Link to={href} onClick={(e) => e.stopPropagation()} className={cn("flex items-center gap-2.5 rounded-md", FOCUS)}>
-                    <ProviderLogo icon={p?.icon} name={name} size={22} />
+                    <ProviderLogo icon={p?.icon} name={name} />
                     <span className="min-w-0">
                       <span className="block truncate font-medium text-fg">{name}</span>
                       <span className="block truncate font-mono text-[11.5px] text-fg-faint">
@@ -463,11 +460,11 @@ function ProviderTable({
                   {strip ? (
                     <UptimeStrip name={name} strip={strip} className="w-40" />
                   ) : (
-                    <span className="text-[12px] text-fg-faint">—</span>
+                    <span className="text-[12px] text-fg-faint">n/a</span>
                   )}
                 </td>
                 <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums">
-                  <span className="block text-fg">{r.requests != null ? r.requests.toLocaleString("en-US") : "—"}</span>
+                  <span className="block text-fg">{r.requests != null ? r.requests.toLocaleString("en-US") : "n/a"}</span>
                   {r.fallback_count > 0 && (
                     <span className="block text-[12px] text-warn">
                       {r.fallback_count.toLocaleString("en-US")} fallback{r.fallback_count === 1 ? "" : "s"}
@@ -487,7 +484,7 @@ function ProviderTable({
                       )}
                     </>
                   ) : (
-                    <span className="text-fg-faint">—</span>
+                    <span className="text-fg-faint">n/a</span>
                   )}
                 </td>
               </tr>
@@ -504,7 +501,7 @@ const THR = "px-4 py-2 text-right font-medium";
 
 function TableSkeleton({ rows = 5 }: { rows?: number }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]" aria-hidden="true">
+    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper" aria-hidden="true">
       <div className="h-9 border-b border-line bg-subtle" />
       <div className="divide-y divide-line">
         {Array.from({ length: rows }, (_, i) => (
@@ -528,18 +525,18 @@ function LoadingTable() {
   );
 }
 
-function EmptyPanel({ icon, title, hint }: { icon: LucideIcon; title: string; hint?: string }) {
-  return <EmptyState variant="card" size="sm" icon={icon} title={title} hint={hint} />;
+function EmptyPanel({ title, hint }: { title: string; hint?: string }) {
+  return <EmptyState variant="card" size="sm" title={title} hint={hint} />;
 }
 
 function TableCard({ children, footer, label, mobile }: { children: ReactNode; footer?: ReactNode; label: string; mobile?: ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+    <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
       {/* `mobile` is a md:hidden list that stands in for the table on phones. */}
       {mobile}
       {/* Focusable so keyboard users can scroll a table wider than the screen (WCAG 2.1.1). */}
       <div
-        className={cn("overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent-500", mobile != null && "hidden md:block")}
+        className={cn("overflow-x-auto focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring", mobile != null && "hidden md:block")}
         tabIndex={0}
         role="region"
         aria-label={label}
@@ -577,7 +574,7 @@ function ModelTable({ query }: { query: UseQueryResult<{ models: HealthModelRow[
   if (query.isLoading) return <LoadingTable />;
   if (query.isError) return <ErrorCard message="Couldn't load model health. Try refreshing." />;
   const rows = (query.data as { models?: HealthModelRow[] } | undefined)?.models ?? [];
-  if (rows.length === 0) return <EmptyPanel icon={ICONS.model} title="No model health data yet" hint="Rows appear once a model gets traffic or a probe." />;
+  if (rows.length === 0) return <EmptyPanel title="No model health data yet" hint="Rows appear once a model gets traffic or a probe." />;
   return <ModelTableInner rows={rows} />;
 }
 
@@ -606,7 +603,7 @@ function ModelTableInner({ rows }: { rows: HealthModelRow[] }) {
               <td className="px-4 py-2.5 text-right tabular-nums text-fg">{fmtPct(r.success_rate)}</td>
               <td className="px-4 py-2.5 text-right tabular-nums text-fg">{fmtMs(r.latency_p95_ms)}</td>
               <td className={cn("px-4 py-2.5 text-right tabular-nums", r.fallback_count ? "text-warn" : "text-fg-muted")}>{r.fallback_count.toLocaleString("en-US")}</td>
-              <td className="px-4 py-2.5 text-fg-muted">{fmtIssue(r.main_issue) || "—"}</td>
+              <td className="px-4 py-2.5 text-fg-muted">{fmtIssue(r.main_issue) || "n/a"}</td>
             </tr>
           ))}
         </tbody>
@@ -620,7 +617,7 @@ function ChainTable({ query }: { query: UseQueryResult<{ chains: HealthChainRow[
   if (query.isLoading) return <LoadingTable />;
   if (query.isError) return <ErrorCard message="Couldn't load chain impact. Try refreshing." />;
   const rows = query.data?.chains ?? [];
-  if (rows.length === 0) return <EmptyPanel icon={ICONS.chains} title="No chains configured" hint="Chains show here once they serve traffic." />;
+  if (rows.length === 0) return <EmptyPanel title="No chains configured" hint="Chains show here once they serve traffic." />;
   const close = () => {
     const id = selected;
     setSelected(null);
@@ -675,8 +672,8 @@ function ChainTableInner({ rows, selected, onSelect }: { rows: HealthChainRow[];
                 <td className="px-4 py-2.5 text-right tabular-nums text-fg">{r.requests.toLocaleString("en-US")}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-fg">{fmtPct(r.fallback_rate)}</td>
                 <td className={cn("px-4 py-2.5 text-right tabular-nums", r.final_failure_count > 0 ? "font-medium text-bad" : "text-fg-muted")}>{r.final_failure_count.toLocaleString("en-US")}</td>
-                <td className="max-w-[280px] px-4 py-2.5">{r.affected_provider ? <TargetCell provider={r.affected_provider} model={r.affected_model ?? ""} /> : <span className="text-fg-faint">—</span>}</td>
-                <td className="px-4 py-2.5 text-fg-faint"><ChevronRight className={cn("h-4 w-4 transition-transform", open && "rotate-90")} strokeWidth={1.75} aria-hidden="true" /></td>
+                <td className="max-w-[280px] px-4 py-2.5">{r.affected_provider ? <TargetCell provider={r.affected_provider} model={r.affected_model ?? ""} /> : <span className="text-fg-faint">n/a</span>}</td>
+                <td className="px-4 py-2.5 text-fg-faint"><ChevronRight className={cn("h-4 w-4 transition-transform", open && "rotate-90")} aria-hidden="true" /></td>
               </tr>
             );
           })}
@@ -698,7 +695,7 @@ function ChainDetail({ id, onClose }: { id: string; onClose: () => void }) {
       aria-labelledby="chain-detail-title"
       aria-busy={q.isLoading}
       onKeyDown={(e) => e.key === "Escape" && onClose()}
-      className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]"
+      className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper"
     >
       <div className="border-b border-line px-4 py-3">
         <SectionTitle
@@ -721,7 +718,7 @@ function ChainDetail({ id, onClose }: { id: string; onClose: () => void }) {
           }
           action={
             <button type="button" onClick={onClose} aria-label="Close chain detail" className={cn("inline-flex h-9 w-9 items-center justify-center rounded-md text-fg-faint hover:bg-hover hover:text-fg sm:h-7 sm:w-7", FOCUS)}>
-              <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+              <X className="h-4 w-4" aria-hidden="true" />
             </button>
           }
         />
@@ -749,7 +746,7 @@ function ChainDetail({ id, onClose }: { id: string; onClose: () => void }) {
           {q.data.fallback_provider && (
             <li className="flex items-center gap-3 bg-subtle px-4 py-2.5">
               <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-dashed border-line-strong text-fg-faint" aria-hidden="true">
-                <CornerDownRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+                <CornerDownRight className="h-3.5 w-3.5" />
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-[12px] text-fg-muted">Final fallback</p>
@@ -777,7 +774,7 @@ function ProbeHistoryTable({ range }: { range: string }) {
   const rows = q.data?.items ?? [];
   const total = q.data?.pagination.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / 50));
-  if (rows.length === 0) return <EmptyPanel icon={Play} title="No probes in this range" hint="Run a probe from a provider's health page." />;
+  if (rows.length === 0) return <EmptyPanel title="No probes in this range" hint="Run a probe from a provider's health page." />;
   return (
     <TableCard label="Probe history table" footer={<TablePagination page={page} pages={pages} total={total} onPage={setPage} />}>
       <table className="w-full min-w-[820px] text-[13px]">
@@ -804,8 +801,8 @@ function ProbeHistoryTable({ range }: { range: string }) {
                 </span>
               </td>
               <td className="px-4 py-2.5 text-right tabular-nums text-fg">{fmtMs(r.latency_ms)}</td>
-              <td className="px-4 py-2.5 text-right font-mono text-[12.5px] tabular-nums text-fg-muted">{r.http_status ?? "—"}</td>
-              <td className="px-4 py-2.5 text-fg-muted">{fmtIssue(r.error_type) || "—"}</td>
+              <td className="px-4 py-2.5 text-right font-mono text-[12.5px] tabular-nums text-fg-muted">{r.http_status ?? "n/a"}</td>
+              <td className="px-4 py-2.5 text-fg-muted">{fmtIssue(r.error_type) || "n/a"}</td>
               <td className="px-4 py-2.5"><Badge tone="neutral">{r.triggered_by}</Badge></td>
             </tr>
           ))}
@@ -853,7 +850,7 @@ function ProviderDetail({ provider }: { provider: string }) {
   const name = meta?.display_name ?? d.provider;
   const m = d.metrics;
   // Success is a status value: tinted only once there is traffic to judge.
-  const successTone = !m.requests ? "section" : m.success_rate >= 99 ? "ok" : m.success_rate >= 95 ? "warn" : "bad";
+  const successTone = !m.requests ? undefined : m.success_rate >= 99 ? "ok" : m.success_rate >= 95 ? "warn" : "bad";
 
   return (
     <div>
@@ -861,7 +858,7 @@ function ProviderDetail({ provider }: { provider: string }) {
         <ol className="flex items-center gap-1.5 text-[13px] text-fg-muted">
           <li>
             <Link to={`/provider-health?range=${range}`} className={cn("inline-flex items-center gap-1.5 rounded-md hover:text-fg", FOCUS)}>
-              <ArrowLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
               Provider health
             </Link>
           </li>
@@ -872,10 +869,10 @@ function ProviderDetail({ provider }: { provider: string }) {
 
       <header className="mb-4 flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 items-center gap-3">
-          <ProviderLogo icon={meta?.icon} name={name} size={40} className="rounded-lg" />
+          <ProviderLogo icon={meta?.icon} name={name} size={40} />
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-[22px] font-semibold leading-tight tracking-[-0.02em] text-fg">{name}</h1>
+              <h1 className="text-[22px] font-medium leading-tight tracking-[-0.02em] text-fg">{name}</h1>
               <HealthStatusBadge status={d.status as HealthStatus} issue={d.main_issue} />
               <HealthScoreRing score={d.score} />
             </div>
@@ -901,21 +898,19 @@ function ProviderDetail({ provider }: { provider: string }) {
         )}
 
         <KpiGrid cols={4} label="Metrics">
-          <Kpi icon={ICONS.requests} label="Requests" value={m.requests.toLocaleString("en-US")} />
+          <Kpi label="Requests" value={m.requests.toLocaleString("en-US")} />
           <Kpi
-            icon={ICONS.successRate}
             label="Success"
             value={fmtPct(m.success_rate)}
             tone={successTone}
             valueClassName={m.requests && m.success_rate < 95 ? "text-warn" : ""}
             hint={<span className={cn("tabular-nums", m.error_rate >= 5 && "text-bad")}>{fmtPct(m.error_rate)} errors</span>}
           />
-          <Kpi icon={ICONS.latency} label="p95 latency" value={fmtMs(m.latency_p95_ms)} hint={<span className="tabular-nums">TTFT {fmtMs(m.ttft_p95_ms)}</span>} />
+          <Kpi label="p95 latency" value={fmtMs(m.latency_p95_ms)} hint={<span className="tabular-nums">TTFT {fmtMs(m.ttft_p95_ms)}</span>} />
           <Kpi
-            icon={ICONS.fallbacks}
             label="Fallbacks"
             value={m.fallback_count.toLocaleString("en-US")}
-            tone={m.fallback_count ? "warn" : "section"}
+            tone={m.fallback_count ? "warn" : undefined}
             valueClassName={m.fallback_count ? "text-warn" : ""}
           />
         </KpiGrid>
@@ -924,7 +919,7 @@ function ProviderDetail({ provider }: { provider: string }) {
 
         <div className="grid gap-4 lg:grid-cols-2">
           <ErrorTypeBreakdown breakdown={d.error_breakdown} />
-          <section aria-labelledby="probe-title" className="self-start rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+          <section aria-labelledby="probe-title" className="self-start rounded-2xl border border-line bg-surface shadow-paper">
             <div className="border-b border-line px-4 py-3">
               <SectionTitle id="probe-title" icon={Play} title="Run a probe" subtitle="Sends one test request now" />
             </div>
@@ -948,7 +943,7 @@ function ProviderDetail({ provider }: { provider: string }) {
 function BackLink() {
   return (
     <Link to="/provider-health" className={cn("mb-3 inline-flex items-center gap-1.5 rounded-md text-[13px] text-fg-muted hover:text-fg", FOCUS)}>
-      <ArrowLeft className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" /> Provider health
+      <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Provider health
     </Link>
   );
 }
@@ -956,8 +951,8 @@ function BackLink() {
 function RecommendationPanel({ issue, recommendation }: { issue: string; recommendation: string }) {
   if (!issue && !recommendation) return null;
   return (
-    <section aria-label="Main issue" className="flex items-start gap-3 rounded-2xl border border-warn/30 bg-warn/5 px-4 py-3">
-      <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+    <section aria-label="Main issue" className="flex items-start gap-3 rounded-2xl border border-warn/30 bg-warn-soft px-4 py-3">
+      <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
       <div className="text-[13px]">
         {issue && <p className="font-medium text-fg">{issue}</p>}
         {recommendation && <p className="mt-0.5 text-fg-muted">{recommendation}</p>}
@@ -995,7 +990,7 @@ function ManualProbeInline({ provider, models }: { provider: string; models: str
         id="probe-model"
         value={model}
         onChange={(e) => setModel(e.target.value)}
-        className={cn("h-9 w-full min-w-0 rounded-lg border border-input bg-surface px-2.5 font-mono text-[12.5px] text-fg focus:border-accent-500 sm:w-auto sm:flex-1", FOCUS)}
+        className={cn("h-9 w-full min-w-0 rounded-lg border border-input bg-surface px-2.5 font-mono text-[12.5px] text-fg focus:border-ring sm:w-auto sm:flex-1", FOCUS)}
       >
         {models.map((m) => <option key={m} value={m}>{m}</option>)}
       </select>

@@ -91,7 +91,7 @@ function FilterGroup<T extends string>({ label, value, onChange, options }: {
               tabIndex={active ? 0 : -1}
               onClick={() => onChange(option.value)}
               className={cn(
-                "inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-[12px] font-medium sm:h-7 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
+                "inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-[12px] font-medium sm:h-7 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 active ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
               )}
             >
@@ -114,7 +114,7 @@ function ChainListSkeleton() {
   return (
     <div className="space-y-3" aria-busy="true" aria-label="Loading chains">
       <Skeleton className="h-9 w-full max-w-2xl" />
-      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+      <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
         <div className="h-8 border-b border-line bg-subtle" />
         <div className="divide-y divide-line">
           {[0, 1, 2, 3].map((index) => (
@@ -147,7 +147,7 @@ function ChainActionsMenu({ chain, onOpen, onCopy, onDelete, className }: Pick<C
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={`Actions for ${chain.name}`}
-        className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500", className)}
+        className={cn("flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring", className)}
       >
         <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
       </DropdownMenuTrigger>
@@ -197,7 +197,7 @@ function ChainCard({ chain, providers, health, onOpen, onCopy, onDelete }: Chain
         <div className="min-w-0">
           <Link
             to={`/chains/${chain.id}/edit`}
-            className="block truncate rounded-sm text-[13px] leading-6 font-medium text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            className="block truncate rounded-sm text-[13px] leading-6 font-medium text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             title={chain.name}
           >
             {chain.name}
@@ -226,7 +226,7 @@ function ChainRow({ chain, providers, health, onOpen, onCopy, onDelete }: ChainR
         <Link
           to={`/chains/${chain.id}/edit`}
           onClick={stop}
-          className="block truncate rounded-sm leading-6 font-medium text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+          className="block truncate rounded-sm leading-6 font-medium text-fg hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title={chain.name}
         >
           {chain.name}
@@ -234,17 +234,17 @@ function ChainRow({ chain, providers, health, onOpen, onCopy, onDelete }: ChainR
         <button
           type="button"
           onClick={(event) => { stop(event); onCopy(); }}
-          className="group mt-0.5 inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-md font-mono text-[12px] text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+          className="group mt-0.5 inline-flex min-h-6 max-w-full items-center gap-1.5 rounded-md font-mono text-[12px] text-fg-muted transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title="Copy model target"
           aria-label={`Copy model target chain:${chain.name}`}
         >
           <span className="truncate">chain:{chain.name}</span>
-          <Copy className="h-3.5 w-3.5 shrink-0 text-fg-faint transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-visible:opacity-100" strokeWidth={1.75} aria-hidden="true" />
+          <Copy className="h-3.5 w-3.5 shrink-0 text-fg-faint transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:group-focus-visible:opacity-100" aria-hidden="true" />
         </button>
       </td>
       <td className="px-4 py-2.5">
         <Badge tone="secondary">
-          <StrategyIcon className="h-3 w-3 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+          <StrategyIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
           {strategyLabel(chain.strategy)}
         </Badge>
         <span className="mt-1 block text-[12px] tabular-nums text-fg-muted">{chain.steps.length} step{chain.steps.length === 1 ? "" : "s"}</span>
@@ -254,8 +254,8 @@ function ChainRow({ chain, providers, health, onOpen, onCopy, onDelete }: ChainR
         <HealthBadge health={health} />
         {hasIssue && health?.main_issue && <p className="mt-0.5 truncate text-[12px] text-fg-muted" title={health.main_issue}>{health.main_issue}</p>}
       </td>
-      <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-fg">{health ? health.requests.toLocaleString() : <><span className="text-fg-muted" aria-hidden="true">—</span><span className="sr-only">No data</span></>}</td>
-      <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-fg">{health ? `${health.fallback_rate.toFixed(1)}%` : <><span className="text-fg-muted" aria-hidden="true">—</span><span className="sr-only">No data</span></>}</td>
+      <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-fg">{health ? health.requests.toLocaleString() : <><span className="text-fg-muted" aria-hidden="true">n/a</span><span className="sr-only">No data</span></>}</td>
+      <td className="whitespace-nowrap px-4 py-2.5 text-right tabular-nums text-fg">{health ? `${health.fallback_rate.toFixed(1)}%` : <><span className="text-fg-muted" aria-hidden="true">n/a</span><span className="sr-only">No data</span></>}</td>
       <td className="px-2 py-2.5" onClick={stop}>
         <ChainActionsMenu chain={chain} onOpen={onOpen} onCopy={onCopy} onDelete={onDelete} />
       </td>
@@ -346,7 +346,6 @@ export function ChainsPage() {
       ) : allChains.length === 0 ? (
         <EmptyState
           variant="card"
-          icon={ICONS.chains}
           title="No chains yet"
           hint="A chain tries models in order, so one failing provider doesn't fail the request."
           action={(
@@ -360,20 +359,20 @@ export function ChainsPage() {
         <div className="space-y-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             <div className="relative w-full sm:w-64">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
               <input
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Search chains or models"
                 aria-label="Search chains, models or providers"
-                className="h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="h-9 w-full rounded-lg border border-input bg-surface pl-9 pr-9 text-[13px] text-fg placeholder:text-fg-faint hover:border-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               {query && (
                 <button
                   type="button"
                   onClick={() => setQuery("")}
-                  className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="absolute right-1.5 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label="Clear search"
                 >
                   <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -395,13 +394,13 @@ export function ChainsPage() {
           </div>
 
           {healthQuery.isError && (
-            <div role="status" className="flex items-start gap-2.5 rounded-lg border border-warn/30 bg-warn/5 px-3 py-2 text-[12.5px] leading-5 text-fg">
-              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+            <div role="status" className="flex items-start gap-2.5 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2 text-[12.5px] leading-5 text-fg">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
               Health data is unavailable right now. Chains still route and can be edited.
             </div>
           )}
 
-          <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+          <div className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
             <div className="border-b border-line px-4 py-3">
               <SectionTitle
                 icon={ICONS.chains}
@@ -414,7 +413,7 @@ export function ChainsPage() {
                   </>
                 )}
                 action={filtersActive ? (
-                  <button type="button" onClick={clearFilters} className="min-h-6 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+                  <button type="button" onClick={clearFilters} className="min-h-6 rounded-md text-[12.5px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                     Clear filters
                   </button>
                 ) : undefined}
@@ -422,7 +421,7 @@ export function ChainsPage() {
               <span className="sr-only" role="status">{filtersActive ? `${chains.length} of ${allChains.length} chains shown` : ""}</span>
             </div>
             {chains.length === 0 ? (
-              <EmptyState icon={Search} title="No chains match" hint="Clear the search or a filter to see every chain." />
+              <EmptyState title="No chains match" hint="Clear the search or a filter to see every chain." />
             ) : (
               <>
                 <ul className="divide-y divide-line md:hidden" aria-label="Chains">

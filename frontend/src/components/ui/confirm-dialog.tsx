@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useRef, useState, type ReactNod
 import { AlertDialog } from "radix-ui";
 import { AlertTriangle, CircleHelp, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { IconTile } from "./index";
+import { Glyph } from "./index";
 
 // useConfirm replaces window.confirm() with an accessible, themed dialog that
 // still reads like the native call at the call site:
@@ -54,12 +54,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
       {children}
       <AlertDialog.Root open={options !== null} onOpenChange={(open) => !open && settle(false)}>
         <AlertDialog.Portal>
-          <AlertDialog.Overlay className="fixed inset-0 z-50 bg-black/45 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
-          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto overscroll-contain rounded-2xl border border-line bg-surface p-5 shadow-[var(--shadow-float)] data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-[0.98]">
+          <AlertDialog.Overlay className="fixed inset-0 z-50 bg-overlay data-[state=open]:animate-overlay-in data-[state=closed]:animate-overlay-out" />
+          <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto overscroll-contain rounded-2xl border border-line bg-surface p-5 shadow-lift data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out">
             <div className="flex items-start gap-3">
-              {icon && <IconTile icon={icon} size="md" tone={danger ? "bad" : "blue"} />}
+              {icon && <Glyph icon={icon} tone={danger ? "bad" : "brand"} />}
               <div className={cn("min-w-0 flex-1", icon && "pt-1")}>
-                <AlertDialog.Title className="text-[15px] font-semibold tracking-[-0.01em] text-fg">{options?.title}</AlertDialog.Title>
+                <AlertDialog.Title className="text-[15px] font-medium tracking-[-0.01em] text-fg">{options?.title}</AlertDialog.Title>
                 {options?.description ? (
                   <AlertDialog.Description className="mt-1.5 text-[13px] leading-5 text-fg-muted">{options.description}</AlertDialog.Description>
                 ) : (
@@ -69,7 +69,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             </div>
             {/* Phones: full-width stacked buttons, confirm on top. */}
             <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-end">
-              <AlertDialog.Cancel className="inline-flex h-9 w-full items-center justify-center rounded-lg sm:w-auto [@media(pointer:coarse)]:h-10 border border-line-strong bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+              <AlertDialog.Cancel className="inline-flex h-9 w-full items-center justify-center rounded-lg sm:w-auto [@media(pointer:coarse)]:h-10 border border-line-strong bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {options?.cancelLabel ?? "Cancel"}
               </AlertDialog.Cancel>
               <AlertDialog.Action
@@ -78,7 +78,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                   "inline-flex h-9 w-full items-center justify-center rounded-lg px-3 sm:w-auto [@media(pointer:coarse)]:h-10 text-[13px] font-medium transition-[background-color,opacity] focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-surface",
                   danger
                     ? "bg-bad text-white hover:opacity-85 focus-visible:ring-bad dark:text-canvas"
-                    : "bg-action text-action-fg shadow-[var(--shadow-card)] hover:bg-action-hover focus-visible:ring-accent-500",
+                    : "bg-action text-action-fg shadow-paper hover:bg-action-hover focus-visible:ring-ring",
                 )}
               >
                 {options?.confirmLabel ?? (danger ? "Delete" : "Confirm")}

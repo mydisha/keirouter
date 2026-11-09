@@ -59,7 +59,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => mq.removeEventListener("change", handler);
   }, [theme]);
 
-  const setTheme = (t: Theme) => setThemeState(t);
+  // Applied synchronously so a view transition can snapshot the new theme.
+  const setTheme = (t: Theme) => {
+    apply(resolve(t));
+    setThemeState(t);
+  };
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, resolved }}>

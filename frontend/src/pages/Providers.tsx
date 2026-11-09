@@ -1,12 +1,12 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, FileSearch, Gift, LogIn, Plug, Plus, Search, SearchX, X, type LucideIcon } from "lucide-react";
+import { AlertTriangle, Check, FileSearch, Gift, LogIn, Plug, Plus, Search, X, type LucideIcon } from "lucide-react";
 import { api, type Account, type HealthTimelineProvider, type Provider } from "../lib/api";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "../components/Layout";
 import { ProviderLogo } from "../components/ProviderLogo";
-import { Badge, Button, ErrorBanner, IconTile, SectionTitle, Select, Skeleton, EmptyState } from "../components/ui";
+import { Badge, Button, ErrorBanner, SectionTitle, Select, Skeleton, EmptyState } from "../components/ui";
 import { ICONS } from "../lib/icons";
 import { useToast } from "../components/Toast";
 import { ConnectDialog, FormError, PrimaryAction, SecondaryAction, SelectField, TextField } from "../components/connect/ConnectKit";
@@ -237,7 +237,6 @@ export function ProvidersPage() {
         <EmptyState
           variant="card"
           titleAs="h2"
-          icon={ICONS.providers}
           title="No providers connected"
           hint="Connect one to start routing requests."
           action={
@@ -248,13 +247,13 @@ export function ProvidersPage() {
           }
         />
       ) : (
-        <section aria-labelledby="connected-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]">
+        <section aria-labelledby="connected-heading" className="overflow-hidden rounded-2xl border border-line bg-surface shadow-paper">
           <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
             <div className="mr-auto">
               <SectionTitle id="connected-heading" icon={ICONS.providers} title="Connected" />
             </div>
             <div className="relative w-full sm:w-64">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
               <input
                 ref={searchRef}
                 type="search"
@@ -263,13 +262,13 @@ export function ProvidersPage() {
                 placeholder="Search"
                 aria-label="Search connected providers"
                 aria-keyshortcuts="/"
-                className="h-9 w-full rounded-lg border border-input bg-surface pl-8 pr-9 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="h-9 w-full rounded-lg border border-input bg-surface pl-8 pr-9 text-[13px] text-fg placeholder:text-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
               {searchQuery ? (
                 <button
                   type="button"
                   onClick={() => setSearchQuery("")}
-                  className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   aria-label="Clear search"
                 >
                   <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -293,7 +292,6 @@ export function ProvidersPage() {
           </p>
           {connected.length === 0 ? (
             <div className="px-6 py-10 text-center">
-              <IconTile icon={SearchX} size="md" className="mx-auto mb-2.5" />
               <p className="text-[13px] font-medium text-fg">No connected provider matches</p>
               <button
                 type="button"
@@ -301,7 +299,7 @@ export function ProvidersPage() {
                   setSearchQuery("");
                   setFilter("all");
                 }}
-                className="mt-1 rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                className="mt-1 rounded-md text-[13px] font-medium text-link hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Clear filters
               </button>
@@ -348,7 +346,7 @@ function providerStatus(accs: Account[], h?: HealthTimelineProvider): { tone: To
 function NoData() {
   return (
     <>
-      <span aria-hidden="true">—</span>
+      <span aria-hidden="true">n/a</span>
       <span className="sr-only">No data</span>
     </>
   );
@@ -383,9 +381,9 @@ function ConnectedTable({
               <div className="flex items-center justify-between gap-3">
                 <Link
                   to={`/providers/${p.id}`}
-                  className="flex min-w-0 items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                  className="flex min-w-0 items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 >
-                  <ProviderLogo icon={p.icon} name={p.display_name} size={24} />
+                  <ProviderLogo icon={p.icon} name={p.display_name} />
                   <span className="min-w-0">
                     <span className="block truncate text-[13px] font-medium text-fg">{p.display_name}</span>
                     <span className="block truncate font-mono text-[11.5px] text-fg-faint">{p.id}</span>
@@ -428,10 +426,10 @@ function ConnectedTable({
                   <td className="px-4 py-2">
                     <Link
                       to={`/providers/${p.id}`}
-                      className="flex items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+                      className="flex items-center gap-2.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       onClick={(e) => e.stopPropagation()}
                     >
-                      <ProviderLogo icon={p.icon} name={p.display_name} size={24} />
+                      <ProviderLogo icon={p.icon} name={p.display_name} />
                       <span className="min-w-0">
                         <span className="block truncate font-medium text-fg">{p.display_name}</span>
                         <span className="block truncate font-mono text-[11.5px] text-fg-faint">{p.id}</span>
@@ -514,14 +512,14 @@ function ProviderPicker({
       toolbar={
         <div className="space-y-2.5">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-fg-faint" aria-hidden="true" />
             <input
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder={`Search ${providers.length} providers`}
               aria-label="Search providers"
-              className="h-9 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint focus:border-accent-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+              className="h-9 w-full rounded-lg border border-input bg-surface pl-8 pr-3 text-[13px] text-fg placeholder:text-fg-faint focus:border-ring focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>
           <div
@@ -541,8 +539,8 @@ function ProviderPicker({
                   tabIndex={active ? 0 : -1}
                   onClick={() => setFilter(k.id)}
                   className={cn(
-                    "h-8 shrink-0 whitespace-nowrap rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors sm:h-7 focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-                    active ? "border-accent-500/30 bg-accent-500/10 text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
+                    "h-8 shrink-0 whitespace-nowrap rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors sm:h-7 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    active ? "border-accent-500/30 bg-brand-soft text-link" : "border-line bg-surface text-fg-muted hover:border-line-strong hover:text-fg",
                   )}
                 >
                   {k.label}
@@ -567,7 +565,6 @@ function ProviderPicker({
       </p>
       {grouped.length === 0 ? (
         <div className="py-8 text-center">
-          <IconTile icon={SearchX} size="md" className="mx-auto mb-2.5" />
           <p className="text-[13px] text-fg-muted">No providers match{q ? ` “${query.trim()}”` : " this capability"}.</p>
         </div>
       ) : (
@@ -619,9 +616,9 @@ function CatalogItem({ provider: p, accountCount }: { provider: Provider; accoun
   return (
     <Link
       to={`/providers/${p.id}`}
-      className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+      className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-hover focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
-      <ProviderLogo icon={p.icon} name={p.display_name} size={24} />
+      <ProviderLogo icon={p.icon} name={p.display_name} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium text-fg">{p.display_name}</span>
         <span className={cn("block truncate text-[11.5px] text-fg-faint", !connected && "font-mono")}>{subtitle}</span>

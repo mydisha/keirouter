@@ -24,9 +24,8 @@ export function DropdownMenuContent({
         collisionPadding={collisionPadding}
         // Never wider or taller than the screen: a long menu scrolls.
         className={cn(
-          "z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-44 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-2xl border border-line bg-surface p-1 text-[13px] text-fg shadow-[var(--shadow-pop)]",
-          "data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95",
-          "data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          "z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] min-w-44 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain rounded-xl border border-line bg-surface p-1 text-[13px] text-fg shadow-lift",
+          "data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out",
           className,
         )}
         {...props}
@@ -39,7 +38,7 @@ export function DropdownMenuContent({
 const menuItem = cn(
   "flex h-8 cursor-pointer select-none items-center gap-2 rounded-lg px-2 outline-none transition-colors [@media(pointer:coarse)]:h-10",
   "data-[highlighted]:bg-hover data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
-  "[&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-fg-faint",
+  "[&_svg:not([class*='size-'])]:size-4 [&_svg]:shrink-0 [&_svg]:text-fg-faint",
 );
 
 export function DropdownMenuItem({
@@ -51,7 +50,7 @@ export function DropdownMenuItem({
     <DropdownMenuPrimitive.Item
       className={cn(
         menuItem,
-        tone === "danger" && "text-bad [&_svg]:text-bad data-[highlighted]:bg-bad/10",
+        tone === "danger" && "text-bad [&_svg]:text-bad data-[highlighted]:bg-bad-soft",
         className,
       )}
       {...props}

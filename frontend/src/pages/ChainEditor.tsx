@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 import { api, type Chain } from "../lib/api";
 import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
-import { Button, ErrorBanner, IconTile, Input, SectionTitle, Skeleton, Toggle } from "../components/ui";
+import { Button, ErrorBanner, Glyph, Input, SectionTitle, Skeleton, Toggle } from "../components/ui";
 import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { ChainModelPicker } from "../components/chains/ChainModelPicker";
@@ -20,11 +20,11 @@ const strategyOptions: { value: ChainStrategy; label: string }[] = [
   { value: "cost", label: "Cost" },
 ];
 
-const focusRing = "focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500";
+const focusRing = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
 function Panel({ title, titleId, icon, subtitle, action, children, className }: { title: ReactNode; titleId?: string; icon?: LucideIcon; subtitle?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section aria-labelledby={titleId} className={cn("rounded-2xl border border-line bg-surface shadow-[var(--shadow-card)]", className)}>
+    <section aria-labelledby={titleId} className={cn("rounded-2xl border border-line bg-surface shadow-paper", className)}>
       <div className="border-b border-line px-4 py-3">
         <SectionTitle icon={icon} title={title} id={titleId} subtitle={subtitle} action={action} />
       </div>
@@ -36,7 +36,7 @@ function Panel({ title, titleId, icon, subtitle, action, children, className }: 
 function FieldMessage({ id, tone = "bad", children }: { id?: string; tone?: "bad" | "muted"; children: ReactNode }) {
   return (
     <p id={id} className={cn("flex items-start gap-1.5 text-[12px] leading-5", tone === "bad" ? "text-bad" : "text-fg-muted")}>
-      {tone === "bad" && <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" strokeWidth={1.75} aria-hidden="true" />}
+      {tone === "bad" && <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />}
       {children}
     </p>
   );
@@ -88,7 +88,7 @@ function StrategyRadios({ value, onChange, labelledBy, describedBy }: {
               active ? "bg-surface text-fg ring-1 ring-line-strong" : "text-fg-muted hover:text-fg",
             )}
           >
-            <Icon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-tone" : "text-fg-faint")} strokeWidth={1.75} aria-hidden="true" />
+            <Icon className={cn("h-3.5 w-3.5 shrink-0", active ? "text-brand-ink" : "text-fg-faint")} aria-hidden="true" />
             {option.label}
           </button>
         );
@@ -384,7 +384,7 @@ export function ChainEditorPage() {
                         aria-label={`Move ${position}${model} up`}
                         title="Move up"
                       >
-                        <ArrowUp className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                        <ArrowUp className="h-4 w-4" aria-hidden="true" />
                       </button>
                       <button
                         type="button"
@@ -395,17 +395,17 @@ export function ChainEditorPage() {
                         aria-label={`Move ${position}${model} down`}
                         title="Move down"
                       >
-                        <ArrowDown className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                        <ArrowDown className="h-4 w-4" aria-hidden="true" />
                       </button>
                       <button
                         type="button"
                         disabled={steps.length === 1}
                         onClick={() => removeStep(step.id)}
-                        className={cn(iconButton, "hover:bg-bad/10 hover:text-bad")}
+                        className={cn(iconButton, "hover:bg-bad-soft hover:text-bad")}
                         aria-label={`Remove ${position}${model}`}
                         title="Remove step"
                       >
-                        <X className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                        <X className="h-4 w-4" aria-hidden="true" />
                       </button>
                     </div>
                   </li>
@@ -418,16 +418,16 @@ export function ChainEditorPage() {
               <button
                 type="button"
                 onClick={addStep}
-                className={cn("inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:border-tone-ring hover:bg-tone-soft hover:text-tone", focusRing)}
+                className={cn("inline-flex min-h-9 w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-line-strong bg-surface px-3 text-[13px] font-medium text-fg transition-colors hover:border-input hover:bg-hover", focusRing)}
               >
-                <Plus className="h-4 w-4 shrink-0" strokeWidth={1.75} aria-hidden="true" />
+                <Plus className="h-4 w-4 shrink-0" aria-hidden="true" />
                 Add model
               </button>
             </div>
 
             <div className="border-t border-line">
               <div className="flex items-center gap-3 px-4 py-3">
-                <IconTile icon={Shield} size="sm" tone="warn" />
+                <Glyph icon={Shield} tone="warn" />
                 <span className="min-w-0 flex-1">
                   <label htmlFor="chain-fallback-toggle" id="chain-fallback-label" className="block cursor-pointer text-[13px] font-medium text-fg">Final fallback</label>
                   <span id="chain-fallback-hint" className="mt-0.5 block text-[12px] leading-5 text-fg-muted">Tried last, after every step fails.</span>
@@ -435,7 +435,7 @@ export function ChainEditorPage() {
                 <Toggle aria-labelledby="chain-fallback-label" aria-describedby="chain-fallback-hint" id="chain-fallback-toggle" checked={fallbackEnabled} onChange={(next) => { setFallbackEnabled(next); setDirty(true); }} />
               </div>
               {fallbackEnabled && (
-                <div className="mx-4 mb-3 space-y-2 rounded-lg border border-dashed border-warn/50 bg-warn/5 p-2.5">
+                <div className="mx-4 mb-3 space-y-2 rounded-lg border border-dashed border-warn/50 bg-warn-soft p-2.5">
                   <ChainModelPicker
                     value={fallback}
                     providers={providers}
@@ -471,20 +471,20 @@ export function ChainEditorPage() {
                 aria-label={`Copy model target ${target}`}
                 title="Copy model target"
               >
-                <Copy className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+                <Copy className="h-4 w-4" aria-hidden="true" />
               </button>
             </div>
           </Panel>
         </aside>
       </div>
 
-      <div ref={saveBarRef} className="sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-subtle px-4 py-3 shadow-[var(--shadow-float)] sm:px-5">
+      <div ref={saveBarRef} className="sticky bottom-4 z-20 mt-5 flex flex-wrap items-center gap-2 rounded-2xl border border-line bg-subtle px-4 py-3 shadow-lift sm:px-5">
         <span className="flex w-full min-w-0 items-center gap-1.5 text-[12.5px] sm:mr-auto sm:w-auto sm:flex-1" role="status">
           {saveMutation.isPending ? (
             <span className="text-fg-muted">Saving…</span>
           ) : !valid && dirty ? (
             <>
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warn" strokeWidth={1.75} aria-hidden="true" />
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warn" aria-hidden="true" />
               <span className="text-fg-muted sm:truncate">{validationMessage}</span>
             </>
           ) : dirty ? (

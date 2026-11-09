@@ -75,12 +75,12 @@ function PassphraseInput({
         onClick={onToggleShow}
         aria-label={show ? "Hide passphrase" : "Show passphrase"}
         aria-pressed={show}
-        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-lg text-fg-faint transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+        className="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r-lg text-fg-faint transition-colors hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         {show ? (
-          <EyeOff className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+          <EyeOff className="h-4 w-4" aria-hidden="true" />
         ) : (
-          <Eye className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
+          <Eye className="h-4 w-4" aria-hidden="true" />
         )}
       </button>
     </div>
@@ -108,7 +108,7 @@ function StatStrip({ items }: { items: { label: string; value: number; muted?: b
         {items.map((s) => (
           <div key={s.label} className="bg-surface px-3 py-2">
             <p className="text-[12px] text-fg-muted">{s.label}</p>
-            <p className={cn("mt-0.5 text-[15px] font-semibold tabular-nums", s.muted ? "text-fg-muted" : "text-fg")}>
+            <p className={cn("mt-0.5 text-[15px] font-medium tabular-nums", s.muted ? "text-fg-muted" : "text-fg")}>
               {s.value.toLocaleString()}
             </p>
           </div>
@@ -165,11 +165,11 @@ function RadioCard({
   return (
     <label
       className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-lg border px-3.5 py-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent-500",
+        "flex cursor-pointer items-start gap-3 rounded-lg border px-3.5 py-3 transition-colors has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring",
         checked
           ? danger
-            ? "border-bad/50 bg-bad/5"
-            : "border-accent-500/30 bg-accent-500/10"
+            ? "border-bad/50 bg-bad-soft"
+            : "border-accent-500/30 bg-brand-soft"
           : "border-line hover:border-line-strong hover:bg-hover",
       )}
     >
@@ -177,7 +177,7 @@ function RadioCard({
       <span
         className={cn(
           "mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
-          checked ? (danger ? "border-bad" : "border-accent-500") : "border-input",
+          checked ? (danger ? "border-bad" : "border-ring") : "border-input",
         )}
         aria-hidden="true"
       >
@@ -383,7 +383,7 @@ function ForeignImportSettings() {
         info="Provider connections (API keys and OAuth tokens re-sealed), custom provider nodes, API keys (re-hashed, so the same key string keeps working), combos as chains, proxy pools and model aliases."
       >
         <Button variant="ghost" onClick={() => import9rRef.current?.click()} disabled={loading}>
-          <Upload className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          <Upload className="text-fg-faint" aria-hidden="true" />
           Select 9router JSON
         </Button>
         <input ref={import9rRef} type="file" accept="application/json,.json" className="hidden" tabIndex={-1} aria-hidden="true" onChange={handle9rFile} />
@@ -400,7 +400,7 @@ function ForeignImportSettings() {
         info="OmniRoute exports redact credentials, so accounts arrive as disabled stubs. Custom provider nodes, combos (as chains), proxy pools and aliases transfer fully. API keys must be re-created."
       >
         <Button variant="ghost" onClick={() => importOmniRef.current?.click()} disabled={loading}>
-          <Upload className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+          <Upload className="text-fg-faint" aria-hidden="true" />
           Select OmniRoute JSON
         </Button>
         <input ref={importOmniRef} type="file" accept="application/json,.json" className="hidden" tabIndex={-1} aria-hidden="true" onChange={handleOmniFile} />
@@ -429,7 +429,7 @@ function ForeignImportSettings() {
         {!analyze && !pendingSqliteFile && (
           <>
             <Button variant="ghost" onClick={() => importSqliteRef.current?.click()} disabled={loading}>
-              <Upload className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+              <Upload className="text-fg-faint" aria-hidden="true" />
               Select data.sqlite
             </Button>
             <input
@@ -542,7 +542,7 @@ function ForeignImportSettings() {
           )}
           {result.errors && result.errors.length > 0 && (
             <details className="rounded-lg border border-line bg-subtle px-3 py-2">
-              <summary className="cursor-pointer rounded-md text-[12px] font-medium text-fg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500">
+              <summary className="cursor-pointer rounded-md text-[12px] font-medium text-fg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 {plural(result.errors.length, "warning")}
               </summary>
               <ul className="mt-2 max-h-40 space-y-1 overflow-y-auto text-[12px] text-fg-muted">
@@ -741,13 +741,13 @@ function DatabaseSettings({ loading, setLoading }: DbBusy) {
       <SettingsCard icon={DatabaseBackup} title="Backups" busy={loading}>
         <SettingRow label="Download configuration" description="JSON file. Local, or portable with a passphrase.">
           <Button variant="ghost" onClick={() => setExportOpen(true)} disabled={loading}>
-            <Download className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            <Download className="text-fg-faint" aria-hidden="true" />
             Download backup
           </Button>
         </SettingRow>
         <SettingRow label="Restore configuration" description="Merges a JSON backup. Nothing is deleted.">
           <Button variant="ghost" onClick={() => importRef.current?.click()} disabled={loading}>
-            <Upload className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            <Upload className="text-fg-faint" aria-hidden="true" />
             Restore backup
           </Button>
           <input
@@ -786,7 +786,7 @@ function DatabaseSettings({ loading, setLoading }: DbBusy) {
           }
         >
           <Button variant="ghost" onClick={downloadSQLiteBackup} disabled={loading || !sqliteAvailable}>
-            <Download className="text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            <Download className="text-fg-faint" aria-hidden="true" />
             Download .db
           </Button>
         </SettingRow>
@@ -806,7 +806,7 @@ function DatabaseSettings({ loading, setLoading }: DbBusy) {
               name="export-mode"
               checked={!usePortable}
               onChange={() => setUsePortable(false)}
-              icon={<ShieldCheck className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+              icon={<ShieldCheck className="h-4 w-4 text-fg-faint" aria-hidden="true" />}
               title="Local backup"
               body="Restores only on this install. No passphrase."
             />
@@ -814,7 +814,7 @@ function DatabaseSettings({ loading, setLoading }: DbBusy) {
               name="export-mode"
               checked={usePortable}
               onChange={() => setUsePortable(true)}
-              icon={<KeyRound className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />}
+              icon={<KeyRound className="h-4 w-4 text-fg-faint" aria-hidden="true" />}
               title="Portable backup"
               body="Passphrase-protected. Restores on any machine."
             />
@@ -1023,7 +1023,7 @@ function DangerZone({ loading, setLoading }: DbBusy) {
         info="KeiRouter checks the file's integrity and saves a safety copy of the current database before replacing it."
       >
         <Button variant="danger" onClick={() => sqliteImportRef.current?.click()} disabled={loading || !sqliteAvailable}>
-          <Upload strokeWidth={1.75} aria-hidden="true" />
+          <Upload aria-hidden="true" />
           Restore .db / .sqlite
         </Button>
         <input

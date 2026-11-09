@@ -180,7 +180,7 @@ export function BrandingTab() {
           <div className="flex items-center gap-3 bg-surface px-4 py-3">
             <img src={local.logo_url || DEFAULT_LOGO} alt={local.name || "Logo"} className="h-9 w-9 shrink-0 object-contain" />
             <div className="min-w-0">
-              <p className="truncate text-[13px] font-semibold text-fg">{local.name || "KeiRouter"}</p>
+              <p className="truncate text-[13px] font-medium text-fg">{local.name || "KeiRouter"}</p>
               {local.tagline && <p className="truncate text-[12px] text-fg-muted">{local.tagline}</p>}
             </div>
             <span className="ml-auto hidden items-center gap-3 text-[12px] sm:flex" aria-hidden="true">
@@ -239,8 +239,8 @@ function PalettePicker({ value, onChange }: { value: string; onChange: (id: stri
             title={palette.description}
             onClick={() => onChange(palette.id)}
             className={cn(
-              "relative flex flex-col gap-2 rounded-lg border p-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-              selected ? "border-accent-500/30 bg-accent-500/10" : "border-line bg-surface hover:border-line-strong hover:bg-hover",
+              "relative flex flex-col gap-2 rounded-lg border p-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              selected ? "border-accent-500/30 bg-brand-soft" : "border-line bg-surface hover:border-line-strong hover:bg-hover",
             )}
           >
             <span className="flex h-7 overflow-hidden rounded-md" aria-hidden="true">
@@ -253,7 +253,7 @@ function PalettePicker({ value, onChange }: { value: string; onChange: (id: stri
               <span className={cn("truncate text-[12.5px] font-medium", selected ? "text-link" : "text-fg-muted")}>
                 {palette.name}
               </span>
-              {selected && <Check className="h-3.5 w-3.5 shrink-0 text-link" strokeWidth={2} aria-hidden="true" />}
+              {selected && <Check className="stroke-2 h-3.5 w-3.5 shrink-0 text-link" aria-hidden="true" />}
             </span>
           </button>
         );
@@ -315,7 +315,7 @@ function ImageUploadField({
             type="button"
             onClick={() => onChange("")}
             aria-label={`Remove custom ${label.toLowerCase()}`}
-            className="inline-flex min-h-6 items-center rounded-md px-1.5 text-[12px] text-fg-muted hover:text-bad focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500"
+            className="inline-flex min-h-6 items-center rounded-md px-1.5 text-[12px] text-fg-muted hover:text-bad focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             Remove
           </button>
@@ -342,12 +342,12 @@ function ImageUploadField({
           onClick={() => inputRef.current?.click()}
           aria-describedby={`${id}-formats`}
           className={cn(
-            "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed px-3 py-2 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent-500",
-            dragOver ? "border-accent-500 bg-accent-500/5" : "border-input hover:bg-hover",
+            "flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed px-3 py-2 text-center transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            dragOver ? "border-ring bg-brand-soft" : "border-input hover:bg-hover",
           )}
         >
           <span className="flex items-center gap-1.5 text-[13px] font-medium text-fg">
-            <Upload className="h-4 w-4 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+            <Upload className="h-4 w-4 text-fg-faint" aria-hidden="true" />
             {value ? `Replace ${label.toLowerCase()}` : `Upload ${label.toLowerCase()}`}
           </span>
           <span id={`${id}-formats`} className="text-[12px] text-fg-muted">

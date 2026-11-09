@@ -119,7 +119,7 @@ function ScopeField({
 function EmptyNotice({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-9 items-center gap-2 rounded-lg border border-dashed border-line-strong bg-subtle px-3 py-2 text-[12.5px] text-fg-muted">
-      <Info className="h-4 w-4 shrink-0 text-fg-faint" strokeWidth={1.75} aria-hidden="true" />
+      <Info className="h-4 w-4 shrink-0 text-fg-faint" aria-hidden="true" />
       <span className="min-w-0 break-words">{children}</span>
     </div>
   );
