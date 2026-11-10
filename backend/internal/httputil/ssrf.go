@@ -102,6 +102,11 @@ func ValidateOutboundURL(rawURL string) error {
 	return nil
 }
 
+// ValidateIP applies the outbound address policy to one resolved IP. Callers
+// that dial on their own use it at connect time, after DNS resolution, so a
+// hostname that was safe when saved cannot be rebound to a private address.
+func ValidateIP(ip net.IP) error { return validateIP(ip) }
+
 // validateIP checks if an IP address is safe for outbound requests.
 func validateIP(ip net.IP) error {
 	relaxed := allowPrivateBaseURL.Load()

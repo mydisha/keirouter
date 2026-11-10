@@ -31,6 +31,24 @@ type Config struct {
 	Data           DataConfig           `koanf:"data"`
 	Guardrails     GuardrailsConfig     `koanf:"guardrails"`
 	Audit          AuditConfig          `koanf:"audit"`
+	MCP            MCPConfig            `koanf:"mcp"`
+}
+
+// MCPConfig configures the MCP gateway.
+type MCPConfig struct {
+	// CatalogFile is an optional YAML file of company presets for the
+	// "add MCP server" picker.
+	CatalogFile string `koanf:"catalog_file"`
+	// CatalogOnly restricts new servers to presets from the catalog.
+	CatalogOnly bool `koanf:"catalog_only"`
+	// SyncInterval is how often tool catalogs are refreshed from upstream.
+	SyncInterval time.Duration `koanf:"sync_interval"`
+	// LogRetentionDays drops tool-call log rows older than N days.
+	LogRetentionDays int `koanf:"log_retention_days"`
+	// DefaultRPM and DefaultConcurrency bound tool calls per API key. They are
+	// counted separately from the key's LLM limits.
+	DefaultRPM         int64 `koanf:"default_rpm"`
+	DefaultConcurrency int64 `koanf:"default_concurrency"`
 }
 
 // DefaultMaxRequestBodyBytes is the default maximum size accepted for inbound
@@ -440,6 +458,12 @@ func Default() Config {
 			LeaseTTL:               time.Minute,
 			BudgetCounterTTL:       time.Minute,
 		},
+		MCP: MCPConfig{
+			SyncInterval:       5 * time.Minute,
+			LogRetentionDays:   30,
+			DefaultRPM:         600,
+			DefaultConcurrency: 20,
+		},
 		Audit: AuditConfig{
 			Enabled:       true,
 			RetentionDays: 365,
@@ -569,6 +593,12 @@ func (c *Config) validate() error {
 	}
 	if c.Meter.ShutdownFlushTimeout <= 0 {
 		c.Meter.ShutdownFlushTimeout = 5 * time.Second
+	}
+	if c.MCP.SyncInterval > 0 && c.MCP.SyncInterval < 30*time.Second {
+		return fmt.Errorf("mcp.sync_interval must be at least 30s (or 0 to disable), got %s", c.MCP.SyncInterval)
+	}
+	if c.MCP.DefaultRPM < 0 || c.MCP.DefaultConcurrency < 0 {
+		return fmt.Errorf("mcp.default_rpm and mcp.default_concurrency must not be negative")
 	}
 	switch c.Limits.Backend {
 	case "", "memory":

@@ -151,6 +151,7 @@ func (s *Server) mountAdmin(r chi.Router) {
 
 	// Guardrails (content safety policies + audit log).
 	s.mountGuardrails(r)
+	s.mountMCPAdmin(r)
 
 	// Administrative audit trail.
 	s.mountAudit(r)

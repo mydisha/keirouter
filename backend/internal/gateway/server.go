@@ -33,6 +33,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/health"
 	"github.com/mydisha/keirouter/backend/internal/healthcheck"
 	"github.com/mydisha/keirouter/backend/internal/identity"
+	"github.com/mydisha/keirouter/backend/internal/mcp"
 	"github.com/mydisha/keirouter/backend/internal/oauth"
 	"github.com/mydisha/keirouter/backend/internal/observ"
 	"github.com/mydisha/keirouter/backend/internal/pipeline"
@@ -58,6 +59,7 @@ type Server struct {
 	chains              *store.ChainRepo
 	aliases             *store.AliasRepo
 	accounts            *store.AccountRepo
+	mcp                 *mcp.Manager
 	pools               *store.ProxyPoolRepo
 	budgets             *store.BudgetRepo
 	budgetEngine        *budget.Engine
@@ -155,6 +157,8 @@ type Deps struct {
 	HealthChecker          *healthcheck.Checker
 	ProviderHealth         *health.Service
 	ProbeRunner            *health.ProbeRunner
+	// MCP is the MCP gateway; nil disables /mcp and /api/mcp.
+	MCP *mcp.Manager
 }
 
 // New builds a gateway Server and wires its routes.
@@ -187,6 +191,7 @@ func New(d Deps) *Server {
 		chains:              d.Chains,
 		aliases:             d.Aliases,
 		accounts:            d.Accounts,
+		mcp:                 d.MCP,
 		pools:               d.Pools,
 		budgets:             d.Budgets,
 		budgetEngine:        d.BudgetEngine,

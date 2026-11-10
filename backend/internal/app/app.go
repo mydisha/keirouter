@@ -42,6 +42,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/httputil"
 	"github.com/mydisha/keirouter/backend/internal/identity"
 	"github.com/mydisha/keirouter/backend/internal/limits"
+	"github.com/mydisha/keirouter/backend/internal/mcp"
 	"github.com/mydisha/keirouter/backend/internal/meter"
 	"github.com/mydisha/keirouter/backend/internal/oauth"
 	"github.com/mydisha/keirouter/backend/internal/observ"
@@ -68,6 +69,7 @@ type App struct {
 	guardrailRetention *guardrails.RetentionSweeper
 	meter              *meter.Meter
 	healthChecker      *healthcheck.Checker
+	mcp                *mcp.Manager
 	providerHealth     *health.Service
 	probeRunner        *health.ProbeRunner
 	audit              *audit.Recorder
@@ -448,6 +450,18 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		return nil
 	}
 
+	mcpManager, err := mcp.NewManager(ctx, db, sealer, mcp.Options{
+		Tenant:       store.DefaultTenantID,
+		Info:         mcp.Implementation{Name: "KeiRouter", Version: version},
+		SyncInterval: cfg.MCP.SyncInterval,
+		CatalogFile:  cfg.MCP.CatalogFile,
+		CatalogOnly:  cfg.MCP.CatalogOnly,
+		Logger:       log.With("component", "mcp"),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("app: build mcp gateway: %w", err)
+	}
+
 	gw := gateway.New(gateway.Deps{
 		Config:                 cfg,
 		Logger:                 log,
@@ -492,6 +506,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		HealthChecker:          healthChecker,
 		ProviderHealth:         healthSvc,
 		ProbeRunner:            probeRunner,
+		MCP:                    mcpManager,
 	})
 
 	srv := &http.Server{
@@ -515,7 +530,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 	// usable without a manual "connect" step in the dashboard.
 	seedFreeAccounts(ctx, db.Accounts(), log)
 
-	return &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), server: srv, keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, providerHealth: healthSvc, probeRunner: probeRunner, audit: auditRec, auditSweeper: auditSweeper, sharedState: sharedState}, nil
+	return &App{cfg: cfg, log: log, db: db, accounts: db.Accounts(), server: srv, keepAlive: keepAlive, guardrailAudit: guardrailAudit, guardrailRetention: guardrailRetention, meter: mtr, healthChecker: healthChecker, mcp: mcpManager, providerHealth: healthSvc, probeRunner: probeRunner, audit: auditRec, auditSweeper: auditSweeper, sharedState: sharedState}, nil
 }
 
 // keyLimiter is the per-key limiter surface the pipeline and gateway need.
@@ -701,6 +716,13 @@ func (a *App) Run(ctx context.Context) error {
 		go func() {
 			defer a.bg.Done()
 			a.healthChecker.Run(ctx, store.DefaultTenantID)
+		}()
+	}
+	if a.mcp != nil {
+		a.bg.Add(1)
+		go func() {
+			defer a.bg.Done()
+			a.mcp.Run(ctx)
 		}()
 	}
 	// Provider health telemetry aggregator (best-effort, non-blocking).
