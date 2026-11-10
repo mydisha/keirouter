@@ -308,8 +308,11 @@ func (r *MCPRepo) CallStats(ctx context.Context, tenantID string, since time.Tim
 	if st.Calls == 0 {
 		return st, nil
 	}
-	failed := st.Calls - st.ByStatus["success"] - st.ByStatus["denied"] - st.ByStatus["rate_limited"]
-	served := st.Calls - st.ByStatus["denied"] - st.ByStatus["rate_limited"]
+	// Calls KeiRouter stopped itself (access, limits, guardrails) are not
+	// server errors and stay out of the error rate and the percentile.
+	stopped := st.ByStatus["denied"] + st.ByStatus["rate_limited"] + st.ByStatus["blocked"]
+	failed := st.Calls - st.ByStatus["success"] - stopped
+	served := st.Calls - stopped
 	if served > 0 {
 		rate := float64(failed) / float64(served)
 		st.ErrorRate = &rate
@@ -321,7 +324,7 @@ func (r *MCPRepo) CallStats(ctx context.Context, tenantID string, since time.Tim
 		}
 		var p int64
 		err := r.db.sql.QueryRowContext(ctx, r.db.rebind(`SELECT latency_ms FROM mcp_call_logs
-			WHERE tenant_id = ? AND created_at >= ? AND status NOT IN ('denied', 'rate_limited')
+			WHERE tenant_id = ? AND created_at >= ? AND status NOT IN ('denied', 'rate_limited', 'blocked')
 			ORDER BY latency_ms LIMIT 1 OFFSET `+strconv.FormatInt(offset, 10)), tenantID, s).Scan(&p)
 		if err == nil {
 			st.P95MS = &p

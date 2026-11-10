@@ -38,6 +38,15 @@ type Options struct {
 	LogRetentionDays int
 	// Auditor receives one mcp.tool.call event per tool call when set.
 	Auditor Auditor
+	// Guard applies guardrail policies to tool arguments and results when set.
+	Guard Guard
+	// Metrics receives one sample per tool call when set.
+	Metrics Metrics
+}
+
+// Metrics is the Prometheus sink for tool calls; *observ.Metrics satisfies it.
+type Metrics interface {
+	RecordMCPCall(server, status string, seconds float64)
 }
 
 // Auditor records audit events; *audit.Recorder satisfies it.
@@ -66,6 +75,8 @@ type Manager struct {
 	limits    limits.EffectiveLimits
 	retention int
 	auditor   Auditor
+	guard     Guard
+	metrics   Metrics
 	seen      atomic.Value // string: last versionSetting this instance applied
 }
 
@@ -97,6 +108,8 @@ func NewManager(ctx context.Context, db *store.DB, sealer *crypto.Sealer, opts O
 		limits:    opts.CallLimits,
 		retention: opts.LogRetentionDays,
 		auditor:   opts.Auditor,
+		guard:     opts.Guard,
+		metrics:   opts.Metrics,
 	}
 	if m.limiter == nil {
 		m.limiter = allowAll{}
@@ -236,6 +249,9 @@ func (m *Manager) auditCall(x *exchange, e store.MCPCallLog, httpStatus int) {
 	}
 	if e.Error != "" {
 		details["error"] = e.Error
+	}
+	if x.out.Guardrail != "" {
+		details["guardrail"] = x.out.Guardrail
 	}
 	if x.out.Version != "" {
 		details["protocol_version"] = x.out.Version

@@ -118,3 +118,27 @@ func TestMCPRepo_CallLogsAndStats(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, n)
 }
+
+func TestMCPRepo_CallStatsLeavesOutGuardrailBlocks(t *testing.T) {
+	ctx := context.Background()
+	repo := newTestDB(t).MCP()
+	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	var logs []MCPCallLog
+	for i, c := range []struct {
+		status  string
+		latency int64
+	}{{"success", 100}, {"tool_error", 200}, {"blocked", 9000}, {"blocked", 8000}} {
+		logs = append(logs, MCPCallLog{ID: fmt.Sprintf("b-%d", i), TenantID: DefaultTenantID, ServerID: "s1", ServerSlug: "a",
+			Tool: "t", Status: c.status, LatencyMS: c.latency, CreatedAt: base})
+	}
+	require.NoError(t, repo.InsertCallLogs(ctx, logs))
+
+	st, err := repo.CallStats(ctx, DefaultTenantID, base.Add(-time.Minute))
+	require.NoError(t, err)
+	require.EqualValues(t, 4, st.Calls)
+	require.EqualValues(t, 2, st.ByStatus["blocked"])
+	require.NotNil(t, st.ErrorRate)
+	require.InDelta(t, 0.5, *st.ErrorRate, 0.0001, "a guardrail block is not a server error")
+	require.NotNil(t, st.P95MS)
+	require.EqualValues(t, 200, *st.P95MS, "blocked calls stay out of the latency percentile")
+}

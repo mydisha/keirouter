@@ -186,7 +186,7 @@ func (c *Client) session(key string) *legacySession {
 // handshake. Authentication failures and network errors are returned as is.
 func (c *Client) Negotiate(ctx context.Context, t Target) (string, error) {
 	params, _ := withMeta(nil, true, c.info, "")
-	resp, err := c.post(ctx, t, c.nextID.Add(1), "server/discover", "", params, nil)
+	resp, err := c.post(ctx, t, c.nextID.Add(1), "server/discover", "", params, nil, nil)
 	if err == nil && resp != nil && resp.Error == nil {
 		var dr struct {
 			SupportedVersions []string `json:"supportedVersions"`
@@ -266,7 +266,7 @@ func (c *Client) initialize(ctx context.Context, t Target, s *legacySession) err
 	if err != nil {
 		return err
 	}
-	resp, sessionID, err := c.do(req, idJSON(id))
+	resp, sessionID, err := c.do(req, idJSON(id), nil)
 	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
 	}
@@ -293,7 +293,7 @@ func (c *Client) initialize(ctx context.Context, t Target, s *legacySession) err
 		return err
 	}
 	setLegacyHeaders(note, s.id, s.version)
-	if _, _, err := c.do(note, nil); err != nil {
+	if _, _, err := c.do(note, nil, nil); err != nil {
 		return fmt.Errorf("initialized notification: %w", err)
 	}
 	s.ready = true
@@ -304,16 +304,22 @@ func (c *Client) initialize(ctx context.Context, t Target, s *legacySession) err
 // the upstream id. The caller restores the client's id. extra carries headers
 // such as Mcp-Param-*. A legacy session that expired is re-initialised once.
 func (c *Client) Call(ctx context.Context, t Target, method, name string, params json.RawMessage, extra http.Header) (*Response, error) {
-	return c.call(ctx, t, method, name, params, extra, "")
+	return c.call(ctx, t, method, name, params, extra, "", nil)
 }
+
+// Notify receives each message an upstream sends on a response stream before
+// the response itself: notifications and server requests, as raw JSON. msg
+// is reused after the call returns, so keep a copy to hold on to it.
+type Notify func(msg []byte)
 
 // CallTool sends tools/call for tool, replacing params.name with the
-// upstream's own tool name. Arguments are forwarded byte for byte.
-func (c *Client) CallTool(ctx context.Context, t Target, tool string, params json.RawMessage, extra http.Header) (*Response, error) {
-	return c.call(ctx, t, "tools/call", tool, params, extra, tool)
+// upstream's own tool name. Arguments are forwarded byte for byte. notify,
+// when set, sees the messages the server streams before the result.
+func (c *Client) CallTool(ctx context.Context, t Target, tool string, params json.RawMessage, extra http.Header, notify Notify) (*Response, error) {
+	return c.call(ctx, t, "tools/call", tool, params, extra, tool, notify)
 }
 
-func (c *Client) call(ctx context.Context, t Target, method, name string, params json.RawMessage, extra http.Header, setName string) (*Response, error) {
+func (c *Client) call(ctx context.Context, t Target, method, name string, params json.RawMessage, extra http.Header, setName string, notify Notify) (*Response, error) {
 	if t.Version == "" {
 		return nil, errors.New("protocol version not negotiated")
 	}
@@ -322,7 +328,7 @@ func (c *Client) call(ctx context.Context, t Target, method, name string, params
 		if err != nil {
 			return nil, err
 		}
-		return c.post(ctx, t, c.nextID.Add(1), method, name, body, extra)
+		return c.post(ctx, t, c.nextID.Add(1), method, name, body, extra, notify)
 	}
 
 	body, err := withMeta(params, false, c.info, setName)
@@ -350,7 +356,7 @@ func (c *Client) call(ctx context.Context, t Target, method, name string, params
 		for k, v := range extra {
 			req.Header[k] = v
 		}
-		resp, _, err := c.do(req, idJSON(id))
+		resp, _, err := c.do(req, idJSON(id), notify)
 		var he *HTTPError
 		if attempt == 0 && sessID != "" && errors.As(err, &he) && he.Status == http.StatusNotFound {
 			s.mu.Lock()
@@ -404,7 +410,7 @@ func (c *Client) ListTools(ctx context.Context, t Target) ([]json.RawMessage, er
 }
 
 // post sends one modern request with the mirrored request headers.
-func (c *Client) post(ctx context.Context, t Target, id int64, method, name string, params json.RawMessage, extra http.Header) (*Response, error) {
+func (c *Client) post(ctx context.Context, t Target, id int64, method, name string, params json.RawMessage, extra http.Header, notify Notify) (*Response, error) {
 	req, err := c.newRequest(ctx, t, envelope(id, method, params))
 	if err != nil {
 		return nil, err
@@ -417,7 +423,7 @@ func (c *Client) post(ctx context.Context, t Target, id int64, method, name stri
 	for k, v := range extra {
 		req.Header[k] = v
 	}
-	resp, _, err := c.do(req, idJSON(id))
+	resp, _, err := c.do(req, idJSON(id), notify)
 	return resp, err
 }
 
@@ -446,8 +452,9 @@ func setLegacyHeaders(req *http.Request, sessionID, version string) {
 
 // do sends req and decodes the reply. wantID is the request's JSON-RPC id,
 // nil for a notification. It returns a nil Response for 202 Accepted, and the
-// Mcp-Session-Id response header.
-func (c *Client) do(req *http.Request, wantID json.RawMessage) (*Response, string, error) {
+// Mcp-Session-Id response header. notify sees streamed messages that precede
+// the response.
+func (c *Client) do(req *http.Request, wantID json.RawMessage, notify Notify) (*Response, string, error) {
 	res, err := c.httpc.Do(req)
 	if err != nil {
 		return nil, "", err
@@ -473,7 +480,7 @@ func (c *Client) do(req *http.Request, wantID json.RawMessage) (*Response, strin
 		return nil, sessionID, he
 	}
 	if ct == "text/event-stream" {
-		resp, err := readSSEResponse(body, wantID)
+		resp, err := readSSEResponse(body, wantID, notify)
 		return resp, sessionID, err
 	}
 	raw, err := io.ReadAll(body)
@@ -494,8 +501,8 @@ func (c *Client) do(req *http.Request, wantID json.RawMessage) (*Response, strin
 }
 
 // readSSEResponse reads SSE events until the JSON-RPC response whose id
-// matches want. Notifications before it are skipped.
-func readSSEResponse(r io.Reader, want json.RawMessage) (*Response, error) {
+// matches want. Other messages before it go to notify, or are skipped.
+func readSSEResponse(r io.Reader, want json.RawMessage, notify Notify) (*Response, error) {
 	br := bufio.NewReaderSize(r, 64<<10)
 	var data bytes.Buffer
 	read := 0
@@ -511,6 +518,9 @@ func readSSEResponse(r io.Reader, want json.RawMessage) (*Response, error) {
 			if data.Len() > 0 {
 				if resp := matchResponse(data.Bytes(), want); resp != nil {
 					return resp, nil
+				}
+				if notify != nil {
+					notify(data.Bytes())
 				}
 				data.Reset()
 			}

@@ -6,12 +6,17 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mydisha/keirouter/backend/internal/fastjson"
+	"github.com/mydisha/keirouter/backend/internal/guardrails"
+	"github.com/mydisha/keirouter/backend/internal/guardrails/injection"
+	"github.com/mydisha/keirouter/backend/internal/guardrails/pii"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
@@ -134,5 +139,57 @@ func TestAppendToolsAllModeAllocations(t *testing.T) {
 	buf.Grow(1 << 12)
 	if n := testing.AllocsPerRun(100, func() { buf.Reset(); appendTools(&buf, snap, AllAccess, "") }); n != 0 {
 		t.Fatalf("appendTools allocates %v times", n)
+	}
+}
+
+// BenchmarkGuard measures what guardrails add to one tool call: the policy
+// lookup every call pays, and the argument and result checks a call pays
+// when a PII policy applies to it.
+func BenchmarkGuard(b *testing.B) {
+	srv := &Server{MCPServer: store.MCPServer{ID: "srv", Slug: "s01"}}
+	tool := &Tool{Name: "tool_03"}
+	caller := Caller{KeyID: "key-1", RequestID: "r"}
+	newManager := func(policy string) *Manager {
+		return &Manager{tenant: store.DefaultTenantID, guard: guardrails.NewEngine(guardrails.EngineConfig{
+			Resolver:  guardrails.NewResolver(&policyStore{cfg: policy}, time.Minute),
+			Detectors: []guardrails.Detector{pii.New(), injection.New()},
+		})}
+	}
+	ctx := context.Background()
+
+	b.Run("no-policy", func(b *testing.B) {
+		m := newManager("")
+		b.ReportAllocs()
+		for b.Loop() {
+			if m.guardFor(ctx, caller, srv, tool) != nil {
+				b.Fatal("policy")
+			}
+		}
+	})
+	m := newManager(`{"pii":{"enabled":true,"strategy":"replace"},"injection":{"enabled":true,"scan_tool_results":true}}`)
+	for _, size := range []int{2 << 10, 200 << 10} {
+		params := json.RawMessage(`{"name":"s01__tool_03","arguments":{"q":"` + strings.Repeat("lorem ipsum ", size/12) + `"}}`)
+		text, _ := json.Marshal(strings.Repeat("lorem ipsum ", size/12))
+		result := json.RawMessage(`{"content":[{"type":"text","text":` + string(text) + `}]}`)
+		b.Run(fmt.Sprintf("args/%dKB", size>>10), func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(params)))
+			for b.Loop() {
+				g := m.guardFor(ctx, caller, srv, tool)
+				if _, v := g.checkArgs(params); v.blocked || v.masked {
+					b.Fatal(v)
+				}
+			}
+		})
+		b.Run(fmt.Sprintf("result/%dKB", size>>10), func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(int64(len(result)))
+			for b.Loop() {
+				g := m.guardFor(ctx, caller, srv, tool)
+				if _, v := g.checkResult(result); v.blocked || v.masked {
+					b.Fatal(v)
+				}
+			}
+		})
 	}
 }

@@ -164,6 +164,10 @@ mcp:
   # Also write each tool call to the audit log as mcp.tool.call (key, server,
   # tool, outcome; never arguments or results). Needs audit.enabled.
   audit_tool_calls: true
+  # Apply guardrail policies to tool arguments and results: PII masking or
+  # blocking, and indirect prompt injection when the injection policy scans
+  # tool results. Policies match provider "mcp" and model "slug__tool".
+  guardrails: true
 
 health:
   # Background account/model health checks. Unhealthy account/model pairs are

@@ -35,6 +35,10 @@ type Metrics struct {
 	// Guardrails activity.
 	GuardrailDecisions *prometheus.CounterVec   // by detector + action
 	GuardrailEval      *prometheus.HistogramVec // per-detector eval latency
+
+	// MCP gateway tool calls.
+	MCPToolCalls    *prometheus.CounterVec   // by server + status
+	MCPCallDuration *prometheus.HistogramVec // by server
 }
 
 // New builds a Metrics instance backed by a dedicated registry. Using a private
@@ -114,6 +118,15 @@ func New() *Metrics {
 			Help:    "Per-detector evaluation latency in seconds.",
 			Buckets: prometheus.ExponentialBuckets(0.0005, 2, 12), // 0.5ms .. ~2s
 		}, []string{"detector"}),
+		MCPToolCalls: factory.NewCounterVec(prometheus.CounterOpts{
+			Name: "keirouter_mcp_tool_calls_total",
+			Help: "MCP tool calls, labeled by server slug and status (success, tool_error, denied, blocked, rate_limited, upstream_error, timeout).",
+		}, []string{"server", "status"}),
+		MCPCallDuration: factory.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "keirouter_mcp_tool_call_duration_seconds",
+			Help:    "MCP tool call latency in seconds, from request to answer, labeled by server slug.",
+			Buckets: prometheus.ExponentialBuckets(0.01, 2, 14), // 10ms .. ~82s
+		}, []string{"server"}),
 	}
 	return m
 }
@@ -204,4 +217,9 @@ func (m *Metrics) RecordGuardrailDecision(detector, action string) {
 // RecordGuardrailLatency records how long a detector took to evaluate.
 func (m *Metrics) RecordGuardrailLatency(detector string, seconds float64) {
 	m.GuardrailEval.WithLabelValues(detector).Observe(seconds)
+}
+// RecordMCPCall counts one MCP tool call and records its latency.
+func (m *Metrics) RecordMCPCall(server, status string, seconds float64) {
+	m.MCPToolCalls.WithLabelValues(server, status).Inc()
+	m.MCPCallDuration.WithLabelValues(server).Observe(seconds)
 }

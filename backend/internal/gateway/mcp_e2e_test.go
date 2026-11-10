@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 
 	"github.com/mydisha/keirouter/backend/internal/audit"
@@ -18,9 +20,12 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/config"
 	"github.com/mydisha/keirouter/backend/internal/consolelog"
 	"github.com/mydisha/keirouter/backend/internal/crypto"
+	"github.com/mydisha/keirouter/backend/internal/guardrails"
+	"github.com/mydisha/keirouter/backend/internal/guardrails/pii"
 	"github.com/mydisha/keirouter/backend/internal/httputil"
 	"github.com/mydisha/keirouter/backend/internal/identity"
 	"github.com/mydisha/keirouter/backend/internal/mcp"
+	"github.com/mydisha/keirouter/backend/internal/observ"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
 
@@ -63,6 +68,17 @@ func sdkUpstream(t *testing.T, stateless bool) *httptest.Server {
 
 func newMCPE2E(t *testing.T, upstreamURL string, recorder ...func(*store.DB) *audit.Recorder) *mcpE2E {
 	t.Helper()
+	var rec func(*store.DB) *audit.Recorder
+	if len(recorder) > 0 {
+		rec = recorder[0]
+	}
+	return newMCPE2EWith(t, upstreamURL, rec, nil)
+}
+
+// newMCPE2EWith is newMCPE2E with an optional audit recorder and a hook that
+// adjusts the manager's options once the database exists.
+func newMCPE2EWith(t *testing.T, upstreamURL string, recorder func(*store.DB) *audit.Recorder, tune func(*store.DB, *mcp.Options)) *mcpE2E {
+	t.Helper()
 	ctx := context.Background()
 	httputil.SetAllowPrivateBaseURL(true)
 	t.Cleanup(func() { httputil.SetAllowPrivateBaseURL(false) })
@@ -82,15 +98,27 @@ func newMCPE2E(t *testing.T, upstreamURL string, recorder ...func(*store.DB) *au
 
 	var rec *audit.Recorder
 	opts := mcp.Options{Info: mcp.Implementation{Name: "KeiRouter", Version: "test"}}
-	if len(recorder) > 0 {
-		rec = recorder[0](db)
+	if recorder != nil {
+		rec = recorder(db)
 		opts.Auditor = rec
+	}
+	if tune != nil {
+		tune(db, &opts)
 	}
 	mgr, err := mcp.NewManager(ctx, db, sealer, opts)
 	require.NoError(t, err)
 	runCtx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go mgr.Run(runCtx)
+	runDone := make(chan struct{})
+	go func() {
+		defer close(runDone)
+		mgr.Run(runCtx)
+	}()
+	// Run flushes the call log on the way out, so it must end before the
+	// database closes (cleanups run in reverse order).
+	t.Cleanup(func() {
+		cancel()
+		<-runDone
+	})
 
 	authSvc := auth.New(db.Settings(), "mcp-e2e-signing", time.Hour)
 	session, err := authSvc.IssueSession()
@@ -368,4 +396,122 @@ func TestMCPEndpoint_ToolCallsInAuditLog(t *testing.T) {
 	require.Equal(t, "success", call.Outcome)
 	raw, _ := json.Marshal(call)
 	require.NotContains(t, string(raw), "private words")
+}
+
+// sdkProgressUpstream serves "slow", which reports two progress steps before
+// answering, and "leak", which returns an e-mail address.
+func sdkProgressUpstream(t *testing.T, stateless bool) *httptest.Server {
+	t.Helper()
+	server := sdk.NewServer(&sdk.Implementation{Name: "upstream", Version: "1.0.0"}, nil)
+	sdk.AddTool(server, &sdk.Tool{Name: "slow", Description: "Reports progress"}, func(ctx context.Context, req *sdk.CallToolRequest, in echoIn) (*sdk.CallToolResult, echoOut, error) {
+		if tok := req.Params.GetProgressToken(); tok != nil {
+			for i := 1; i <= 2; i++ {
+				if err := req.Session.NotifyProgress(ctx, &sdk.ProgressNotificationParams{ProgressToken: tok, Progress: float64(i), Total: 2, Message: "step"}); err != nil {
+					return nil, echoOut{}, err
+				}
+			}
+		}
+		return nil, echoOut{Echo: in.Text}, nil
+	})
+	sdk.AddTool(server, &sdk.Tool{Name: "leak", Description: "Returns an address"}, func(_ context.Context, _ *sdk.CallToolRequest, in echoIn) (*sdk.CallToolResult, echoOut, error) {
+		return nil, echoOut{Echo: "owner rina@example.com, asked about " + in.Text}, nil
+	})
+	h := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server }, &sdk.StreamableHTTPOptions{Stateless: stateless})
+	up := httptest.NewServer(h)
+	t.Cleanup(up.Close)
+	return up
+}
+
+func TestMCPEndpoint_RelaysProgressThroughGateway(t *testing.T) {
+	for _, up := range []struct {
+		name      string
+		stateless bool
+	}{{"modern upstream", true}, {"legacy upstream", false}} {
+		for _, version := range []string{mcp.VersionModern, mcp.VersionLegacyLatest} {
+			t.Run(up.name+"/"+version, func(t *testing.T) {
+				h := newMCPE2E(t, sdkProgressUpstream(t, up.stateless).URL)
+				var mu sync.Mutex
+				var got []float64
+				client := sdk.NewClient(&sdk.Implementation{Name: "progress-client", Version: "1"}, &sdk.ClientOptions{
+					ProgressNotificationHandler: func(_ context.Context, req *sdk.ProgressNotificationClientRequest) {
+						mu.Lock()
+						got = append(got, req.Params.Progress)
+						mu.Unlock()
+					},
+				})
+				tr := &sdk.StreamableClientTransport{
+					Endpoint:             h.srv.URL + "/mcp",
+					HTTPClient:           &http.Client{Transport: bearer{key: h.apiKey, next: http.DefaultTransport}},
+					DisableStandaloneSSE: true,
+					MaxRetries:           -1,
+				}
+				cs, err := client.Connect(context.Background(), tr, &sdk.ClientSessionOptions{ProtocolVersion: version})
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = cs.Close() })
+
+				params := &sdk.CallToolParams{Name: "up__slow", Arguments: map[string]any{"text": "halo"}}
+				params.SetProgressToken("p-1")
+				res, err := cs.CallTool(context.Background(), params)
+				require.NoError(t, err)
+				require.False(t, res.IsError)
+				raw, _ := json.Marshal(res.StructuredContent)
+				require.JSONEq(t, `{"echo":"halo"}`, string(raw))
+				// The SDK client runs notification handlers asynchronously.
+				require.Eventually(t, func() bool {
+					mu.Lock()
+					defer mu.Unlock()
+					return len(got) == 2
+				}, 3*time.Second, 10*time.Millisecond, "both progress steps reach the client")
+				mu.Lock()
+				defer mu.Unlock()
+				require.ElementsMatch(t, []float64{1, 2}, got)
+			})
+		}
+	}
+}
+
+func TestMCPEndpoint_GuardrailsAndMetrics(t *testing.T) {
+	ctx := context.Background()
+	metrics := observ.New()
+	var gAudit *guardrails.AuditWriter
+	h := newMCPE2EWith(t, sdkProgressUpstream(t, true).URL, nil, func(db *store.DB, o *mcp.Options) {
+		require.NoError(t, db.Guardrails().Upsert(ctx, store.GuardrailPolicy{
+			ID: "g-mcp", TenantID: store.DefaultTenantID, Scope: store.GuardrailScopeProvider, ScopeID: mcp.GuardProvider,
+			Name: "MCP PII", Enabled: true, Config: `{"pii":{"enabled":true,"strategy":"replace","types":["EMAIL_ADDRESS"]}}`,
+		}))
+		gAudit = guardrails.NewAuditWriter(db.GuardrailLogs(), nil, guardrails.AuditWriterConfig{})
+		t.Cleanup(func() { gAudit.Stop(time.Second) })
+		o.Guard = guardrails.NewEngine(guardrails.EngineConfig{
+			Resolver: guardrails.NewResolver(db.Guardrails(), 0), Audit: gAudit,
+			Detectors: []guardrails.Detector{pii.New()}, Metrics: metrics,
+		})
+		o.Metrics = metrics
+	})
+	cs := h.sdkClient(t, "/mcp", mcp.VersionModern)
+
+	res, err := cs.CallTool(ctx, &sdk.CallToolParams{Name: "up__leak", Arguments: map[string]any{"text": "mail budi@example.com"}})
+	require.NoError(t, err)
+	out, _ := json.Marshal(res.StructuredContent)
+	require.JSONEq(t, `{"echo":"owner <EMAIL_ADDRESS>, asked about mail <EMAIL_ADDRESS>"}`, string(out),
+		"the address in the result is masked, and so is the one in the arguments, before it reached the server")
+	require.Len(t, res.Content, 1)
+	require.NotContains(t, res.Content[0].(*sdk.TextContent).Text, "@example.com")
+
+	var logs []store.GuardrailLog
+	require.Eventually(t, func() bool {
+		gAudit.FlushNow()
+		var err error
+		logs, err = h.db.GuardrailLogs().List(ctx, store.DefaultTenantID, store.GuardrailLogFilter{Model: "up__leak"})
+		return err == nil && len(logs) == 2
+	}, 3*time.Second, 20*time.Millisecond, "one guardrail log row for the arguments, one for the result")
+	for _, l := range logs {
+		require.Equal(t, mcp.GuardProvider, l.Provider)
+		require.Equal(t, h.keyID, l.APIKeyID)
+		require.Equal(t, "mask", l.Action)
+	}
+
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(metrics.MCPToolCalls.WithLabelValues("up", "success")) == 1
+	}, 3*time.Second, 20*time.Millisecond)
+	require.Equal(t, 1, testutil.CollectAndCount(metrics.MCPCallDuration))
 }

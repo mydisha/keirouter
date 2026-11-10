@@ -169,13 +169,17 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			res += `,"nextCursor":"` + next + `"`
 		}
 		res += `}`
-		f.respond(w, req.ID, res)
+		f.respond(w, req.ID, res, nil)
 	case "tools/call":
 		if params.Name == "explode" {
+			if f.sse {
+				f.stream(w, req.ID, `"error":{"code":-32602,"message":"bad arguments for explode"}`, params.Meta["progressToken"])
+				return
+			}
 			fakeRPCError(w, http.StatusOK, req.ID, CodeInvalidParams, "bad arguments for explode")
 			return
 		}
-		f.respond(w, req.ID, f.callResult)
+		f.respond(w, req.ID, f.callResult, params.Meta["progressToken"])
 	default:
 		code := http.StatusOK
 		if isModernReq {
@@ -185,16 +189,29 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (f *fakeServer) respond(w http.ResponseWriter, id json.RawMessage, result string) {
+// respond answers with result. In SSE mode it streams notifications first: a
+// progress notification without a token, a log message, and when the client
+// sent token, a multi-line progress notification for it.
+func (f *fakeServer) respond(w http.ResponseWriter, id json.RawMessage, result string, token json.RawMessage) {
 	if !f.sse {
 		writeResult(w, id, result)
 		return
 	}
+	f.stream(w, id, `"result":`+result, token)
+}
+
+// stream writes the SSE answer; tail is the response's result or error member.
+func (f *fakeServer) stream(w http.ResponseWriter, id json.RawMessage, tail string, token json.RawMessage) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progress\":1}}\n\n")
 	fmt.Fprintf(w, ": keepalive\n\n")
-	fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":%s}\n\n", id, result)
+	fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{\"level\":\"info\",\"data\":\"hi\"}}\n\n")
+	if len(token) > 0 {
+		fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\ndata:  \"params\":{\"progressToken\":%s,\"progress\":1,\"total\":2}}\n\n", token)
+		fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":\"other\",\"progress\":9}}\n\n")
+	}
+	fmt.Fprintf(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":%s,%s}\n\n", id, tail)
 }
 
 func writeResult(w http.ResponseWriter, id json.RawMessage, result string) {

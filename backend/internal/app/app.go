@@ -464,6 +464,8 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		},
 		LogRetentionDays: cfg.MCP.LogRetentionDays,
 		Auditor:          mcpAuditor(cfg, auditRec),
+		Guard:            mcpGuard(cfg, guardrailEngine),
+		Metrics:          metrics,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("app: build mcp gateway: %w", err)
@@ -553,6 +555,15 @@ func mcpAuditor(cfg config.Config, rec *audit.Recorder) mcp.Auditor {
 		return nil
 	}
 	return rec
+}
+
+// mcpGuard returns the guardrail engine tool calls are checked with, or nil
+// when MCP guardrails are off.
+func mcpGuard(cfg config.Config, engine *guardrails.Engine) mcp.Guard {
+	if engine == nil || !cfg.MCP.Guardrails {
+		return nil
+	}
+	return engine
 }
 
 // buildLimiter builds the per-key limiter. With limits.backend=redis it also

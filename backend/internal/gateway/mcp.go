@@ -121,6 +121,12 @@ func (t *reqTrace) mcpDone(o mcp.Outcome) {
 		msg = fmt.Sprintf("MCP · %s · %s · %s", o.Tool, strings.ReplaceAll(o.CallStatus, "_", " "), dur)
 		if o.CallStatus != mcp.StatusSuccess && o.Error != "" {
 			msg += " · " + o.Error
+		} else if o.Guardrail != "" {
+			msg += " · " + o.Guardrail
+			hint = "A guardrail policy masked part of the tool call. The guardrail log has the details."
+		}
+		if o.Progress > 0 {
+			msg += fmt.Sprintf(" · %d progress update%s", o.Progress, plural(o.Progress))
 		}
 	case o.HTTPStatus >= 400:
 		level, hint = "WARN", statusHint(o.HTTPStatus)
@@ -186,6 +192,8 @@ func mcpCallHint(status string) string {
 		return "The MCP server failed, rejected KeiRouter's credentials, or is paused after repeated failures. Check its status on the MCP servers page."
 	case mcp.StatusTimeout:
 		return "The MCP server did not answer within its timeout. Raise the server's timeout or check the server."
+	case mcp.StatusBlocked:
+		return "A guardrail policy blocked the tool's arguments or result. The guardrail log has the details; policies match provider \"mcp\" and the slug__tool name as the model."
 	}
 	return ""
 }

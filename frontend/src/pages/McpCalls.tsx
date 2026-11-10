@@ -63,7 +63,7 @@ export function McpCallsPage() {
   const filtering = !!(serverId || keyId || status || tool);
 
   const st = stats.data?.stats;
-  const denied = (st?.by_status.denied ?? 0) + (st?.by_status.rate_limited ?? 0);
+  const stopped = (st?.by_status.denied ?? 0) + (st?.by_status.rate_limited ?? 0) + (st?.by_status.blocked ?? 0);
 
   return (
     <>
@@ -83,13 +83,17 @@ export function McpCallsPage() {
             <Kpi
               label="Error rate"
               value={st ? (st.error_rate === null ? <span className="text-fg-faint">n/a</span> : `${(st.error_rate * 100).toFixed(1)}%`) : <Skeleton className="h-8 w-16" />}
-              hint={st && st.error_rate !== null ? "of calls that reached a server" : undefined}
+              hint={st && st.error_rate !== null ? "excludes calls KeiRouter stopped" : undefined}
             />
             <Kpi
               label="p95 latency"
               value={st ? (st.p95_latency_ms === null ? <span className="text-fg-faint">n/a</span> : <span className="font-mono">{formatMs(st.p95_latency_ms)}</span>) : <Skeleton className="h-8 w-16" />}
             />
-            <Kpi label="Denied or limited" value={st ? denied.toLocaleString("en-US") : <Skeleton className="h-8 w-16" />} hint={st ? "never reached a server" : undefined} />
+            <Kpi
+              label="Stopped by KeiRouter"
+              value={st ? stopped.toLocaleString("en-US") : <Skeleton className="h-8 w-16" />}
+              hint={st ? "denied, rate limited or blocked by a guardrail" : undefined}
+            />
           </KpiGrid>
         </div>
       )}

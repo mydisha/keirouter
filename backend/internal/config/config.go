@@ -52,6 +52,10 @@ type MCPConfig struct {
 	// AuditToolCalls writes every tool call to the audit log (mcp.tool.call),
 	// besides the MCP call log. Needs audit.enabled. Default true.
 	AuditToolCalls bool `koanf:"audit_tool_calls"`
+	// Guardrails applies the guardrail policies to tool arguments and
+	// results. Policies resolve with provider "mcp" and the tool's prefixed
+	// name (slug__tool) as the model. Default true.
+	Guardrails bool `koanf:"guardrails"`
 }
 
 // DefaultMaxRequestBodyBytes is the default maximum size accepted for inbound
@@ -467,6 +471,7 @@ func Default() Config {
 			DefaultRPM:         600,
 			DefaultConcurrency: 20,
 			AuditToolCalls:     true,
+			Guardrails:         true,
 		},
 		Audit: AuditConfig{
 			Enabled:       true,

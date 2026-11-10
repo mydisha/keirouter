@@ -54,6 +54,10 @@ type Outcome struct {
 	Error      string
 	ToolCount  int
 	UpstreamMS int64
+	// Guardrail says what a guardrail did to the call, such as "pii masked".
+	Guardrail string
+	// Progress counts the progress notifications relayed to the client.
+	Progress int
 }
 
 // statusWriter remembers the status code written to the client.
@@ -68,6 +72,9 @@ func (w *statusWriter) WriteHeader(code int) {
 	}
 	w.ResponseWriter.WriteHeader(code)
 }
+
+// Unwrap lets http.ResponseController reach the Flusher underneath.
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 type inbound struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -431,13 +438,48 @@ func (m *Manager) serveCallTool(x *exchange) {
 	}
 	defer release(0)
 
-	res := m.invoke(ctx, srv, tool, x.req.Params, forwardHeaders(x.r.Header, srv.ForwardHeaders))
+	params := x.req.Params
+	guard := m.guardFor(ctx, x.caller, srv, tool)
+	if guard != nil {
+		var v guardVerdict
+		params, v = guard.checkArgs(params)
+		x.out.Guardrail = v.label()
+		if v.blocked {
+			finish(StatusBlocked, "arguments blocked by "+v.detector+": "+v.reason, 0, 0, http.StatusOK)
+			writeRPCResult(x.w, http.StatusOK, x.req.ID, toolErrorResult("KeiRouter blocked this tool call: "+v.reason))
+			return
+		}
+	}
+
+	relay := newProgressRelay(x)
+	var notify Notify
+	if relay != nil {
+		notify = relay.notify
+	}
+	res := m.invoke(ctx, srv, tool, params, forwardHeaders(x.r.Header, srv.ForwardHeaders), notify)
+	if relay != nil {
+		x.out.Progress = relay.sent
+	}
 	if res.rpcErr != nil {
 		finish(res.status, res.rpcErr.Message, 0, res.upstream, http.StatusOK)
-		writeRPCErrorData(x.w, http.StatusOK, x.req.ID, res.rpcErr.Code, res.rpcErr.Message, res.rpcErr.Data)
+		buf := getBuffer()
+		defer putBuffer(buf)
+		appendRPCError(buf, x.req.ID, res.rpcErr.Code, res.rpcErr.Message, res.rpcErr.Data)
+		relay.reply(x.w, buf.Bytes())
 		return
 	}
 	result := res.result
+	if guard != nil && (res.status == StatusSuccess || res.status == StatusToolError) {
+		var v guardVerdict
+		result, v = guard.checkResult(result)
+		if l := v.label(); l != "" {
+			x.out.Guardrail = joinLabel(x.out.Guardrail, l)
+		}
+		if v.blocked {
+			result = toolErrorResult("KeiRouter blocked the result of this tool call: " + v.reason)
+			res.status, res.errText = StatusBlocked, "result blocked by "+v.detector+": "+v.reason
+		}
+	}
 	if x.modern {
 		result = ensureResultType(result)
 	} else if resultType(result) == "input_required" {
@@ -448,7 +490,17 @@ func (m *Manager) serveCallTool(x *exchange) {
 		res.errText = toolErrorText(result)
 	}
 	finish(res.status, res.errText, len(result), res.upstream, http.StatusOK)
-	writeRPCResult(x.w, http.StatusOK, x.req.ID, result)
+	buf := getBuffer()
+	defer putBuffer(buf)
+	appendRPCResult(buf, x.req.ID, result)
+	relay.reply(x.w, buf.Bytes())
+}
+
+func joinLabel(a, b string) string {
+	if a == "" {
+		return b
+	}
+	return a + ", " + b
 }
 
 // invokeResult is the outcome of one upstream tools/call.
@@ -462,7 +514,7 @@ type invokeResult struct {
 
 // invoke calls a tool upstream. Transport failures come back as an isError
 // result the model can read; upstream JSON-RPC errors as rpcErr.
-func (m *Manager) invoke(ctx context.Context, srv *Server, tool *Tool, params json.RawMessage, extra http.Header) invokeResult {
+func (m *Manager) invoke(ctx context.Context, srv *Server, tool *Tool, params json.RawMessage, extra http.Header, notify Notify) invokeResult {
 	if ok, wait := m.breaker.allow(srv.ID); !ok {
 		msg := fmt.Sprintf("%s is failing; KeiRouter paused calls to it for %ds.", srv.Name, int(wait.Seconds()+0.999))
 		return invokeResult{result: toolErrorResult(msg), status: StatusUpstreamError, errText: "circuit open"}
@@ -492,7 +544,7 @@ func (m *Manager) invoke(ctx context.Context, srv *Server, tool *Tool, params js
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(srv.TimeoutMS)*time.Millisecond)
 	defer cancel()
 	t0 := time.Now()
-	resp, err := m.Client.CallTool(callCtx, target, tool.Name, params, extra)
+	resp, err := m.Client.CallTool(callCtx, target, tool.Name, params, extra, notify)
 	upstream := time.Since(t0)
 	if err != nil {
 		var he *HTTPError
@@ -555,7 +607,7 @@ func (m *Manager) Invoke(ctx context.Context, serverID, tool string, args json.R
 	params := append(append(append([]byte(`{"name":`), name...), `,"arguments":`...), args...)
 	params = append(params, '}')
 	start := time.Now()
-	res := m.invoke(ctx, srv, t, params, nil)
+	res := m.invoke(ctx, srv, t, params, nil, nil)
 	out := InvokeResult{Status: res.status, Result: res.result, Error: res.rpcErr, LatencyMS: time.Since(start).Milliseconds()}
 	m.recordCall(store.MCPCallLog{
 		APIKeyID: "dashboard", ServerID: srv.ID, ServerSlug: srv.Slug, Tool: t.Name, Status: res.status,
@@ -571,6 +623,9 @@ func (m *Manager) recordCall(e store.MCPCallLog) {
 	e.TenantID = m.tenant
 	e.CreatedAt = time.Now().UTC()
 	m.calls.record(e)
+	if m.metrics != nil {
+		m.metrics.RecordMCPCall(e.ServerSlug, e.Status, float64(e.LatencyMS)/1000)
+	}
 }
 
 // checkParamHeaders validates the Mcp-Param-* headers of a modern request
@@ -670,12 +725,16 @@ func writeRPCResult(w http.ResponseWriter, status int, id, result []byte) {
 	w.WriteHeader(status)
 	buf := getBuffer()
 	defer putBuffer(buf)
+	appendRPCResult(buf, id, result)
+	_, _ = w.Write(buf.Bytes())
+}
+
+func appendRPCResult(buf *bytes.Buffer, id, result []byte) {
 	buf.WriteString(`{"jsonrpc":"2.0","id":`)
 	writeID(buf, id)
 	buf.WriteString(`,"result":`)
 	buf.Write(result)
 	buf.WriteByte('}')
-	_, _ = w.Write(buf.Bytes())
 }
 
 func writeRPCError(w http.ResponseWriter, status int, id json.RawMessage, code int, msg string) {
@@ -685,9 +744,14 @@ func writeRPCError(w http.ResponseWriter, status int, id json.RawMessage, code i
 func writeRPCErrorData(w http.ResponseWriter, status int, id json.RawMessage, code int, msg string, data json.RawMessage) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	m, _ := json.Marshal(msg)
 	buf := getBuffer()
 	defer putBuffer(buf)
+	appendRPCError(buf, id, code, msg, data)
+	_, _ = w.Write(buf.Bytes())
+}
+
+func appendRPCError(buf *bytes.Buffer, id json.RawMessage, code int, msg string, data json.RawMessage) {
+	m, _ := json.Marshal(msg)
 	buf.WriteString(`{"jsonrpc":"2.0","id":`)
 	writeID(buf, id)
 	buf.WriteString(`,"error":{"code":` + strconv.Itoa(code) + `,"message":`)
@@ -697,7 +761,6 @@ func writeRPCErrorData(w http.ResponseWriter, status int, id json.RawMessage, co
 		buf.Write(data)
 	}
 	buf.WriteString(`}}`)
-	_, _ = w.Write(buf.Bytes())
 }
 
 // WriteHTTPError writes a JSON-RPC error with no id, for failures before the
