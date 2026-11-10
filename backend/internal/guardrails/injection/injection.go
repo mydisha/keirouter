@@ -107,7 +107,7 @@ func (d *Detector) Inbound(ctx context.Context, in *guardrails.InboundRequest, p
 	}
 
 	dec := decide(cfg, hits)
-	if in.Source != nil && (dec == nil || dec.Action != guardrails.ActionBlock) && (cfg.Spotlight || cfg.Canary) {
+	if in.Source != nil && !guardrails.IsScanOnly(ctx) && (dec == nil || dec.Action != guardrails.ActionBlock) && (cfg.Spotlight || cfg.Canary) {
 		if cfg.Spotlight {
 			d.spotlight(in.Source)
 		}

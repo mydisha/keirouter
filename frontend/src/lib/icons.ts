@@ -41,6 +41,7 @@ import {
   Users,
   Waypoints,
   Wallet,
+  Wrench,
   Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -65,6 +66,8 @@ export const ICONS = {
   cliTools: TerminalSquare,
   system: Cpu,
   settings: Settings,
+  mcpServers: Wrench,
+  mcpCalls: ListChecks,
 
   // Metrics
   requests: Zap,

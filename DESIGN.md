@@ -119,7 +119,8 @@ No invented numbers. A metric with no data shows its empty state, not a zero.
   Icon-only buttons always have an `aria-label`.
 - **Provider and tool logos**: `ProviderLogo` draws the vendor's LobeHub mark
   (MIT, vendored in `components/provider-mark/marks`) from one sprite in
-  `currentColor`. Ids without a mark get a monogram. Add a mark by dropping
+  `currentColor`; brands LobeHub lacks come from Simple Icons (CC0), listed
+  in `provider-mark/NOTICE`. Ids without a mark get a monogram. Add a mark by dropping
   its mono SVG in `marks/` (and an alias in `marks.ts` if the id differs),
   then run `npm run sprite`.
 - **Badges** are small `rounded-md` stamps in `-soft` + ink. Only for real

@@ -33,6 +33,7 @@ import (
 	"github.com/mydisha/keirouter/backend/internal/health"
 	"github.com/mydisha/keirouter/backend/internal/healthcheck"
 	"github.com/mydisha/keirouter/backend/internal/identity"
+	"github.com/mydisha/keirouter/backend/internal/mcp"
 	"github.com/mydisha/keirouter/backend/internal/oauth"
 	"github.com/mydisha/keirouter/backend/internal/observ"
 	"github.com/mydisha/keirouter/backend/internal/pipeline"
@@ -58,6 +59,7 @@ type Server struct {
 	chains              *store.ChainRepo
 	aliases             *store.AliasRepo
 	accounts            *store.AccountRepo
+	mcp                 *mcp.Manager
 	pools               *store.ProxyPoolRepo
 	budgets             *store.BudgetRepo
 	budgetEngine        *budget.Engine
@@ -155,6 +157,8 @@ type Deps struct {
 	HealthChecker          *healthcheck.Checker
 	ProviderHealth         *health.Service
 	ProbeRunner            *health.ProbeRunner
+	// MCP is the MCP gateway; nil disables /mcp and /api/mcp.
+	MCP *mcp.Manager
 }
 
 // New builds a gateway Server and wires its routes.
@@ -187,6 +191,7 @@ func New(d Deps) *Server {
 		chains:              d.Chains,
 		aliases:             d.Aliases,
 		accounts:            d.Accounts,
+		mcp:                 d.MCP,
 		pools:               d.Pools,
 		budgets:             d.Budgets,
 		budgetEngine:        d.BudgetEngine,
@@ -250,8 +255,9 @@ func (s *Server) routes() chi.Router {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: s.cfg.Server.CORSOrigins,
 		AllowedMethods: []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"Authorization", "Content-Type", "x-api-key", "x-goog-api-key", "anthropic-version", "anthropic-beta", "X-KeiRouter-Affinity", "X-KeiRouter-Account", skipSkillsHeader, "X-Conversation-ID", "X-Thread-ID", "X-Session-ID", "OpenAI-Conversation-ID"},
-		ExposedHeaders: []string{"X-KeiRouter-Provider", "X-KeiRouter-Model", "X-KeiRouter-Account", "X-Request-Id", "Retry-After"},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "x-api-key", "x-goog-api-key", "anthropic-version", "anthropic-beta", "X-KeiRouter-Affinity", "X-KeiRouter-Account", skipSkillsHeader, "X-Conversation-ID", "X-Thread-ID", "X-Session-ID", "OpenAI-Conversation-ID",
+			"MCP-Protocol-Version", "Mcp-Method", "Mcp-Name", "Mcp-Session-Id", "Traceparent", "Tracestate", "Last-Event-ID"},
+		ExposedHeaders: []string{"X-KeiRouter-Provider", "X-KeiRouter-Model", "X-KeiRouter-Account", "X-Request-Id", "Retry-After", "Mcp-Session-Id"},
 	}))
 
 	// Crawlers are asked to skip the whole instance; see securityHeaders for
@@ -309,6 +315,9 @@ func (s *Server) routes() chi.Router {
 			fmt.Sprintf("Limit: %d concurrent requests", maxConc),
 			"Every concurrent-request slot is busy (mostly long streams). Raise server.max_concurrent_requests or add capacity.")
 	})
+
+	// MCP gateway (authenticated with the same API keys).
+	s.mountMCP(r, limitInFlight)
 
 	// OpenAI-compatible API surface (authenticated).
 	r.Group(func(r chi.Router) {

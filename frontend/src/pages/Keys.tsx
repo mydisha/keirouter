@@ -251,6 +251,7 @@ export function KeysPage() {
   const [budgetAlertPct, setBudgetAlertPct] = useState(80);
   const [budgetHardCutoff, setBudgetHardCutoff] = useState(true);
   const [allowedModels, setAllowedModels] = useState<string[]>([]);
+  const [mcpMode, setMcpMode] = useState<"all" | "none">("all");
 
   // Result
   const [created, setCreated] = useState<CreatedKey | null>(null);
@@ -271,6 +272,7 @@ export function KeysPage() {
     setBudgetAlertPct(80);
     setBudgetHardCutoff(true);
     setAllowedModels([]);
+    setMcpMode("all");
     setShowAdvanced(false);
     setCreated(null);
     setCopied(false);
@@ -305,6 +307,7 @@ export function KeysPage() {
         }
         if (allowedModels.length > 0) opts.allowed_models = allowedModels;
       }
+      if (mcpMode === "none") opts.mcp_mode = "none";
       return api.createKey(name, Object.keys(opts).length > 0 ? opts as any : undefined);
     },
     onSuccess: (data) => {
@@ -535,6 +538,17 @@ export function KeysPage() {
                       )}
                     </p>
                   </div>
+
+                  <FormField
+                    id={`${ids.models}-mcp`}
+                    label="MCP tools"
+                    hint="Limit it to specific servers or tools later, on the key's MCP tab."
+                  >
+                    <Select id={`${ids.models}-mcp`} value={mcpMode} onChange={(e) => setMcpMode(e.target.value as "all" | "none")} aria-describedby={`${ids.models}-mcp-hint`}>
+                      <option value="all">Every MCP server</option>
+                      <option value="none">No MCP access</option>
+                    </Select>
+                  </FormField>
 
                   {isCustom && (
                     <div className="divide-y divide-line rounded-lg border border-line">

@@ -16,6 +16,12 @@ export const SCOPE_ICONS: Record<GuardrailScope, LucideIcon> = {
   apikey: ICONS.keys,
 };
 
+// MCP_PROVIDER is the provider id MCP tool calls carry in guardrail policies:
+// a provider-scope policy with this id applies to tool arguments and results
+// only, never to LLM requests.
+export const MCP_PROVIDER = "mcp";
+const MCP_PROVIDER_LABEL = "MCP tool calls";
+
 interface Props {
   scope: GuardrailScope;
   value: string;
@@ -70,6 +76,7 @@ export function useScopeTargetLabels(scopes: Iterable<GuardrailScope>) {
       if (!id) return undefined;
       switch (scope) {
         case "provider":
+          if (id === MCP_PROVIDER) return MCP_PROVIDER_LABEL;
           return providers.data?.providers.find((p) => p.id === id)?.display_name;
         case "chain":
           return chains.data?.chains.find((c) => c.id === id)?.name;
@@ -135,15 +142,30 @@ function ProviderSelector({ value, onChange }: { value: string; onChange: (v: st
   });
   const options = q.data?.providers ?? [];
   return (
-    <ScopeField label="Provider" loading={q.isLoading}>
+    <ScopeField
+      label="Provider"
+      loading={q.isLoading}
+      hint={
+        value === MCP_PROVIDER
+          ? "Applies to tool arguments and results at /mcp. PII and injection (with tool results scanned) take effect there. Pick PII entities; with none picked, URLs and IP addresses in results are masked too."
+          : undefined
+      }
+    >
       {(ids) => (
         <Select {...ids} required value={value} onChange={(e) => onChange(e.target.value)} className="min-w-0 truncate">
           <option value="">Select a provider</option>
-          {options.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.display_name} ({p.id})
-            </option>
-          ))}
+          {options.length > 0 && (
+            <optgroup label="LLM providers">
+              {options.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.display_name} ({p.id})
+                </option>
+              ))}
+            </optgroup>
+          )}
+          <optgroup label="MCP gateway">
+            <option value={MCP_PROVIDER}>{MCP_PROVIDER_LABEL}</option>
+          </optgroup>
         </Select>
       )}
     </ScopeField>

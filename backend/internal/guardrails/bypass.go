@@ -16,3 +16,19 @@ func bypassed(ctx context.Context) bool {
 	v, _ := ctx.Value(bypassKey{}).(bool)
 	return v
 }
+
+type scanOnlyKey struct{}
+
+// ScanOnly marks ctx so detectors report decisions and masks but leave out
+// request hardening meant for model prompts (spotlight delimiters, canary
+// markers). Callers that inspect text which never reaches a model as a
+// prompt, such as MCP tool arguments and results, set it.
+func ScanOnly(ctx context.Context) context.Context {
+	return context.WithValue(ctx, scanOnlyKey{}, true)
+}
+
+// IsScanOnly reports whether ctx was marked by ScanOnly.
+func IsScanOnly(ctx context.Context) bool {
+	v, _ := ctx.Value(scanOnlyKey{}).(bool)
+	return v
+}
