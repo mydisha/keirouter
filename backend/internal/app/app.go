@@ -1090,11 +1090,39 @@ func buildModelPrices(ctx context.Context, db *store.DB, log *slog.Logger) map[s
 		if model.InputPerM <= 0 && model.OutputPerM <= 0 {
 			continue
 		}
-		out[model.ProviderID+"/"+model.ModelID] = meter.Price{
+		key := model.ProviderID + "/" + model.ModelID
+		price := meter.Price{
 			InputPerM: model.InputPerM, OutputPerM: model.OutputPerM,
 			CachedInputPerM: model.InputPerM, CacheWritePerM: model.InputPerM,
 			ReasoningPerM: model.OutputPerM, Source: "custom", Estimated: false,
 		}
+		if vendor, ok := out[key]; ok {
+			inheritCacheRates(&price, vendor)
+		}
+		out[key] = price
 	}
 	return out
+}
+
+// inheritCacheRates gives a custom price the cache tiers of the vendor price
+// it overrides. A custom row stores only input and output rates; treating
+// cached input as full input billed cached-heavy agent traffic at up to 50×
+// the vendor rate (Cloudflare DeepSeek: $0.30 input vs $0.006 cached). Tiers
+// scale with the custom input rate so an operator markup applies to them too.
+// Without a vendor row for the same provider/model the full rate stays: a
+// reseller's caching discount cannot be assumed.
+func inheritCacheRates(p *meter.Price, vendor meter.Price) {
+	if p.InputPerM <= 0 || vendor.InputPerM <= 0 {
+		return
+	}
+	scale := p.InputPerM / vendor.InputPerM
+	if vendor.CachedInputPerM > 0 {
+		p.CachedInputPerM = vendor.CachedInputPerM * scale
+	}
+	if vendor.CacheWritePerM > 0 {
+		p.CacheWritePerM = vendor.CacheWritePerM * scale
+	}
+	if vendor.CacheWrite1hPerM > 0 {
+		p.CacheWrite1hPerM = vendor.CacheWrite1hPerM * scale
+	}
 }

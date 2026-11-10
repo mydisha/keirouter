@@ -98,3 +98,22 @@ type StreamChunk struct {
 	Usage        *Usage       `json:"usage,omitempty"`
 	Err          error        `json:"-"`
 }
+
+// WithToolCallFinish returns resp with finish reason tool_calls when it ends a
+// turn that called tools but the upstream reported a plain stop (vLLM does so
+// for a named tool_choice). Agent loops key off the finish reason and would
+// otherwise treat the tool call as the final answer. It copies rather than
+// mutates: cached responses are shared.
+func WithToolCallFinish(resp *ChatResponse) *ChatResponse {
+	if resp == nil || (resp.FinishReason != FinishStop && resp.FinishReason != "") {
+		return resp
+	}
+	for _, p := range resp.Message.Content {
+		if p.Type == PartToolCall {
+			clone := *resp
+			clone.FinishReason = FinishToolCalls
+			return &clone
+		}
+	}
+	return resp
+}

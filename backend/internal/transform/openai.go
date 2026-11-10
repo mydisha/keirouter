@@ -6,6 +6,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
 
@@ -1278,6 +1279,7 @@ func (OpenAICodec) RenderResponse(resp *core.ChatResponse) ([]byte, error) {
 	out := map[string]any{
 		"id":      firstNonEmpty(resp.ID, "chatcmpl-"+resp.Model),
 		"object":  "chat.completion",
+		"created": time.Now().Unix(),
 		"model":   resp.Model,
 		"choices": []map[string]any{renderOAIChoice(resp)},
 		"usage":   renderOAIUsage(resp.Usage),

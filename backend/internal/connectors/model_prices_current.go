@@ -21,6 +21,14 @@ func currentOfficialModelPrices() []ModelPrice {
 
 		// Cloudflare Workers AI models no longer in the catalog listing.
 		{Provider: "cloudflare-ai", Model: "@cf/moonshotai/kimi-k2.5", InputPerM: .6, CachedInputPerM: .1, OutputPerM: 3, Source: "official", SourceURL: cloudflareURL},
+		// Cloudflare Workers AI models added after the catalog refresh. Without
+		// an exact row, cached input fell through to a rate without a cached
+		// tier and was billed at the full input price.
+		{Provider: "cloudflare-ai", Model: "@cf/zai-org/glm-5.3", InputPerM: 1.4, CachedInputPerM: .26, OutputPerM: 4.4, Source: "official", SourceURL: cloudflareURL},
+		{Provider: "cloudflare-ai", Model: "@cf/zai-org/glm-5.3-flash", InputPerM: .15, CachedInputPerM: .03, OutputPerM: .5, Source: "official", SourceURL: cloudflareURL},
+		{Provider: "cloudflare-ai", Model: "@cf/deepseek-ai/deepseek-v4-flash-0731", InputPerM: .44, CachedInputPerM: .014, OutputPerM: 1.32, Source: "official", SourceURL: cloudflareURL},
+		{Provider: "cloudflare-ai", Model: "@cf/deepseek-ai/deepseek-v4.1-flash-1017", InputPerM: .3, CachedInputPerM: .006, OutputPerM: 1.2, Source: "official", SourceURL: cloudflareURL},
+		{Provider: "cloudflare-ai", Model: "@cf/deepseek-ai/deepseek-v4-pro-0813", InputPerM: 1.32, CachedInputPerM: .044, OutputPerM: 3.96, Source: "official", SourceURL: cloudflareURL},
 	}
 
 	// Kiro is subscription/credit based. GPT 5.6 entries mirror the OpenAI list

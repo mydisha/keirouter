@@ -465,6 +465,15 @@ func mergeStreamUsage(total *core.Usage, u core.Usage) {
 	if u.ReasoningTokens > 0 {
 		total.ReasoningTokens = u.ReasoningTokens
 	}
+	if u.TotalTokens > 0 {
+		total.TotalTokens = u.TotalTokens
+	}
+	if u.CacheWriteTokens > 0 {
+		total.CacheWriteTokens = u.CacheWriteTokens
+	}
+	if u.CacheWrite1hTokens > 0 {
+		total.CacheWrite1hTokens = u.CacheWrite1hTokens
+	}
 }
 
 // respEvent formats a Responses API SSE event: "event: <name>\ndata: <json>\n\n".

@@ -295,6 +295,7 @@ func (s *Server) unaryChat(w http.ResponseWriter, r *http.Request, codec transfo
 		transform.UnwrapStructuredOutput(result.Response)
 	}
 	result.Response = core.WithReasoningOrigin(result.Response, core.ReasoningOrigin(result.Provider, result.Model))
+	result.Response = core.WithToolCallFinish(result.Response)
 
 	out, err := codec.RenderResponse(result.Response)
 	if err != nil {
