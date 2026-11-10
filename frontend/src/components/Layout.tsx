@@ -8,6 +8,7 @@ import {
   Image,
   KeyRound,
   LayoutGrid,
+  ListChecks,
   Layers,
   Loader2,
   LogOut,
@@ -26,6 +27,7 @@ import {
   Shield,
   Sun,
   Waypoints,
+  Wrench,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -96,6 +98,13 @@ const navGroups: NavGroup[] = [
       { to: "/providers", label: "Providers", icon: Boxes, preload: "/providers", indicator: "health", also: ["/provider-health", "/quota"] },
       { to: "/media", label: "Media", icon: Image, preload: "/media" },
       { to: "/proxy-pools", label: "Proxy pools", icon: Waypoints, preload: "/proxy-pools" },
+    ],
+  },
+  {
+    heading: "MCP",
+    items: [
+      { to: "/mcp-servers", label: "Servers", icon: Wrench, preload: "/mcp-servers" },
+      { to: "/mcp-servers/calls", label: "Tool calls", icon: ListChecks, preload: "/mcp-calls" },
     ],
   },
   {
@@ -188,6 +197,8 @@ const TITLE_BY_PATH: Record<string, string> = {
   "/cli-tools": "CLI tools",
   "/system": "System",
   "/audit": "Audit log",
+  "/mcp-servers": "MCP servers",
+  "/mcp-servers/calls": "Tool calls",
 };
 
 const TITLE_BY_PREFIX: [string, string][] = [
@@ -197,6 +208,7 @@ const TITLE_BY_PREFIX: [string, string][] = [
   ["/keys/", "API key"],
   ["/chains/", "Chain"],
   ["/provider-health/", "Provider health"],
+  ["/mcp-servers/", "MCP server"],
 ];
 
 function titleForPath(pathname: string): string {

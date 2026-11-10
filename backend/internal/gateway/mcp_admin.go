@@ -92,13 +92,14 @@ type mcpServerInput struct {
 }
 
 type mcpToolJSON struct {
-	Name          string     `json:"name"`
-	Title         string     `json:"title,omitempty"`
-	Description   string     `json:"description,omitempty"`
-	Enabled       bool       `json:"enabled"`
-	InvalidReason string     `json:"invalid_reason,omitempty"`
-	ChangedAt     *time.Time `json:"changed_at,omitempty"`
-	ExposedName   string     `json:"exposed_name"`
+	Name          string          `json:"name"`
+	Title         string          `json:"title,omitempty"`
+	Description   string          `json:"description,omitempty"`
+	InputSchema   json.RawMessage `json:"input_schema,omitempty"`
+	Enabled       bool            `json:"enabled"`
+	InvalidReason string          `json:"invalid_reason,omitempty"`
+	ChangedAt     *time.Time      `json:"changed_at,omitempty"`
+	ExposedName   string          `json:"exposed_name"`
 }
 
 type mcpServerJSON struct {
@@ -456,9 +457,9 @@ func (s *Server) mcpServerView(srv store.MCPServer, tools []store.MCPServerTool,
 			v.InvalidToolCount++
 		}
 		if withTools {
-			title, desc := mcpToolText(t.Definition)
+			title, desc, schema := mcpToolText(t.Definition)
 			v.Tools = append(v.Tools, mcpToolJSON{
-				Name: t.Name, Title: title, Description: desc, Enabled: t.Enabled, InvalidReason: t.InvalidReason,
+				Name: t.Name, Title: title, Description: desc, InputSchema: schema, Enabled: t.Enabled, InvalidReason: t.InvalidReason,
 				ChangedAt: t.ChangedAt, ExposedName: srv.Slug + mcp.ToolNameSeparator + t.Name,
 			})
 		}
@@ -469,13 +470,14 @@ func (s *Server) mcpServerView(srv store.MCPServer, tools []store.MCPServerTool,
 	return v
 }
 
-func mcpToolText(def string) (title, desc string) {
+func mcpToolText(def string) (title, desc string, schema json.RawMessage) {
 	var t struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
+		Title       string          `json:"title"`
+		Description string          `json:"description"`
+		InputSchema json.RawMessage `json:"inputSchema"`
 	}
 	_ = json.Unmarshal([]byte(def), &t)
-	return t.Title, t.Description
+	return t.Title, t.Description, t.InputSchema
 }
 
 // applyMCPInput validates the input and copies it onto srv. It returns the

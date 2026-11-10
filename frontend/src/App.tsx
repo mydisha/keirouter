@@ -33,6 +33,9 @@ const KeyDetailPage = lazy(routeLoaders["/key-detail"]);
 const GuardrailsPage = lazy(routeLoaders["/guardrails"]);
 const AuditPage = lazy(routeLoaders["/audit"]);
 const ProviderHealthPage = lazy(routeLoaders["/provider-health"]);
+const McpServersPage = lazy(routeLoaders["/mcp-servers"]);
+const McpServerDetailPage = lazy(routeLoaders["/mcp-server-detail"]);
+const McpCallsPage = lazy(routeLoaders["/mcp-calls"]);
 
 function PageFallback() {
   return (
@@ -82,6 +85,9 @@ export function App() {
                 <Route path="audit" element={<AuditPage />} />
                 <Route path="provider-health" element={<ProviderHealthPage />} />
                 <Route path="provider-health/:provider" element={<ProviderHealthPage />} />
+                <Route path="mcp-servers" element={<McpServersPage />} />
+                <Route path="mcp-servers/calls" element={<McpCallsPage />} />
+                <Route path="mcp-servers/:id" element={<McpServerDetailPage />} />
                 <Route path="plans" element={<PlansPage />} />
                 <Route path="budgets" element={<PlansPage />} />
                 <Route path="system" element={<SystemPage />} />

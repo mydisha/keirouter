@@ -189,6 +189,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: "nav-health", label: "Provider health", icon: ICONS.health, section: "Go to", run: go("/provider-health"), keywords: ["uptime", "errors", "latency", "status"] },
       { id: "nav-quota", label: "Quota", icon: ICONS.quota, section: "Go to", run: go("/quota"), keywords: ["limits", "remaining", "upstream"] },
       { id: "nav-proxy-pools", label: "Proxy pools", icon: ICONS.proxyPools, section: "Go to", run: go("/proxy-pools"), keywords: ["proxy", "egress"] },
+      { id: "nav-mcp-servers", label: "MCP servers", icon: ICONS.mcpServers, section: "Go to", run: go("/mcp-servers"), keywords: ["mcp", "tools", "model context protocol", "github", "linear"] },
+      { id: "nav-mcp-calls", label: "MCP tool calls", icon: ICONS.mcpCalls, section: "Go to", run: go("/mcp-servers/calls"), keywords: ["mcp", "tool calls", "logs"] },
       { id: "nav-keys", label: "API keys", icon: ICONS.keys, section: "Go to", run: go("/keys"), keywords: ["auth", "token", "bearer"] },
       { id: "nav-plans", label: "Plans & budgets", icon: ICONS.plans, section: "Go to", run: go("/plans"), keywords: ["budget", "limit", "rate limit"] },
       { id: "nav-guardrails", label: "Guardrails", icon: ICONS.guardrails, section: "Go to", run: go("/guardrails"), keywords: ["pii", "injection", "moderation"] },
@@ -198,6 +200,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       { id: "nav-settings", label: "Settings", icon: ICONS.settings, section: "Go to", run: go("/settings"), keywords: ["token saving", "rtk", "caveman", "branding", "backup"] },
 
       { id: "action-connect", label: "Connect a provider", icon: Plus, section: "Actions", run: go("/providers"), keywords: ["add account", "oauth", "api key"] },
+      { id: "action-add-mcp", label: "Add MCP server", icon: Plus, section: "Actions", run: go("/mcp-servers?add=1"), keywords: ["mcp", "tool server", "connect"] },
       { id: "action-new-key", label: "Create API key", icon: Plus, section: "Actions", run: go("/keys"), keywords: ["new key", "generate"] },
       { id: "action-new-chain", label: "Create chain", icon: Plus, section: "Actions", run: go("/chains/new"), keywords: ["new chain", "fallback"] },
       { id: "action-new-plan", label: "Create plan", icon: Plus, section: "Actions", run: go("/plans"), keywords: ["budget", "limit"] },

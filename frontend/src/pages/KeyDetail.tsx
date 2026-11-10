@@ -29,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { useToast } from "../components/Toast";
 import { CodeBlock } from "../components/ui/code-block";
 import { GuardrailEditor } from "../components/GuardrailEditor";
+import { KeyMcpAccess } from "../components/mcp/KeyMcpAccess";
 import { GuardrailKeyStats } from "../components/GuardrailMonitor";
 import { useModelCatalog, type ModelCatalogOption } from "../components/ModelSelect";
 import { ProviderLogo } from "../components/ProviderLogo";
@@ -37,9 +38,9 @@ import { ICONS } from "../lib/icons";
 import { useConfirm } from "../components/ui/confirm-dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 
-type Tab = "general" | "models" | "guardrails";
-const TAB_VALUES: Tab[] = ["general", "models", "guardrails"];
-const TAB_LABELS: Record<Tab, string> = { general: "Overview", models: "Models", guardrails: "Guardrails" };
+type Tab = "general" | "models" | "mcp" | "guardrails";
+const TAB_VALUES: Tab[] = ["general", "models", "mcp", "guardrails"];
+const TAB_LABELS: Record<Tab, string> = { general: "Overview", models: "Models", mcp: "MCP", guardrails: "Guardrails" };
 
 const FOCUS_RING = "focus:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const USAGE_DAYS = 30;
@@ -366,6 +367,7 @@ export function KeyDetailPage() {
           <GeneralTab apiKey={key} plan={plan} portalUrl={portalUrl} onToggle={() => toggle.mutate(key)} togglePending={toggle.isPending} />
         )}
         {tab === "models" && <ModelsTab apiKey={key} plan={plan} plansLoading={plans.isLoading} />}
+        {tab === "mcp" && <KeyMcpAccess keyId={key.id} />}
         {tab === "guardrails" && <GuardrailsTab apiKey={key} />}
       </div>
     </>

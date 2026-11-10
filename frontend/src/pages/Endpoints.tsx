@@ -8,6 +8,7 @@ import { PageHeader } from "../components/Layout";
 import { useToast } from "../components/Toast";
 import { CodeBlock, CopyButton } from "../components/ui/code-block";
 import type { CodeLanguage } from "../lib/highlight";
+import { McpConnectCard } from "../components/mcp/McpConnectCard";
 import {
   Card,
   Button,
@@ -133,6 +134,7 @@ export function EndpointsPage() {
       <div className="space-y-6">
         <ConnectionCard localUrl={localUrl} loading={access.isLoading} tunnelUrl={tunnelUrl} />
         <QuickStartCard apiBase={apiBase} action={targetControl} />
+        <McpConnectCard apiBase={apiBase} />
         <CatalogueCard apiBase={apiBase} />
         <TunnelSection />
       </div>

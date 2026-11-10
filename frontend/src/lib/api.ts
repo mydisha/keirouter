@@ -1601,6 +1601,179 @@ export async function fetchKeyUsageById(id: string, days?: number): Promise<KeyU
   return resp.json();
 }
 
+// ---- MCP gateway ---------------------------------------------------------------
+
+export type MCPAuthType = "none" | "bearer" | "header" | "basic";
+export type MCPHealth = "unknown" | "healthy" | "failing";
+export type MCPMode = "none" | "all" | "selected";
+export type MCPCallStatus = "success" | "tool_error" | "denied" | "blocked" | "rate_limited" | "upstream_error" | "timeout";
+
+export interface MCPTool {
+  name: string;
+  title?: string;
+  description?: string;
+  input_schema?: unknown;
+  enabled: boolean;
+  invalid_reason?: string;
+  changed_at?: string | null;
+  exposed_name: string;
+}
+
+export interface MCPServer {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  preset_id: string;
+  url: string;
+  auth_type: MCPAuthType;
+  auth_header: string;
+  username: string;
+  has_secret: boolean;
+  static_header_names: string[];
+  forward_headers: string[];
+  tool_mode: "all" | "selected";
+  timeout_ms: number;
+  enabled: boolean;
+  protocol_version: string;
+  health_status: MCPHealth;
+  health_error: string;
+  health_checked_at: string | null;
+  tools_synced_at: string | null;
+  tool_count: number;
+  exposed_tool_count: number;
+  changed_tool_count: number;
+  invalid_tool_count: number;
+  created_at: string;
+  updated_at: string;
+  tools?: MCPTool[];
+  /** Set when saving worked but the follow-up catalog sync failed. */
+  sync_error?: string;
+}
+
+export interface MCPServerInput {
+  preset_id?: string;
+  slug?: string;
+  name?: string;
+  description?: string;
+  url?: string;
+  auth_type?: MCPAuthType;
+  auth_header?: string;
+  username?: string;
+  /** Omit to keep the stored secret; "" clears it. */
+  secret?: string;
+  /** Omit to keep the stored headers; replaces them all when sent. */
+  static_headers?: Record<string, string>;
+  forward_headers?: string[];
+  timeout_ms?: number;
+  enabled?: boolean;
+  /** Test endpoint only: reuse this server's stored secret. */
+  server_id?: string;
+}
+
+export interface MCPPresetVar {
+  key: string;
+  label: string;
+  type: "text" | "select" | "bool";
+  options?: { value: string; label: string }[];
+  default?: string;
+  required?: boolean;
+  hint?: string;
+}
+
+export interface MCPPreset {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  url: string;
+  auth_types: MCPAuthType[];
+  auth_header?: string;
+  secret_label?: string;
+  secret_help_url?: string;
+  secret_optional?: boolean;
+  vars?: MCPPresetVar[];
+  static_headers?: Record<string, string>;
+  notes?: string;
+  docs_url?: string;
+  source: "builtin" | "company";
+}
+
+export interface MCPTestResult {
+  ok: boolean;
+  error?: string;
+  protocol_version?: string;
+  tools?: { name: string; description?: string; invalid_reason?: string }[];
+  latency_ms: number;
+}
+
+export interface MCPKeyAccess {
+  mode: MCPMode;
+  servers: { server_id: string; tool_mode: "all" | "selected"; tools: string[] }[];
+}
+
+export interface MCPServerKey {
+  id: string;
+  name: string;
+  display: string;
+  disabled: boolean;
+  all_tools: boolean;
+  tools: string[] | null;
+}
+
+export interface MCPCallLog {
+  id: string;
+  request_id: string;
+  api_key_id: string;
+  server_id: string;
+  server_slug: string;
+  tool: string;
+  status: MCPCallStatus;
+  error: string;
+  latency_ms: number;
+  upstream_ms: number;
+  request_bytes: number;
+  response_bytes: number;
+  client: string;
+  trace_id: string;
+  created_at: string;
+}
+
+export interface MCPStats {
+  calls: number;
+  by_status: Partial<Record<MCPCallStatus, number>>;
+  p95_latency_ms: number | null;
+  by_server: Record<string, number>;
+  error_rate: number | null;
+}
+
+export interface MCPInvokeResult {
+  status: MCPCallStatus;
+  result?: unknown;
+  error?: { code: number; message: string; data?: unknown };
+  latency_ms: number;
+}
+
+export type MCPPeriod = "1h" | "24h" | "7d" | "30d";
+
+export interface MCPLogQuery {
+  server_id?: string;
+  key_id?: string;
+  status?: string;
+  tool?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+function mcpLogQuery(q: MCPLogQuery): string {
+  const p = new URLSearchParams();
+  for (const [k, v] of Object.entries(q)) {
+    if (v !== undefined && v !== "") p.set(k, String(v));
+  }
+  const s = p.toString();
+  return s ? `?${s}` : "";
+}
+
 export const api = {
   // Auth (no session required for status/login/logout).
   authStatus: () => request<AuthStatus>("GET", "/auth/status"),
@@ -1696,6 +1869,7 @@ export const api = {
     budget_alert_pct?: number;
     budget_hard_cutoff?: boolean;
     allowed_models?: string[];
+    mcp_mode?: "all" | "none";
   }) =>
     request<CreatedKey>("POST", "/keys", { name, ...(opts ? opts : {}) }),
   updateKey: (id: string, patch: { disabled?: boolean; allowed_models?: string[] }) =>
@@ -2112,6 +2286,25 @@ export const api = {
 
   runHealthProbe: (input: { provider: string; provider_account_id?: string; model: string; capability?: string }) =>
     request<HealthProbeResult>("POST", "/health/probes/run", input),
+
+  // MCP gateway.
+  mcpCatalog: () => request<{ presets: MCPPreset[]; catalog_only: boolean }>("GET", "/mcp/catalog"),
+  mcpServers: () => request<{ servers: MCPServer[]; keys_with_all_access: number }>("GET", "/mcp/servers"),
+  mcpServer: (id: string) => request<MCPServer>("GET", `/mcp/servers/${id}`),
+  createMcpServer: (input: MCPServerInput) => request<MCPServer>("POST", "/mcp/servers", input),
+  updateMcpServer: (id: string, input: MCPServerInput) => request<MCPServer>("PATCH", `/mcp/servers/${id}`, input),
+  deleteMcpServer: (id: string) => request<void>("DELETE", `/mcp/servers/${id}`),
+  testMcpServer: (input: MCPServerInput) => request<MCPTestResult>("POST", "/mcp/servers/test", input),
+  syncMcpServer: (id: string) => request<MCPServer>("POST", `/mcp/servers/${id}/sync`),
+  setMcpTools: (id: string, tool_mode: "all" | "selected", enabled: string[]) =>
+    request<MCPServer>("PUT", `/mcp/servers/${id}/tools`, { tool_mode, enabled }),
+  callMcpTool: (id: string, tool: string, args: unknown) =>
+    request<MCPInvokeResult>("POST", `/mcp/servers/${id}/call`, { tool, arguments: args }),
+  mcpServerKeys: (id: string) => request<{ keys: MCPServerKey[] }>("GET", `/mcp/servers/${id}/access`),
+  keyMcpAccess: (keyId: string) => request<MCPKeyAccess>("GET", `/keys/${keyId}/mcp-access`),
+  setKeyMcpAccess: (keyId: string, access: MCPKeyAccess) => request<MCPKeyAccess>("PUT", `/keys/${keyId}/mcp-access`, access),
+  mcpLogs: (q: MCPLogQuery) => request<{ logs: MCPCallLog[]; next_cursor: string }>("GET", `/mcp/logs${mcpLogQuery(q)}`),
+  mcpStats: (period: MCPPeriod) => request<{ period: MCPPeriod; stats: MCPStats }>("GET", `/mcp/stats?period=${period}`),
 };
 
 // ---- Provider health types ----

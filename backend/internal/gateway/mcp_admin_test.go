@@ -127,6 +127,7 @@ func TestMCPAdmin_CreateSyncsAndHidesSecret(t *testing.T) {
 
 	tools := body["tools"].([]any)
 	require.Equal(t, "docs__fetch", tools[0].(map[string]any)["exposed_name"])
+	require.Equal(t, map[string]any{"type": "object"}, tools[0].(map[string]any)["input_schema"], "the tester builds its form from the schema")
 
 	id := body["id"].(string)
 	status, list := h.do(t, http.MethodGet, "/mcp/servers", nil)
