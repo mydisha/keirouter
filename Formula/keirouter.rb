@@ -1,27 +1,27 @@
-# Auto-updated by release.yml on tag v0.3.2. Do not edit manually.
+# Auto-updated by release.yml on tag v0.4.0. Do not edit manually.
 class Keirouter < Formula
   desc "Self-hosted AI gateway — one endpoint for 130+ LLM providers with fallback, caching, and a dashboard"
   homepage "https://github.com/mydisha/keirouter"
-  version "0.3.2"
+  version "0.4.0"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.2/keirouter_v0.3.2_darwin_arm64.tar.gz"
-      sha256 "6a73d7c756612c5f0ed21ae2515ab9444c6ff765da8911f968795f4a1d572490"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.4.0/keirouter_v0.4.0_darwin_arm64.tar.gz"
+      sha256 "d7f44f0889ebc8ac5b2b4554002d0e7b9cde78b3eada795e11c3105c3d509c81"
     else
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.2/keirouter_v0.3.2_darwin_amd64.tar.gz"
-      sha256 "bf48a922c2011219e31e2e5661723b98f883afe4c08c623fb9f40f0e2f30c33d"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.4.0/keirouter_v0.4.0_darwin_amd64.tar.gz"
+      sha256 "020c9196aafa6de5140ba4d2211feb92f7c567dd8f77c664bb2ac4f11f15f7f0"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.2/keirouter_v0.3.2_linux_arm64.tar.gz"
-      sha256 "c3c5bf0bfa12e4c381abe20d319902b010819ef94a77e19905e26e9291c40609"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.4.0/keirouter_v0.4.0_linux_arm64.tar.gz"
+      sha256 "0f62a1981652d09f69b644c315699954b43f7f2ffa8254ad06e48091c409811f"
     else
-      url "https://github.com/mydisha/keirouter/releases/download/v0.3.2/keirouter_v0.3.2_linux_amd64.tar.gz"
-      sha256 "5392695fc595d2635ecf8177876245663148d2d22d7e3aad3e44421b79dbc70e"
+      url "https://github.com/mydisha/keirouter/releases/download/v0.4.0/keirouter_v0.4.0_linux_amd64.tar.gz"
+      sha256 "47c3af99b4ca17dd49964480ee5c39c64336db93a10abe7b3e9a3d7aa5d26dff"
     end
   end
 
