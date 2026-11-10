@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fillPresetURL, PRESET_TEXT_VALUE, SLUG_PATTERN, skeletonArgs, slugFromName } from "./shared";
+import { connectHint, fillPresetURL, PRESET_TEXT_VALUE, SLUG_PATTERN, skeletonArgs, slugFromName } from "./shared";
 
 describe("slugFromName", () => {
   it("lowercases and joins words with hyphens", () => {
@@ -56,5 +56,23 @@ describe("skeletonArgs", () => {
     expect(skeletonArgs(undefined)).toEqual({});
     expect(skeletonArgs({ type: "object" })).toEqual({});
     expect(skeletonArgs({ required: ["ghost"], properties: {} })).toEqual({});
+  });
+});
+
+describe("connectHint", () => {
+  it("points at the token when the server rejects the credentials", () => {
+    expect(connectHint("probe: upstream rejected the credentials (HTTP 401)")).toMatch(/token/);
+  });
+  it("explains the private address block, timeouts, unreachable hosts and wrong paths", () => {
+    expect(connectHint("dial tcp: private network address blocked")).toMatch(/public URL/);
+    expect(connectHint("context deadline exceeded")).toMatch(/in time/);
+    expect(connectHint("dial tcp: lookup mcp.exmple.com: no such host")).toMatch(/reach the host/);
+    expect(connectHint("upstream HTTP 404: not found")).toMatch(/\/mcp/);
+  });
+  it("adds nothing when the error already says what to do, or there is none", () => {
+    expect(connectHint("server lists 900 tools; the limit is 500")).toBeUndefined();
+    expect(connectHint("upstream HTTP 4040: odd")).toBeUndefined();
+    expect(connectHint(undefined)).toBeUndefined();
+    expect(connectHint("")).toBeUndefined();
   });
 });

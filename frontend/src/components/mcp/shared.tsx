@@ -65,6 +65,18 @@ export function fillPresetURL(template: string, values: Record<string, string>):
 /** The characters the server accepts in a text variable of a preset URL. */
 export const PRESET_TEXT_VALUE = /^[A-Za-z0-9._-]+$/;
 
+/** connectHint turns a failed connection test into the next thing to check,
+ *  or undefined when the error already says it. */
+export function connectHint(error: string | undefined): string | undefined {
+  const e = (error ?? "").toLowerCase();
+  if (e.includes("rejected the credentials")) return "Check the token, and that it may use this server.";
+  if (e.includes("address blocked") || e.includes("multicast blocked")) return "KeiRouter does not connect to private or loopback addresses. Use the server's public URL.";
+  if (e.includes("deadline exceeded") || e.includes("timeout") || e.includes("timed out")) return "The server did not answer in time. Check the URL, then try again.";
+  if (e.includes("no such host") || e.includes("connection refused") || e.includes("network is unreachable")) return "KeiRouter could not reach the host. Check the URL.";
+  if (/upstream http 404\b/.test(e)) return "Nothing answers at this path. Check the URL; MCP servers often end in /mcp.";
+  return undefined;
+}
+
 export function hostOf(url: string): string {
   try {
     return new URL(url).host;

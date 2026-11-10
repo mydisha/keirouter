@@ -80,6 +80,10 @@ const ALIASES: Record<string, string> = {
   "deepseek-tui": "deepseek",
   "qoder-cli": "qoder",
   "codebuddy-cli": "codebuddy",
+  // MCP server presets.
+  "microsoft-learn": "microsoft",
+  "aws-knowledge": "aws",
+  deepwiki: "devin",
 };
 
 /** The sprite symbol id for a provider or tool id, if a mark is vendored. */

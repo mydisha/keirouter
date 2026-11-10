@@ -1,12 +1,96 @@
-import { useId, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
-import { ChevronDown, ExternalLink, Plus, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, ExternalLink, Plus, X } from "lucide-react";
 import { api, type MCPAuthType, type MCPPreset, type MCPServer, type MCPServerInput, type MCPTestResult } from "../../lib/api";
 import { cn } from "@/lib/utils";
 import { formatMs } from "../../lib/format";
 import { Button, ErrorBanner, Field, Input, Select, Textarea } from "../ui";
-import { fillPresetURL, PRESET_TEXT_VALUE, SLUG_PATTERN, slugFromName } from "./shared";
+import { connectHint, fillPresetURL, hostOf, PRESET_TEXT_VALUE, SLUG_PATTERN, slugFromName } from "./shared";
+
+const TOOL_PREVIEW = 8;
+
+/**
+ * TestResult reports a connection test: what answered, how fast, and the
+ * tools clients will get, or what failed and what to check. A result whose
+ * settings were edited afterwards says so instead of vouching for them.
+ */
+function TestResult({ result, host, stale }: { result: MCPTestResult; host: string; stale: boolean }) {
+  const tools = result.tools ?? [];
+  const hidden = tools.filter((t) => t.invalid_reason);
+  const usable = tools.filter((t) => !t.invalid_reason);
+  const hint = result.ok ? undefined : connectHint(result.error);
+
+  return (
+    <section aria-label="Connection test" className="overflow-hidden rounded-lg border border-line bg-surface text-[13px]">
+      <div className={cn("flex items-start gap-2.5 px-3 py-2.5", result.ok ? "bg-ok-soft" : "bg-bad-soft")}>
+        {result.ok ? (
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ok" aria-hidden="true" />
+        ) : (
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-bad" aria-hidden="true" />
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-fg">
+            {result.ok ? "Connected" : "Could not connect"}
+            {host && <span className="font-normal text-fg-muted"> to {host}</span>}
+          </p>
+          {!result.ok && result.error && <p className="mt-0.5 break-words text-[12.5px] leading-5 text-fg">{result.error}</p>}
+          {hint && <p className="mt-0.5 text-[12.5px] leading-5 text-fg-muted">{hint}</p>}
+        </div>
+      </div>
+
+      {result.ok && (
+        <>
+          <dl className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] divide-x divide-line border-t border-line">
+            <div className="min-w-0 px-3 py-2">
+              <dt className="text-[12px] text-fg-muted">Tools</dt>
+              <dd className="font-mono tnum text-fg">{usable.length}</dd>
+            </div>
+            <div className="min-w-0 px-3 py-2">
+              <dt className="text-[12px] text-fg-muted">Protocol</dt>
+              <dd className="whitespace-nowrap font-mono text-fg">{result.protocol_version || "n/a"}</dd>
+            </div>
+            <div className="min-w-0 px-3 py-2">
+              <dt className="text-[12px] text-fg-muted">Latency</dt>
+              <dd className="font-mono tnum text-fg">{formatMs(result.latency_ms)}</dd>
+            </div>
+          </dl>
+          {usable.length > 0 && (
+            <ul aria-label="Tools found" className="flex flex-wrap gap-1.5 border-t border-line px-3 py-2.5">
+              {usable.slice(0, TOOL_PREVIEW).map((t) => (
+                <li key={t.name} title={t.description || undefined} className="max-w-full truncate rounded-md bg-subtle px-1.5 py-0.5 font-mono text-[12px] text-fg-muted">
+                  {t.name}
+                </li>
+              ))}
+              {usable.length > TOOL_PREVIEW && <li className="px-1 py-0.5 text-[12px] text-fg-muted">+{usable.length - TOOL_PREVIEW} more</li>}
+            </ul>
+          )}
+          {usable.length === 0 && hidden.length === 0 && (
+            <p className="border-t border-line px-3 py-2.5 text-[12.5px] text-fg-muted">The server lists no tools yet. Clients will see none until it does.</p>
+          )}
+          {hidden.length > 0 && (
+            <div className="flex items-start gap-2 border-t border-line px-3 py-2.5 text-[12.5px] leading-5">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
+              <p className="min-w-0 text-fg-muted">
+                <span className="text-fg">
+                  {hidden.length} tool{hidden.length === 1 ? "" : "s"} hidden
+                </span>{" "}
+                for an invalid header annotation: <span className="break-all font-mono">{hidden.map((t) => t.name).join(", ")}</span>
+              </p>
+            </div>
+          )}
+        </>
+      )}
+
+      {stale && (
+        <p className="flex items-start gap-2 border-t border-line bg-warn-soft px-3 py-2 text-[12.5px] leading-5 text-fg">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-hidden="true" />
+          Settings changed since this test. Test again to check them.
+        </p>
+      )}
+    </section>
+  );
+}
 
 const AUTH_LABELS: Record<MCPAuthType, string> = {
   none: "No authentication",
@@ -60,7 +144,13 @@ export function ServerForm({ mode, preset, server, keysWithAllAccess, submitLabe
   const [timeoutS, setTimeoutS] = useState(String(Math.round((server?.timeout_ms ?? 60000) / 1000)));
   const [advanced, setAdvanced] = useState(editing && ((server?.static_header_names.length ?? 0) > 0 || (server?.forward_headers.length ?? 0) > 0));
   const [submitted, setSubmitted] = useState(false);
-  const [test, setTest] = useState<MCPTestResult | null>(null);
+  const [test, setTest] = useState<{ result: MCPTestResult; signature: string } | null>(null);
+  // The result lands at the end of a long form, under the sticky footer:
+  // bring each new one into view.
+  const testRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (test) testRef.current?.scrollIntoView({ block: "nearest" });
+  }, [test]);
 
   // A preset that is not fixed to one server URL lets the operator fill its
   // variables; the URL is derived from them.
@@ -127,14 +217,19 @@ export function ServerForm({ mode, preset, server, keysWithAllAccess, submitLabe
     return input;
   };
 
+  // The settings a result was measured with: editing any of them after a test
+  // marks the result as out of date instead of leaving it to vouch for them.
+  // Name, description and timeout do not change what the test sees.
+  const { name: _n, description: _d, timeout_ms: _t, ...connection } = buildInput();
+  const signature = JSON.stringify(connection);
   const testConn = useMutation({
-    mutationFn: () => {
+    mutationFn: (_signature: string) => {
       const input = buildInput();
       if (editing && server) input.server_id = server.id;
       return api.testMcpServer(input);
     },
-    onSuccess: (res) => setTest(res),
-    onError: (e: Error) => setTest({ ok: false, error: e.message, latency_ms: 0 }),
+    onSuccess: (res, sig) => setTest({ result: res, signature: sig }),
+    onError: (e: Error, sig) => setTest({ result: { ok: false, error: e.message, latency_ms: 0 }, signature: sig }),
   });
 
   const submit = (ev: FormEvent) => {
@@ -334,21 +429,9 @@ export function ServerForm({ mode, preset, server, keysWithAllAccess, submitLabe
           )}
         </div>
 
-        {test && (
-          <div role="status" className={cn("rounded-lg px-3 py-2 text-[12.5px] leading-5", test.ok ? "bg-ok-soft text-fg" : "bg-bad-soft text-fg")}>
-            {test.ok ? (
-              <>
-                <span className="font-medium text-ok">Connected</span> · {test.tools?.length ?? 0} tools · protocol <span className="font-mono">{test.protocol_version}</span> ·{" "}
-                {formatMs(test.latency_ms)}
-                {(test.tools ?? []).some((t) => t.invalid_reason) && <> · {(test.tools ?? []).filter((t) => t.invalid_reason).length} hidden for an invalid header annotation</>}
-              </>
-            ) : (
-              <>
-                <span className="font-medium text-bad">Could not connect.</span> {test.error}
-              </>
-            )}
-          </div>
-        )}
+        <div ref={testRef} aria-live="polite" className="scroll-mb-48 sm:scroll-mb-20">
+          {test && <TestResult result={test.result} host={hostOf(effectiveURL)} stale={test.signature !== signature} />}
+        </div>
         {mode === "create" && keysWithAllAccess !== undefined && keysWithAllAccess > 0 && (
           <p className="text-[12.5px] text-fg-muted">
             {keysWithAllAccess} API key{keysWithAllAccess === 1 ? "" : "s"} with access to every MCP server will be able to use it.{" "}
@@ -372,10 +455,10 @@ export function ServerForm({ mode, preset, server, keysWithAllAccess, submitLabe
           disabled={testConn.isPending}
           onClick={() => {
             setSubmitted(true);
-            if (valid) testConn.mutate();
+            if (valid) testConn.mutate(signature);
           }}
         >
-          {testConn.isPending ? "Testing…" : "Test connection"}
+          {testConn.isPending ? "Testing…" : test && test.signature !== signature ? "Test again" : "Test connection"}
         </Button>
         <Button type="submit" disabled={submitting}>
           {submitting ? "Saving…" : submitLabel}
