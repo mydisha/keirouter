@@ -1,12 +1,9 @@
 import { lazy, Suspense, useId, useState, useEffect, type ReactNode } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { useQuery, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import {
-  Activity,
   BarChart3,
   Boxes,
-  Cpu,
-  Gauge,
   History,
   Image,
   KeyRound,
@@ -28,7 +25,6 @@ import {
   Settings,
   Shield,
   Sun,
-  TerminalSquare,
   Waypoints,
   X,
   type LucideIcon,
@@ -63,10 +59,11 @@ interface NavItem {
   to: string;
   label: string;
   icon: LucideIcon;
-  end?: boolean;
   preload?: RoutePreloadKey;
   /** Optional status indicator rendered at the end of the row. */
   indicator?: "live" | "health";
+  /** Other pages this item owns, shown as a switch in their headers. */
+  also?: string[];
 }
 
 interface NavGroup {
@@ -79,7 +76,7 @@ interface NavGroup {
 const navGroups: NavGroup[] = [
   {
     items: [
-      { to: "/", label: "Overview", icon: LayoutGrid, end: true, preload: "/" },
+      { to: "/", label: "Overview", icon: LayoutGrid, preload: "/" },
       { to: "/usage", label: "Usage", icon: BarChart3, preload: "/usage" },
       { to: "/console", label: "Console", icon: ScrollText, preload: "/console", indicator: "live" },
       { to: "/playground", label: "Playground", icon: MessagesSquare, preload: "/playground" },
@@ -88,7 +85,7 @@ const navGroups: NavGroup[] = [
   {
     heading: "Routing",
     items: [
-      { to: "/endpoints", label: "Endpoints", icon: Plug, preload: "/endpoints" },
+      { to: "/endpoints", label: "Endpoints", icon: Plug, preload: "/endpoints", also: ["/cli-tools"] },
       { to: "/chains", label: "Chains", icon: Layers, preload: "/chains" },
       { to: "/skills", label: "Skills", icon: NotebookPen, preload: "/skills" },
     ],
@@ -96,10 +93,8 @@ const navGroups: NavGroup[] = [
   {
     heading: "Providers",
     items: [
-      { to: "/providers", label: "Providers", icon: Boxes, preload: "/providers" },
+      { to: "/providers", label: "Providers", icon: Boxes, preload: "/providers", indicator: "health", also: ["/provider-health", "/quota"] },
       { to: "/media", label: "Media", icon: Image, preload: "/media" },
-      { to: "/provider-health", label: "Health", icon: Activity, preload: "/provider-health", indicator: "health" },
-      { to: "/quota", label: "Quota", icon: Gauge, preload: "/quota" },
       { to: "/proxy-pools", label: "Proxy pools", icon: Waypoints, preload: "/proxy-pools" },
     ],
   },
@@ -109,27 +104,64 @@ const navGroups: NavGroup[] = [
       { to: "/keys", label: "API keys", icon: KeyRound, preload: "/keys" },
       { to: "/plans", label: "Plans & budgets", icon: ReceiptText, preload: "/plans" },
       { to: "/guardrails", label: "Guardrails", icon: Shield, preload: "/guardrails" },
-      { to: "/audit", label: "Audit log", icon: History, preload: "/audit" },
     ],
   },
   {
     heading: "Workspace",
     items: [
-      { to: "/cli-tools", label: "CLI tools", icon: TerminalSquare, preload: "/cli-tools" },
-      { to: "/system", label: "System", icon: Cpu, preload: "/system" },
-      { to: "/settings", label: "Settings", icon: Settings, preload: "/settings" },
+      { to: "/audit", label: "Audit log", icon: History, preload: "/audit" },
+      { to: "/settings", label: "Settings", icon: Settings, preload: "/settings", also: ["/system"] },
     ],
   },
 ];
 
+// Pages that share one sidebar item. Each list page of a section shows a
+// switch between its siblings in its header instead of its own nav row.
+interface SectionLink {
+  to: string;
+  label: string;
+  preload: RoutePreloadKey;
+}
+
+const sections: { label: string; links: SectionLink[] }[] = [
+  {
+    label: "Provider views",
+    links: [
+      { to: "/providers", label: "Connections", preload: "/providers" },
+      { to: "/provider-health", label: "Health", preload: "/provider-health" },
+      { to: "/quota", label: "Quota", preload: "/quota" },
+    ],
+  },
+  {
+    label: "Endpoint views",
+    links: [
+      { to: "/endpoints", label: "Endpoints", preload: "/endpoints" },
+      { to: "/cli-tools", label: "CLI tools", preload: "/cli-tools" },
+    ],
+  },
+  {
+    label: "Settings views",
+    links: [
+      { to: "/settings", label: "Settings", preload: "/settings" },
+      { to: "/system", label: "System", preload: "/system" },
+    ],
+  },
+];
+
+function sectionFor(pathname: string) {
+  return sections.find((s) => s.links.some((l) => l.to === pathname)) ?? null;
+}
+
 // activeSection finds the nav item (and its group) that owns a path, so detail
 // pages such as /providers/:id inherit their list page's place in the nav.
 function activeSection(pathname: string): { item: NavItem; heading?: string } | null {
-  let best: { item: NavItem; heading?: string } | null = null;
+  let best: { item: NavItem; heading?: string; len: number } | null = null;
   for (const group of navGroups) {
     for (const item of group.items) {
-      const matches = item.to === "/" ? pathname === "/" : pathname === item.to || pathname.startsWith(item.to + "/");
-      if (matches && (!best || item.to.length > best.item.to.length)) best = { item, heading: group.heading };
+      for (const to of [item.to, ...(item.also ?? [])]) {
+        const matches = to === "/" ? pathname === "/" : pathname === to || pathname.startsWith(to + "/");
+        if (matches && (!best || to.length > best.len)) best = { item, heading: group.heading, len: to.length };
+      }
     }
   }
   return best;
@@ -155,6 +187,7 @@ const TITLE_BY_PATH: Record<string, string> = {
   "/playground": "Playground",
   "/cli-tools": "CLI tools",
   "/system": "System",
+  "/audit": "Audit log",
 };
 
 const TITLE_BY_PREFIX: [string, string][] = [
@@ -376,6 +409,8 @@ function Sidebar({ collapsed, drawer = false }: { collapsed: boolean; /** Inside
   const healthTone = summary ? (summary.unhealthy > 0 ? "bad" : summary.degraded > 0 ? "warn" : null) : null;
   // Sidebar renders twice (desktop + mobile drawer), so heading ids are unique per instance.
   const navId = useId();
+  const { pathname } = useLocation();
+  const current = activeSection(pathname)?.item;
 
   return (
     <aside
@@ -402,46 +437,39 @@ function Sidebar({ collapsed, drawer = false }: { collapsed: boolean; /** Inside
               <ul className="space-y-px" aria-labelledby={group.heading && !collapsed ? `${navId}-group-${gi}` : undefined}>
                 {group.items.map((item) => (
                   <li key={item.to}>
-                    <NavLink
+                    <Link
                       to={item.to}
-                      end={item.end}
-                      aria-current="page"
+                      aria-current={item === current ? "page" : undefined}
                       aria-label={collapsed ? item.label : undefined}
                       title={collapsed ? item.label : undefined}
                       onMouseEnter={() => item.preload && preloadRoute(item.preload)}
                       onFocus={() => item.preload && preloadRoute(item.preload)}
                       onTouchStart={() => item.preload && preloadRoute(item.preload)}
-                      className={({ isActive }) =>
-                        cn(
-                          "group relative flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors pointer-coarse:h-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                          isActive ? "text-fg" : "text-fg-muted hover:bg-sidebar-accent hover:text-fg",
-                        )
-                      }
-                    >
-                      {({ isActive }) => (
-                        <>
-                          <item.icon
-                            className={cn("size-4 shrink-0 transition-colors", isActive ? "text-brand-ink" : "text-fg-faint group-hover:text-fg-muted")}
-                            aria-hidden="true"
-                          />
-                          {!collapsed && <span className="truncate">{item.label}</span>}
-                          {item.indicator === "live" && (
-                            <span
-                              className={cn("live-dot size-1.5 rounded-full bg-ok text-ok", collapsed ? "absolute right-1.5 top-1.5" : "ml-auto")}
-                              role="img"
-                              aria-label="Live"
-                            />
-                          )}
-                          {item.indicator === "health" && healthTone && (
-                            <span
-                              className={cn("size-1.5 rounded-full", healthTone === "bad" ? "bg-bad" : "bg-warn", collapsed ? "absolute right-1.5 top-1.5" : "ml-auto")}
-                              role="img"
-                              aria-label={healthTone === "bad" ? "A provider is unhealthy" : "A provider is degraded"}
-                            />
-                          )}
-                        </>
+                      className={cn(
+                        "group relative flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-[13px] font-medium transition-colors pointer-coarse:h-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                        item === current ? "text-fg" : "text-fg-muted hover:bg-sidebar-accent hover:text-fg",
                       )}
-                    </NavLink>
+                    >
+                      <item.icon
+                        className={cn("size-4 shrink-0 transition-colors", item === current ? "text-brand-ink" : "text-fg-faint group-hover:text-fg-muted")}
+                        aria-hidden="true"
+                      />
+                      {!collapsed && <span className="truncate">{item.label}</span>}
+                      {item.indicator === "live" && (
+                        <span
+                          className={cn("live-dot size-1.5 rounded-full bg-ok text-ok", collapsed ? "absolute right-1.5 top-1.5" : "ml-auto")}
+                          role="img"
+                          aria-label="Live"
+                        />
+                      )}
+                      {item.indicator === "health" && healthTone && (
+                        <span
+                          className={cn("size-1.5 rounded-full", healthTone === "bad" ? "bg-bad" : "bg-warn", collapsed ? "absolute right-1.5 top-1.5" : "ml-auto")}
+                          role="img"
+                          aria-label={healthTone === "bad" ? "A provider is unhealthy" : "A provider is degraded"}
+                        />
+                      )}
+                    </Link>
                   </li>
                 ))}
               </ul>
@@ -524,6 +552,11 @@ function TopBar({
   const { pathname } = useLocation();
   const name = branding.name || "KeiRouter";
   const section = activeSection(pathname);
+  // A page that shares its sidebar item (Health under Providers) names itself
+  // after the item in the breadcrumb.
+  const sub = sections
+    .flatMap((s) => s.links)
+    .find((l) => l.to !== section?.item.to && (pathname === l.to || pathname.startsWith(l.to + "/")));
   const iconButton =
     "press flex size-9 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-hover hover:text-fg focus:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:size-11";
   return (
@@ -571,7 +604,15 @@ function TopBar({
               <span className="text-fg-faint" aria-hidden="true">/</span>
             </>
           )}
-          <span className="truncate font-medium text-fg">{section.item.label}</span>
+          {sub ? (
+            <>
+              <span className="text-fg-faint">{section.item.label}</span>
+              <span className="text-fg-faint" aria-hidden="true">/</span>
+              <span className="truncate font-medium text-fg">{sub.label}</span>
+            </>
+          ) : (
+            <span className="truncate font-medium text-fg">{section.item.label}</span>
+          )}
         </p>
       )}
 
@@ -663,10 +704,13 @@ export function PageHeader({ title, description, action }: { title: string; desc
   const { pathname } = useLocation();
   const heading = activeSection(pathname)?.heading;
   const eyebrow = heading && heading !== title ? heading : undefined;
+  const section = sectionFor(pathname);
   return (
     <div className="mb-8 flex flex-wrap items-end justify-between gap-x-6 gap-y-4 md:mb-10">
       <div className="min-w-[min(100%,280px)] flex-1">
-        {eyebrow && (
+        {section ? (
+          <SectionSwitch label={section.label} links={section.links} pathname={pathname} />
+        ) : eyebrow && (
           <p className="mb-2 flex items-center gap-2 text-meta text-fg-muted">
             <span className="h-px w-5 bg-brand-ink" aria-hidden="true" />
             {eyebrow}
@@ -677,6 +721,36 @@ export function PageHeader({ title, description, action }: { title: string; desc
       </div>
       {action && <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">{action}</div>}
     </div>
+  );
+}
+
+// SectionSwitch links the pages that share one sidebar item. It looks like
+// SegmentedControl but each option is a link, so the pages keep their URLs.
+function SectionSwitch({ label, links, pathname }: { label: string; links: SectionLink[]; pathname: string }) {
+  return (
+    <nav aria-label={label} className="mb-3">
+      <ul className="inline-flex max-w-full overflow-x-auto overscroll-x-contain rounded-xl bg-subtle p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {links.map((l) => {
+          const active = l.to === pathname;
+          return (
+            <li key={l.to} className="shrink-0">
+              <Link
+                to={l.to}
+                aria-current={active ? "page" : undefined}
+                onMouseEnter={() => preloadRoute(l.preload)}
+                onFocus={() => preloadRoute(l.preload)}
+                className={cn(
+                  "press flex h-7 items-center whitespace-nowrap rounded-lg px-2.5 text-[12px] font-medium pointer-coarse:h-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  active ? "bg-surface text-fg shadow-paper ring-1 ring-line" : "text-fg-muted hover:text-fg",
+                )}
+              >
+                {l.label}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
   );
 }
 
