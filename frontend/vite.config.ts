@@ -75,6 +75,17 @@ export default defineConfig({
           });
         },
       },
+      // The MCP endpoint. A regex so the dashboard's /mcp-servers pages are
+      // not proxied.
+      "^/mcp(/|$)": {
+        target: BACKEND,
+        changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on("error", (_err) => {
+            // silently ignore — same startup race
+          });
+        },
+      },
       "/healthz": {
         target: BACKEND,
         changeOrigin: true,

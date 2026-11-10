@@ -255,8 +255,9 @@ func (s *Server) routes() chi.Router {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: s.cfg.Server.CORSOrigins,
 		AllowedMethods: []string{"GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"Authorization", "Content-Type", "x-api-key", "x-goog-api-key", "anthropic-version", "anthropic-beta", "X-KeiRouter-Affinity", "X-KeiRouter-Account", skipSkillsHeader, "X-Conversation-ID", "X-Thread-ID", "X-Session-ID", "OpenAI-Conversation-ID"},
-		ExposedHeaders: []string{"X-KeiRouter-Provider", "X-KeiRouter-Model", "X-KeiRouter-Account", "X-Request-Id", "Retry-After"},
+		AllowedHeaders: []string{"Authorization", "Content-Type", "x-api-key", "x-goog-api-key", "anthropic-version", "anthropic-beta", "X-KeiRouter-Affinity", "X-KeiRouter-Account", skipSkillsHeader, "X-Conversation-ID", "X-Thread-ID", "X-Session-ID", "OpenAI-Conversation-ID",
+			"MCP-Protocol-Version", "Mcp-Method", "Mcp-Name", "Mcp-Session-Id", "Traceparent", "Tracestate", "Last-Event-ID"},
+		ExposedHeaders: []string{"X-KeiRouter-Provider", "X-KeiRouter-Model", "X-KeiRouter-Account", "X-Request-Id", "Retry-After", "Mcp-Session-Id"},
 	}))
 
 	// Crawlers are asked to skip the whole instance; see securityHeaders for
@@ -314,6 +315,9 @@ func (s *Server) routes() chi.Router {
 			fmt.Sprintf("Limit: %d concurrent requests", maxConc),
 			"Every concurrent-request slot is busy (mostly long streams). Raise server.max_concurrent_requests or add capacity.")
 	})
+
+	// MCP gateway (authenticated with the same API keys).
+	s.mountMCP(r, limitInFlight)
 
 	// OpenAI-compatible API surface (authenticated).
 	r.Group(func(r chi.Router) {

@@ -197,15 +197,15 @@ func TestTransport_BlocksPrivateAddressAtDialTime(t *testing.T) {
 }
 
 func TestWithMeta(t *testing.T) {
-	out, err := withMeta(nil, false, testInfo)
+	out, err := withMeta(nil, false, testInfo, "")
 	require.NoError(t, err)
 	require.Nil(t, out)
 
-	out, err = withMeta(json.RawMessage(`{"_meta":{"io.modelcontextprotocol/x":1}}`), false, testInfo)
+	out, err = withMeta(json.RawMessage(`{"_meta":{"io.modelcontextprotocol/x":1}}`), false, testInfo, "")
 	require.NoError(t, err)
 	require.Nil(t, out, "a _meta holding only reserved keys disappears for legacy upstreams")
 
-	_, err = withMeta(json.RawMessage(`[1]`), true, testInfo)
+	_, err = withMeta(json.RawMessage(`[1]`), true, testInfo, "")
 	require.Error(t, err)
 }
 
@@ -213,4 +213,45 @@ func TestHTTPErrorMessages(t *testing.T) {
 	require.Contains(t, (&HTTPError{Status: 401}).Error(), "credentials")
 	require.Contains(t, (&HTTPError{Status: 500, Body: "boom"}).Error(), "boom")
 	require.Contains(t, (&HTTPError{Status: 400, RPC: &RPCError{Message: "nope"}}).Error(), "nope")
+}
+
+// Regression: a dual-era server that answers server/discover but only
+// supports initialize-era versions must be used through initialize.
+func TestNegotiate_DiscoverWithOnlyLegacyVersionsFallsBack(t *testing.T) {
+	allowPrivate(t)
+	f := &fakeServer{legacy: true, tools: []string{toolWeather}}
+	newFake(t, f) // initialises the fake's state
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(HeaderMethod) == "server/discover" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"supportedVersions":["2025-11-25","2025-06-18"]}}`))
+			return
+		}
+		f.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	v, err := NewClient(testInfo, nil).Negotiate(context.Background(), Target{Key: "s1", URL: srv.URL})
+	require.NoError(t, err)
+	require.Equal(t, VersionLegacyLatest, v)
+}
+
+// Regression: an UnsupportedProtocolVersion error that lists only legacy
+// versions means "use initialize", not "give up".
+func TestNegotiate_UnsupportedVersionListingLegacyFallsBack(t *testing.T) {
+	allowPrivate(t)
+	f := &fakeServer{legacy: true, tools: []string{toolWeather}}
+	newFake(t, f)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get(HeaderMethod) == "server/discover" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32022,"message":"unsupported","data":{"supported":["2025-06-18"]}}}`))
+			return
+		}
+		f.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	v, err := NewClient(testInfo, nil).Negotiate(context.Background(), Target{Key: "s1", URL: srv.URL})
+	require.NoError(t, err)
+	require.Equal(t, VersionLegacyLatest, v)
 }

@@ -457,6 +457,12 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 		CatalogFile:  cfg.MCP.CatalogFile,
 		CatalogOnly:  cfg.MCP.CatalogOnly,
 		Logger:       log.With("component", "mcp"),
+		Limiter:      limiter,
+		CallLimits: limits.EffectiveLimits{
+			RPM:         cfg.MCP.DefaultRPM,
+			Concurrency: cfg.MCP.DefaultConcurrency,
+		},
+		LogRetentionDays: cfg.MCP.LogRetentionDays,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("app: build mcp gateway: %w", err)

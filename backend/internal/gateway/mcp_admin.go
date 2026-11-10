@@ -1,12 +1,14 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -49,7 +51,13 @@ func (s *Server) mountMCPAdmin(r chi.Router) {
 		r.Delete("/servers/{id}", s.adminDeleteMCPServer)
 		r.Post("/servers/{id}/sync", s.adminSyncMCPServer)
 		r.Put("/servers/{id}/tools", s.adminSetMCPTools)
+		r.Post("/servers/{id}/call", s.adminCallMCPTool)
+		r.Get("/servers/{id}/access", s.adminMCPServerAccess)
+		r.Get("/logs", s.adminListMCPLogs)
+		r.Get("/stats", s.adminMCPStats)
 	})
+	r.With(s.requireMCP).Get("/keys/{id}/mcp-access", s.adminGetKeyMCPAccess)
+	r.With(s.requireMCP).Put("/keys/{id}/mcp-access", s.adminSetKeyMCPAccess)
 }
 
 func (s *Server) requireMCP(next http.Handler) http.Handler {
@@ -246,7 +254,7 @@ func (s *Server) adminUpdateMCPServer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if connChanged {
-		s.mcp.Client.Forget(srv.ID)
+		s.mcp.ForgetServer(srv.ID)
 	}
 	s.mcp.Changed(r.Context())
 	if connChanged || (srv.Enabled && !before.Enabled) {
@@ -266,7 +274,7 @@ func (s *Server) adminDeleteMCPServer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "delete mcp server"))
 		return
 	}
-	s.mcp.Client.Forget(id)
+	s.mcp.ForgetServer(id)
 	s.mcp.Changed(r.Context())
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -639,4 +647,251 @@ func validateMCPURL(raw string) string {
 		return "url is not allowed: " + err.Error()
 	}
 	return ""
+}
+
+// adminCallMCPTool runs one tool from the dashboard tester. Access rules and
+// limits do not apply; the call is logged with the "dashboard" key.
+func (s *Server) adminCallMCPTool(w http.ResponseWriter, r *http.Request) {
+	srv, ok := s.loadMCPServer(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Tool      string          `json:"tool"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if body.Tool == "" {
+		writeError(w, http.StatusBadRequest, "tool is required")
+		return
+	}
+	if args := bytes.TrimSpace(body.Arguments); len(args) > 0 && args[0] != '{' {
+		writeError(w, http.StatusBadRequest, "arguments must be a JSON object")
+		return
+	}
+	res, err := s.mcp.Invoke(r.Context(), srv.ID, body.Tool, body.Arguments)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// adminMCPServerAccess lists the keys that can use a server.
+func (s *Server) adminMCPServerAccess(w http.ResponseWriter, r *http.Request) {
+	srv, ok := s.loadMCPServer(w, r)
+	if !ok {
+		return
+	}
+	grants, err := s.mcp.Repo.ListKeysForServer(r.Context(), s.mcp.Tenant(), srv.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "list mcp keys"))
+		return
+	}
+	keys, err := s.identity.List(r.Context(), adminTenant)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "list keys"))
+		return
+	}
+	type row struct {
+		ID       string   `json:"id"`
+		Name     string   `json:"name"`
+		Display  string   `json:"display"`
+		Disabled bool     `json:"disabled"`
+		AllTools bool     `json:"all_tools"`
+		Tools    []string `json:"tools"`
+	}
+	out := []row{}
+	for _, k := range keys {
+		tools, ok := grants[k.ID]
+		if !ok || k.Kind != "" {
+			continue
+		}
+		out = append(out, row{ID: k.ID, Name: k.Name, Display: k.Display, Disabled: k.Disabled, AllTools: tools == nil, Tools: tools})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"keys": out})
+}
+
+type mcpKeyAccessJSON struct {
+	Mode    string `json:"mode"`
+	Servers []struct {
+		ServerID string   `json:"server_id"`
+		ToolMode string   `json:"tool_mode"`
+		Tools    []string `json:"tools"`
+	} `json:"servers"`
+}
+
+func (s *Server) adminGetKeyMCPAccess(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.mcpOperatorKey(w, r, id) {
+		return
+	}
+	a, err := s.mcp.Repo.GetKeyAccess(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "get mcp access"))
+		return
+	}
+	var out mcpKeyAccessJSON
+	out.Mode = a.Mode
+	out.Servers = make([]struct {
+		ServerID string   `json:"server_id"`
+		ToolMode string   `json:"tool_mode"`
+		Tools    []string `json:"tools"`
+	}, 0, len(a.Grants))
+	for _, g := range a.Grants {
+		tools := g.Tools
+		if tools == nil {
+			tools = []string{}
+		}
+		out.Servers = append(out.Servers, struct {
+			ServerID string   `json:"server_id"`
+			ToolMode string   `json:"tool_mode"`
+			Tools    []string `json:"tools"`
+		}{g.ServerID, g.ToolMode, tools})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) adminSetKeyMCPAccess(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if !s.mcpOperatorKey(w, r, id) {
+		return
+	}
+	var body mcpKeyAccessJSON
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	a := store.MCPKeyAccess{Mode: body.Mode}
+	switch body.Mode {
+	case store.MCPModeNone, store.MCPModeAll:
+		if len(body.Servers) > 0 {
+			writeError(w, http.StatusBadRequest, "servers are only allowed with mode selected")
+			return
+		}
+	case store.MCPModeSelected:
+		if len(body.Servers) == 0 {
+			writeError(w, http.StatusBadRequest, "pick at least one server, or choose every server or no access")
+			return
+		}
+		servers, err := s.mcp.Repo.ListServers(r.Context(), s.mcp.Tenant())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "list mcp servers"))
+			return
+		}
+		known := map[string]bool{}
+		for _, srv := range servers {
+			known[srv.ID] = true
+		}
+		seen := map[string]bool{}
+		for _, g := range body.Servers {
+			if !known[g.ServerID] {
+				writeError(w, http.StatusBadRequest, "unknown server "+strconv.Quote(g.ServerID))
+				return
+			}
+			if seen[g.ServerID] {
+				writeError(w, http.StatusBadRequest, "server "+strconv.Quote(g.ServerID)+" is listed twice")
+				return
+			}
+			seen[g.ServerID] = true
+			switch g.ToolMode {
+			case store.MCPModeAll:
+			case store.MCPModeSelected:
+				if len(g.Tools) == 0 {
+					writeError(w, http.StatusBadRequest, "pick at least one tool for each server limited to selected tools")
+					return
+				}
+				if len(g.Tools) > 1000 {
+					writeError(w, http.StatusBadRequest, "too many tools")
+					return
+				}
+			default:
+				writeError(w, http.StatusBadRequest, "tool_mode must be all or selected")
+				return
+			}
+			a.Grants = append(a.Grants, store.MCPKeyGrant{ServerID: g.ServerID, ToolMode: g.ToolMode, Tools: dedupeStrings(g.Tools)})
+		}
+	default:
+		writeError(w, http.StatusBadRequest, "mode must be none, all or selected")
+		return
+	}
+	if err := s.mcp.Repo.SetKeyAccess(r.Context(), id, a); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "key not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "set mcp access"))
+		return
+	}
+	s.mcp.InvalidateAccess(id)
+	s.adminGetKeyMCPAccess(w, r)
+}
+
+// mcpOperatorKey writes 404 unless id is an operator key.
+func (s *Server) mcpOperatorKey(w http.ResponseWriter, r *http.Request, id string) bool {
+	k, err := s.identity.Get(r.Context(), id)
+	if err != nil || k.Kind != "" || k.TenantID != adminTenant {
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "get key"))
+			return false
+		}
+		writeError(w, http.StatusNotFound, "key not found")
+		return false
+	}
+	return true
+}
+
+func (s *Server) adminListMCPLogs(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	logs, next, err := s.mcp.Repo.ListCallLogs(r.Context(), store.MCPLogFilter{
+		TenantID: s.mcp.Tenant(), ServerID: q.Get("server_id"), APIKeyID: q.Get("key_id"),
+		Status: q.Get("status"), Tool: strings.TrimSpace(q.Get("tool")), Cursor: q.Get("cursor"), Limit: limit,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrInvalid) {
+			writeError(w, http.StatusBadRequest, "invalid cursor")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "list mcp logs"))
+		return
+	}
+	if logs == nil {
+		logs = []store.MCPCallLog{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"logs": logs, "next_cursor": next})
+}
+
+var mcpStatsPeriods = map[string]time.Duration{"1h": time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
+
+func (s *Server) adminMCPStats(w http.ResponseWriter, r *http.Request) {
+	period := r.URL.Query().Get("period")
+	if period == "" {
+		period = "24h"
+	}
+	d, ok := mcpStatsPeriods[period]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "period must be 1h, 24h, 7d or 30d")
+		return
+	}
+	st, err := s.mcp.Repo.CallStats(r.Context(), s.mcp.Tenant(), time.Now().Add(-d))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "mcp stats"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"period": period, "stats": st})
+}
+
+func dedupeStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }

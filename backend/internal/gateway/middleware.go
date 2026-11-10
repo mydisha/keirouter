@@ -13,6 +13,7 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/mydisha/keirouter/backend/internal/core"
 	"github.com/mydisha/keirouter/backend/internal/identity"
+	"github.com/mydisha/keirouter/backend/internal/mcp"
 	"github.com/mydisha/keirouter/backend/internal/pipeline"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
@@ -122,6 +123,10 @@ func dialectForPath(path string) core.Dialect {
 }
 
 func writeRequestError(w http.ResponseWriter, r *http.Request, status int, message string) {
+	if isMCPPath(r.URL.Path) {
+		mcp.WriteHTTPError(w, status, message)
+		return
+	}
 	writeDialectError(w, dialectForPath(r.URL.Path), status, message)
 }
 

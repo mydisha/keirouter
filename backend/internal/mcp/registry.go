@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/mydisha/keirouter/backend/internal/store"
@@ -41,6 +42,16 @@ type Server struct {
 	store.MCPServer
 	Tools  map[string]*Tool
 	Sorted []*Tool // exposed tools ordered by name
+
+	// joinedBare and joinedPrefixed are the comma-joined definitions of every
+	// exposed tool, served as is to keys that see the whole server.
+	joinedBare     []byte
+	joinedPrefixed []byte
+
+	// target is built once per snapshot from the sealed secret.
+	targetOnce sync.Once
+	target     Target
+	targetErr  error
 }
 
 // Snapshot is an immutable view of every enabled server and exposed tool.
@@ -49,6 +60,10 @@ type Snapshot struct {
 	BySlug  map[string]*Server
 	ByID    map[string]*Server
 	Ordered []*Server // ordered by slug
+
+	// allPrefixed is every exposed tool of every server, comma-joined, for
+	// keys in all mode.
+	allPrefixed []byte
 }
 
 // Tool returns a server's exposed tool.
@@ -123,9 +138,27 @@ func buildSnapshot(servers []store.MCPServer, tools []store.MCPServerTool) (*Sna
 		srv.Tools[t.Name] = tool
 		srv.Sorted = append(srv.Sorted, tool)
 	}
+	var all bytes.Buffer
 	for _, srv := range snap.Ordered {
 		sort.Slice(srv.Sorted, func(i, j int) bool { return srv.Sorted[i].Name < srv.Sorted[j].Name })
+		var bare, pre bytes.Buffer
+		for i, t := range srv.Sorted {
+			if i > 0 {
+				bare.WriteByte(',')
+				pre.WriteByte(',')
+			}
+			bare.Write(t.Bare)
+			pre.Write(t.Prefixed)
+		}
+		srv.joinedBare, srv.joinedPrefixed = bare.Bytes(), pre.Bytes()
+		if len(srv.joinedPrefixed) > 0 {
+			if all.Len() > 0 {
+				all.WriteByte(',')
+			}
+			all.Write(srv.joinedPrefixed)
+		}
 	}
+	snap.allPrefixed = all.Bytes()
 	return snap, nil
 }
 

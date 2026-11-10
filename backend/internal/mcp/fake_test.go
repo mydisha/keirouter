@@ -103,7 +103,7 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case req.Method == "initialize":
 		if !f.legacy {
-			writeRPCError(w, http.StatusBadRequest, req.ID, CodeHeaderMismatch, "missing MCP-Protocol-Version")
+			fakeRPCError(w, http.StatusBadRequest, req.ID, CodeHeaderMismatch, "missing MCP-Protocol-Version")
 			return
 		}
 		f.mu.Lock()
@@ -127,18 +127,18 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if r.Header.Get(HeaderProtocolVersion) != VersionModern || r.Header.Get(HeaderMethod) != req.Method {
-			writeRPCError(w, http.StatusBadRequest, req.ID, CodeHeaderMismatch, "header mismatch")
+			fakeRPCError(w, http.StatusBadRequest, req.ID, CodeHeaderMismatch, "header mismatch")
 			return
 		}
 		if req.Method == "tools/call" {
 			if got, _ := DecodeHeaderValue(r.Header.Get(HeaderName)); got != params.Name {
-				writeRPCError(w, http.StatusBadRequest, req.ID, CodeHeaderMismatch, "Mcp-Name mismatch")
+				fakeRPCError(w, http.StatusBadRequest, req.ID, CodeHeaderMismatch, "Mcp-Name mismatch")
 				return
 			}
 		}
 	} else {
 		if !f.legacy {
-			writeRPCError(w, http.StatusBadRequest, req.ID, CodeHeaderMismatch, "missing headers")
+			fakeRPCError(w, http.StatusBadRequest, req.ID, CodeHeaderMismatch, "missing headers")
 			return
 		}
 		f.mu.Lock()
@@ -171,13 +171,17 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		res += `}`
 		f.respond(w, req.ID, res)
 	case "tools/call":
+		if params.Name == "explode" {
+			fakeRPCError(w, http.StatusOK, req.ID, CodeInvalidParams, "bad arguments for explode")
+			return
+		}
 		f.respond(w, req.ID, f.callResult)
 	default:
 		code := http.StatusOK
 		if isModernReq {
 			code = http.StatusNotFound
 		}
-		writeRPCError(w, code, req.ID, CodeMethodNotFound, "method not found")
+		fakeRPCError(w, code, req.ID, CodeMethodNotFound, "method not found")
 	}
 }
 
@@ -198,7 +202,7 @@ func writeResult(w http.ResponseWriter, id json.RawMessage, result string) {
 	fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%s,"result":%s}`, id, result)
 }
 
-func writeRPCError(w http.ResponseWriter, status int, id json.RawMessage, code int, msg string) {
+func fakeRPCError(w http.ResponseWriter, status int, id json.RawMessage, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if len(id) == 0 {
@@ -209,4 +213,5 @@ func writeRPCError(w http.ResponseWriter, status int, id json.RawMessage, code i
 
 const toolWeather = `{"name":"get_weather","description":"Weather","inputSchema":{"type":"object","properties":{"city":{"type":"string"}}}}`
 const toolRegion = `{"name":"run_sql","inputSchema":{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"},"query":{"type":"string"}}}}`
+const toolExplode = `{"name":"explode","inputSchema":{"type":"object"}}`
 const toolBadHeader = `{"name":"bad_header","inputSchema":{"type":"object","properties":{"ratio":{"type":"number","x-mcp-header":"Ratio"}}}}`

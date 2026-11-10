@@ -514,8 +514,17 @@ func (s *Server) adminCreateKey(w http.ResponseWriter, r *http.Request) {
 		BudgetHardCutoff  *bool    `json:"budget_hard_cutoff"`
 		// Optional per-key model access restriction (overrides plan models).
 		AllowedModels []string `json:"allowed_models"`
+		// MCPMode is the key's MCP access at creation: "all" (default) or
+		// "none". Per-server access is set afterwards on the key.
+		MCPMode string `json:"mcp_mode"`
 	}
 	if !decodeJSON(w, r, &body) {
+		return
+	}
+	switch body.MCPMode {
+	case "", store.MCPModeAll, store.MCPModeNone:
+	default:
+		writeError(w, http.StatusBadRequest, "mcp_mode must be all or none")
 		return
 	}
 	if body.Name == "" {
@@ -567,8 +576,9 @@ func (s *Server) adminCreateKey(w http.ResponseWriter, r *http.Request) {
 	hasPlanModels := plan != nil && plan.AllowedModels != ""
 	hasModels := hasPerKeyModels || hasPlanModels
 
-	if !hasBudget && !hasModels && plan == nil {
-		// Simple path: no budget, no models, no plan — insert key directly.
+	if !hasBudget && !hasModels && plan == nil && body.MCPMode != store.MCPModeNone {
+		// Simple path: no budget, no models, no plan, default MCP access —
+		// insert key directly.
 		if err := s.identity.CreateFromIssued(r.Context(), issued); err != nil {
 			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 			return
@@ -670,6 +680,13 @@ func (s *Server) adminCreateKey(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
 				return
 			}
+		}
+	}
+
+	if body.MCPMode == store.MCPModeNone {
+		if err := s.identity.Keys().SetMCPModeOnTx(r.Context(), tx, issued.Record.ID, store.MCPModeNone); err != nil {
+			writeError(w, http.StatusInternalServerError, sanitizeError(s.log, err, "internal server error"))
+			return
 		}
 	}
 

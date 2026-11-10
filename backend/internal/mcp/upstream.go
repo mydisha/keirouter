@@ -185,7 +185,7 @@ func (c *Client) session(key string) *legacySession {
 // means a modern server. Anything else falls back to the legacy initialize
 // handshake. Authentication failures and network errors are returned as is.
 func (c *Client) Negotiate(ctx context.Context, t Target) (string, error) {
-	params, _ := withMeta(nil, true, c.info)
+	params, _ := withMeta(nil, true, c.info, "")
 	resp, err := c.post(ctx, t, c.nextID.Add(1), "server/discover", "", params, nil)
 	if err == nil && resp != nil && resp.Error == nil {
 		var dr struct {
@@ -194,7 +194,11 @@ func (c *Client) Negotiate(ctx context.Context, t Target) (string, error) {
 		if json.Unmarshal(resp.Result, &dr) == nil && slices.Contains(dr.SupportedVersions, VersionModern) {
 			return VersionModern, nil
 		}
-		return "", fmt.Errorf("server supports protocol versions %v; KeiRouter supports %v", dr.SupportedVersions, SupportedVersions)
+		if !slices.ContainsFunc(dr.SupportedVersions, IsLegacy) {
+			return "", fmt.Errorf("server supports protocol versions %v; KeiRouter supports %v", dr.SupportedVersions, SupportedVersions)
+		}
+		// It answers discovery but only speaks initialize-era versions.
+		return c.negotiateLegacy(ctx, t)
 	}
 
 	rpcErr := rpcErrorOf(resp, err)
@@ -204,9 +208,12 @@ func (c *Client) Negotiate(ctx context.Context, t Target) (string, error) {
 		if slices.Contains(data.Supported, VersionModern) {
 			return VersionModern, nil
 		}
-		return "", fmt.Errorf("server supports protocol versions %v; KeiRouter supports %v", data.Supported, SupportedVersions)
-	}
-	if rpcErr != nil && IsModernErrorCode(rpcErr.Code) {
+		// A dual-era server that only offers initialize-era versions: use the
+		// legacy handshake below.
+		if !slices.ContainsFunc(data.Supported, IsLegacy) {
+			return "", fmt.Errorf("server supports protocol versions %v; KeiRouter supports %v", data.Supported, SupportedVersions)
+		}
+	} else if rpcErr != nil && IsModernErrorCode(rpcErr.Code) {
 		return "", fmt.Errorf("server rejected discovery: %s", rpcErr.Message)
 	}
 	var he *HTTPError
@@ -220,7 +227,12 @@ func (c *Client) Negotiate(ctx context.Context, t Target) (string, error) {
 		return "", err
 	}
 
-	// Legacy server: run initialize.
+	return c.negotiateLegacy(ctx, t)
+}
+
+// negotiateLegacy runs the initialize handshake and returns the version the
+// server agreed to.
+func (c *Client) negotiateLegacy(ctx context.Context, t Target) (string, error) {
 	s := c.session(t.Key)
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -292,18 +304,28 @@ func (c *Client) initialize(ctx context.Context, t Target, s *legacySession) err
 // the upstream id. The caller restores the client's id. extra carries headers
 // such as Mcp-Param-*. A legacy session that expired is re-initialised once.
 func (c *Client) Call(ctx context.Context, t Target, method, name string, params json.RawMessage, extra http.Header) (*Response, error) {
+	return c.call(ctx, t, method, name, params, extra, "")
+}
+
+// CallTool sends tools/call for tool, replacing params.name with the
+// upstream's own tool name. Arguments are forwarded byte for byte.
+func (c *Client) CallTool(ctx context.Context, t Target, tool string, params json.RawMessage, extra http.Header) (*Response, error) {
+	return c.call(ctx, t, "tools/call", tool, params, extra, tool)
+}
+
+func (c *Client) call(ctx context.Context, t Target, method, name string, params json.RawMessage, extra http.Header, setName string) (*Response, error) {
 	if t.Version == "" {
 		return nil, errors.New("protocol version not negotiated")
 	}
 	if IsModern(t.Version) {
-		body, err := withMeta(params, true, c.info)
+		body, err := withMeta(params, true, c.info, setName)
 		if err != nil {
 			return nil, err
 		}
 		return c.post(ctx, t, c.nextID.Add(1), method, name, body, extra)
 	}
 
-	body, err := withMeta(params, false, c.info)
+	body, err := withMeta(params, false, c.info, setName)
 	if err != nil {
 		return nil, err
 	}
@@ -554,7 +576,7 @@ func idJSON(id int64) json.RawMessage { return strconv.AppendInt(nil, id, 10) }
 // the gateway's own version, identity and capabilities are added. Other
 // `_meta` keys (progressToken, traceparent, vendor keys) pass through, and
 // every other params field is copied byte for byte.
-func withMeta(params json.RawMessage, modern bool, info Implementation) (json.RawMessage, error) {
+func withMeta(params json.RawMessage, modern bool, info Implementation, setName string) (json.RawMessage, error) {
 	fields := map[string]json.RawMessage{}
 	if len(bytes.TrimSpace(params)) > 0 && string(bytes.TrimSpace(params)) != "null" {
 		if err := json.Unmarshal(params, &fields); err != nil {
@@ -566,6 +588,10 @@ func withMeta(params json.RawMessage, modern bool, info Implementation) (json.Ra
 		if err := json.Unmarshal(raw, &meta); err != nil {
 			return nil, fmt.Errorf("_meta must be a JSON object: %w", err)
 		}
+	}
+	if setName != "" {
+		n, _ := json.Marshal(setName)
+		fields["name"] = n
 	}
 	for k := range meta {
 		if strings.HasPrefix(k, reservedMetaPrefix) {
