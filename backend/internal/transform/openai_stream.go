@@ -3,6 +3,7 @@ package transform
 import (
 	"bytes"
 	"fmt"
+	"time"
 
 	json "github.com/mydisha/keirouter/backend/internal/fastjson"
 
@@ -169,6 +170,7 @@ func normalizeOpenAIToolArguments(raw json.RawMessage) json.RawMessage {
 type oaiChunkEvent struct {
 	ID      string           `json:"id"`
 	Object  string           `json:"object"`
+	Created int64            `json:"created"`
 	Model   string           `json:"model"`
 	Choices []oaiChunkChoice `json:"choices"`
 	Usage   *oaiUsageOut     `json:"usage,omitempty"`
@@ -258,6 +260,7 @@ func (OpenAICodec) RenderStreamChunk(chunk core.StreamChunk, state *StreamState)
 		if args == "" {
 			args = "{}"
 		}
+		state.oaiToolSeen = true
 		delta.ToolCalls = []oaiChunkToolCall{{
 			Index:    openAIToolIndex(state, chunk),
 			ID:       chunk.ToolCall.ID,
@@ -265,26 +268,61 @@ func (OpenAICodec) RenderStreamChunk(chunk core.StreamChunk, state *StreamState)
 			Function: oaiChunkFunction{Name: chunk.ToolCall.Name, Arguments: args},
 		}}
 	case core.ChunkFinish:
-		finish := string(chunk.FinishReason)
+		// One finish per choice: upstreams that repeat finish_reason (vLLM
+		// behind Cloudflare sends it on trailing frames too) would otherwise
+		// let a late "stop" overwrite the "tool_calls" clients act on.
+		if state.oaiFinishSent {
+			return nil, nil
+		}
+		state.oaiFinishSent = true
+		reason := chunk.FinishReason
+		if reason == core.FinishStop && state.oaiToolSeen {
+			reason = core.FinishToolCalls
+		}
+		finish := string(reason)
 		return [][]byte{encodeOAIEvent(state, oaiChunkDelta{}, &finish)}, nil
 	case core.ChunkUsage:
-		// Emit a usage-only chunk (OpenAI sends this as a final empty-choices event).
-		return [][]byte{encodeOAIUsageEvent(state, chunk.Usage)}, nil
+		// Held until RenderStreamDone: OpenAI sends usage once, as the final
+		// empty-choices event, even when the upstream reports it per chunk.
+		if chunk.Usage != nil {
+			mergeStreamUsage(&state.oaiUsage, *chunk.Usage)
+			state.oaiHasUsage = true
+		}
+		return nil, nil
 	default:
 		return nil, nil
 	}
 	return [][]byte{encodeOAIEvent(state, delta, nil)}, nil
 }
 
-// RenderStreamDone returns the OpenAI terminal sentinel.
-func (OpenAICodec) RenderStreamDone(_ *StreamState) [][]byte {
-	return [][]byte{[]byte("data: [DONE]\n\n")}
+// RenderStreamDone emits the accumulated usage event, then the OpenAI terminal
+// sentinel.
+func (OpenAICodec) RenderStreamDone(state *StreamState) [][]byte {
+	done := []byte("data: [DONE]\n\n")
+	if state == nil || !state.oaiHasUsage {
+		return [][]byte{done}
+	}
+	state.oaiHasUsage = false
+	usage := state.oaiUsage
+	if sum := usage.PromptTokens + usage.CompletionTokens; usage.TotalTokens < sum {
+		usage.TotalTokens = sum
+	}
+	return [][]byte{encodeOAIUsageEvent(state, &usage), done}
+}
+
+// oaiCreatedAt returns the stream's creation time, fixing it on first use.
+func oaiCreatedAt(state *StreamState) int64 {
+	if state.oaiCreated == 0 {
+		state.oaiCreated = time.Now().Unix()
+	}
+	return state.oaiCreated
 }
 
 func encodeOAIEvent(state *StreamState, delta oaiChunkDelta, finish *string) []byte {
 	return sseData(&oaiChunkEvent{
 		ID:      firstNonEmpty(state.MessageID, "chatcmpl-stream"),
 		Object:  "chat.completion.chunk",
+		Created: oaiCreatedAt(state),
 		Model:   state.Model,
 		Choices: []oaiChunkChoice{{Index: 0, Delta: delta, FinishReason: finish}},
 	})
@@ -297,6 +335,7 @@ func encodeOAIUsageEvent(state *StreamState, usage *core.Usage) []byte {
 	return sseData(&oaiChunkEvent{
 		ID:      firstNonEmpty(state.MessageID, "chatcmpl-stream"),
 		Object:  "chat.completion.chunk",
+		Created: oaiCreatedAt(state),
 		Model:   state.Model,
 		Choices: []oaiChunkChoice{},
 		Usage:   oaiUsageFromCore(*usage),

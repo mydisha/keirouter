@@ -84,6 +84,19 @@ type StreamState struct {
 	// to the upstream chunk index it was opened with.
 	oaiToolUpstream []int
 	oaiToolBuf      [8]int
+	// oaiCreated is the Unix time stamped on every chat.completion.chunk of
+	// this stream (OpenAI requires the same value on all of them).
+	oaiCreated int64
+	// oaiFinishSent drops duplicate finish events: some upstreams repeat
+	// finish_reason, and clients keep the last one they see.
+	oaiFinishSent bool
+	// oaiToolSeen records that a tool call was rendered, so a later "stop"
+	// still reads as the tool-call turn it is.
+	oaiToolSeen bool
+	// oaiUsage accumulates usage until the stream ends: upstreams that attach
+	// usage to every chunk must still yield one final usage event.
+	oaiUsage    core.Usage
+	oaiHasUsage bool
 }
 
 // ResetStreamState resets a StreamState to its initial zero values.
@@ -96,6 +109,11 @@ func ResetStreamState(state *StreamState) {
 	state.ToolIndex = 0
 	state.Custom = make(map[string]any)
 	state.oaiToolUpstream = state.oaiToolUpstream[:0]
+	state.oaiCreated = 0
+	state.oaiFinishSent = false
+	state.oaiToolSeen = false
+	state.oaiUsage = core.Usage{}
+	state.oaiHasUsage = false
 }
 
 // hoistLeadingSystem folds system and developer messages that open the

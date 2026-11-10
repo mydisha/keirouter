@@ -415,6 +415,11 @@ func (d *Dispatcher) PlanWith(ctx context.Context, tenantID string, targets []Ta
 	var nonCooldownReason string
 	var earliestRetryAt time.Time
 	blockedScope := core.FailureScopeAccount
+	// Targets skipped because the gateway cannot serve them at all (no
+	// connector, no account, missing hard capability). When every target is
+	// skipped this way the request itself is wrong, not the gateway: clients
+	// must get a 4xx they will not retry instead of a 500 they back off on.
+	var unservable, incapable int
 
 	for i, target := range ordered {
 		// Capability guard: never fall back to a model that cannot honor the
@@ -422,6 +427,8 @@ func (d *Dispatcher) PlanWith(ctx context.Context, tenantID string, targets []Ta
 		// the guard because their upstream capabilities are unknown.
 		if !eligible[i] {
 			lastReason = fmt.Sprintf("model %q lacks required capabilities", target.Model)
+			unservable++
+			incapable++
 			continue
 		}
 		if remaining := d.providerCircuitRemaining(target.Provider, now); remaining > 0 {
@@ -441,12 +448,14 @@ func (d *Dispatcher) PlanWith(ctx context.Context, tenantID string, targets []Ta
 		}
 		if resolved.err != nil {
 			lastReason = resolved.err.Error()
+			unservable++
 			continue
 		}
 
 		accs := accountsByProvider[target.Provider]
 		if len(accs) == 0 {
 			lastReason = fmt.Sprintf("no accounts configured for provider %q", target.Provider)
+			unservable++
 			continue
 		}
 		accs = d.applyAccountRouting(ctx, tenantID, target, accs, opts.accountRoutingForTarget(target.Provider))
@@ -572,6 +581,13 @@ func (d *Dispatcher) PlanWith(ctx context.Context, tenantID string, targets []Ta
 		}
 		if lastReason == "" {
 			lastReason = "no usable targets in chain"
+		}
+		if len(ordered) > 0 && unservable == len(ordered) {
+			kind := core.ErrModelUnavailable
+			if incapable == unservable {
+				kind = core.ErrCapability
+			}
+			return nil, &core.ProviderError{Kind: kind, Scope: core.FailureScopeRequest, Message: "dispatch: " + lastReason}
 		}
 		return nil, &core.ProviderError{Kind: core.ErrInternal, Message: "dispatch: " + lastReason}
 	}
