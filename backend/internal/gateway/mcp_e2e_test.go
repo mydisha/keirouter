@@ -13,8 +13,10 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mydisha/keirouter/backend/internal/audit"
 	"github.com/mydisha/keirouter/backend/internal/auth"
 	"github.com/mydisha/keirouter/backend/internal/config"
+	"github.com/mydisha/keirouter/backend/internal/consolelog"
 	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/httputil"
 	"github.com/mydisha/keirouter/backend/internal/identity"
@@ -25,6 +27,7 @@ import (
 // mcpE2E is a full gateway with the MCP endpoint, one API key, and an
 // upstream MCP server built with the official SDK.
 type mcpE2E struct {
+	gw      *Server
 	srv     *httptest.Server
 	apiKey  string
 	keyID   string
@@ -58,7 +61,7 @@ func sdkUpstream(t *testing.T, stateless bool) *httptest.Server {
 	return up
 }
 
-func newMCPE2E(t *testing.T, upstreamURL string) *mcpE2E {
+func newMCPE2E(t *testing.T, upstreamURL string, recorder ...func(*store.DB) *audit.Recorder) *mcpE2E {
 	t.Helper()
 	ctx := context.Background()
 	httputil.SetAllowPrivateBaseURL(true)
@@ -77,7 +80,13 @@ func newMCPE2E(t *testing.T, upstreamURL string) *mcpE2E {
 	issued, err := idSvc.Create(ctx, store.DefaultTenantID, "", "mcp-key")
 	require.NoError(t, err)
 
-	mgr, err := mcp.NewManager(ctx, db, sealer, mcp.Options{Info: mcp.Implementation{Name: "KeiRouter", Version: "test"}})
+	var rec *audit.Recorder
+	opts := mcp.Options{Info: mcp.Implementation{Name: "KeiRouter", Version: "test"}}
+	if len(recorder) > 0 {
+		rec = recorder[0](db)
+		opts.Auditor = rec
+	}
+	mgr, err := mcp.NewManager(ctx, db, sealer, opts)
 	require.NoError(t, err)
 	runCtx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -88,11 +97,11 @@ func newMCPE2E(t *testing.T, upstreamURL string) *mcpE2E {
 	require.NoError(t, err)
 	cfg := config.Default()
 	cfg.Server.CORSOrigins = []string{"https://dash.example"}
-	gw := New(Deps{Config: cfg, Auth: authSvc, DB: db, Settings: db.Settings(), Identity: idSvc, MCP: mgr})
+	gw := New(Deps{Config: cfg, Auth: authSvc, DB: db, Settings: db.Settings(), Identity: idSvc, MCP: mgr, Audit: rec})
 	srv := httptest.NewServer(gw.Handler())
 	t.Cleanup(srv.Close)
 
-	h := &mcpE2E{srv: srv, apiKey: issued.Plaintext, keyID: issued.Record.ID, session: session, mgr: mgr, db: db}
+	h := &mcpE2E{gw: gw, srv: srv, apiKey: issued.Plaintext, keyID: issued.Record.ID, session: session, mgr: mgr, db: db}
 	if upstreamURL != "" {
 		admin := &mcpAdminHarness{srv: srv, session: session, db: db, mgr: mgr}
 		status, body := admin.do(t, http.MethodPost, "/mcp/servers", map[string]any{
@@ -294,4 +303,69 @@ func TestAdminCreateKey_MCPModeNone(t *testing.T) {
 
 	status, _ = admin.do(t, http.MethodPost, "/keys", map[string]any{"name": "x", "mcp_mode": "selected"})
 	require.Equal(t, http.StatusBadRequest, status)
+}
+
+func TestMCPEndpoint_ConsoleLines(t *testing.T) {
+	h := newMCPE2E(t, sdkUpstream(t, true).URL)
+	cs := h.sdkClient(t, "/mcp", mcp.VersionModern)
+	_, err := cs.ListTools(context.Background(), nil)
+	require.NoError(t, err)
+	_, err = cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "up__echo", Arguments: map[string]any{"text": "hi"}})
+	require.NoError(t, err)
+	_, err = cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "up__fail", Arguments: map[string]any{"text": "x"}})
+	require.NoError(t, err)
+
+	var finals []consolelog.Entry
+	for _, e := range h.gw.consoleLog.Entries() {
+		if e.Final && strings.HasPrefix(e.Endpoint, "POST /mcp") {
+			finals = append(finals, e)
+		}
+	}
+	msgs := []string{}
+	for _, e := range finals {
+		msgs = append(msgs, e.Level+" "+e.Message)
+	}
+	joined := strings.Join(msgs, "\n")
+	require.Contains(t, joined, "DEBUG MCP · tools/list · 2 tools")
+	require.Contains(t, joined, "INFO MCP · up__echo · success")
+	require.Contains(t, joined, "WARN MCP · up__fail · tool error")
+	require.Contains(t, joined, "· nope", "the tool's own error text is on the line")
+	for _, e := range finals {
+		if e.Model == "up__echo" {
+			require.Equal(t, "mcp/up", e.Provider)
+			require.Contains(t, e.Detail, "modern 2026-07-28")
+			require.Contains(t, e.Detail, "mcp-key")
+		}
+	}
+}
+
+func TestMCPEndpoint_ToolCallsInAuditLog(t *testing.T) {
+	var rec *audit.Recorder
+	h := newMCPE2E(t, sdkUpstream(t, true).URL, func(db *store.DB) *audit.Recorder {
+		rec = audit.New(db.Audit(), nil, audit.Config{DefaultTenantID: store.DefaultTenantID})
+		t.Cleanup(func() { rec.Stop(time.Second) })
+		return rec
+	})
+	cs := h.sdkClient(t, "/mcp", mcp.VersionModern)
+	_, err := cs.CallTool(context.Background(), &sdk.CallToolParams{Name: "up__echo", Arguments: map[string]any{"text": "private words"}})
+	require.NoError(t, err)
+
+	rows := auditRows(t, h.db, rec)
+	var call, create *store.AuditEntry
+	for i := range rows {
+		switch rows[i].Action {
+		case "mcp.tool.call":
+			call = &rows[i]
+		case "mcp.servers":
+			create = &rows[i]
+		}
+	}
+	require.NotNil(t, create, "creating the server is an audited admin action")
+	require.NotNil(t, call, "the tool call is in the audit log")
+	require.Equal(t, "api_key", call.ActorType)
+	require.Equal(t, h.keyID, call.Actor)
+	require.Equal(t, "up__echo", call.Target)
+	require.Equal(t, "success", call.Outcome)
+	raw, _ := json.Marshal(call)
+	require.NotContains(t, string(raw), "private words")
 }

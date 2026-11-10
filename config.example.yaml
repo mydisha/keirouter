@@ -147,6 +147,24 @@ audit:
     # Off by default because the volume follows your traffic.
     include_requests: false
 
+mcp:
+  # MCP gateway: clients call POST /mcp with a KeiRouter API key and reach
+  # every MCP server registered on the dashboard.
+  # Optional YAML file of company presets for the "add MCP server" picker.
+  catalog_file: ""
+  # true: servers can only be created from catalog presets.
+  catalog_only: false
+  # How often tool catalogs are refreshed from each server (0 disables).
+  sync_interval: 5m
+  # Tool-call log rows (mcp_call_logs) older than this are deleted.
+  log_retention_days: 30
+  # Per-key tool-call limits, counted apart from the key's LLM limits.
+  default_rpm: 600
+  default_concurrency: 20
+  # Also write each tool call to the audit log as mcp.tool.call (key, server,
+  # tool, outcome; never arguments or results). Needs audit.enabled.
+  audit_tool_calls: true
+
 health:
   # Background account/model health checks. Unhealthy account/model pairs are
   # skipped by dispatch until probes recover.

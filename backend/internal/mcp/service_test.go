@@ -6,11 +6,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/mydisha/keirouter/backend/internal/audit"
 	"github.com/mydisha/keirouter/backend/internal/limits"
 	"github.com/mydisha/keirouter/backend/internal/store"
 )
@@ -437,4 +439,85 @@ func TestEnsureResultType(t *testing.T) {
 	require.Equal(t, `{"resultType":"complete"}`, string(ensureResultType(json.RawMessage(`{}`))))
 	require.Equal(t, `{"resultType":"x"}`, string(ensureResultType(json.RawMessage(`{"resultType":"x"}`))))
 	require.Equal(t, `[1]`, string(ensureResultType(json.RawMessage(`[1]`))))
+}
+
+type fakeAuditor struct {
+	mu     sync.Mutex
+	events []audit.Event
+}
+
+func (f *fakeAuditor) Record(ev audit.Event) {
+	f.mu.Lock()
+	f.events = append(f.events, ev)
+	f.mu.Unlock()
+}
+
+func (f *fakeAuditor) all() []audit.Event {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]audit.Event(nil), f.events...)
+}
+
+func TestServe_AuditsEveryToolCall(t *testing.T) {
+	aud := &fakeAuditor{}
+	e := newServeEnv(t, &fakeServer{modern: true, tools: []string{toolWeather}, callResult: `{"content":[{"type":"text","text":"city not found"}],"isError":true}`}, func(o *Options) {
+		o.Auditor = aud
+	})
+	caller := Caller{KeyID: e.keyID, RequestID: "req-9", ClientIP: "10.0.0.7", UserAgent: "claude-code/2", Route: "/mcp", TraceID: "t1", SpanID: "s1"}
+
+	req, _ := modernReq(3, "tools/call", map[string]any{"name": "wx__get_weather", "arguments": map[string]any{"city": "secret-place"}})
+	w := httptest.NewRecorder()
+	out := e.m.Serve(w, req, caller, "")
+	require.Equal(t, http.StatusOK, out.HTTPStatus)
+	require.Equal(t, "tools/call", out.Method)
+	require.Equal(t, "wx__get_weather", out.Tool)
+	require.Equal(t, "wx", out.Server)
+	require.Equal(t, StatusToolError, out.CallStatus)
+	require.Equal(t, "city not found", out.Error, "the tool's own message explains the failure")
+	require.True(t, out.Modern)
+
+	evs := aud.all()
+	require.Len(t, evs, 1)
+	ev := evs[0]
+	require.Equal(t, "mcp.tool.call", ev.Action)
+	require.Equal(t, audit.OutcomeFailure, ev.Outcome)
+	require.Equal(t, audit.ActorAPIKey, ev.ActorType)
+	require.Equal(t, e.keyID, ev.ActorID)
+	require.Equal(t, "wx__get_weather", ev.ResourceID)
+	require.Equal(t, "10.0.0.7", ev.ClientIP)
+	require.Equal(t, "req-9", ev.RequestID)
+	require.Equal(t, "t1", ev.TraceID)
+	require.Equal(t, "tool_error", ev.Details["status"])
+	require.Equal(t, VersionModern, ev.Details["protocol_version"])
+	for k, v := range ev.Details {
+		require.NotContains(t, v, "secret-place", "arguments never reach the audit log (%s)", k)
+	}
+
+	// A denied call is audited as denied.
+	require.NoError(t, e.m.Repo.SetKeyAccess(context.Background(), e.keyID, store.MCPKeyAccess{Mode: store.MCPModeNone}))
+	e.m.InvalidateAccess(e.keyID)
+	out = e.m.Serve(httptest.NewRecorder(), legacyReq(4, "tools/call", map[string]any{"name": "wx__get_weather"}), caller, "")
+	require.Equal(t, StatusDenied, out.CallStatus)
+	evs = aud.all()
+	require.Len(t, evs, 2)
+	require.Equal(t, audit.OutcomeDenied, evs[1].Outcome)
+
+	// Calls to tools that do not exist and non-call methods are not audited.
+	e.m.Serve(httptest.NewRecorder(), legacyReq(5, "tools/call", map[string]any{"name": "nope__x"}), caller, "")
+	out = e.m.Serve(httptest.NewRecorder(), legacyReq(6, "tools/list", nil), caller, "")
+	require.Equal(t, 0, out.ToolCount)
+	require.Len(t, aud.all(), 2)
+}
+
+func TestServe_OutcomeForListAndRejects(t *testing.T) {
+	e := newServeEnv(t, &fakeServer{modern: true, tools: []string{toolWeather, toolRegion}})
+	out := e.m.Serve(httptest.NewRecorder(), legacyReq(1, "tools/list", nil), Caller{KeyID: e.keyID}, "")
+	require.Equal(t, 2, out.ToolCount)
+	require.False(t, out.Modern)
+
+	req, _ := modernReq(1, "tools/list", nil)
+	req.Header.Del(HeaderMethod)
+	out = e.m.Serve(httptest.NewRecorder(), req, Caller{KeyID: e.keyID}, "")
+	require.Equal(t, http.StatusBadRequest, out.HTTPStatus)
+	require.NotEmpty(t, out.Error)
 }

@@ -49,6 +49,9 @@ type MCPConfig struct {
 	// counted separately from the key's LLM limits.
 	DefaultRPM         int64 `koanf:"default_rpm"`
 	DefaultConcurrency int64 `koanf:"default_concurrency"`
+	// AuditToolCalls writes every tool call to the audit log (mcp.tool.call),
+	// besides the MCP call log. Needs audit.enabled. Default true.
+	AuditToolCalls bool `koanf:"audit_tool_calls"`
 }
 
 // DefaultMaxRequestBodyBytes is the default maximum size accepted for inbound
@@ -463,6 +466,7 @@ func Default() Config {
 			LogRetentionDays:   30,
 			DefaultRPM:         600,
 			DefaultConcurrency: 20,
+			AuditToolCalls:     true,
 		},
 		Audit: AuditConfig{
 			Enabled:       true,

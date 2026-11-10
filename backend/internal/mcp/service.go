@@ -32,6 +32,41 @@ type Caller struct {
 	RequestID string
 	Client    string
 	TraceID   string
+	SpanID    string
+	ClientIP  string
+	UserAgent string
+	// Route is the matched route, "/mcp" or "/mcp/{server}", for the audit log.
+	Route string
+}
+
+// Outcome summarises one /mcp request for the console.
+type Outcome struct {
+	HTTPStatus int
+	Method     string
+	Modern     bool
+	// Version is the protocol version the client used, when known.
+	Version string
+	// Tool is the name the client called; Server the slug it resolved to.
+	Tool   string
+	Server string
+	// CallStatus is the tool-call log status (success, denied, ...).
+	CallStatus string
+	Error      string
+	ToolCount  int
+	UpstreamMS int64
+}
+
+// statusWriter remembers the status code written to the client.
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusWriter) WriteHeader(code int) {
+	if w.status == 0 {
+		w.status = code
+	}
+	w.ResponseWriter.WriteHeader(code)
 }
 
 type inbound struct {
@@ -64,26 +99,41 @@ type exchange struct {
 	params inboundParams
 	modern bool
 	size   int
+	out    *Outcome
 }
 
 // Serve answers one Streamable HTTP POST to /mcp or /mcp/{scope}. The
-// caller has authenticated the key and checked the Origin header.
-func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, caller Caller, scope string) {
+// caller has authenticated the key and checked the Origin header. The
+// returned Outcome describes what happened, for the console.
+func (m *Manager) Serve(rw http.ResponseWriter, r *http.Request, caller Caller, scope string) Outcome {
+	sw := &statusWriter{ResponseWriter: rw}
+	out := Outcome{Server: scope}
+	m.serve(sw, r, caller, scope, &out)
+	out.HTTPStatus = sw.status
+	if out.HTTPStatus == 0 {
+		out.HTTPStatus = http.StatusOK
+	}
+	return out
+}
+
+func (m *Manager) serve(w http.ResponseWriter, r *http.Request, caller Caller, scope string, out *Outcome) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxRequestBytes))
 	if err != nil {
 		writeRPCError(w, http.StatusRequestEntityTooLarge, nil, CodeInvalidRequest, "request body is larger than 4 MiB")
 		return
 	}
-	x := &exchange{w: w, r: r, caller: caller, scope: scope, size: len(body)}
+	x := &exchange{w: w, r: r, caller: caller, scope: scope, size: len(body), out: out}
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) > 0 && trimmed[0] == '[' {
 		writeRPCError(w, http.StatusBadRequest, nil, CodeInvalidRequest, "JSON-RPC batches are not supported")
 		return
 	}
 	if err := fastjson.UnmarshalNoCopy(body, &x.req); err != nil {
+		out.Error = "invalid JSON"
 		writeRPCError(w, http.StatusBadRequest, nil, CodeParseError, "invalid JSON")
 		return
 	}
+	out.Method = x.req.Method
 	if x.req.JSONRPC != "2.0" || x.req.Method == "" {
 		writeRPCError(w, http.StatusBadRequest, x.req.ID, CodeInvalidRequest, "not a JSON-RPC 2.0 request")
 		return
@@ -98,7 +148,15 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, caller Caller, s
 		x.caller.Client = x.params.Meta.ClientInfo.Name
 	}
 	if !m.checkEra(x) {
+		out.Error = "protocol headers rejected"
 		return
+	}
+	out.Modern = x.modern
+	out.Version = x.params.Meta.ProtocolVersion
+	if !x.modern && x.req.Method == "initialize" {
+		out.Version = x.params.ProtocolVersion
+	} else if !x.modern {
+		out.Version = x.r.Header.Get(HeaderProtocolVersion)
 	}
 	if x.req.IsNotification() {
 		w.WriteHeader(http.StatusAccepted)
@@ -213,7 +271,7 @@ func (m *Manager) serveListTools(x *exchange) {
 	buf := getBuffer()
 	defer putBuffer(buf)
 	buf.WriteString(`{"tools":[`)
-	appendTools(buf, m.Registry.Snapshot(), access, x.scope)
+	x.out.ToolCount = appendTools(buf, m.Registry.Snapshot(), access, x.scope)
 	buf.WriteString(`]`)
 	if x.modern {
 		buf.WriteString(`,"resultType":"complete","ttlMs":` + strconv.Itoa(listTTLMS) + `,"cacheScope":"private","_meta":{"` + MetaServerInfo + `":`)
@@ -224,34 +282,37 @@ func (m *Manager) serveListTools(x *exchange) {
 	writeRPCResult(x.w, http.StatusOK, x.req.ID, buf.Bytes())
 }
 
-// appendTools writes the comma-separated tool definitions a key may see.
-func appendTools(buf *bytes.Buffer, snap *Snapshot, access *Access, scope string) {
+// appendTools writes the comma-separated tool definitions a key may see and
+// returns how many it wrote.
+func appendTools(buf *bytes.Buffer, snap *Snapshot, access *Access, scope string) int {
+	n := 0
+	add := func(def []byte) {
+		if n > 0 {
+			buf.WriteByte(',')
+		}
+		buf.Write(def)
+		n++
+	}
 	if scope != "" {
 		srv := snap.BySlug[scope]
 		if srv == nil || !access.CanUseServer(srv.ID) {
-			return
+			return 0
 		}
 		if access.AllToolsOf(srv.ID) {
 			buf.Write(srv.joinedBare)
-			return
+			return len(srv.Sorted)
 		}
-		first := true
 		for _, t := range srv.Sorted {
 			if access.CanCall(srv.ID, t.Name) {
-				if !first {
-					buf.WriteByte(',')
-				}
-				buf.Write(t.Bare)
-				first = false
+				add(t.Bare)
 			}
 		}
-		return
+		return n
 	}
 	if access.Mode == store.MCPModeAll {
 		buf.Write(snap.allPrefixed)
-		return
+		return snap.toolCount
 	}
-	first := true
 	for _, srv := range snap.Ordered {
 		if !access.CanUseServer(srv.ID) {
 			continue
@@ -260,23 +321,20 @@ func appendTools(buf *bytes.Buffer, snap *Snapshot, access *Access, scope string
 			if len(srv.joinedPrefixed) == 0 {
 				continue
 			}
-			if !first {
+			if n > 0 {
 				buf.WriteByte(',')
 			}
 			buf.Write(srv.joinedPrefixed)
-			first = false
+			n += len(srv.Sorted)
 			continue
 		}
 		for _, t := range srv.Sorted {
 			if access.CanCall(srv.ID, t.Name) {
-				if !first {
-					buf.WriteByte(',')
-				}
-				buf.Write(t.Prefixed)
-				first = false
+				add(t.Prefixed)
 			}
 		}
 	}
+	return n
 }
 
 // resolveTool maps the name a client called to a server and tool. It
@@ -305,7 +363,12 @@ func (m *Manager) serveCallTool(x *exchange) {
 	ctx := x.r.Context()
 	snap := m.Registry.Snapshot()
 	srv, tool := resolveTool(snap, x.scope, x.params.Name)
+	x.out.Tool = x.params.Name
+	if srv != nil {
+		x.out.Server = srv.Slug
+	}
 	unknown := func() {
+		x.out.Error = "unknown tool"
 		writeRPCError(x.w, http.StatusOK, x.req.ID, CodeInvalidParams, "Unknown tool: "+x.params.Name)
 	}
 	if srv == nil || tool == nil {
@@ -316,12 +379,14 @@ func (m *Manager) serveCallTool(x *exchange) {
 		RequestID: x.caller.RequestID, APIKeyID: x.caller.KeyID, ServerID: srv.ID, ServerSlug: srv.Slug,
 		Tool: tool.Name, Client: x.caller.Client, TraceID: x.caller.TraceID, RequestBytes: int64(x.size),
 	}
-	finish := func(status, errText string, respBytes int, upstream time.Duration) {
+	finish := func(status, errText string, respBytes int, upstream time.Duration, httpStatus int) {
 		entry.Status, entry.Error = status, truncate(errText, 500)
 		entry.LatencyMS = time.Since(start).Milliseconds()
 		entry.UpstreamMS = upstream.Milliseconds()
 		entry.ResponseBytes = int64(respBytes)
 		m.recordCall(entry)
+		m.auditCall(x, entry, httpStatus)
+		x.out.CallStatus, x.out.Error, x.out.UpstreamMS = status, entry.Error, entry.UpstreamMS
 	}
 
 	access, err := m.access.get(ctx, x.caller.KeyID)
@@ -330,7 +395,7 @@ func (m *Manager) serveCallTool(x *exchange) {
 		return
 	}
 	if !access.CanCall(srv.ID, tool.Name) {
-		finish(StatusDenied, "key has no access to this tool", 0, 0)
+		finish(StatusDenied, "key has no access to this tool", 0, 0, http.StatusOK)
 		unknown() // same answer as a missing tool, so access does not reveal what exists
 		return
 	}
@@ -354,7 +419,7 @@ func (m *Manager) serveCallTool(x *exchange) {
 		return
 	}
 	if !decision.Allowed {
-		finish(StatusRateLimited, decision.LimitKind+" limit reached", 0, 0)
+		finish(StatusRateLimited, decision.LimitKind+" limit reached", 0, 0, http.StatusTooManyRequests)
 		secs := int(decision.RetryAfter.Seconds() + 0.999)
 		if secs < 1 {
 			secs = 1
@@ -368,7 +433,7 @@ func (m *Manager) serveCallTool(x *exchange) {
 
 	res := m.invoke(ctx, srv, tool, x.req.Params, forwardHeaders(x.r.Header, srv.ForwardHeaders))
 	if res.rpcErr != nil {
-		finish(res.status, res.rpcErr.Message, 0, res.upstream)
+		finish(res.status, res.rpcErr.Message, 0, res.upstream, http.StatusOK)
 		writeRPCErrorData(x.w, http.StatusOK, x.req.ID, res.rpcErr.Code, res.rpcErr.Message, res.rpcErr.Data)
 		return
 	}
@@ -379,7 +444,10 @@ func (m *Manager) serveCallTool(x *exchange) {
 		result = toolErrorResult("This tool needs input that only clients speaking MCP " + VersionModern + " can provide.")
 		res.status = StatusToolError
 	}
-	finish(res.status, res.errText, len(result), res.upstream)
+	if res.status == StatusToolError && res.errText == "" {
+		res.errText = toolErrorText(result)
+	}
+	finish(res.status, res.errText, len(result), res.upstream, http.StatusOK)
 	writeRPCResult(x.w, http.StatusOK, x.req.ID, result)
 }
 
@@ -542,6 +610,17 @@ func forwardHeaders(in http.Header, names []string) http.Header {
 		}
 	}
 	return out
+}
+
+// toolErrorText returns the first text block of an isError result, so the
+// log and console say why the tool failed.
+func toolErrorText(result json.RawMessage) string {
+	n, err := sonic.Get(result, "content", 0, "text")
+	if err != nil {
+		return ""
+	}
+	s, _ := n.String()
+	return truncate(s, 200)
 }
 
 func isErrorResult(result json.RawMessage) bool {

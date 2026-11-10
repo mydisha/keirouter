@@ -62,8 +62,9 @@ type Snapshot struct {
 	Ordered []*Server // ordered by slug
 
 	// allPrefixed is every exposed tool of every server, comma-joined, for
-	// keys in all mode.
+	// keys in all mode; toolCount is how many tools it holds.
 	allPrefixed []byte
+	toolCount   int
 }
 
 // Tool returns a server's exposed tool.
@@ -151,6 +152,7 @@ func buildSnapshot(servers []store.MCPServer, tools []store.MCPServerTool) (*Sna
 			pre.Write(t.Prefixed)
 		}
 		srv.joinedBare, srv.joinedPrefixed = bare.Bytes(), pre.Bytes()
+		snap.toolCount += len(srv.Sorted)
 		if len(srv.joinedPrefixed) > 0 {
 			if all.Len() > 0 {
 				all.WriteByte(',')

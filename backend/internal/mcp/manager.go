@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/http"
 	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/mydisha/keirouter/backend/internal/audit"
 	"github.com/mydisha/keirouter/backend/internal/crypto"
 	"github.com/mydisha/keirouter/backend/internal/limits"
 	"github.com/mydisha/keirouter/backend/internal/store"
@@ -34,6 +36,13 @@ type Options struct {
 	CallLimits limits.EffectiveLimits
 	// LogRetentionDays drops call logs older than this; 0 keeps them.
 	LogRetentionDays int
+	// Auditor receives one mcp.tool.call event per tool call when set.
+	Auditor Auditor
+}
+
+// Auditor records audit events; *audit.Recorder satisfies it.
+type Auditor interface {
+	Record(audit.Event)
 }
 
 // Manager owns the MCP gateway's state: registry, upstream client, syncer
@@ -56,6 +65,7 @@ type Manager struct {
 	limiter   limits.Limiter
 	limits    limits.EffectiveLimits
 	retention int
+	auditor   Auditor
 	seen      atomic.Value // string: last versionSetting this instance applied
 }
 
@@ -86,6 +96,7 @@ func NewManager(ctx context.Context, db *store.DB, sealer *crypto.Sealer, opts O
 		limiter:   opts.Limiter,
 		limits:    opts.CallLimits,
 		retention: opts.LogRetentionDays,
+		auditor:   opts.Auditor,
 	}
 	if m.limiter == nil {
 		m.limiter = allowAll{}
@@ -197,4 +208,58 @@ type allowAll struct{}
 
 func (allowAll) Acquire(context.Context, limits.Request) (limits.ReleaseFunc, limits.Decision, error) {
 	return func(int64) {}, limits.Decision{Allowed: true}, nil
+}
+
+// auditCall writes one tool call to the audit log, so it is hash-chained and
+// exported with the operator's other audit events. Arguments and results
+// are never included.
+func (m *Manager) auditCall(x *exchange, e store.MCPCallLog, httpStatus int) {
+	if m.auditor == nil {
+		return
+	}
+	outcome := audit.OutcomeFailure
+	switch e.Status {
+	case StatusSuccess:
+		outcome = audit.OutcomeSuccess
+	case StatusDenied, StatusRateLimited:
+		outcome = audit.OutcomeDenied
+	}
+	details := map[string]string{
+		"server":      e.ServerSlug,
+		"tool":        e.Tool,
+		"status":      e.Status,
+		"latency_ms":  strconv.FormatInt(e.LatencyMS, 10),
+		"upstream_ms": strconv.FormatInt(e.UpstreamMS, 10),
+	}
+	if e.Client != "" {
+		details["client"] = e.Client
+	}
+	if e.Error != "" {
+		details["error"] = e.Error
+	}
+	if x.out.Version != "" {
+		details["protocol_version"] = x.out.Version
+	}
+	route := x.caller.Route
+	if route == "" {
+		route = "/mcp"
+	}
+	m.auditor.Record(audit.Event{
+		TenantID:     m.tenant,
+		Action:       "mcp.tool.call",
+		Outcome:      outcome,
+		ActorType:    audit.ActorAPIKey,
+		ActorID:      x.caller.KeyID,
+		ClientIP:     x.caller.ClientIP,
+		UserAgent:    x.caller.UserAgent,
+		Method:       http.MethodPost,
+		Route:        route,
+		StatusCode:   httpStatus,
+		ResourceType: "mcp_tool",
+		ResourceID:   e.ServerSlug + ToolNameSeparator + e.Tool,
+		RequestID:    x.caller.RequestID,
+		TraceID:      x.caller.TraceID,
+		SpanID:       x.caller.SpanID,
+		Details:      details,
+	})
 }

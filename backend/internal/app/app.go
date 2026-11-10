@@ -463,6 +463,7 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 			Concurrency: cfg.MCP.DefaultConcurrency,
 		},
 		LogRetentionDays: cfg.MCP.LogRetentionDays,
+		Auditor:          mcpAuditor(cfg, auditRec),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("app: build mcp gateway: %w", err)
@@ -543,6 +544,15 @@ func Build(ctx context.Context, cfg config.Config, log *slog.Logger, version str
 type keyLimiter interface {
 	limits.Limiter
 	gateway.RateLimitController
+}
+
+// mcpAuditor returns the recorder tool calls are audited to, or nil when
+// either audit or MCP tool-call auditing is off.
+func mcpAuditor(cfg config.Config, rec *audit.Recorder) mcp.Auditor {
+	if rec == nil || !cfg.MCP.AuditToolCalls {
+		return nil
+	}
+	return rec
 }
 
 // buildLimiter builds the per-key limiter. With limits.backend=redis it also
