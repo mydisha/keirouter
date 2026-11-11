@@ -22,7 +22,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "html-to-image": "^1.11.13",
-    "katex": "^0.16.47",
+    "katex": "^0.18.2",
     "lucide-react": "^1.55.0",
     "mermaid": "^12.2.0",
     "motion": "^14.6.0",
@@ -52,5 +52,8 @@
     "typescript": "^6.0.3",
     "vite": "^8.3.4",
     "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "katex": "$katex"
   }
 }
