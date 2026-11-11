@@ -158,7 +158,10 @@ func (AnthropicCodec) ParseRequest(body []byte) (*core.ChatRequest, error) {
 
 	// Parse thinking configuration from the raw body (before unmarshaling)
 	req.Reasoning = parseAntThinkingFromBytes(body)
-	if effort := parseAntOutputEffort(raw.OutputConfig); effort != "" && req.Reasoning != nil && req.Reasoning.Adaptive {
+	// output_config.effort steers both adaptive and budget thinking, since a
+	// client may send it alongside budget_tokens. A disabled thinking block
+	// keeps its "none" so effort never turns thinking on.
+	if effort := parseAntOutputEffort(raw.OutputConfig); effort != "" && req.Reasoning != nil && req.Reasoning.Effort != "none" {
 		req.Reasoning.Effort = effort
 	}
 	req.ResponseFormat = parseAntOutputFormat(raw.OutputConfig)

@@ -104,3 +104,61 @@ func TestToolChoice_CrossesResponsesAndGemini(t *testing.T) {
 	require.Equal(t, "function", body.ToolChoice.Type)
 	require.Equal(t, "lookup", body.ToolChoice.Function.Name)
 }
+
+// An Anthropic client may send budget thinking plus output_config.effort; the
+// effort must reach DeepSeek instead of collapsing to high.
+func TestAnthropic_OutputEffortReachesDeepSeekWithBudgetThinking(t *testing.T) {
+	cases := []struct {
+		name       string
+		thinking   string
+		effort     string
+		wantEffort string
+		wantType   string
+	}{
+		{name: "enabled max", thinking: `{"type":"enabled","budget_tokens":31999}`, effort: "max", wantEffort: "max", wantType: "enabled"},
+		{name: "enabled xhigh", thinking: `{"type":"enabled","budget_tokens":31999}`, effort: "xhigh", wantEffort: "max", wantType: "enabled"},
+		{name: "enabled low", thinking: `{"type":"enabled","budget_tokens":1024}`, effort: "low", wantEffort: "high", wantType: "enabled"},
+		{name: "enabled no effort", thinking: `{"type":"enabled","budget_tokens":1024}`, effort: "", wantEffort: "high", wantType: "enabled"},
+		{name: "adaptive max", thinking: `{"type":"adaptive"}`, effort: "max", wantEffort: "max", wantType: "enabled"},
+		{name: "disabled max stays off", thinking: `{"type":"disabled"}`, effort: "max", wantEffort: "", wantType: "disabled"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oc := ""
+			if tc.effort != "" {
+				oc = `"output_config":{"effort":"` + tc.effort + `"},`
+			}
+			body := `{"model":"deepseek-v4-flash","max_tokens":64000,"thinking":` + tc.thinking + `,` + oc +
+				`"messages":[{"role":"user","content":"hi"}]}`
+			req, err := AnthropicCodec{}.ParseRequest([]byte(body))
+			require.NoError(t, err)
+
+			for _, provider := range []string{"deepseek", "custom-openai"} {
+				out, err := OpenAICodec{}.RenderRequestForProvider(req, provider)
+				require.NoError(t, err)
+				var got oaiRequest
+				require.NoError(t, json.Unmarshal(out, &got))
+				require.Equal(t, tc.wantEffort, got.ReasoningEffort, provider)
+				require.NotNil(t, got.Thinking, provider)
+				require.Equal(t, tc.wantType, got.Thinking.Type, provider)
+			}
+		})
+	}
+}
+
+// Reading output_config.effort for budget thinking must not change the budget
+// an Anthropic upstream receives.
+func TestAnthropic_OutputEffortKeepsClientBudget(t *testing.T) {
+	body := `{"model":"claude-sonnet-4-5","max_tokens":64000,"thinking":{"type":"enabled","budget_tokens":10000},
+		"output_config":{"effort":"max"},"messages":[{"role":"user","content":"hi"}]}`
+	req, err := AnthropicCodec{}.ParseRequest([]byte(body))
+	require.NoError(t, err)
+	require.Equal(t, "max", req.Reasoning.Effort)
+	require.Equal(t, 10000, req.Reasoning.MaxTokens)
+	require.False(t, req.Reasoning.Adaptive)
+
+	out, err := AnthropicCodec{}.RenderRequest(req)
+	require.NoError(t, err)
+	require.Contains(t, string(out), `"budget_tokens":10000`)
+	require.Contains(t, string(out), `"type":"enabled"`)
+}

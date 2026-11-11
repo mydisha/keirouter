@@ -150,6 +150,11 @@ func TestFindModel(t *testing.T) {
 	if _, ok := FindModel("deepseek", "deepseek-v4-pro-none"); !ok {
 		t.Error("expected to find deepseek/deepseek-v4-pro-none")
 	}
+	for _, alias := range []string{"deepseek-v4-flash-max", "deepseek-v4-flash-none"} {
+		if _, ok := FindModel("deepseek", alias); !ok {
+			t.Errorf("expected to find deepseek/%s", alias)
+		}
+	}
 	if _, ok := FindModel("openai", "nonexistent-model"); ok {
 		t.Error("expected miss for nonexistent model")
 	}
@@ -314,5 +319,29 @@ func TestRegistryRegistersDrivableProviders(t *testing.T) {
 	// An unknown provider still has no connector.
 	if r.Has("does-not-exist") {
 		t.Error("registry should not have a connector for an unknown provider")
+	}
+}
+
+// Effort aliases bill at their base model's rate.
+func TestDeepSeekEffortAliasesPriceAsBaseModel(t *testing.T) {
+	for alias, base := range map[string]string{
+		"deepseek-v4-pro-max":    "deepseek-v4-pro",
+		"deepseek-v4-pro-none":   "deepseek-v4-pro",
+		"deepseek-v4-flash-max":  "deepseek-v4-flash",
+		"deepseek-v4-flash-none": "deepseek-v4-flash",
+	} {
+		want, ok := ModelPriceByProviderModel("deepseek", base)
+		if !ok {
+			t.Fatalf("no price for base %s", base)
+		}
+		got, ok := ModelPriceByProviderModel("deepseek", alias)
+		if !ok {
+			t.Errorf("no price for %s", alias)
+			continue
+		}
+		if got.InputPerM != want.InputPerM || got.OutputPerM != want.OutputPerM || got.CachedInputPerM != want.CachedInputPerM {
+			t.Errorf("%s priced %v/%v/%v, want %s rate %v/%v/%v", alias,
+				got.InputPerM, got.OutputPerM, got.CachedInputPerM, base, want.InputPerM, want.OutputPerM, want.CachedInputPerM)
+		}
 	}
 }

@@ -98,6 +98,7 @@ var providerModels = map[string][]ModelSpec{
 	"deepseek": {
 		m("deepseek-v4-pro", "DeepSeek V4 Pro"), m("deepseek-v4-pro-max", "DeepSeek V4 Pro Max"),
 		m("deepseek-v4-pro-none", "DeepSeek V4 Pro No Thinking"), m("deepseek-v4-flash", "DeepSeek V4 Flash"),
+		m("deepseek-v4-flash-max", "DeepSeek V4 Flash Max"), m("deepseek-v4-flash-none", "DeepSeek V4 Flash No Thinking"),
 		m("deepseek-chat", "DeepSeek V3.2 Chat"), m("deepseek-reasoner", "DeepSeek V3.2 Reasoner"),
 	},
 	"glm": {
