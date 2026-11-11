@@ -26,23 +26,6 @@ updates:
         patterns: ["*"]
 
   - package-ecosystem: npm
-    directory: /@keirouter-opencode-plugin
-    schedule:
-      interval: weekly
-      day: monday
-    commit-message:
-      prefix: build
-      include: scope
-    groups:
-      opencode-plugin-minor-patch:
-        applies-to: version-updates
-        patterns: ["*"]
-        update-types: [minor, patch]
-      opencode-plugin-security:
-        applies-to: security-updates
-        patterns: ["*"]
-
-  - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
