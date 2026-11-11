@@ -1,3 +1,14 @@
+/**
+ * rehype-katex options for model replies. `trust: false` keeps \href and
+ * \url from making links; errors render as the source instead of throwing.
+ */
+export const KATEX_OPTIONS = {
+  throwOnError: false,
+  strict: "ignore",
+  trust: false,
+  output: "htmlAndMathml",
+} as const;
+
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 
 /** True when a reply may hold math, so KaTeX is worth loading. */

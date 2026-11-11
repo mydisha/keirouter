@@ -4,7 +4,7 @@ import type { ReactElement, ReactNode } from "react";
 import Markdown from "react-markdown";
 import type { Components, Options } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { mayHaveMath, normalizeMath } from "../math";
+import { KATEX_OPTIONS, mayHaveMath, normalizeMath } from "../math";
 import CodeFence from "./code-fence";
 import MermaidDiagram from "./mermaid-diagram";
 
@@ -16,23 +16,13 @@ let mathPlugins: Promise<Plugins> | null = null;
 
 /**
  * KaTeX and its fonts load only once a reply looks like it holds math.
- * `trust: false` keeps \href and \url from making links; errors render as
- * the source instead of throwing.
  */
 function loadMath(): Promise<Plugins> {
   mathPlugins ??= Promise.all([import("remark-math"), import("rehype-katex"), import("katex/dist/katex.min.css")]).then(
     ([math, katex]) => ({
       remarkPlugins: [remarkGfm, math.default],
       rehypePlugins: [
-        [
-          katex.default,
-          {
-            throwOnError: false,
-            strict: "ignore",
-            trust: false,
-            output: "htmlAndMathml",
-          },
-        ],
+        [katex.default, KATEX_OPTIONS],
       ],
     }),
   );
