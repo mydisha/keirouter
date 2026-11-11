@@ -356,8 +356,9 @@ func deepseekModelPrices() []ModelPrice {
 		// Aliases of deepseek-chat / deepseek-reasoner.
 		{Provider: "deepseek", Model: "deepseek-v3.2-chat", InputPerM: 0.28, OutputPerM: 0.42, CachedInputPerM: 0.028},
 		{Provider: "deepseek", Model: "deepseek-v3.2-reasoner", InputPerM: 0.28, OutputPerM: 0.42, CachedInputPerM: 0.028},
-		// Effort variant of deepseek-v4-pro ("-none" resolves via suffix stripping).
+		// Effort variants of deepseek-v4-pro/flash ("-none" resolves via suffix stripping).
 		{Provider: "deepseek", Model: "deepseek-v4-pro-max", InputPerM: 1.32, OutputPerM: 3.96, CachedInputPerM: 0.044},
+		{Provider: "deepseek", Model: "deepseek-v4-flash-max", InputPerM: 0.3, OutputPerM: 1.2, CachedInputPerM: 0.006},
 	}
 }
 
