@@ -160,6 +160,12 @@ var providerModels = map[string][]ModelSpec{
 		m("zai-org/GLM-5.2", "GLM 5.2"), m("openai/gpt-oss-120b", "GPT-OSS 120B"),
 		m("meta-llama/Llama-3.3-70B-Instruct-Turbo", "Llama 3.3 70B Turbo"),
 	},
+	"uberllm": {
+		m("deepseek/deepseek-v4.1-flash", "DeepSeek V4.1 Flash"), m("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
+		m("qwen/qwen3-235b-a22b-2507", "Qwen3 235B A22B"), m("moonshotai/kimi-k2.6", "Kimi K2.6"),
+		m("z-ai/glm-5.2", "GLM 5.2"), m("openai/gpt-oss-120b", "GPT-OSS 120B"),
+		m("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6"), m("google/gemini-2.5-flash", "Gemini 2.5 Flash"),
+	},
 	"fireworks": {
 		m("accounts/fireworks/models/kimi-k3", "Kimi K3"),
 		m("accounts/fireworks/models/glm-5p3", "GLM 5.3"),
