@@ -427,6 +427,37 @@ func TestRuncrateCatalogAndChat(t *testing.T) {
 	require.Equal(t, 6, resp.Usage.TotalTokens)
 }
 
+func TestUberLLMCatalogAndChat(t *testing.T) {
+	spec, ok := SpecByID("uberllm")
+	require.True(t, ok, "catalog missing provider uberllm")
+	require.Equal(t, core.DialectOpenAI, spec.Dialect)
+	require.Equal(t, "https://api.uberllm.dev/v1", spec.BaseURL)
+	require.Equal(t, "api_key", spec.AuthKind)
+	if s, ok := SpecByAlias("uberllm"); !ok || s.ID != "uberllm" {
+		t.Fatalf("alias uberllm should resolve to uberllm, got %q ok=%v", s.ID, ok)
+	}
+
+	require.NotEmpty(t, ModelsForProvider("uberllm"))
+	require.Equal(t, "deepseek/deepseek-v4.1-flash", firstCatalogModel("uberllm"))
+	require.True(t, DefaultRegistry().Has("uberllm"), "registry should have a connector for uberllm")
+
+	// The catalog base URL already ends in /v1, so chat goes to /chat/completions
+	// under it with the key as a Bearer token.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/chat/completions", r.URL.Path)
+		require.Equal(t, "Bearer ull-test", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"c1","model":"deepseek/deepseek-v4.1-flash","choices":[{"message":{"role":"assistant","content":"hi from uberllm"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":3,"total_tokens":6}}`)
+	}))
+	defer srv.Close()
+
+	c := NewOpenAICompatible("uberllm", srv.URL)
+	resp, err := c.Chat(context.Background(), textReq("deepseek/deepseek-v4.1-flash", false), core.Credentials{APIKey: "ull-test"})
+	require.NoError(t, err)
+	require.Equal(t, "hi from uberllm", resp.Message.TextContent())
+	require.Equal(t, 6, resp.Usage.TotalTokens)
+}
+
 func TestOpenAICompatibleModelSource_ListModelsPublicNoCreds(t *testing.T) {
 	// A provider whose /models endpoint is public (e.g. sumopod) must be
 	// discoverable without credentials, so the model catalog populates before
