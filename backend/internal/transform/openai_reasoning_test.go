@@ -198,14 +198,18 @@ func TestOpenAI_RenderRequest_NonDeepSeekToolCallsUntouched(t *testing.T) {
 	require.Empty(t, got.Messages[0].ToolCalls[0].ID)
 }
 
-func TestOpenAI_RenderRequest_DeepSeekV4ProAliases(t *testing.T) {
+func TestOpenAI_RenderRequest_DeepSeekV4EffortAliases(t *testing.T) {
 	cases := []struct {
 		model        string
+		wantModel    string
 		wantEffort   string
 		wantThinking string
 	}{
-		{model: "deepseek-v4-pro-max", wantEffort: "max", wantThinking: "enabled"},
-		{model: "deepseek-v4-pro-none", wantEffort: "", wantThinking: "disabled"},
+		{model: "deepseek-v4-pro-max", wantModel: "deepseek-v4-pro", wantEffort: "max", wantThinking: "enabled"},
+		{model: "deepseek-v4-pro-none", wantModel: "deepseek-v4-pro", wantEffort: "", wantThinking: "disabled"},
+		{model: "deepseek-v4-flash-max", wantModel: "deepseek-v4-flash", wantEffort: "max", wantThinking: "enabled"},
+		{model: "deepseek-v4-flash-none", wantModel: "deepseek-v4-flash", wantEffort: "", wantThinking: "disabled"},
+		{model: "DeepSeek-V4-Flash-Max", wantModel: "deepseek-v4-flash", wantEffort: "max", wantThinking: "enabled"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.model, func(t *testing.T) {
@@ -215,7 +219,7 @@ func TestOpenAI_RenderRequest_DeepSeekV4ProAliases(t *testing.T) {
 
 			var got oaiRequest
 			require.NoError(t, json.Unmarshal(body, &got))
-			require.Equal(t, "deepseek-v4-pro", got.Model)
+			require.Equal(t, tc.wantModel, got.Model)
 			require.Equal(t, tc.wantEffort, got.ReasoningEffort)
 			// The API reads thinking at the top level; an "extra_body" key is
 			// only a Python SDK convention and would be ignored.

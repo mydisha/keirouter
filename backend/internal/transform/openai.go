@@ -869,13 +869,15 @@ func applyDeepSeekThinking(out *oaiRequest, req *core.ChatRequest, providerID st
 	if providerID != "deepseek" {
 		return
 	}
+	// Effort aliases for clients that cannot send an effort value: the suffix
+	// pins the thinking mode and is stripped before the model reaches DeepSeek.
 	switch strings.ToLower(req.Model) {
-	case "deepseek-v4-pro-max":
-		out.Model = "deepseek-v4-pro"
+	case "deepseek-v4-pro-max", "deepseek-v4-flash-max":
+		out.Model = strings.TrimSuffix(strings.ToLower(req.Model), "-max")
 		out.ReasoningEffort = "max"
 		out.Thinking = &oaiThinking{Type: "enabled"}
-	case "deepseek-v4-pro-none":
-		out.Model = "deepseek-v4-pro"
+	case "deepseek-v4-pro-none", "deepseek-v4-flash-none":
+		out.Model = strings.TrimSuffix(strings.ToLower(req.Model), "-none")
 		out.ReasoningEffort = ""
 		out.Thinking = &oaiThinking{Type: "disabled"}
 	}
